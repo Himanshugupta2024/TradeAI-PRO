@@ -35,6 +35,26 @@ from agents.execution.position_sizing import calculate_position_size
 
 log = get_logger(__name__)
 
+# ── Singleton outcome logger (lazy-initialised) ───────────────────────────────
+_outcome_logger = None
+
+def _get_outcome_logger():
+    global _outcome_logger
+    if _outcome_logger is None:
+        try:
+            from agents.analytics.feedback_loop import TradeOutcomeLogger
+            _outcome_logger = TradeOutcomeLogger()
+        except Exception as e:
+            log.warning("TradeOutcomeLogger unavailable: %s — self-learning disabled", e)
+            _outcome_logger = _NoopLogger()
+    return _outcome_logger
+
+
+class _NoopLogger:
+    """Fallback when feedback_loop is unavailable — silently does nothing."""
+    def log_closed_trade(self, **_kwargs): pass
+
+
 
 @dataclass
 class PaperTrade:
@@ -52,6 +72,12 @@ class PaperTrade:
     exit_time: str = ""
     pnl: float = 0.0
     pnl_pct: float = 0.0
+    # ── Self-Learning metadata (captured at entry, stored with trade) ──────
+    signal_type: str = "COMBINED"   # RSI_BOUNCE / MACD_CROSS / BREAKOUT / EMA_CROSS / DIVERGENCE
+    regime: str = "UNKNOWN"         # TRENDING / RANGING / HIGH_VOLATILITY
+    rsi_at_entry: float = 0.0       # RSI value at signal bar
+    volume_above_avg: bool = False   # was volume > 1.5x avg at entry?
+    confidence: float = 0.0         # AI confidence score at signal time
 
 
 class PaperTradingEngine:
@@ -106,9 +132,19 @@ class PaperTradingEngine:
         sl: float,
         tp: float,
         atr: float = 0.0,
+        # ── Self-learning context (optional but recommended) ────────────────
+        signal_type: str = "COMBINED",
+        regime: str = "UNKNOWN",
+        rsi_at_entry: float = 0.0,
+        volume_above_avg: bool = False,
+        confidence: float = 0.0,
     ) -> PaperTrade | None:
         """
         Execute a paper trade if risk rules allow it.
+
+        Extra keyword params (signal_type, regime, rsi_at_entry, volume_above_avg,
+        confidence) are stored on the trade and later forwarded to the feedback
+        logger when the trade closes.
 
         Returns:
             PaperTrade if executed, None if blocked by risk rules.
@@ -178,6 +214,11 @@ class PaperTradingEngine:
             target=tp,
             quantity=qty,
             entry_time=_now_ist_isoformat(),
+            signal_type=signal_type,
+            regime=regime,
+            rsi_at_entry=rsi_at_entry,
+            volume_above_avg=volume_above_avg,
+            confidence=confidence,
         )
 
         self.trades.append(trade)
@@ -410,6 +451,26 @@ class PaperTradingEngine:
         else:
             log.warning("❌ #%d %s @ %.2f | PnL: %+.2f (%+.2f%%) | Qty: %.4f",
                         trade.id, status, exit_price, trade.pnl, trade.pnl_pct, trade.quantity)
+
+        # ── Self-learning: log outcome to SQLite ──────────────────────────
+        try:
+            from agents.analytics.feedback_loop import TradeOutcomeLogger
+            logger = _get_outcome_logger()
+            logger.log_closed_trade(
+                symbol=trade.symbol,
+                direction=trade.direction,
+                signal_type=getattr(trade, "signal_type", "COMBINED"),
+                regime=getattr(trade, "regime", "UNKNOWN"),
+                rsi_at_entry=getattr(trade, "rsi_at_entry", None),
+                volume_above_avg=bool(getattr(trade, "volume_above_avg", False)),
+                entry_price=trade.entry_price,
+                exit_price=exit_price,
+                pnl_pct=trade.pnl_pct,
+                exit_reason=status,
+                confidence=getattr(trade, "confidence", 0.0),
+            )
+        except Exception as _fb_err:
+            log.debug("Feedback logger skipped: %s", _fb_err)
 
     def _save(self):
         """Persist trades to JSON file."""

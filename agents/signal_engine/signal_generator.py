@@ -73,6 +73,19 @@ def generate_signals(
 
     result = df.copy()
 
+    # ── Self-Learning Weights ────────────────────────
+    try:
+        from agents.analytics.feedback_loop import WeightAdapter
+        _w = WeightAdapter()._load()
+    except Exception:
+        _w = {}
+    
+    w_rsi  = _w.get("RSI_BOUNCE", 1.0)
+    w_macd = _w.get("MACD_CROSS", 1.0)
+    w_ema  = _w.get("EMA_CROSS", 1.0)
+    w_vol  = _w.get("VOLUME_SPIKE", 1.0)
+    w_div  = _w.get("DIVERGENCE", 1.0)
+
     # ── Compute AI confidence score ─────────────────────────────────────────
     # Priority:
     #   1. Caller supplied ai_confidence  → use directly
@@ -270,15 +283,17 @@ def generate_signals(
         mfi_buy_ok  = pd.Series(True, index=result.index)
         mfi_sell_ok = pd.Series(True, index=result.index)
 
-    # ── Volume filter: 1.2x average required (was 0.8x) ──────────────────
+    # ── Volume filter: 1.5x spike bonus; 1.2x basic entry filter ─────────────
     # Real breakouts have above-average volume. Low volume = fake signal.
+    # volume_ok  (1.2x): basic gate — filters dead-volume noise
+    # volume_spike (1.5x): strong confirmation — adds score + confidence bonus
+    volume_ok    = pd.Series(True,  index=result.index)
+    volume_spike = pd.Series(False, index=result.index)
     if "volume" in result.columns and result["volume"].notna().any():
         vol_avg = result["volume"].rolling(20, min_periods=5).mean()
-        # Require at least 1.2x average volume — filters fake/low momentum moves
-        volume_ok = result["volume"] > vol_avg * 1.2
-        volume_ok = volume_ok.fillna(True)
-    else:
-        volume_ok = pd.Series(True, index=result.index)
+        volume_ok    = (result["volume"] > vol_avg * 1.2).fillna(True)
+        volume_spike = (result["volume"] > vol_avg * settings.VOLUME_SPIKE_MULTIPLIER).fillna(False)
+
 
     # ── Sector / Market Correlation filter ───────────────────────────────
     # If broader market (Nifty/BankNifty) is moving AGAINST the signal,
@@ -361,18 +376,19 @@ def generate_signals(
         # Trend-following alignment bonus (max 3) — HTF + EMA both agree
         + trend_follow_buy
         # RSI oversold signal (max 15 + 8 deep bonus) — ACTIVE trigger
-        + rsi_buy.astype(float) * 15
-        + deep_oversold.astype(float) * 8
+        + (rsi_buy.astype(float) * 15 * w_rsi)
+        + (deep_oversold.astype(float) * 8 * w_rsi)
         # EMA crossover (max 12) — ACTIVE trigger (price crossing EMA)
-        + (ema_buy | ema20_buy).astype(float) * 12
+        + ((ema_buy | ema20_buy).astype(float) * 12 * w_ema)
         # MACD momentum shift (max 8) — ACTIVE trigger (histogram improving)
-        + macd_turning_bull.astype(float) * 8
-        # Volume confirmation (max 5) — ACTIVE (above-avg volume)
-        + volume_ok.astype(float) * 5
+        + (macd_turning_bull.astype(float) * 8 * w_macd)
+        # Volume spike confirmation (max 5 base + 15 spike bonus) — ACTIVE (above-avg volume)
+        + (volume_ok.astype(float) * 5 * w_vol)
+        + (volume_spike.astype(float) * settings.VOLUME_SPIKE_SCORE_BONUS * w_vol)
         # StochRSI crossover (max 5) — ACTIVE trigger
         + stoch_buy.astype(float) * 5
         # Hidden bullish divergence (max 8) — ACTIVE (trend continuation)
-        + hidden_bullish.astype(float) * 8
+        + (hidden_bullish.astype(float) * 8 * w_div)
         # AI confidence — soft bonus (0-8 pts, only when conf > 30)
         + ai_soft_bonus
         # VWAP confirmation (max 2) — minor active bonus (price > VWAP)
@@ -410,18 +426,19 @@ def generate_signals(
         # Trend-following alignment bonus (max 3) — HTF + EMA both agree
         + trend_follow_sell
         # RSI overbought signal (max 15 + 8 deep bonus) — ACTIVE trigger
-        + rsi_sell.astype(float) * 15
-        + deep_overbought.astype(float) * 8
+        + (rsi_sell.astype(float) * 15 * w_rsi)
+        + (deep_overbought.astype(float) * 8 * w_rsi)
         # EMA crossover (max 12) — ACTIVE trigger
-        + (ema_sell | ema20_sell).astype(float) * 12
+        + ((ema_sell | ema20_sell).astype(float) * 12 * w_ema)
         # MACD momentum shift (max 8) — ACTIVE trigger (histogram deteriorating)
-        + macd_turning_bear.astype(float) * 8
-        # Volume confirmation (max 5) — ACTIVE (above-avg volume)
-        + volume_ok.astype(float) * 5
+        + (macd_turning_bear.astype(float) * 8 * w_macd)
+        # Volume spike confirmation (max 5 base + 15 spike bonus) — ACTIVE
+        + (volume_ok.astype(float) * 5 * w_vol)
+        + (volume_spike.astype(float) * settings.VOLUME_SPIKE_SCORE_BONUS * w_vol)
         # StochRSI crossover (max 5) — ACTIVE trigger
         + stoch_sell.astype(float) * 5
         # Hidden bearish divergence (max 8) — ACTIVE (trend continuation)
-        + hidden_bearish.astype(float) * 8
+        + (hidden_bearish.astype(float) * 8 * w_div)
         # AI confidence — soft bonus (0-8 pts, only when conf > 30)
         + ai_soft_bonus
         # VWAP confirmation (max 2) — minor active bonus (price < VWAP)
@@ -487,6 +504,74 @@ def generate_signals(
         result["quality_should_trade"] = result["_raw_signal"].isin(["LONG", "SHORT"])
         result["quality_hard_gate"]    = ""
 
+    # ── Conflict Guardrails (post-score, pre-final-signal) ───────────────────
+    from agents.signal_engine.quality_scorer import detect_signal_conflicts
+
+    result["confidence"] = result["ai_confidence"].clip(0, 100).round(1)
+
+    conflict_payloads = []
+    conflict_severity = []
+    conflict_joined_reasons = []
+    conflict_penalty = []
+
+    for _, row in result.iterrows():
+        direction = str(row.get("_raw_signal", "HOLD") or "HOLD").upper()
+        if direction not in ("LONG", "SHORT"):
+            conflict = {
+                "has_conflict": False,
+                "severity": "none",
+                "reasons": [],
+                "confidence_penalty": 0,
+            }
+        else:
+            trend_val = str(row.get("htf_trend", "") or "")
+            if "BULL" in trend_val.upper():
+                trend_val = "BULLISH"
+            elif "BEAR" in trend_val.upper():
+                trend_val = "BEARISH"
+            else:
+                trend_val = "NEUTRAL"
+            conflict = detect_signal_conflicts(
+                direction=direction,
+                rsi=row.get("RSI_14"),
+                trend=trend_val,
+                macd=row.get("MACD_hist"),
+            )
+
+        reasons = conflict.get("reasons", [])
+        joined = " | ".join(reasons) if reasons else ""
+
+        conflict_payloads.append(conflict)
+        conflict_severity.append(conflict.get("severity", "none"))
+        conflict_joined_reasons.append(joined)
+        conflict_penalty.append(int(conflict.get("confidence_penalty", 0) or 0))
+
+    result["conflict"] = conflict_payloads
+    result["conflict_severity"] = conflict_severity
+    result["signal_conflict"] = conflict_joined_reasons
+    result["_conflict_penalty"] = pd.Series(conflict_penalty, index=result.index).astype(float)
+
+    candidate_mask = result["_raw_signal"].isin(["LONG", "SHORT"])
+    result.loc[candidate_mask, "confidence"] = (
+        result.loc[candidate_mask, "confidence"] - result.loc[candidate_mask, "_conflict_penalty"]
+    ).clip(lower=10)
+
+    conflict_block_mask = candidate_mask & (result["conflict_severity"] == "block")
+    if conflict_block_mask.any():
+        block_reason = result.loc[conflict_block_mask, "signal_conflict"].fillna("")
+        existing_gate = result.loc[conflict_block_mask, "quality_hard_gate"].fillna("")
+        result.loc[conflict_block_mask, "_raw_signal"] = "HOLD"
+        result.loc[conflict_block_mask, "quality_hard_gate"] = np.where(
+            existing_gate == "",
+            block_reason,
+            existing_gate,
+        )
+        result.loc[conflict_block_mask, "skip_reason"] = block_reason
+
+    if "skip_reason" not in result.columns:
+        result["skip_reason"] = ""
+    result["skip_reason"] = result["skip_reason"].fillna("")
+
     # ── Apply quality gate: LONG/SHORT or SKIP ────────────────────────────────
     # LONG/SHORT → quality grade A or B (score >= quality_threshold) AND hard gates passed
     # SKIP       → conditions met but grade C/D, OR hard gate failed (low confidence, VWAP)
@@ -494,20 +579,31 @@ def generate_signals(
     quality_ok = result["quality_score"] >= quality_threshold
     gate_passed = result["quality_hard_gate"].fillna("") == ""
 
+    # High-QS SKIP tightening: strong setups should still show unless conflict is blocked.
+    high_qs_force = (
+        ((result["quality_score"] >= 85) & (result["conflict_severity"] != "block"))
+        | (
+            (result["quality_score"] >= 75)
+            & (result["confidence"] >= 80)
+            & (result["conflict_severity"] != "block")
+        )
+    )
+    result["force_show"] = high_qs_force
+
     result["signal"] = "HOLD"
     # Signals that passed quality AND hard gates → LONG/SHORT
     result.loc[
-        (result["_raw_signal"] == "LONG")  & quality_ok & gate_passed, "signal"
+        (result["_raw_signal"] == "LONG")  & ((quality_ok & gate_passed) | high_qs_force), "signal"
     ] = "LONG"
     result.loc[
-        (result["_raw_signal"] == "SHORT") & quality_ok & gate_passed, "signal"
+        (result["_raw_signal"] == "SHORT") & ((quality_ok & gate_passed) | high_qs_force), "signal"
     ] = "SHORT"
     # Signals that failed either quality score OR hard gate → SKIP
     result.loc[
-        (result["_raw_signal"] == "LONG")  & (~quality_ok | ~gate_passed), "signal"
+        (result["_raw_signal"] == "LONG")  & (~((quality_ok & gate_passed) | high_qs_force)), "signal"
     ] = "SKIP"
     result.loc[
-        (result["_raw_signal"] == "SHORT") & (~quality_ok | ~gate_passed), "signal"
+        (result["_raw_signal"] == "SHORT") & (~((quality_ok & gate_passed) | high_qs_force)), "signal"
     ] = "SKIP"
 
     # Preserve underlying direction for SKIP rows (needed for correct SL/Target)
@@ -522,17 +618,69 @@ def generate_signals(
     result["stop_loss"] = np.nan
     result["target"]    = np.nan
 
-    # Keep confidence semantics direct: higher ai_confidence means stronger setup.
-    # Enforce minimum 20% confidence for any LONG/SHORT signal so dashboard
-    # doesn't show embarrassingly low numbers (1-5%) for real signals.
-    result["confidence"] = result["ai_confidence"].clip(0, 100).round(1)
-    long_or_short = result["signal"].isin(["LONG", "SHORT"])
-    result.loc[long_or_short & (result["confidence"] < 20), "confidence"] = 20.0
+    # Keep confidence semantics direct: higher base confidence means stronger setup.
+    # Confidence already includes conflict penalty above.
+    result["confidence"] = result["confidence"].clip(0, 100).round(1)
 
-    # Blend MTF score into confidence if provided
+    # ── Confidence Boosters ─────────────────────────────────────────────────────
+    # These post-score confidence adjustments reward high-conviction setups
+    # that the base composite underweights. Applied after initial confidence
+    # so they correctly push borderline signals over the 40% SKIP threshold.
+
+    # (A) Volume Spike: strong trend + 1.5x volume = +20 confidence pts
+    #     Rationale: real institutional moves ALWAYS come with volume
+    conf_boost = pd.Series(0.0, index=result.index)
+    conf_boost += volume_spike.astype(float) * settings.VOLUME_SPIKE_CONF_BONUS
+
+    # (B) RSI Divergence: bullish divergence on LONG bars, bearish on SHORT bars
+    #     +15 pts — confirms the signal type and adds predictive edge
+    #     (Divergence already blocks *opposing* signals; here we reward *aligned* ones)
+    if "_raw_direction" in result.columns:
+        div_aligned_long  = bullish_divergence & (result["_raw_direction"] == "LONG")
+        div_aligned_short = bearish_divergence & (result["_raw_direction"] == "SHORT")
+        conf_boost += (div_aligned_long | div_aligned_short).astype(float) * settings.RSI_DIVERGENCE_CONF_BONUS
+    else:
+        # Before _raw_direction is available, apply divergence boost to candidate buy/sell bars
+        div_aligned_long  = bullish_divergence & buy_condition
+        div_aligned_short = bearish_divergence & sell_condition
+        conf_boost += (div_aligned_long | div_aligned_short).astype(float) * settings.RSI_DIVERGENCE_CONF_BONUS
+
+    # (C) S/R Level Test: price within 0.5% of key support (LONG) or resistance (SHORT)
+    #     +10 pts — confirms the price is at a meaningful structural level
+    if "support" in result.columns and "resistance" in result.columns:
+        close_px = result["close"]
+        sup = result["support"].fillna(0)
+        res = result["resistance"].fillna(float("inf"))
+        near_support    = (sup > 0) & ((close_px - sup) / sup.replace(0, np.nan) * 100 <= 0.5)
+        near_resistance = (res > 0) & (res < float("inf")) & ((res - close_px) / res.replace(0, np.nan) * 100 <= 0.5)
+        sr_test_buy  = near_support  & buy_condition
+        sr_test_sell = near_resistance & sell_condition
+        conf_boost += (sr_test_buy | sr_test_sell).astype(float) * settings.SR_TEST_CONF_BONUS
+
+    # (D) MTF Alignment: 15m + 1h + 1d all agree on direction → +15 pts
+    #     If mtf_score is provided (full MTF pipeline), convert it to a bonus;
+    #     if not, check if the HTF trend strongly agrees (htf_bull/bear is a proxy).
     if mtf_score is not None:
-        mtf_adjustment = mtf_score * 0.2  # ±20 pts
-        result["confidence"] = (result["confidence"] + mtf_adjustment).clip(0, 100)
+        # mtf_score is -100 to +100; map extremes to full bonus
+        mtf_alignment_bonus = (abs(mtf_score) / 100.0 * settings.MTF_ALIGNMENT_CONF_BONUS)
+        result["confidence"] = (result["confidence"] + mtf_alignment_bonus).clip(0, 100)
+    else:
+        # HTF strongly aligned + EMA alignment + MACD direction = proxy for MTF agreement
+        strong_mtf_bull = htf_bull & ema_align_buy  & macd_bull
+        strong_mtf_bear = htf_bear & ema_align_sell & macd_bear
+        mtf_proxy_bonus = ((strong_mtf_bull & buy_condition) | (strong_mtf_bear & sell_condition))
+        conf_boost += mtf_proxy_bonus.astype(float) * settings.MTF_ALIGNMENT_CONF_BONUS
+
+    # Apply all boosts (cap at 100)
+    result["confidence"] = (result["confidence"] + conf_boost).clip(0, 100).round(1)
+
+    # Floor: LONG/SHORT signals always show at least 25% on dashboard
+    long_or_short = result["signal"].isin(["LONG", "SHORT"])
+    result.loc[long_or_short & (result["confidence"] < 25), "confidence"] = 25.0
+
+    # Cleanup helper column used only during conflict penalty application.
+    if "_conflict_penalty" in result.columns:
+        result.drop(columns=["_conflict_penalty"], inplace=True)
 
     long_mask  = result["signal"] == "LONG"
     short_mask = result["signal"] == "SHORT"

@@ -5,8 +5,9 @@ Tables: Candle, Feature, Signal, Trade
 
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, Float, String, DateTime, Enum, ForeignKey,
+    Column, Integer, Float, String, DateTime, Date, Enum, ForeignKey,
     UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import relationship, DeclarativeBase
 import enum
@@ -144,3 +145,44 @@ class Trade(Base):
 
     def __repr__(self):
         return f"<Trade #{self.id} {self.status.value} pnl={self.pnl}>"
+
+
+# ── Morning Scan ────────────────────────────────────────
+
+class MorningScan(Base):
+    __tablename__ = "morning_scans"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scan_time = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    scan_date = Column(Date, nullable=False, index=True)
+    rank = Column(Integer, nullable=False, default=0)
+
+    symbol = Column(String(30), nullable=False, index=True)
+    entry_price = Column(Float, nullable=False)
+    stop_loss = Column(Float, nullable=False)
+    target_price = Column(Float, nullable=False)
+    confidence_score = Column(Float, nullable=False, default=0.0, index=True)
+    reason = Column(String(255), nullable=False)
+
+    # Snapshot values for transparency and auditability.
+    close = Column(Float, nullable=False)
+    rsi = Column(Float, nullable=False)
+    macd = Column(Float, nullable=False)
+    macd_signal = Column(Float, nullable=False)
+    ema_20 = Column(Float, nullable=False)
+    ema_50 = Column(Float, nullable=False)
+    ema_200 = Column(Float, nullable=False)
+    volume = Column(Float, nullable=False)
+    avg_volume_20 = Column(Float, nullable=False)
+    volume_ratio = Column(Float, nullable=False)
+
+    __table_args__ = (
+        Index("ix_morning_scans_scan_rank", "scan_time", "confidence_score"),
+        Index("ix_morning_scans_date_symbol", "scan_date", "symbol"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<MorningScan {self.symbol} score={self.confidence_score:.1f} "
+            f"entry={self.entry_price:.2f}>"
+        )

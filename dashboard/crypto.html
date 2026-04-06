@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crypto Live — TradeAI PRO</title>
+<meta name="description" content="Live crypto market dashboard — BTC, ETH, Top Gainers/Losers with RSI signals and browser alerts">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ── Reset & Tokens ─────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #0d0f17;
+  --bg2:         #12151f;
+  --card:        #161922;
+  --border:      rgba(255,255,255,0.07);
+  --accent:      #6366f1;
+  --accent2:     #8b5cf6;
+  --green:       #10b981;
+  --red:         #ef4444;
+  --yellow:      #f59e0b;
+  --cyan:        #22d3ee;
+  --text:        #f1f5f9;
+  --text2:       #94a3b8;
+  --text3:       #475569;
+  --mono:        'JetBrains Mono', monospace;
+  --sans:        'Inter', sans-serif;
+  --radius:      14px;
+  --radius-sm:   8px;
+}
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Header ─────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.5rem;
+  height: 56px;
+  background: rgba(13,15,23,0.92);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: -0.02em;
+}
+.logo-icon { color: var(--accent); font-size: 1.3rem; }
+.logo-badge {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.nav-back {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text2);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: all 0.15s;
+}
+.nav-back:hover { color: var(--text); border-color: var(--accent); }
+
+.notif-btn {
+  background: rgba(99,102,241,0.12);
+  border: 1px solid rgba(99,102,241,0.3);
+  color: var(--text2);
+  padding: 0.3rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: var(--sans);
+}
+.notif-btn:hover { color: var(--text); border-color: var(--accent); }
+.notif-btn.enabled { color: var(--green); border-color: rgba(16,185,129,0.4); background: rgba(16,185,129,0.08); }
+
+.refresh-status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text3);
+  font-family: var(--mono);
+}
+.pulse-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+.manual-refresh {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text2);
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.manual-refresh:hover { color: var(--text); border-color: var(--accent); }
+
+/* ── Main Layout ─────────────────────────────────── */
+.main { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+
+/* ── Section Title ───────────────────────────────── */
+.section-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.section-hd h2 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text2);
+}
+.live-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--green);
+  border: 1px solid rgba(16,185,129,0.3);
+  background: rgba(16,185,129,0.08);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* ── Hero Coins Row ──────────────────────────────── */
+.coins-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.coin-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.3rem;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.15s;
+}
+.coin-card:hover { border-color: rgba(99,102,241,0.4); transform: translateY(-2px); }
+.coin-card::before {
+  content: '';
+  position: absolute;
+  top: 0; right: 0;
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  filter: blur(30px);
+  opacity: 0.15;
+  pointer-events: none;
+}
+.coin-card.up::before { background: var(--green); }
+.coin-card.down::before { background: var(--red); }
+
+.coin-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+.coin-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.coin-icon {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #fff;
+}
+.coin-icon.btc { background: linear-gradient(135deg, #f7931a, #ff6b35); }
+.coin-icon.eth { background: linear-gradient(135deg, #627eea, #a78bfa); }
+.coin-icon.sol { background: linear-gradient(135deg, #9945ff, #14f195); }
+.coin-icon.bnb { background: linear-gradient(135deg, #f3ba2f, #ff9000); }
+.coin-icon.xrp { background: linear-gradient(135deg, #00aae4, #0066cc); }
+.coin-icon.other { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+
+.coin-sym {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.coin-full {
+  font-size: 0.68rem;
+  color: var(--text3);
+  font-weight: 400;
+}
+
+.signal-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.signal-badge.buy { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.35); }
+.signal-badge.sell { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.35); }
+.signal-badge.hold { background: rgba(34,211,238,0.1); color: var(--cyan); border: 1px solid rgba(34,211,238,0.25); }
+
+.coin-price {
+  font-family: var(--mono);
+  font-size: 1.7rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  margin-bottom: 0.3rem;
+}
+
+.coin-change {
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.coin-change.up { color: var(--green); }
+.coin-change.down { color: var(--red); }
+
+.coin-metrics {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.coin-metric { display: flex; flex-direction: column; gap: 2px; }
+.coin-metric-lbl { font-size: 0.6rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; }
+.coin-metric-val { font-family: var(--mono); font-size: 0.78rem; font-weight: 600; color: var(--text2); }
+
+.rsi-bar-wrap {
+  margin-top: 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.rsi-label { font-size: 0.62rem; color: var(--text3); text-transform: uppercase; min-width: 2.5rem; }
+.rsi-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px;
+  overflow: visible;
+  position: relative;
+}
+.rsi-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s;
+}
+.rsi-val { font-family: var(--mono); font-size: 0.7rem; font-weight: 600; min-width: 2.2rem; text-align: right; }
+
+/* Sparkline */
+.sparkline-wrap { margin-top: 0.5rem; }
+canvas.sparkline { width: 100%; height: 40px; display: block; }
+
+/* Flash animation */
+@keyframes flash-green { 0%,100% { background: transparent; } 50% { background: rgba(16,185,129,0.18); } }
+@keyframes flash-red   { 0%,100% { background: transparent; } 50% { background: rgba(239,68,68,0.18); } }
+.flash-g { animation: flash-green 0.7s; }
+.flash-r { animation: flash-red   0.7s; }
+
+/* ── Movers Section ─────────────────────────────── */
+.movers-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+@media (max-width: 700px) { .movers-grid { grid-template-columns: 1fr; } }
+
+.mover-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.mover-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.mover-card-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.mover-card-title.up { color: var(--green); }
+.mover-card-title.down { color: var(--red); }
+
+.mover-row {
+  display: grid;
+  grid-template-columns: 2rem 1fr 5rem 4.5rem 3.5rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  transition: background 0.15s;
+  cursor: pointer;
+}
+.mover-row:hover { background: rgba(255,255,255,0.03); }
+.mover-row:last-child { border-bottom: none; }
+
+.mover-rank {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--text3);
+  text-align: center;
+}
+.mover-sym {
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.mover-price {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text2);
+  text-align: right;
+}
+.mover-pct {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-align: right;
+}
+.mover-pct.up { color: var(--green); }
+.mover-pct.down { color: var(--red); }
+
+.rsi-pill {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-align: center;
+  font-family: var(--mono);
+}
+.rsi-pill.oversold { background: rgba(16,185,129,0.15); color: var(--green); }
+.rsi-pill.overbought { background: rgba(239,68,68,0.15); color: var(--red); }
+.rsi-pill.normal { background: rgba(148,163,184,0.1); color: var(--text2); }
+
+/* ── Market Summary Bar ──────────────────────────── */
+.market-bar {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+.bar-item { display: flex; flex-direction: column; gap: 2px; }
+.bar-label { font-size: 0.6rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.07em; }
+.bar-val { font-family: var(--mono); font-size: 0.9rem; font-weight: 700; }
+.bar-divider { width: 1px; height: 36px; background: var(--border); }
+
+/* Mood badge */
+.mood-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+.mood-bullish { color: var(--green); background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); }
+.mood-bearish { color: var(--red);   background: rgba(239,68,68,0.1);   border: 1px solid rgba(239,68,68,0.3); }
+.mood-neutral { color: var(--cyan);  background: rgba(34,211,238,0.1);  border: 1px solid rgba(34,211,238,0.3); }
+
+/* ── AI Summary ──────────────────────────────────── */
+.ai-card {
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.04));
+  border: 1px solid rgba(99,102,241,0.2);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+.ai-icon { font-size: 1.3rem; flex-shrink: 0; margin-top: 2px; }
+.ai-text { font-size: 0.82rem; line-height: 1.55; color: var(--text2); }
+
+/* ── Notification Toast ──────────────────────────── */
+.toast-container {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.toast {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  font-size: 0.82rem;
+  max-width: 280px;
+  animation: slideIn 0.3s ease;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.toast.alert { border-color: rgba(245,158,11,0.5); }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ── Loading overlay ─────────────────────────────── */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  z-index: 200;
+  transition: opacity 0.4s;
+}
+.loading-overlay.hidden { opacity: 0; pointer-events: none; }
+.spinner {
+  width: 40px; height: 40px;
+  border: 3px solid rgba(99,102,241,0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 0.85rem; color: var(--text2); font-family: var(--mono); }
+
+/* ── Responsive ──────────────────────────────────── */
+@media (max-width: 600px) {
+  .coins-grid { grid-template-columns: 1fr; }
+  .market-bar { gap: 1rem; }
+  .mover-row { grid-template-columns: 1.5rem 1fr 4rem 3.5rem; }
+  .mover-row .rsi-pill { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text">Fetching live crypto data...</div>
+</div>
+
+<!-- Header -->
+<header class="header">
+  <div class="logo">
+    <span class="logo-icon">◈</span>
+    <span>TradeAI</span>
+    <span class="logo-badge">PRO</span>
+  </div>
+  <div class="header-right">
+    <button class="notif-btn" id="notifBtn" onclick="toggleNotifications()">🔔 Alerts Off</button>
+    <div class="refresh-status">
+      <div class="pulse-dot" id="pulseDot"></div>
+      <span id="lastRefreshTime">—</span>
+    </div>
+    <button class="manual-refresh" id="refreshBtn" onclick="fetchAll(true)">↻</button>
+    <a class="nav-back" href="/">← Dashboard</a>
+  </div>
+</header>
+
+<main class="main">
+
+  <!-- ── Market Summary Bar ── -->
+  <div class="market-bar" id="marketBar">
+    <div class="bar-item">
+      <span class="bar-label">BTC Dominance</span>
+      <span class="bar-val" id="btcDom">—</span>
+    </div>
+    <div class="bar-divider"></div>
+    <div class="bar-item">
+      <span class="bar-label">Fear & Greed</span>
+      <span class="bar-val" id="fearGreed">—</span>
+    </div>
+    <div class="bar-divider"></div>
+    <div class="bar-item">
+      <span class="bar-label">Total Market Cap</span>
+      <span class="bar-val" id="totalMcap">—</span>
+    </div>
+    <div class="bar-divider"></div>
+    <div class="bar-item">
+      <span class="bar-label">24h Volume</span>
+      <span class="bar-val" id="totalVol">—</span>
+    </div>
+    <div class="bar-divider"></div>
+    <div class="bar-item">
+      <span class="bar-label">Market Mood</span>
+      <span class="bar-val" id="moodBadge">—</span>
+    </div>
+    <div class="bar-divider"></div>
+    <div class="bar-item">
+      <span class="bar-label">Auto Refresh</span>
+      <span class="bar-val" id="countdownEl" style="font-size:0.8rem;color:var(--text3)">30s</span>
+    </div>
+  </div>
+
+  <!-- ── AI Summary ── -->
+  <div class="ai-card" id="aiCard">
+    <div class="ai-icon">🧠</div>
+    <div class="ai-text" id="aiSummary">Analyzing market data...</div>
+  </div>
+
+  <!-- ── Hero Coins ── -->
+  <div class="section-hd">
+    <h2>📊 Tracked Coins — Live</h2>
+    <div class="live-pill"><span>●</span> BINANCE LIVE</div>
+  </div>
+  <div class="coins-grid" id="coinsGrid">
+    <!-- Populated by JS -->
+  </div>
+
+  <!-- ── Movers ── -->
+  <div class="movers-grid">
+    <div class="mover-card">
+      <div class="mover-card-header">
+        <span class="mover-card-title up">▲ Top 7 Gainers (24h)</span>
+        <div class="live-pill"><span>●</span> LIVE</div>
+      </div>
+      <div id="gainersBody">
+        <div style="padding:1.5rem;text-align:center;color:var(--text3);font-size:0.8rem">Loading...</div>
+      </div>
+    </div>
+    <div class="mover-card">
+      <div class="mover-card-header">
+        <span class="mover-card-title down">▼ Top 7 Losers (24h)</span>
+        <div class="live-pill"><span>●</span> LIVE</div>
+      </div>
+      <div id="losersBody">
+        <div style="padding:1.5rem;text-align:center;color:var(--text3);font-size:0.8rem">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ── Config ───────────────────────────────────────────────
+const BINANCE_API   = 'https://api.binance.com/api/v3';
+const BINANCE_FAPI  = 'https://fapi.binance.com/fapi/v1';   // Futures (for OI later)
+const COINGECKO     = 'https://api.coingecko.com/api/v3';
+const REFRESH_SEC   = 30;
+
+// Hero coins to always show
+const HERO_COINS = [
+  { sym: 'BTCUSDT',  label: 'BTC',  full: 'Bitcoin',  iconClass: 'btc' },
+  { sym: 'ETHUSDT',  label: 'ETH',  full: 'Ethereum', iconClass: 'eth' },
+  { sym: 'SOLUSDT',  label: 'SOL',  full: 'Solana',   iconClass: 'sol' },
+  { sym: 'BNBUSDT',  label: 'BNB',  full: 'BNB',      iconClass: 'bnb' },
+  { sym: 'XRPUSDT',  label: 'XRP',  full: 'XRP',      iconClass: 'xrp' },
+];
+
+// ── State ────────────────────────────────────────────────
+let tickerCache    = {};     // sym → 24h ticker data
+let klineCache     = {};     // sym → recent closes[]
+let notifEnabled   = false;
+let notifPermission = Notification.permission ?? 'default';
+let prevPrices     = {};     // for flash detect
+let refreshTimer   = null;
+let countdown      = REFRESH_SEC;
+
+// ── Utility ──────────────────────────────────────────────
+const fmt  = (n, d=2) => Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const fmtB = (n) => {
+  if (n >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
+  if (n >= 1e9)  return '$' + (n / 1e9).toFixed(2)  + 'B';
+  if (n >= 1e6)  return '$' + (n / 1e6).toFixed(2)  + 'M';
+  return '$' + fmt(n);
+};
+
+// Calculate RSI from closes array
+function calcRSI(closes, period = 14) {
+  if (closes.length < period + 1) return null;
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (d > 0) gains  += d;
+    else       losses -= d;
+  }
+  let avgG = gains / period;
+  let avgL = losses / period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (d > 0) { avgG = (avgG * (period-1) + d) / period; avgL = (avgL * (period-1)) / period; }
+    else        { avgL = (avgL * (period-1) - d) / period; avgG = (avgG * (period-1)) / period; }
+  }
+  if (avgL === 0) return 100;
+  return 100 - 100 / (1 + avgG / avgL);
+}
+
+// Volume spike: latest vol vs 20-bar average
+function volSpike(volumes) {
+  if (volumes.length < 5) return 1;
+  const recent = volumes[volumes.length - 1];
+  const avg = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  return avg > 0 ? recent / avg : 1;
+}
+
+// Simple signal: RSI + price vs EMA
+function computeSignal(closes, rsi) {
+  if (!rsi) return 'HOLD';
+  const ema20 = closes.slice(-20).reduce((a,b) => a+b,0) / Math.min(20, closes.length);
+  const price = closes[closes.length - 1];
+  if (rsi < 32 && price > ema20 * 0.98) return 'BUY';
+  if (rsi > 68 && price < ema20 * 1.02) return 'SELL';
+  if (rsi < 40 && price > ema20)         return 'BUY';
+  if (rsi > 60 && price < ema20)         return 'SELL';
+  return 'HOLD';
+}
+
+// Mood from movers ratio
+function computeMood(gainers, losers, btcChange) {
+  const gLen = gainers.length, lLen = losers.length;
+  const ratio = gLen / (gLen + lLen + 0.01);
+  if (btcChange > 3 && ratio > 0.6)       return { mood: 'BULLISH',  cls: 'mood-bullish' };
+  if (btcChange < -3 && ratio < 0.4)      return { mood: 'BEARISH',  cls: 'mood-bearish' };
+  if (Math.abs(btcChange) < 1.5 || ratio > 0.45) return { mood: 'NEUTRAL', cls: 'mood-neutral' };
+  return btcChange >= 0 ? { mood: 'BULLISH', cls: 'mood-bullish' } : { mood: 'BEARISH', cls: 'mood-bearish' };
+}
+
+// AI Summary generator (rule-based NLP)
+function generateAISummary(btc, eth, gainers, losers, mood) {
+  const btcPct = parseFloat(btc?.priceChangePercent ?? 0);
+  const ethPct = parseFloat(eth?.priceChangePercent ?? 0);
+  const moodStr = mood.mood;
+  const topGainer = gainers[0];
+  const topLoser  = losers[0];
+
+  let lines = [];
+
+  if (moodStr === 'BULLISH') {
+    lines.push(`🟢 Market is bullish — BTC ${btcPct >= 0 ? '+' : ''}${btcPct.toFixed(2)}%, ETH ${ethPct >= 0 ? '+' : ''}${ethPct.toFixed(2)}% in 24h. Buying momentum remains strong.`);
+  } else if (moodStr === 'BEARISH') {
+    lines.push(`🔴 Market is under pressure — BTC ${btcPct.toFixed(2)}%, ETH ${ethPct.toFixed(2)}% in 24h. Caution advised; avoid chasing pumps.`);
+  } else {
+    lines.push(`🟡 Mixed signals — BTC ${btcPct >= 0 ? '+' : ''}${btcPct.toFixed(2)}%, ETH ${ethPct >= 0 ? '+' : ''}${ethPct.toFixed(2)}%. Market is consolidating; wait for clear breakout.`);
+  }
+
+  if (topGainer) {
+    lines.push(`Top gainer: ${topGainer.sym.replace('USDT','')} +${parseFloat(topGainer.priceChangePercent).toFixed(2)}% — watch for RSI overbought warning.`);
+  }
+  if (topLoser) {
+    lines.push(`Top loser: ${topLoser.sym.replace('USDT','')} ${parseFloat(topLoser.priceChangePercent).toFixed(2)}% — potential bounce zone if RSI <30.`);
+  }
+
+  return lines.join(' ');
+}
+
+// ── Draw Sparkline ───────────────────────────────────────
+function drawSparkline(canvas, closes, isUp) {
+  if (!canvas || closes.length < 2) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.offsetWidth || 200;
+  const H = 40;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  const pts = closes.slice(-48);  // last 48 candles → 4h on 5m
+  const mn = Math.min(...pts);
+  const mx = Math.max(...pts);
+  const rng = mx - mn || 1;
+
+  const toX = i => (i / (pts.length - 1)) * W;
+  const toY = v => H - (v - mn) / rng * (H - 4) - 2;
+
+  const color = isUp ? '#10b981' : '#ef4444';
+
+  // Gradient fill
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, isUp ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.beginPath();
+  ctx.moveTo(toX(0), toY(pts[0]));
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(toX(i), toY(pts[i]));
+  ctx.lineTo(toX(pts.length - 1), H);
+  ctx.lineTo(0, H);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  ctx.moveTo(toX(0), toY(pts[0]));
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(toX(i), toY(pts[i]));
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+}
+
+// ── Fetch Binance 24h All Tickers ────────────────────────
+async function fetchTickers() {
+  const res = await fetch(`${BINANCE_API}/ticker/24hr`);
+  if (!res.ok) {
+    throw new Error(`Binance ticker API failed: HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  if (!Array.isArray(data)) {
+    throw new Error('Binance ticker API returned unexpected payload');
+  }
+  // Only USDT pairs, filter dust
+  const usdt = data.filter(t =>
+    t.symbol.endsWith('USDT') &&
+    parseFloat(t.quoteVolume) > 1_000_000 &&
+    !t.symbol.includes('DOWN') &&
+    !t.symbol.includes('UP') &&
+    !t.symbol.includes('BEAR') &&
+    !t.symbol.includes('BULL')
+  );
+  tickerCache = {};
+  usdt.forEach(t => { tickerCache[t.symbol] = t; });
+  return usdt;
+}
+
+
+function setCryptoUnavailable(message) {
+  const reason = message || 'Unable to load Binance market feed right now.';
+  document.getElementById('btcDom').textContent = 'Unavailable';
+  document.getElementById('fearGreed').textContent = 'Unavailable';
+  document.getElementById('totalMcap').textContent = 'Unavailable';
+  document.getElementById('totalVol').textContent = 'Unavailable';
+  document.getElementById('moodBadge').innerHTML = '<span class="mood-badge mood-neutral">DATA UNAVAILABLE</span>';
+  document.getElementById('aiSummary').textContent = `${reason} We will retry automatically every ${REFRESH_SEC}s.`;
+
+  const grid = document.getElementById('coinsGrid');
+  grid.innerHTML = `<div style="grid-column:1/-1;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.3);padding:1rem;border-radius:10px;color:#fecaca;font-size:0.85rem;">Crypto data unavailable. Check internet/VPN/firewall or Binance reachability.</div>`;
+
+  document.getElementById('gainersBody').innerHTML = `<div style="padding:1.5rem;text-align:center;color:#fca5a5;font-size:0.8rem;">No live data</div>`;
+  document.getElementById('losersBody').innerHTML = `<div style="padding:1.5rem;text-align:center;color:#fca5a5;font-size:0.8rem;">No live data</div>`;
+}
+
+// ── Fetch Klines for hero coins ──────────────────────────
+async function fetchKlines(symbol) {
+  try {
+    const res = await fetch(`${BINANCE_API}/klines?symbol=${symbol}&interval=1h&limit=50`);
+    const data = await res.json();
+    const closes  = data.map(c => parseFloat(c[4]));
+    const volumes = data.map(c => parseFloat(c[5]));
+    klineCache[symbol] = { closes, volumes };
+  } catch { /* ignore */ }
+}
+
+// ── Fetch Global Market Stats (CoinGecko) ────────────────
+async function fetchGlobalStats() {
+  try {
+    const res = await fetch(`${COINGECKO}/global`);
+    const { data } = await res.json();
+    const btcDom = data.market_cap_percentage?.bitcoin?.toFixed(1) ?? '—';
+    const mcap   = data.total_market_cap?.usd ?? 0;
+    const vol    = data.total_volume?.usd ?? 0;
+    document.getElementById('btcDom').textContent = btcDom + '%';
+    document.getElementById('totalMcap').textContent = fmtB(mcap);
+    document.getElementById('totalVol').textContent  = fmtB(vol);
+  } catch { /* rate-limited sometimes */ }
+}
+
+// Fetch Fear & Greed Index
+async function fetchFearGreed() {
+  try {
+    const res  = await fetch('https://api.alternative.me/fng/?limit=1');
+    const data = await res.json();
+    const val  = data.data?.[0]?.value ?? '—';
+    const cls  = data.data?.[0]?.value_classification ?? '';
+    const el   = document.getElementById('fearGreed');
+    el.textContent = `${val} (${cls})`;
+    el.style.color = val < 25 ? 'var(--red)' : val > 75 ? 'var(--green)' : 'var(--yellow)';
+  } catch { /* ignore */ }
+}
+
+// ── Render Hero Coin Cards ────────────────────────────────
+function renderHeroCoins(tickers) {
+  const grid = document.getElementById('coinsGrid');
+  grid.innerHTML = '';
+
+  HERO_COINS.forEach(({ sym, label, full, iconClass }) => {
+    const t = tickers[sym];
+    if (!t) return;
+
+    const price = parseFloat(t.lastPrice);
+    const pct   = parseFloat(t.priceChangePercent);
+    const isUp  = pct >= 0;
+    const prev  = prevPrices[sym] ?? price;
+    const flashed = price > prev ? 'flash-g' : price < prev ? 'flash-r' : '';
+    prevPrices[sym] = price;
+
+    const kd = klineCache[sym] ?? {};
+    const closes  = kd.closes  ?? [];
+    const volumes = kd.volumes ?? [];
+    const rsi = closes.length >= 15 ? calcRSI(closes) : null;
+    const vs  = volSpike(volumes);
+    const sig = computeSignal(closes, rsi);
+
+    const rsiColor = rsi == null ? 'var(--text3)' :
+                     rsi < 30 ? 'var(--green)' :
+                     rsi > 70 ? 'var(--red)' : 'var(--text2)';
+
+    const vol1 = parseFloat(t.quoteVolume);
+    const high = parseFloat(t.highPrice);
+    const low  = parseFloat(t.lowPrice);
+
+    const card = document.createElement('div');
+    card.className = `coin-card ${isUp ? 'up' : 'down'} ${flashed}`;
+    card.id = `coin-${sym}`;
+    card.innerHTML = `
+      <div class="coin-top">
+        <div class="coin-name">
+          <div class="coin-icon ${iconClass}">${label[0]}</div>
+          <div>
+            <div class="coin-sym">${label}</div>
+            <div class="coin-full">${full}</div>
+          </div>
+        </div>
+        <span class="signal-badge ${sig.toLowerCase()}">${sig}</span>
+      </div>
+      <div class="coin-price">$${price >= 1 ? fmt(price) : price.toFixed(6)}</div>
+      <div class="coin-change ${isUp ? 'up' : 'down'}">${isUp ? '+' : ''}${pct.toFixed(2)}%
+        ${vs >= 2 ? `<span style="font-size:0.65rem;margin-left:4px;color:var(--yellow)">⚡ Vol×${vs.toFixed(1)}</span>` : ''}
+      </div>
+      <div class="sparkline-wrap"><canvas class="sparkline" id="spark-${sym}"></canvas></div>
+      <div class="rsi-bar-wrap">
+        <span class="rsi-label">RSI</span>
+        <div class="rsi-track">
+          <div class="rsi-fill" style="width:${rsi ?? 50}%;background:${rsiColor}"></div>
+        </div>
+        <span class="rsi-val" style="color:${rsiColor}">${rsi != null ? rsi.toFixed(1) : '—'}</span>
+      </div>
+      <div class="coin-metrics">
+        <div class="coin-metric">
+          <span class="coin-metric-lbl">24h High</span>
+          <span class="coin-metric-val">$${high >= 1 ? fmt(high) : high.toFixed(6)}</span>
+        </div>
+        <div class="coin-metric">
+          <span class="coin-metric-lbl">24h Low</span>
+          <span class="coin-metric-val">$${low >= 1 ? fmt(low) : low.toFixed(6)}</span>
+        </div>
+        <div class="coin-metric">
+          <span class="coin-metric-lbl">Volume</span>
+          <span class="coin-metric-val">${fmtB(vol1)}</span>
+        </div>
+      </div>`;
+    grid.appendChild(card);
+
+    // Draw sparkline after DOM insertion
+    requestAnimationFrame(() => {
+      if (closes.length >= 2)
+        drawSparkline(document.getElementById(`spark-${sym}`), closes, isUp);
+    });
+
+    // ── 5%+ move notification ──
+    checkPriceAlert(label, sym, pct);
+  });
+}
+
+// ── Render Movers ────────────────────────────────────────
+function renderMovers(tickers) {
+  const sorted = Object.values(tickers).sort((a, b) =>
+    parseFloat(b.priceChangePercent) - parseFloat(a.priceChangePercent)
+  );
+  const gainers = sorted.filter(t => parseFloat(t.priceChangePercent) > 0).slice(0, 7);
+  const losers  = sorted.filter(t => parseFloat(t.priceChangePercent) < 0).reverse().slice(0, 7);
+
+  renderMoverList('gainersBody', gainers, 'up');
+  renderMoverList('losersBody', losers, 'down');
+
+  return { gainers, losers };
+}
+
+function renderMoverList(containerId, coins, dir) {
+  const el = document.getElementById(containerId);
+  if (!coins.length) { el.innerHTML = `<div style="padding:1.5rem;text-align:center;color:var(--text3);font-size:0.8rem">No data</div>`; return; }
+  el.innerHTML = coins.map((t, i) => {
+    const pct   = parseFloat(t.priceChangePercent);
+    const price = parseFloat(t.lastPrice);
+    const sym   = t.symbol.replace('USDT','');
+
+    // RSI from kline cache if available
+    const closes = klineCache[t.symbol]?.closes ?? [];
+    const rsi = closes.length >= 15 ? calcRSI(closes) : null;
+    const rsiCls = rsi == null ? 'normal' : rsi < 35 ? 'oversold' : rsi > 65 ? 'overbought' : 'normal';
+    const rsiTxt = rsi != null ? rsi.toFixed(0) : '—';
+
+    return `<div class="mover-row" onclick="copyToClipboard('${sym}')">
+      <span class="mover-rank">${i+1}</span>
+      <span class="mover-sym">${sym}</span>
+      <span class="mover-price">$${price >= 1 ? fmt(price) : price.toFixed(6)}</span>
+      <span class="mover-pct ${dir}">${dir === 'up' ? '+' : ''}${pct.toFixed(2)}%</span>
+      <span class="rsi-pill ${rsiCls}">${rsiTxt}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Notifications ────────────────────────────────────────
+const alertedCoins = new Set();
+
+function checkPriceAlert(label, sym, pct) {
+  if (!notifEnabled) return;
+  const absP = Math.abs(pct);
+  if (absP >= 5 && !alertedCoins.has(sym)) {
+    alertedCoins.add(sym);
+    const dir = pct > 0 ? '🚀 PUMP' : '💥 DUMP';
+    const msg = `${dir}: ${label} moved ${pct > 0 ? '+' : ''}${pct.toFixed(2)}% in 24h!`;
+    showToast(msg, 'alert');
+    if (Notification.permission === 'granted') {
+      new Notification('TradeAI PRO — Price Alert', {
+        body: msg,
+        icon: '/favicon.ico',
+      });
+    }
+    // Clear after 2 min so it can re-alert
+    setTimeout(() => alertedCoins.delete(sym), 120_000);
+  }
+}
+
+async function toggleNotifications() {
+  if (!notifEnabled) {
+    if (Notification.permission === 'default') {
+      const perm = await Notification.requestPermission();
+      notifPermission = perm;
+    }
+    notifEnabled = true;
+    document.getElementById('notifBtn').textContent = '🔔 Alerts ON';
+    document.getElementById('notifBtn').classList.add('enabled');
+    showToast('Notifications enabled — you\'ll be alerted on 5%+ moves', 'info');
+  } else {
+    notifEnabled = false;
+    document.getElementById('notifBtn').textContent = '🔔 Alerts Off';
+    document.getElementById('notifBtn').classList.remove('enabled');
+  }
+}
+
+// ── Toast ────────────────────────────────────────────────
+function showToast(msg, type = 'info') {
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = `toast ${type === 'alert' ? 'alert' : ''}`;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 5000);
+}
+
+function copyToClipboard(sym) {
+  navigator.clipboard?.writeText(sym + 'USDT');
+  showToast(`Copied: ${sym}USDT`);
+}
+
+// ── Countdown Timer ───────────────────────────────────────
+function startCountdown() {
+  countdown = REFRESH_SEC;
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => {
+    countdown--;
+    document.getElementById('countdownEl').textContent = countdown + 's';
+    if (countdown <= 0) {
+      fetchAll(false);
+    }
+  }, 1000);
+}
+
+// ── Main Fetch Cycle ──────────────────────────────────────
+async function fetchAll(manual = false) {
+  const btn = document.getElementById('refreshBtn');
+  if (btn) { btn.textContent = '⟳'; btn.disabled = true; }
+
+  try {
+    // Fetch klines for hero coins concurrently
+    await Promise.allSettled(HERO_COINS.map(c => fetchKlines(c.sym)));
+
+    const tickers = await fetchTickers();
+    if (!tickers.length) {
+      throw new Error('Binance returned empty ticker list');
+    }
+    const tickerMap = {};
+    tickers.forEach(t => { tickerMap[t.symbol] = t; });
+
+    renderHeroCoins(tickerMap);
+    const { gainers, losers } = renderMovers(tickerMap);
+
+    // Market mood
+    const btc = tickerMap['BTCUSDT'];
+    const eth = tickerMap['ETHUSDT'];
+    const mood = computeMood(gainers, losers, parseFloat(btc?.priceChangePercent ?? 0));
+
+    const moodEl = document.getElementById('moodBadge');
+    moodEl.innerHTML = `<span class="mood-badge ${mood.cls}">${mood.mood}</span>`;
+
+    // AI Summary
+    document.getElementById('aiSummary').textContent =
+      generateAISummary(btc, eth, gainers, losers, mood);
+
+    // Timestamp
+    const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    document.getElementById('lastRefreshTime').textContent = now;
+
+    // Fetch global stats (slower — non-blocking)
+    fetchGlobalStats();
+    fetchFearGreed();
+
+  } catch (err) {
+    console.error('Fetch error:', err);
+    showToast('⚠️ Binance API error — retrying...', 'alert');
+    setCryptoUnavailable(err && err.message ? err.message : 'Live feed unavailable.');
+    document.getElementById('lastRefreshTime').textContent = 'Fetch failed';
+  } finally {
+    if (btn) { btn.textContent = '↻'; btn.disabled = false; }
+
+    // Always hide loading overlay even on API failure.
+    const overlay = document.getElementById('loadingOverlay');
+    if (!overlay.classList.contains('hidden')) overlay.classList.add('hidden');
+
+    // Reset countdown
+    startCountdown();
+  }
+}
+
+// ── Init ─────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  fetchAll(true);
+});
+
+// Resume when tab becomes visible
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) fetchAll(false);
+});
+</script>
+</body>
+</html>

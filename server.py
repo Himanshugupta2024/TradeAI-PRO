@@ -38,7 +38,7 @@ import pandas as pd
 
 from config import settings
 from db.connection import init_db, SessionLocal
-from db.models import Signal, Trade, TradeStatus, Candle
+from db.models import Signal, Trade, TradeStatus, Candle, MorningScan
 from agents.feature_engine.indicators import calculate_indicators
 from agents.feature_engine.trend import classify_trend, propagate_trend_to_ltf
 from agents.feature_engine.regime_detector import detect_regime, MarketRegime
@@ -70,7 +70,13 @@ from agents.market_intelligence.nse_fetcher import (
     fetch_sector_performance,
     search_symbols,
     fetch_arbitrary_symbol,
+    validate_nse_symbol,
     NSE_SYMBOLS,
+)
+from agents.stock_screener import (
+    start_screener_task,
+    start_morning_scan_task,
+    opportunity_stocks,
 )
 from agents.data_ingestion.validator import validate as validate_ohlcv
 from agents.analytics.trade_journal import get_journal
@@ -91,6 +97,8 @@ async def lifespan(app: FastAPI):
     # Start data loading as a background task (non-blocking)
     asyncio.create_task(_initial_load())
     asyncio.create_task(_background_refresh())
+    asyncio.create_task(start_screener_task())
+    asyncio.create_task(start_morning_scan_task())
     logger.info("Server ready — accepting connections. Data loading in background.")
     yield
     # ── Shutdown (nothing special needed) ────────────────
@@ -149,6 +157,7 @@ _data_quality_cache: dict[str, float] = {}
 # Precomputed snapshots for fast dashboard responses
 _movers_cache: dict[str, object] = {"gainers": [], "losers": [], "updated_at": None}
 _market_mood_cache: dict[str, object] = {"score": 50, "mood": "NEUTRAL", "updated_at": None}
+_lazy_bootstrap_started = False
 
 # Regime hysteresis: (confirmed_regime, tentative_regime, consecutive_count)
 _regime_hysteresis: dict[str, tuple[str, str, int]] = {}
@@ -537,6 +546,28 @@ def _clean_trend(raw) -> str:
     return s.split(".")[-1] if "." in s else s
 
 
+def _cap_confidence(raw) -> float:
+    """Cap displayed confidence to a realistic ceiling for UX credibility."""
+    try:
+        return round(max(0.0, min(float(raw), 85.0)), 0)
+    except Exception:
+        return 0.0
+
+
+def _signal_age_minutes(ts) -> float:
+    try:
+        dt = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
+        now = datetime.now(dt.tzinfo) if getattr(dt, "tzinfo", None) else datetime.now()
+        return max((now - dt).total_seconds() / 60.0, 0.0)
+    except Exception:
+        return 0.0
+
+
+def _stale_threshold_minutes(symbol: str) -> float:
+    # Crypto runs 24/7, so allow up to 60 minutes. NSE intraday signals are stricter.
+    return 60.0 if "/" in str(symbol) else 30.0
+
+
 def _get_signal_for_symbol(symbol: str) -> dict:
     """Extract the latest signal data for a symbol (shared helper)."""
     if symbol not in _signal_cache:
@@ -551,7 +582,9 @@ def _get_signal_for_symbol(symbol: str) -> dict:
     current_trend = _clean_trend(last.get("htf_trend", "NEUTRAL"))
     current_regime = _regime_cache.get(symbol, "RANGING")
     current_ts = last["timestamp"].isoformat()
-    current_conf = round(float(last.get("confidence", last.get("ai_confidence", 0))), 0)
+    current_conf = _cap_confidence(last.get("confidence", last.get("ai_confidence", 0)))
+    current_age_min = _signal_age_minutes(last.get("timestamp"))
+    stale_threshold_min = _stale_threshold_minutes(symbol)
 
     # Look for non-HOLD signal within the LAST 100 bars (recent window)
     recent = df.tail(100)
@@ -570,11 +603,13 @@ def _get_signal_for_symbol(symbol: str) -> dict:
             "trend": current_trend,
             "regime": current_regime,
             "timestamp": current_ts,
-            "stale": False,
+            "stale": current_age_min > stale_threshold_min,
+            "stale_minutes": round(current_age_min, 1),
         }
 
     last_signal = signals.iloc[-1]
-    stale = False
+    signal_age_min = _signal_age_minutes(last_signal.get("timestamp"))
+    stale = signal_age_min > stale_threshold_min
 
     # Pull live indicator values from current bar (last row of df)
     def _safe_float(row, col):
@@ -593,6 +628,16 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         quality_breakdown = json.loads(str(quality_breakdown_raw)) if quality_breakdown_raw else {}
     except Exception:
         quality_breakdown = {}
+    quality_hard_gate = str(last_signal.get("quality_hard_gate", "") or "")
+    signal_conflict = str(last_signal.get("signal_conflict", "") or "")
+    conflict_payload = last_signal.get("conflict")
+    if not isinstance(conflict_payload, dict):
+        conflict_payload = {
+            "has_conflict": bool(signal_conflict),
+            "severity": "warn" if signal_conflict else "none",
+            "reasons": [signal_conflict] if signal_conflict else [],
+            "confidence_penalty": 15 if signal_conflict else 0,
+        }
 
     # Determine underlying direction for SKIP signals
     sig_label = str(last_signal["signal"])
@@ -625,7 +670,7 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         "symbol":    symbol,
         "signal":    sig_label,                     # LONG / SHORT / SKIP / HOLD
         "direction": effective_dir,                 # Underlying direction for SKIPs
-        "confidence": round(float(last_signal.get("confidence", last_signal.get("ai_confidence", 0))), 0),
+        "confidence": _cap_confidence(last_signal.get("confidence", last_signal.get("ai_confidence", 0))),
         "entry":     entry_price,
         "close":     current_close,                # always current price
         "stop_loss": sl,
@@ -634,11 +679,17 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         "trend":     current_trend,                # always current trend
         "regime":    current_regime,
         "timestamp": last_signal["timestamp"].isoformat(),
+        "sparkline": [round(float(c), 2) for c in df["close"].tail(20)],
         "stale":     stale,
+        "stale_minutes": round(signal_age_min, 1),
         # Signal quality
         "quality_score":     quality_score,
         "quality_grade":     quality_grade,
         "quality_breakdown": quality_breakdown,
+        "quality_hard_gate": quality_hard_gate,
+        "skip_reason": quality_hard_gate if sig_label == "SKIP" else "",
+        "signal_conflict": signal_conflict,
+        "conflict": conflict_payload,
         # Data quality
         "data_quality": round(_data_quality_cache.get(symbol, 100.0), 1),
         # Live indicator values for signal card display
@@ -664,6 +715,25 @@ async def health_check():
 @app.get("/api/signals/all")
 async def get_all_signals():
     """Get the latest signal for every tracked symbol."""
+    # Lazy bootstrap: if startup is still warming up and cache is empty,
+    # trigger one background refresh so the dashboard does not stay blank.
+    global _lazy_bootstrap_started
+    if not _signal_cache and not _lazy_bootstrap_started:
+        lock = _get_refresh_lock()
+        if not lock.locked():
+            _lazy_bootstrap_started = True
+
+            async def _bootstrap_once():
+                global _lazy_bootstrap_started
+                try:
+                    await _refresh_market_data()
+                except Exception as e:
+                    logger.warning("Lazy signal bootstrap failed: %s", e)
+                finally:
+                    _lazy_bootstrap_started = False
+
+            asyncio.create_task(_bootstrap_once())
+
     results = []
     for symbol in _signal_cache:
         sig = _get_signal_for_symbol(symbol)
@@ -755,6 +825,59 @@ async def get_trades(limit: int = Query(20, le=100)):
     """Get recent trade history from real paper trading engine."""
     engine = _get_engine()
     return {"trades": engine.get_history(limit=limit)}
+
+
+# ── Self-Learning Feedback Loop endpoints ─────────────────────────────────────
+
+@app.get("/api/learning/stats")
+async def get_learning_stats_endpoint():
+    """
+    Return AI self-learning insights + current learned weights.
+
+    Analyses last 500 closed paper trades from trade_outcomes SQLite table.
+    Returns:
+      - win rate by signal type (RSI_BOUNCE, MACD_CROSS, BREAKOUT, ...)
+      - win rate by market regime (TRENDING / RANGING / HIGH_VOLATILITY)
+      - win rate by RSI zone at entry
+      - volume impact analysis
+      - model accuracy (confidence ≥ 50% trades that won)
+      - current learned weights for each signal component
+    """
+    try:
+        from agents.analytics.feedback_loop import get_learning_stats
+        return get_learning_stats()
+    except Exception as exc:
+        logger.error("Learning stats error: %s", exc)
+        return {
+            "insights": {
+                "signal_type_stats": {},
+                "regime_stats": {},
+                "rsi_zone_stats": {},
+                "volume_stats": {},
+                "overall": {"total_trades": 0, "win_rate": 0, "avg_pnl_pct": 0, "model_accuracy": 0},
+                "best_signal_type": "—",
+                "worst_signal_type": "—",
+                "best_regime": "—",
+                "optimal_rsi_zone": "—",
+            },
+            "weights": {},
+            "error": str(exc),
+        }
+
+
+@app.get("/api/learning/outcomes")
+async def get_learning_outcomes(limit: int = Query(100, le=500)):
+    """
+    Return recent raw trade outcomes logged to the feedback loop.
+    Used by the dashboard to display the Learning Stats trade history table.
+    """
+    try:
+        from agents.analytics.feedback_loop import get_recent_outcomes
+        return {"outcomes": get_recent_outcomes(limit=limit)}
+    except Exception as exc:
+        logger.error("Learning outcomes error: %s", exc)
+        return {"outcomes": [], "error": str(exc)}
+
 
 
 @app.get("/api/portfolio")
@@ -1125,6 +1248,36 @@ def _compute_market_mood() -> dict:
     signal_total = long_count + short_count + hold_count
     signal_bias_pct = ((long_count - short_count) / signal_total * 100.0) if signal_total else 0.0
 
+    # Breadth split score: % of tracked NSE stocks above 20-DMA proxy (EMA_20 in pipeline).
+    index_symbols = {"NIFTY 50", "BANKNIFTY", "SENSEX", "NIFTY IT", "NIFTY BANK"}
+    breadth_universe = 0
+    breadth_above_20 = 0
+    for symbol, df in _market_data.items():
+        if "/" in str(symbol) or symbol in index_symbols:
+            continue
+        if df is None or df.empty:
+            continue
+        last = df.iloc[-1]
+        close_val = last.get("close")
+        dma20_val = last.get("EMA_20")
+        if close_val is None or dma20_val is None or pd.isna(close_val) or pd.isna(dma20_val):
+            continue
+        breadth_universe += 1
+        if float(close_val) > float(dma20_val):
+            breadth_above_20 += 1
+
+    breadth_split_score = (breadth_above_20 / breadth_universe * 100.0) if breadth_universe else 50.0
+    buy_sell_total = long_count + short_count
+    signal_bias_score = (long_count / buy_sell_total * 100.0) if buy_sell_total else 50.0
+    split_composite_score = (breadth_split_score * 0.6) + (signal_bias_score * 0.4)
+
+    def _split_label(value: float) -> str:
+        if value > 55:
+            return "BULLISH"
+        if value < 45:
+            return "BEARISH"
+        return "NEUTRAL"
+
     regime_counts = {"TRENDING": 0, "RANGING": 0, "HIGH_VOLATILITY": 0}
     for regime in _regime_cache.values():
         key = str(regime).upper()
@@ -1163,6 +1316,8 @@ def _compute_market_mood() -> dict:
     payload = {
         "mood": mood,
         "score": round(score, 1),
+        "mood_label": mood,
+        "mood_score": round(score, 1),
         "breadth": {
             "gainers": len(gainers),
             "losers": len(losers),
@@ -1173,6 +1328,22 @@ def _compute_market_mood() -> dict:
             "short": short_count,
             "hold": hold_count,
             "bias_pct": round(signal_bias_pct, 1),
+        },
+        "breadth_signal_split": {
+            "breadth": {
+                "score": round(breadth_split_score, 1),
+                "label": _split_label(breadth_split_score),
+                "detail": f"{breadth_above_20}/{breadth_universe} stocks above 20 DMA",
+            },
+            "signal_bias": {
+                "score": round(signal_bias_score, 1),
+                "label": _split_label(signal_bias_score),
+                "detail": f"{long_count} BUY out of {buy_sell_total} directional signals",
+            },
+            "composite": {
+                "score": round(split_composite_score, 1),
+                "note": "Breadth 60% weight · Signal Bias 40%",
+            },
         },
         "regimes": regime_counts,
         "sector_avg_pct": round(avg_sector_move, 2),
@@ -1635,16 +1806,148 @@ async def refresh_data():
 # ── Search Endpoints ─────────────────────────────────────
 
 @app.get("/api/search/symbols")
-async def search_symbol_list(q: str = Query("", min_length=1, max_length=30)):
-    """Search available symbols by name/ticker (NSE + Crypto)."""
+async def search_symbol_list(q: str = Query("", min_length=0, max_length=30)):
+    """
+    Search available symbols by name/ticker (NSE + Crypto).
+
+    Phase 1: Instant match against pre-loaded NSE_SYMBOLS + crypto list.
+    Phase 2: If fewer than 3 pre-loaded results, dynamically validate
+             '{QUERY}.NS' via yFinance fast_info (~0.3s) for any NSE stock
+             not in the pre-loaded map (e.g. PRECWIRE, NAUKRI, etc.).
+    """
     results = search_symbols(q)
     for r in results:
         sym = r["symbol"]
         r["tracked"] = sym in _market_data
-        # For crypto: also check with CCXT symbol format (BTC/USDT)
         if not r["tracked"] and r.get("type") == "CRYPTO":
             r["tracked"] = sym in _market_data or sym.replace("/", "-") in _market_data
-    return {"results": results, "query": q}
+
+    # ── Dynamic NSE validation ────────────────────────────────────────────
+    # Only run if the query looks like a stock ticker (not crypto) and we
+    # have fewer than 3 pre-loaded matches — avoids unnecessary yf calls.
+    q_clean = q.upper().strip()
+    already_found = {r["ticker"].replace(".NS", "") for r in results if r.get("type") == "NSE"}
+    is_likely_nse = (
+        len(results) < 3
+        and "/" not in q_clean
+        and len(q_clean) >= 3
+        and not any(c in q_clean for c in ["BTC", "ETH", "SOL", "BNB", "USDT"])
+    )
+
+    if is_likely_nse and q_clean not in already_found:
+        nse_ticker = f"{q_clean}.NS"
+        try:
+            info = await asyncio.to_thread(validate_nse_symbol, nse_ticker)
+            if info:
+                # Symbol is valid — add as dynamic suggestion (not pre-tracked)
+                results.insert(0, {
+                    "symbol": q_clean,
+                    "ticker": nse_ticker,
+                    "type": "NSE",
+                    "tracked": q_clean in _market_data,
+                    "dynamic": True,
+                    "price": info["price"],
+                    "exchange": info.get("exchange", "NSE"),
+                })
+        except Exception as e:
+            logger.debug("Dynamic NSE validate failed for %s: %s", nse_ticker, e)
+
+    # ── Inject Opportunity Stocks ──────────────────────────────────────
+    if q_clean:
+        # Prepend any Opportunity Stocks that match the query
+        for opp in reversed(opportunity_stocks):
+            if q_clean in opp["symbol"].upper():
+                # Avoid duplicates
+                if not any(r["symbol"] == opp["symbol"] for r in results):
+                    results.insert(0, {
+                        "symbol": opp["symbol"],
+                        "ticker": f"{opp['symbol']}.NS",
+                        "type": "NSE",
+                        "tracked": opp["symbol"] in _market_data,
+                        "dynamic": True,
+                        "opportunity": True,
+                        "signal": opp["signal"]
+                    })
+
+    return {"results": results[:50], "query": q}
+
+
+@app.get("/api/screener/opportunities")
+async def get_screener_opportunities():
+    """Return top 5 stock opportunities found by the screener."""
+    return {"opportunities": opportunity_stocks}
+
+
+@app.get("/api/morning-scan")
+async def get_morning_scan():
+    """Return the latest persisted morning scan results (max 10)."""
+    session = SessionLocal()
+    try:
+        latest = (
+            session.query(MorningScan.scan_time)
+            .order_by(MorningScan.scan_time.desc())
+            .first()
+        )
+
+        if not latest:
+            return {
+                "scan_time": None,
+                "count": 0,
+                "results": [],
+            }
+
+        latest_scan_time = latest[0]
+        rows = (
+            session.query(MorningScan)
+            .filter(MorningScan.scan_time == latest_scan_time)
+            .order_by(MorningScan.confidence_score.desc())
+            .limit(10)
+            .all()
+        )
+
+        results = []
+        for row in rows:
+            results.append(
+                {
+                    "symbol": row.symbol,
+                    "entry_price": float(row.entry_price),
+                    "stop_loss": float(row.stop_loss),
+                    "target": float(row.target_price),
+                    "confidence_score": float(row.confidence_score),
+                    "reason": row.reason,
+                    "close": float(row.close),
+                    "rsi": float(row.rsi),
+                    "macd": float(row.macd),
+                    "macd_signal": float(row.macd_signal),
+                    "ema_20": float(row.ema_20),
+                    "ema_50": float(row.ema_50),
+                    "ema_200": float(row.ema_200),
+                    "volume": float(row.volume),
+                    "avg_volume_20": float(row.avg_volume_20),
+                    "volume_ratio": float(row.volume_ratio),
+                    "scan_time": row.scan_time.isoformat(),
+                    "scan_date": row.scan_date.isoformat(),
+                }
+            )
+
+        return {
+            "scan_time": latest_scan_time.isoformat() if latest_scan_time else None,
+            "count": len(results),
+            "results": results,
+        }
+    except Exception as e:
+        logger.error("Morning scan API error: %s", e)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "scan_time": None,
+                "count": 0,
+                "results": [],
+                "error": "Failed to fetch morning scan results",
+            },
+        )
+    finally:
+        session.close()
 
 
 @app.get("/api/search/quote/{symbol}")
@@ -1653,12 +1956,19 @@ async def search_quote(symbol: str):
     Get full quote (OHLCV + indicators + signal) for any symbol.
     Supports NSE stocks (yFinance), crypto pairs (CCXT/Binance),
     and any global ticker.
+
+    Auto-appends ".NS" suffix for unrecognized Indian stock symbols.
     """
     clean = symbol.replace("-", "/").replace("_", " ")
+    # Strip any .NS suffix the caller may have included (normalize to display name format)
+    clean_base = clean.upper().replace(".NS", "").strip()
 
-    # Check if already in cache
+    # Check if already in cache (try both the clean name and the original symbol)
     if clean in _market_data:
         df = _market_data[clean]
+    elif clean_base in _market_data:
+        df = _market_data[clean_base]
+        clean = clean_base
     else:
         df = None
 
@@ -1692,14 +2002,29 @@ async def search_quote(symbol: str):
 
         # ── Fallback to yFinance (NSE + global) ──────
         if df is None:
-            df = fetch_arbitrary_symbol(clean)
+            # 1st attempt: raw symbol (handles known tickers, AAPL, etc.)
+            df = await asyncio.to_thread(fetch_arbitrary_symbol, clean)
+
+            # 2nd attempt: try as NSE stock with .NS suffix (e.g. PRECWIRE → PRECWIRE.NS)
+            if (df is None or df.empty) and "/" not in clean:
+                nse_ticker = f"{clean_base}.NS"
+                logger.info("Trying NSE suffix: %s", nse_ticker)
+                df = await asyncio.to_thread(fetch_arbitrary_symbol, nse_ticker)
+                if df is not None and not df.empty:
+                    clean = clean_base  # Use clean display name for cache key
+
             if df is None or df.empty:
                 return JSONResponse(
                     status_code=404,
-                    content={"error": f"Symbol '{symbol}' not found. For crypto use format: BTC-USDT"},
+                    content={"error": f"Symbol '{symbol}' not found on NSE or yFinance. "
+                                      f"Tried '{clean_base}.NS'. Check the symbol and try again."},
                 )
             df = calculate_indicators(df)
-            htf_df = fetch_arbitrary_symbol(clean, period="60d", interval="1d")
+            htf_df = await asyncio.to_thread(fetch_arbitrary_symbol, clean, "60d", "1d")
+            if htf_df is None or htf_df.empty:
+                # For dynamic NSE symbols, also try with .NS for HTF
+                nse_htf = f"{clean_base}.NS"
+                htf_df = await asyncio.to_thread(fetch_arbitrary_symbol, nse_htf, "60d", "1d")
             if htf_df is not None and not htf_df.empty and len(htf_df) >= 20:
                 htf_df = calculate_indicators(htf_df)
                 htf_df = classify_trend(htf_df)
@@ -1732,7 +2057,12 @@ async def search_quote(symbol: str):
             "ema_20": round(float(row["EMA_20"]), 2) if pd.notna(row.get("EMA_20")) else None,
             "ema_50": round(float(row["EMA_50"]), 2) if pd.notna(row.get("EMA_50")) else None,
             "vwap": round(float(row["VWAP"]), 2) if pd.notna(row.get("VWAP")) else None,
+            "macd_hist": round(float(row["MACD_hist"]), 4) if pd.notna(row.get("MACD_hist")) else None,
+            "signal": str(row.get("signal", "HOLD")) if "signal" in row.index else "HOLD",
         })
+
+    # Compute MACD histogram for current bar
+    macd_hist = round(float(last["MACD_hist"]), 4) if pd.notna(last.get("MACD_hist")) else None
 
     return {
         "symbol": clean,
@@ -1740,6 +2070,7 @@ async def search_quote(symbol: str):
         "high": round(float(last["high"]), 2),
         "low": round(float(last["low"]), 2),
         "rsi": round(float(last["RSI_14"]), 1) if pd.notna(last.get("RSI_14")) else None,
+        "macd_hist": macd_hist,
         "regime": _regime_cache.get(clean, "RANGING"),
         "signal": sig,
         "chart": chart_data,
@@ -2062,6 +2393,16 @@ async def serve_landing():
     landing = os.path.join(STATIC_DIR, "landing.html")
     if os.path.exists(landing):
         return FileResponse(landing)
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+@app.get("/crypto")
+@app.get("/crypto/")
+async def serve_crypto():
+    """Serve the live crypto dashboard page."""
+    crypto = os.path.join(STATIC_DIR, "crypto.html")
+    if os.path.exists(crypto):
+        return FileResponse(crypto)
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 if __name__ == "__main__":

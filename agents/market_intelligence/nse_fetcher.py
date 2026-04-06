@@ -291,9 +291,17 @@ def search_symbols(query: str) -> list[dict]:
     Returns list of {symbol, ticker, type} dicts.
     """
     q = query.upper().strip()
-    if not q:
-        return []
     results = []
+
+    if not q:
+        # Return top 50 NSE stocks as default suggestions
+        for idx, (display_name, ticker) in enumerate(NSE_SYMBOLS.items()):
+            if "NIFTY" in display_name or "SENSEX" in display_name:
+                continue
+            results.append({"symbol": display_name, "ticker": ticker, "type": "NSE"})
+            if len(results) >= 50:
+                break
+        return results
 
     # Search NSE stocks first
     for display_name, ticker in NSE_SYMBOLS.items():
@@ -307,7 +315,34 @@ def search_symbols(query: str) -> list[dict]:
         if q_clean in sym_upper or q_clean in ticker.upper().replace("/", ""):
             results.append({"symbol": display_name, "ticker": ticker, "type": "CRYPTO"})
 
-    return results[:20]
+    return results[:50]
+
+
+def validate_nse_symbol(symbol: str) -> dict | None:
+    """
+    Quickly validate whether a yFinance ticker exists using fast_info.
+    Does NOT download OHLCV — only metadata ping (~0.3s).
+
+    Args:
+        symbol: Raw yFinance ticker e.g. "PRECWIRE.NS", "RELIANCE.NS"
+
+    Returns:
+        dict with {price, currency, exchange} if valid, None otherwise.
+    """
+    try:
+        t = yf.Ticker(symbol)
+        info = t.fast_info
+        price = getattr(info, 'last_price', None)
+        if price is None or price <= 0:
+            return None
+        return {
+            "price": round(float(price), 2),
+            "currency": getattr(info, 'currency', 'INR') or 'INR',
+            "exchange": getattr(info, 'exchange', 'NSE') or 'NSE',
+        }
+    except Exception as e:
+        logger.debug("validate_nse_symbol failed for %s: %s", symbol, e)
+        return None
 
 
 def fetch_arbitrary_symbol(ticker_or_name: str, period: str = "5d", interval: str = "5m") -> Optional[pd.DataFrame]:

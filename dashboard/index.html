@@ -40,7 +40,7 @@
         /* ── Signal quality badge on cards ── */
         .quality-badge {
             display: inline-flex; align-items: center; gap: 3px;
-            font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em;
+            font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em;
             padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
         }
         .quality-A { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
@@ -214,6 +214,9 @@
                 <button class="tab-btn" data-tab="performance" id="tabPerformance">
                     <span class="tab-icon">🏆</span><span class="tab-label"> Performance</span>
                 </button>
+                <button class="tab-btn" data-tab="learning" id="tabLearning">
+                    <span class="tab-icon">🧠</span><span class="tab-label"> Learning</span>
+                </button>
                 <button class="tab-btn" data-tab="scorecard" id="tabScorecard">
                     <span class="tab-icon">📋</span><span class="tab-label"> Scorecard</span>
                 </button>
@@ -226,6 +229,9 @@
                 <button class="tab-btn" data-tab="breakouts" id="tabBreakouts">
                     <span class="tab-icon">🚀</span><span class="tab-label"> Breakouts</span>
                 </button>
+                <a class="tab-btn" href="/crypto" style="text-decoration:none;display:inline-flex;align-items:center;" id="tabCrypto">
+                    <span class="tab-icon">₿</span><span class="tab-label"> Crypto</span>
+                </a>
             </nav>
         </div>
         <div class="header-right">
@@ -258,6 +264,7 @@
 
         <!-- ════════ OVERVIEW TAB ════════ -->
         <section class="tab-content active" id="overviewTab">
+            <div id="marketSessionBanner" style="display:none;margin-bottom:0.75rem;padding:0.6rem 0.9rem;border-radius:10px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#fecaca;font-size:0.82rem;font-weight:600;"></div>
             <div class="stats-strip" id="statsStrip">
                 <div class="stat-chip">
                     <span class="stat-value" id="statCapital">₹0</span>
@@ -276,13 +283,31 @@
                     <span class="stat-label">Trades</span>
                 </div>
             </div>
+            <div id="statsHint" style="margin:0.4rem 0 0.65rem;color:var(--text-muted);font-size:0.75rem;display:none;"></div>
             <div class="update-bar">
                 <span class="update-label">Last updated:</span>
                 <span class="update-time" id="lastUpdated">—</span>
                 <span class="update-dot" id="refreshDot"></span>
                 <span class="auto-refresh-label">Auto-refresh 60s</span>
+                <label style="display:inline-flex;align-items:center;gap:0.35rem;margin-left:0.5rem;font-size:0.75rem;color:var(--text-muted);">
+                    <input type="checkbox" id="showSkipToggle">
+                    <span id="showSkipLabel">Show filtered signals</span>
+                </label>
                 <button class="refresh-btn" id="manualRefreshBtn">↻ Refresh</button>
             </div>
+            <div class="signal-controls-row" style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin:0.35rem 0 0.55rem;">
+                <button class="refresh-btn signal-filter-btn active" data-signal-filter="all" type="button">All</button>
+                <button class="refresh-btn signal-filter-btn" data-signal-filter="buy" type="button">BUY</button>
+                <button class="refresh-btn signal-filter-btn" data-signal-filter="sell" type="button">SELL</button>
+                <button class="refresh-btn signal-filter-btn" data-signal-filter="high_conf" type="button">High Confidence (&gt;75%)</button>
+                <span style="margin-left:auto;color:var(--text-muted);font-size:0.74rem;">Sort by</span>
+                <select id="signalSortSelect" style="background:var(--bg-input);border:1px solid var(--border-color);color:var(--text-primary);padding:0.32rem 0.5rem;border-radius:7px;font-size:0.75rem;">
+                    <option value="qs_desc">QS Score (High to Low)</option>
+                    <option value="conf_desc">Confidence (High to Low)</option>
+                    <option value="signal_type">Signal Type (BUY/SELL)</option>
+                </select>
+            </div>
+            <div id="signalsFilterNote" style="margin:0.35rem 0 0.55rem;color:var(--text-muted);font-size:0.75rem;">Showing all signals</div>
             <div class="signals-grid" id="signalsGrid">
                 <div class="loading-state" id="loadingState">
                     <div class="loader"></div>
@@ -312,11 +337,22 @@
                         <span class="mood-badge mood-neutral" id="marketMoodBadge">NEUTRAL</span>
                         <span class="mood-score" id="marketMoodScore">50.0 / 100</span>
                     </div>
+                    <div id="marketMoodSplitContainer"></div>
+                    <div id="marketMoodExplain" style="margin-top:0.4rem;font-size:0.75rem;color:var(--text-muted);"></div>
                     <div class="mover-chips" id="topMoverChips"></div>
                 </div>
                 <div class="intel-card">
                     <div class="intel-title">AI Market Summary</div>
                     <div class="ai-summary-text" id="aiSummaryText">Waiting for live summary...</div>
+                </div>
+            </div>
+            <div class="intel-card" style="margin-top:0.75rem;">
+                <div class="intel-title" style="display:flex;justify-content:space-between;">
+                    <span>⚡ Top 5 Opportunities (NSE Screener)</span>
+                    <span style="font-size:0.7rem;color:var(--text-muted);font-weight:normal;">Refreshes 5m</span>
+                </div>
+                <div class="opportunity-grid" id="opportunityGrid" style="display:grid;grid-template-columns:repeat(5, 1fr);gap:0.75rem;margin-top:0.5rem;">
+                    <div style="font-size:0.8rem;color:var(--text-muted);">Screener is analyzing 200 stocks...</div>
                 </div>
             </div>
         </section>
@@ -652,6 +688,84 @@
                 </div>
             </div>
 
+        </section>
+
+        <!-- ════════ LEARNING TAB ════════ -->
+        <section class="tab-content" id="learningTab">
+            <div class="perf-card-header" style="margin-bottom: 1.5rem">
+                <h2 class="section-title">Self-Learning AI Insights</h2>
+                <span class="auto-refresh-label" id="learningUpdated">Updating every 50 trades</span>
+            </div>
+
+            <!-- KPIs -->
+            <div class="perf-kpi-row" style="margin-bottom: 1.5rem">
+                <div class="perf-kpi-card" id="lcTotalTrades">
+                    <span class="pkv" id="lsTotalTradesVal">0</span>
+                    <span class="pkl">Trades Learnt From</span>
+                </div>
+                <div class="perf-kpi-card" id="lcAccuracy">
+                    <span class="pkv" id="lsAccuracyVal">0%</span>
+                    <span class="pkl">Model Accuracy</span>
+                </div>
+                <div class="perf-kpi-card" id="lcBestSignal">
+                    <span class="pkv" id="lsBestSignalVal">—</span>
+                    <span class="pkl" style="color:var(--green)">Best Signal</span>
+                </div>
+                <div class="perf-kpi-card" id="lcWorstSignal">
+                    <span class="pkv" id="lsWorstSignalVal">—</span>
+                    <span class="pkl" style="color:var(--red)">Worst Setup (Avoid)</span>
+                </div>
+                <div class="perf-kpi-card" id="lcBestRegime">
+                    <span class="pkv" id="lsBestRegimeVal">—</span>
+                    <span class="pkl">Optimal Regime</span>
+                </div>
+            </div>
+
+            <!-- Main Split -->
+            <div class="perf-main-row" style="margin-bottom: 1.5rem">
+                <!-- Win Rates by Signal Type -->
+                <div class="chart-card">
+                    <h3 class="chart-title">Win Rate by Signal Type</h3>
+                    <div id="lsSignalBars" class="perf-symbol-bars" style="margin-top: 1rem">
+                        <div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No learning data</p></div>
+                    </div>
+                </div>
+
+                <!-- System Weights -->
+                <div class="chart-card">
+                    <h3 class="chart-title">Auto-Adjusted Algorithm Weights</h3>
+                    <div id="lsWeightsList" class="perf-exit-list" style="margin-top: 1rem; border-top:none;">
+                        <div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No weight data</p></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Learning Outcomes Table -->
+            <div class="chart-card perf-history-card">
+                <div class="perf-card-header">
+                    <h3 class="chart-title">Recent Learning Outcomes</h3>
+                </div>
+                <div class="perf-table-wrap">
+                    <table class="perf-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Symbol</th>
+                                <th>Signal Type</th>
+                                <th>Regime</th>
+                                <th>RSI</th>
+                                <th>Vol Spike</th>
+                                <th>Conf</th>
+                                <th>P&amp;L%</th>
+                                <th>Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="learningOutcomesBody">
+                            <tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--text-muted)">No learning trades yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </section>
 
         <!-- ── Scorecard Tab ──────────────────────────── -->

@@ -35,21 +35,22 @@ import pandas as pd
 
 from agents.feature_engine.regime_detector import MarketRegime
 from agents.feature_engine.session_features import get_session_quality
+from config import settings
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 
-# ── Grade thresholds (restored to strict values) ────────────────────────────────────────
-GRADE_A = 80  # Restored — only premium, high-conviction setups
-GRADE_B = 60  # Restored — good setups with solid confirmation
-GRADE_C = 40  # Restored — below this → SKIP, too risky
+# ── Grade thresholds ─────────────────────────────────────────────────────────
+GRADE_A = 80  # Premium, high-conviction setups only
+GRADE_B = 55  # Lowered from 60: good setups with solid confirmation
+GRADE_C = 40  # Below this → SKIP (too risky to trade)
 
-# ── Hard gate: minimum AI confidence to emit LONG/SHORT (not just quality score) ─────
-# Below this threshold, signal is forced to SKIP even if quality score is high.
-# 47% confidence (like the SOL/USDT SHORT) should NEVER emit a live signal.
-MIN_CONFIDENCE_FOR_SIGNAL = 55  # percent
+# ── Hard gate: minimum AI confidence to emit LONG/SHORT ──────────────────────
+# Read from settings so it can be tuned without code changes.
+# Default is now 40% (lowered from 55%) — see settings.SKIP_CONFIDENCE_THRESHOLD.
+MIN_CONFIDENCE_FOR_SIGNAL = settings.SKIP_CONFIDENCE_THRESHOLD  # percent
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -521,6 +522,63 @@ def _score_session(row: pd.Series, symbol: str) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
+def detect_signal_conflicts(direction, rsi, trend, macd) -> dict:
+    """Return conflict metadata for a candidate LONG/SHORT direction."""
+    direction_u = str(direction or "").upper()
+    trend_u = str(trend or "").upper()
+
+    try:
+        rsi_v = float(rsi)
+    except Exception:
+        rsi_v = 50.0
+
+    try:
+        macd_v = float(macd)
+    except Exception:
+        macd_v = 0.0
+
+    reasons: list[str] = []
+    severity = "none"
+
+    def _raise_warn(reason: str) -> None:
+        nonlocal severity
+        reasons.append(reason)
+        if severity == "none":
+            severity = "warn"
+
+    def _raise_block(reason: str) -> None:
+        nonlocal severity
+        reasons.append(reason)
+        severity = "block"
+
+    if direction_u == "SHORT":
+        if rsi_v < 35:
+            _raise_warn("SHORT with RSI < 35")
+        if trend_u == "BULLISH":
+            _raise_warn("SHORT against BULLISH trend")
+        if macd_v > 0.1:
+            _raise_warn("SHORT with MACD > 0.1")
+        if macd_v > 1.0:
+            _raise_block("SHORT with MACD > 1.0")
+    elif direction_u == "LONG":
+        if rsi_v > 75:
+            _raise_warn("LONG with RSI > 75")
+        if trend_u == "BEARISH":
+            _raise_warn("LONG against BEARISH trend")
+        if macd_v < -0.1:
+            _raise_warn("LONG with MACD < -0.1")
+        if macd_v < -1.0:
+            _raise_block("LONG with MACD < -1.0")
+
+    penalty = 40 if severity == "block" else 15 if severity == "warn" else 0
+
+    return {
+        "has_conflict": len(reasons) > 0,
+        "severity": severity,
+        "reasons": reasons,
+        "confidence_penalty": penalty,
+    }
 
 def _grade(total: int) -> str:
     if total >= GRADE_A:

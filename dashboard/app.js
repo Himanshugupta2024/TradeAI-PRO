@@ -20,6 +20,9 @@ let _modalRefreshTimer = null;
 let _refreshTimer = null;
 let _isRefreshing = false;
 let _lastSignalsSignature = '';
+let _showSkipSignals = false;
+let _signalTypeFilter = 'all';
+let _signalSortMode = 'qs_desc';
 const REFRESH_INTERVAL_MS = 60000;
 
 // ── Init ────────────────────────────────────────────────
@@ -27,6 +30,8 @@ const REFRESH_INTERVAL_MS = 60000;
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initTabs();
+    initSignalControls();
+    updateMarketSessionBanner();
     initModal();
     startClock();
     loadAllData({ background: false });
@@ -278,6 +283,7 @@ function switchTab(tab) {
     if (tab === 'scorecard') loadScorecard();
     if (tab === 'swing') loadSwingScanner();
     if (tab === 'indexmover') loadIndexMover();
+    if (tab === 'learning') loadLearningStats();
     if (tab === 'breakouts') loadBreakouts();
 }
 
@@ -299,15 +305,21 @@ async function loadAllData({ background = false } = {}) {
     if (refreshDot) refreshDot.classList.add('refreshing');
 
     try {
-        const [signalsRes, statsRes, dashboardRes] = await Promise.all([
+        const [signalsRes, statsRes, dashboardRes, oppsRes] = await Promise.all([
             fetchWithTimeout(`${API}/api/signals/all`, {}, 15000),
             fetchWithTimeout(`${API}/api/stats`, {}, 10000),
             fetchWithTimeout(`${API}/api/nse/dashboard`, {}, 12000),
+            fetchWithTimeout(`${API}/api/screener/opportunities`, {}, 10000).catch(() => null),
         ]);
 
         const signalsData = await signalsRes.json();
         const statsData = await statsRes.json();
         const dashboardData = await dashboardRes.json();
+        
+        let oppsData = { opportunities: [] };
+        if (oppsRes && oppsRes.ok) {
+            oppsData = await oppsRes.json();
+        }
 
         const nextSignals = Array.isArray(signalsData.signals) ? signalsData.signals : [];
         const nextSignature = getSignalsSignature(nextSignals);
@@ -320,6 +332,10 @@ async function loadAllData({ background = false } = {}) {
         updateSummary(allSignals);
         updateStatsStrip(statsData);
         updateMarketIntel(dashboardData);
+        updateMarketSessionBanner();
+        if (oppsData && oppsData.opportunities) {
+            updateOpportunitiesGrid(oppsData.opportunities);
+        }
 
         // Update timestamp
         const updated = new Date(signalsData.updated_at);
@@ -329,7 +345,17 @@ async function loadAllData({ background = false } = {}) {
             });
 
         const loader = document.getElementById('loadingState');
-        if (loader) loader.classList.add('hidden');
+        if (loader) {
+            if (nextSignals.length === 0) {
+                loader.classList.remove('hidden');
+                loader.innerHTML = `
+                    <div class="loader"></div>
+                    <p>Warming up market data... this can take 1-2 minutes on first load.</p>
+                `;
+            } else {
+                loader.classList.add('hidden');
+            }
+        }
 
     } catch (err) {
         if (err.name === 'AbortError') {
@@ -341,6 +367,11 @@ async function loadAllData({ background = false } = {}) {
             handleLoadError();
         }
     }
+
+    // Background tab refreshes
+    if (currentTab === 'learning') loadLearningStats();
+    if (currentTab === 'portfolio') loadPortfolio();
+    if (currentTab === 'performance') loadPerformance();
 
     if (refreshDot) refreshDot.classList.remove('refreshing');
     _isRefreshing = false;
@@ -374,18 +405,213 @@ function updateStatsStrip(stats) {
     const pnl = stats.total_pnl || 0;
     pnlEl.textContent = `${pnl >= 0 ? '+' : ''}${fmt(pnl)}`;
     pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-    document.getElementById('statWinRate').textContent = `${(stats.win_rate || 0).toFixed(1)}%`;
-    document.getElementById('statTrades').textContent = stats.total_trades || 0;
+    const trades = Number(stats.total_trades || 0);
+    document.getElementById('statWinRate').textContent = trades > 0 ? `${(stats.win_rate || 0).toFixed(1)}%` : '—';
+    document.getElementById('statTrades').textContent = trades;
+
+    const hint = document.getElementById('statsHint');
+    if (hint) {
+        if (trades === 0) {
+            hint.style.display = 'block';
+            hint.textContent = 'No trades yet — paper trading is active. Start with high-confidence setups to build performance stats.';
+        } else {
+            hint.style.display = 'none';
+        }
+    }
+}
+
+
+function _getIstDate() {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+    });
+    const parts = Object.fromEntries(fmt.formatToParts(new Date()).map(p => [p.type, p.value]));
+    return {
+        year: Number(parts.year),
+        month: Number(parts.month),
+        day: Number(parts.day),
+        hour: Number(parts.hour),
+        minute: Number(parts.minute),
+        second: Number(parts.second),
+    };
+}
+
+
+function _isNseMarketOpen() {
+    const t = _getIstDate();
+    const jsDay = new Date(Date.UTC(t.year, t.month - 1, t.day)).getUTCDay();
+    if (jsDay === 0 || jsDay === 6) return false;
+    const mins = t.hour * 60 + t.minute;
+    return mins >= (9 * 60 + 15) && mins <= (15 * 60 + 30);
+}
+
+
+function _nextNseOpenLabel() {
+    const t = _getIstDate();
+    const nowUtc = new Date(Date.UTC(t.year, t.month - 1, t.day, t.hour, t.minute, t.second));
+    for (let i = 0; i < 8; i++) {
+        const d = new Date(nowUtc);
+        d.setUTCDate(d.getUTCDate() + i);
+        const day = d.getUTCDay();
+        if (day === 0 || day === 6) continue;
+        const open = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 9, 15, 0));
+        if (open > nowUtc) {
+            return open.toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short', hour12: true });
+        }
+    }
+    return '09:15 AM IST';
+}
+
+
+function updateMarketSessionBanner() {
+    const banner = document.getElementById('marketSessionBanner');
+    if (!banner) return;
+    if (_isNseMarketOpen()) {
+        banner.style.display = 'none';
+        banner.textContent = '';
+        return;
+    }
+    banner.style.display = 'block';
+    banner.textContent = `Market Closed · Opens at 9:15 AM IST · Showing last session signals (next open: ${_nextNseOpenLabel()})`;
+}
+
+
+function initSignalControls() {
+    const toggle = document.getElementById('showSkipToggle');
+    if (toggle) {
+        toggle.checked = _showSkipSignals;
+        toggle.addEventListener('change', () => {
+            _showSkipSignals = Boolean(toggle.checked);
+            renderSignals(allSignals);
+        });
+    }
+
+    document.querySelectorAll('.signal-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            _signalTypeFilter = btn.dataset.signalFilter || 'all';
+            document.querySelectorAll('.signal-filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            renderSignals(allSignals);
+        });
+    });
+
+    const sortSelect = document.getElementById('signalSortSelect');
+    if (sortSelect) {
+        sortSelect.value = _signalSortMode;
+        sortSelect.addEventListener('change', () => {
+            _signalSortMode = sortSelect.value;
+            renderSignals(allSignals);
+        });
+    }
 }
 
 
 // ── Render Signal Cards ─────────────────────────────────
 
+function renderConflictBadge(conflict) {
+    if (!conflict || typeof conflict !== 'object') return '';
+    const severity = String(conflict.severity || 'none').toLowerCase();
+    const reasons = Array.isArray(conflict.reasons) ? conflict.reasons : [];
+    if (severity === 'none' || reasons.length === 0) return '';
+
+    const title = reasons.join(' | ').replace(/"/g, '&quot;');
+    if (severity === 'block') {
+        return '<span class="skip-badge" style="background:rgba(239,68,68,0.14);color:#ef4444;border:1px solid rgba(239,68,68,0.4);" title="' + title + '">🚫 BLOCKED</span>';
+    }
+    return '<span class="skip-badge" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);" title="' + title + '">⚠️ CONFLICT</span>';
+}
+
+function renderMoodSplit(split) {
+    const safeSplit = split && typeof split === 'object' ? split : {};
+    const breadth = safeSplit.breadth || {};
+    const signalBias = safeSplit.signal_bias || {};
+    const composite = safeSplit.composite || {};
+
+    const panel = (title, data) => {
+        const label = String(data.label || 'NEUTRAL').toUpperCase();
+        const score = Number(data.score || 50).toFixed(1);
+        const detail = String(data.detail || 'No details available');
+        let tone = 'var(--text-muted)';
+        if (label === 'BULLISH') tone = 'var(--green)';
+        if (label === 'BEARISH') tone = 'var(--red)';
+
+        return `
+            <div style="border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:0.5rem 0.55rem;">
+                <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">${title}</div>
+                <div style="font-size:0.78rem;font-weight:700;color:${tone};margin-top:0.2rem;">${label} ${score}%</div>
+                <div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.12rem;">${detail}</div>
+            </div>
+        `;
+    };
+
+    return `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-top:0.55rem;">
+            ${panel('MARKET BREADTH', breadth)}
+            ${panel('SIGNAL BIAS', signalBias)}
+        </div>
+        <div style="margin-top:0.45rem;font-size:0.74rem;color:var(--text-muted);">
+            Composite: <span style="color:var(--text-primary);font-weight:700;">${Number(composite.score || 50).toFixed(1)} / 100</span>
+            <span style="margin-left:0.35rem;">${String(composite.note || '')}</span>
+        </div>
+    `;
+}
+
 function renderSignals(signals) {
     const grid = document.getElementById('signalsGrid');
+    const filterNote = document.getElementById('signalsFilterNote');
+    const skipLabel = document.getElementById('showSkipLabel');
     grid.querySelectorAll('.signal-card, .error-state').forEach(el => el.remove());
 
-    signals.forEach((sig, i) => {
+    let visibleSignals = _showSkipSignals
+        ? signals
+        : signals.filter(sig => String(sig.signal || '').toUpperCase() !== 'SKIP');
+
+    visibleSignals = visibleSignals.filter(sig => {
+        const s = String(sig.signal || '').toUpperCase();
+        const conf = Number(sig.confidence || 0);
+        if (_signalTypeFilter === 'buy') return s === 'LONG' || s === 'BUY';
+        if (_signalTypeFilter === 'sell') return s === 'SHORT' || s === 'SELL';
+        if (_signalTypeFilter === 'high_conf') return conf > 75;
+        return true;
+    });
+
+    const sorters = {
+        qs_desc: (a, b) => Number(b.quality_score || 0) - Number(a.quality_score || 0),
+        conf_desc: (a, b) => Number(b.confidence || 0) - Number(a.confidence || 0),
+        signal_type: (a, b) => {
+            const rank = { LONG: 0, BUY: 0, SHORT: 1, SELL: 1, SKIP: 2, HOLD: 3 };
+            return (rank[String(a.signal || '').toUpperCase()] ?? 9) - (rank[String(b.signal || '').toUpperCase()] ?? 9);
+        },
+    };
+    visibleSignals.sort(sorters[_signalSortMode] || sorters.qs_desc);
+
+    if (skipLabel) {
+        const filteredCount = signals.filter(sig => String(sig.signal || '').toUpperCase() === 'SKIP').length;
+        skipLabel.textContent = `Show filtered signals (${filteredCount} SKIP)`;
+    }
+
+    if (filterNote) {
+        const filterMap = {
+            all: 'All',
+            buy: 'BUY',
+            sell: 'SELL',
+            high_conf: 'High Confidence (>75%)',
+        };
+        if (_showSkipSignals) {
+            filterNote.textContent = `Showing ${visibleSignals.length} signals · Filter: ${filterMap[_signalTypeFilter] || 'All'} · Sort: ${_signalSortMode}`;
+        } else {
+            filterNote.textContent = `Showing ${visibleSignals.length}/${signals.length} · SKIP hidden by default · Filter: ${filterMap[_signalTypeFilter] || 'All'} · Sort: ${_signalSortMode}`;
+        }
+    }
+
+    visibleSignals.forEach((sig, i) => {
         const card = document.createElement('div');
         const isSkip = sig.signal === 'SKIP';
         // Map LONG→buy, SHORT→sell for CSS classes (existing styles)
@@ -413,24 +639,53 @@ function renderSignals(signals) {
         const regime = (sig.regime || 'RANGING').toLowerCase().replace(' ', '_');
         const regimeLabel = String(sig.regime || 'RANGING').replace('_', ' ');
 
-        const conf = sig.confidence || 0;
+        const conf = Math.min(sig.confidence || 0, 85);
         const circumference = 2 * Math.PI * 36;
         const offset = circumference - (conf / 100) * circumference;
         let ringColor = '#ef4444';
-        if (conf >= 70) ringColor = '#10b981';
-        else if (conf >= 40) ringColor = '#22d3ee';
+        let ringGlow = 'rgba(239,68,68,0.25)';
+        if (conf >= 65) { ringColor = '#10b981'; ringGlow = 'rgba(16,185,129,0.3)'; }
+        else if (conf >= 40) { ringColor = '#f59e0b'; ringGlow = 'rgba(245,158,11,0.25)'; }
 
+        const staleMins = Number(sig.stale_minutes || 0);
+        const staleLimit = String(sig.symbol || '').includes('/') ? 60 : 30;
+        const isMarketClosed = !_isNseMarketOpen();
         const staleBadge = sig.stale
-            ? `<span class="stale-badge" title="Signal is older than 100 bars">STALE</span>`
+            ? (isMarketClosed
+                ? ''
+                : `<span class="stale-badge" title="Signal age: ${staleMins.toFixed(1)} min">STALE > ${staleLimit}m</span>`)
             : '';
+        const skipReason = String(sig.skip_reason || '').trim();
+        const conflictReason = String(sig.signal_conflict || '').trim();
+        const conflictPayload = (sig.conflict && typeof sig.conflict === 'object')
+            ? sig.conflict
+            : (conflictReason
+                ? { severity: 'warn', reasons: [conflictReason] }
+                : null);
         const skipBadge = isSkip
-            ? `<span class="skip-badge" title="Setup detected but quality score too low">SKIP</span>`
+            ? `<span class="skip-badge" title="${skipReason ? `Skipped: ${skipReason}` : 'Setup detected but quality or safety gates blocked this trade.'}">SKIP</span>`
             : '';
+        const conflictBadge = renderConflictBadge(conflictPayload);
 
         // Quality score badge
         const qs = sig.quality_score ?? 0;
         const qg = sig.quality_grade || 'D';
-        const qualityBadge = `<span class="quality-badge quality-${qg}" title="Quality Score: ${qs}/100">QS ${qs}</span>`;
+        const qualityHint = (isSkip && qs >= 70 && skipReason)
+            ? `Quality Score: ${qs}/100. Blocked by safety gate: ${skipReason}`
+            : `Quality Score: ${qs}/100. Tradeable setups are usually QS >= 70.`;
+        const qualityBadge = `<span class="quality-badge quality-${qg}" title="${qualityHint}">QS ${qs}</span>`;
+
+        const entryVal = Number(sig.entry);
+        const slVal = Number(sig.stop_loss);
+        const tpVal = Number(sig.target);
+        let rrLabel = '—';
+        if (Number.isFinite(entryVal) && Number.isFinite(slVal) && Number.isFinite(tpVal)) {
+            const risk = Math.abs(entryVal - slVal);
+            const reward = Math.abs(tpVal - entryVal);
+            if (risk > 0 && reward > 0) {
+                rrLabel = `1:${(reward / risk).toFixed(2)}`;
+            }
+        }
 
         // Data quality dot
         const dq = sig.data_quality ?? 100;
@@ -443,14 +698,61 @@ function renderSignals(signals) {
         // Display signal label: LONG→LONG, SHORT→SHORT, SKIP→SKIP, HOLD→HOLD
         const signalLabel = sig.signal;
 
+        const signalDate = new Date(sig.timestamp);
+        const timeStr = signalDate.toLocaleTimeString('en-IN', {hour: '2-digit', minute:'2-digit'});
+
+        // RSI visual bar
+        const rsiVal = sig.rsi ?? null;
+        let rsiBarColor = 'var(--text-muted)';
+        if (rsiVal !== null) {
+            if (rsiVal < 30) rsiBarColor = 'var(--green)';
+            else if (rsiVal > 70) rsiBarColor = 'var(--red)';
+            else rsiBarColor = 'var(--accent-light)';
+        }
+        const rsiBarWidth = rsiVal !== null ? Math.min(rsiVal, 100) : 0;
+
+        // Trend arrow
+        let trendArrow = '→';
+        if (trendClass === 'bullish') trendArrow = '↗';
+        else if (trendClass === 'bearish') trendArrow = '↘';
+
+        let sparklineSvg = '';
+        if (sig.sparkline && sig.sparkline.length > 1) {
+            const minP = Math.min(...sig.sparkline);
+            const maxP = Math.max(...sig.sparkline);
+            const range = maxP - minP || 1;
+            const pts = sig.sparkline.map((p, idx) => {
+                const x = (idx / (sig.sparkline.length - 1)) * 64;
+                const y = 22 - ((p - minP) / range) * 22;
+                return `${x},${y}`;
+            }).join(' ');
+            
+            const isUp = sig.sparkline[sig.sparkline.length-1] >= sig.sparkline[0];
+            const spLineColor = isUp ? 'var(--green)' : 'var(--red)';
+            const spFillColor = isUp ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)';
+            const fillPts = `0,22 ${pts} 64,22`;
+            
+            sparklineSvg = `
+                <div class="sparkline-wrap" title="Last 20 candles">
+                    <svg viewBox="0 0 64 22" width="64" height="22" style="overflow:visible;">
+                        <polygon points="${fillPts}" fill="${spFillColor}"/>
+                        <polyline points="${pts}" fill="none" stroke="${spLineColor}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            `;
+        }
+
         card.innerHTML = `
             <div class="card-top">
-                <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;flex:1">
                     <span class="card-symbol signal-symbol">${sig.symbol}</span>${dqDot}
                     <span class="regime-badge regime-${regime}">${regimeLabel}</span>
-                    ${staleBadge}${skipBadge}
+                    ${staleBadge}${skipBadge}${conflictBadge}
                 </div>
-                <span class="card-price signal-price" data-price="${sig.close ?? 0}">${fmtPrice(sig.close)}</span>
+                <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;">
+                    <span class="card-price signal-price" data-price="${sig.close ?? 0}">${fmtPrice(sig.close)}</span>
+                    <span class="signal-time-chip">${timeStr}</span>
+                </div>
             </div>
             <div class="card-signal-row">
                 <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
@@ -458,13 +760,13 @@ function renderSignals(signals) {
                     ${qualityBadge}
                 </div>
                 <div class="confidence-wrap">
-                    <div class="confidence-ring">
+                    <div class="confidence-ring" style="--ring-glow-color:${ringGlow}">
                         <svg viewBox="0 0 80 80">
                             <circle class="ring-bg" cx="40" cy="40" r="36"/>
                             <circle class="ring-fill" cx="40" cy="40" r="36"
                                 style="stroke-dashoffset: ${offset}; stroke: ${ringColor};"/>
                         </svg>
-                        <span class="confidence-value">${conf}%</span>
+                        <span class="confidence-value" style="color:${ringColor}">${conf}%</span>
                     </div>
                     <span class="confidence-label">Confidence</span>
                 </div>
@@ -482,16 +784,23 @@ function renderSignals(signals) {
                     <span class="level-label">Target</span>
                     <span class="level-value">${fmtPrice(sig.target)}</span>
                 </div>
+                <div class="level rr">
+                    <span class="level-label">R:R</span>
+                    <span class="level-value">${rrLabel}</span>
+                </div>
             </div>
             <div class="card-indicators">
-                <div class="indicator">
+                <div class="indicator rsi-bar-wrap">
                     <span class="indicator-label">RSI</span>
-                    <span class="indicator-value ${rsiClass}">${sig.rsi ?? '—'}</span>
+                    <span class="indicator-value ${rsiClass}">${rsiVal ?? '—'}</span>
+                    ${rsiVal !== null ? `<div class="rsi-mini-bar"><div class="rsi-mini-fill" style="width:${rsiBarWidth}%;background:${rsiBarColor}"></div></div>` : ''}
                 </div>
                 <div class="indicator">
                     <span class="indicator-label">Trend</span>
+                    <span class="trend-arrow ${trendClass}">${trendArrow}</span>
                     <span class="indicator-value ${trendClass}">${trend}</span>
                 </div>
+                ${sparklineSvg}
                 ${macdVal != null ? `
                 <div class="indicator">
                     <span class="indicator-label">MACD</span>
@@ -559,10 +868,53 @@ function updateMarketIntel(dashboardData) {
     }
 }
 
+function updateOpportunitiesGrid(opportunities) {
+    const grid = document.getElementById('opportunityGrid');
+    if (!grid) return;
+
+    if (!opportunities || opportunities.length === 0) {
+        if (_isNseMarketOpen()) {
+            grid.innerHTML = '<div style="font-size:0.8rem;color:var(--text-muted);grid-column:1/-1;">No deep opportunities right now. Market is in SKIP zone — refresh in a few minutes.</div>';
+        } else {
+            grid.innerHTML = '<div style="font-size:0.8rem;color:var(--text-muted);grid-column:1/-1;">Market closed. Next scan starts at 9:15 AM IST — showing new opportunities after open.</div>';
+        }
+        return;
+    }
+
+    grid.innerHTML = opportunities.map(opp => {
+        let sigColor = 'var(--cyan)';
+        let sigText = opp.signal;
+        if (opp.signal.includes('BUY')) sigColor = 'var(--green)';
+        if (opp.signal.includes('SELL')) sigColor = 'var(--red)';
+        if (opp.signal.includes('BREAKOUT') || opp.signal.includes('SPIKE')) sigColor = 'var(--yellow)';
+
+        // Strip .NS for display
+        const symbol = opp.symbol.replace('.NS', '');
+
+        return `
+            <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);padding:0.6rem;border-radius:6px;display:flex;flex-direction:column;gap:0.25rem;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="font-weight:bold;font-size:0.85rem">${symbol}</span>
+                    <span style="font-size:0.65rem;color:${sigColor};border:1px solid ${sigColor};padding:1px 4px;border-radius:3px;">${sigText}</span>
+                </div>
+                <div style="font-size:0.8rem;">
+                    <span style="color:var(--text-muted);">₹${opp.price.toFixed(2)}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text-muted);">
+                    <span>RSI: ${opp.rsi ? opp.rsi : '-'}</span>
+                    <span>Vol: ${(opp.vol / 1000).toFixed(0)}k <span style="font-size:0.6rem;color:${opp.vol_spike ? 'var(--green)' : 'inherit'}">${opp.vol_spike ? '▲' : ''}</span></span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
 
 function updateMarketMood(mood) {
     const badge = document.getElementById('marketMoodBadge');
     const score = document.getElementById('marketMoodScore');
+    const explain = document.getElementById('marketMoodExplain');
+    const splitContainer = document.getElementById('marketMoodSplitContainer');
     if (!badge || !score || !mood) return;
 
     const moodLabel = String(mood.mood || 'NEUTRAL').toUpperCase();
@@ -581,7 +933,23 @@ function updateMarketMood(mood) {
     }
 
     score.textContent = `${scoreValue.toFixed(1)} / 100`;
+
+    const split = mood.breadth_signal_split || {};
+    if (splitContainer) {
+        splitContainer.innerHTML = renderMoodSplit(split);
+    }
+
+    if (explain) {
+        const sigBias = Number((mood.signals && mood.signals.bias_pct) || 0);
+        const breadth = Number((mood.breadth && mood.breadth.breadth_pct) || 0);
+        const biasSign = sigBias >= 0 ? '+' : '';
+        const breadthSign = breadth >= 0 ? '+' : '';
+        explain.textContent = `Signal bias ${biasSign}${sigBias.toFixed(1)}%, breadth ${breadthSign}${breadth.toFixed(1)}%. Composite score weights breadth and signal bias separately.`;
+    }
 }
+
+// Ensure banner stays accurate when users keep the tab open.
+setInterval(updateMarketSessionBanner, 60000);
 
 
 // ── Portfolio Tab ───────────────────────────────────────
@@ -655,6 +1023,103 @@ async function loadPortfolio() {
         }
     } catch (err) {
         console.error('Portfolio load error:', err);
+    }
+}
+
+
+// ── Learning Tab ────────────────────────────────────────
+
+async function loadLearningStats() {
+    try {
+        const [statsRes, outcomesRes] = await Promise.all([
+            fetch(`${API}/api/learning/stats`),
+            fetch(`${API}/api/learning/outcomes?limit=50`)
+        ]);
+        const data = await statsRes.json();
+        const outcomesData = await outcomesRes.json();
+
+        // Populate KPIs
+        const o = data.insights?.overall || {};
+        document.getElementById('lsTotalTradesVal').textContent = o.total_trades || 0;
+        document.getElementById('lsAccuracyVal').textContent = ((o.model_accuracy || 0).toFixed(1)) + '%';
+        document.getElementById('lsBestSignalVal').textContent = data.insights?.best_signal_type || '—';
+        document.getElementById('lsWorstSignalVal').textContent = data.insights?.worst_signal_type || '—';
+        document.getElementById('lsBestRegimeVal').textContent = data.insights?.best_regime || '—';
+
+        // Signal Win Rate Bars
+        const sb = document.getElementById('lsSignalBars');
+        const sstats = data.insights?.signal_type_stats || {};
+        if (Object.keys(sstats).length === 0) {
+            sb.innerHTML = '<div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No learning data</p></div>';
+        } else {
+            sb.innerHTML = Object.entries(sstats).sort((a,b)=> b[1].win_rate - a[1].win_rate).map(([sym, st]) => {
+                const w = st.win_rate;
+                const c = w >= 50 ? 'var(--green)' : 'var(--red)';
+                return `
+                    <div class="perf-sym-bar-wrap">
+                        <div class="perf-sym-label">
+                            <span class="psym">${sym}</span>
+                            <span class="pnl" style="color:${c}">${w.toFixed(1)}% WR</span>
+                        </div>
+                        <div class="perf-sym-track">
+                            <div class="perf-sym-fill" style="width:${w}%;background:${c}"></div>
+                        </div>
+                        <div class="perf-sym-count" style="font-size:0.75rem; color:var(--text-muted); display:flex; justify-content:space-between">
+                            <span>${st.trades} trades</span>
+                            <span>Avg ${st.avg_pnl.toFixed(2)}%</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Auto-Adjusted Weights
+        const wl = document.getElementById('lsWeightsList');
+        const weights = data.weights || {};
+        if (Object.keys(weights).length === 0) {
+            wl.innerHTML = '<div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No weight data</p></div>';
+        } else {
+            wl.innerHTML = Object.entries(weights)
+                .filter(([k]) => !k.startsWith('_'))
+                .sort((a,b)=> b[1] - a[1])
+                .map(([sw, w]) => {
+                    const diff = w - 1.0;
+                    const c = diff > 0 ? 'color:var(--green)' : (diff < 0 ? 'color:var(--red)' : 'color:var(--text-muted)');
+                    return `
+                    <div class="perf-exit-item">
+                        <span class="pe-reason" style="width: 130px">${sw}</span>
+                        <div class="pe-track"><div class="pe-fill" style="width:${Math.min(w * 40, 100)}%;"></div></div>
+                        <span class="pe-count" style="${c}">${w.toFixed(2)}x</span>
+                    </div>
+                    `;
+            }).join('');
+        }
+
+        // Outcomes Table
+        const tb = document.getElementById('learningOutcomesBody');
+        const outcomes = outcomesData.outcomes || [];
+        if (!outcomes.length) {
+            tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--text-muted)">No learning trades yet</td></tr>';
+        } else {
+            tb.innerHTML = outcomes.map(t => {
+                const pnlClass = t.pnl_pct >= 0 ? 'positive' : 'negative';
+                return `
+                    <tr>
+                        <td style="font-family: var(--font-body)">#${t.id}</td>
+                        <td style="font-weight:600">${t.symbol}</td>
+                        <td>${t.signal_type}</td>
+                        <td>${t.regime}</td>
+                        <td>${t.rsi_at_entry ? t.rsi_at_entry.toFixed(1) : '—'}</td>
+                        <td>${t.volume_above_avg ? 'YES' : 'NO'}</td>
+                        <td>${(t.confidence || 0).toFixed(0)}%</td>
+                        <td class="${pnlClass}">${(t.pnl_pct || 0).toFixed(2)}%</td>
+                        <td class="${pnlClass}">${t.result}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+    } catch (err) {
+        console.error('Learning stats load error:', err);
     }
 }
 
@@ -2127,51 +2592,82 @@ async function searchSymbols(query) {
     const resultsEl = document.getElementById('searchResults');
     const dropdown = document.getElementById('searchDropdown');
 
+    // Show "searching..." state immediately
+    resultsEl.innerHTML = '<div class="search-empty" style="opacity:0.6">🔍 Searching NSE...</div>';
+    dropdown.classList.add('visible');
+    searchDropdownVisible = true;
+
     try {
         const res = await fetch(`${API}/api/search/symbols?q=${encodeURIComponent(query)}`);
         const data = await res.json();
         const results = data.results || [];
 
+        const q = query.toUpperCase().trim();
+        // Build the "Try as NSE" direct-fetch fallback shown at the bottom
+        const nseDirectHTML = `
+            <div class="search-item search-item-fetch" onclick="fetchAndShowQuote('${q.replace(/'/g, '')}')"
+                 title="Fetch ${q}.NS from NSE via yFinance">
+                <span class="search-item-icon">🇮🇳</span>
+                <div class="search-item-info">
+                    <span class="search-item-sym">Try "${q}" as NSE Stock</span>
+                    <span class="search-item-sub">Auto-appends .NS · fetches via yFinance</span>
+                </div>
+                <span class="search-item-arrow">→</span>
+            </div>`;
+
+        const yfDirectHTML = `
+            <div class="search-item search-item-fetch" onclick="fetchAndShowQuote('${query.replace(/'/g, '')}')"
+                 title="Search any global ticker on yFinance">
+                <span class="search-item-icon">🌐</span>
+                <div class="search-item-info">
+                    <span class="search-item-sym">Search "${q}" on yFinance</span>
+                    <span class="search-item-sub">Fetch live data for any global ticker</span>
+                </div>
+                <span class="search-item-arrow">→</span>
+            </div>`;
+
         if (results.length === 0) {
             resultsEl.innerHTML = `
                 <div class="search-empty">
-                    No matches for "<strong>${query}</strong>"
-                    <br><span class="search-hint">Try: RELIANCE, TATA, BTC, ETH, SOL, BNB</span>
-                </div>`;
-            // Also show a "fetch anyway" button
-            resultsEl.innerHTML += `
-                <div class="search-item search-item-fetch" onclick="fetchAndShowQuote('${query.replace(/'/g, '')}')">
-                    <span class="search-item-icon">🌐</span>
-                    <div class="search-item-info">
-                        <span class="search-item-sym">Search "${query.toUpperCase()}" on yFinance</span>
-                        <span class="search-item-sub">Fetch live data for any global ticker</span>
-                    </div>
-                    <span class="search-item-arrow">→</span>
-                </div>`;
+                    No pre-loaded match for "<strong>${query}</strong>"
+                    <br><span class="search-hint">Use the options below to fetch live data ↓</span>
+                </div>
+                ${nseDirectHTML}
+                ${yfDirectHTML}`;
         } else {
             resultsEl.innerHTML = results.map(r => {
-                const trackedBadge = r.tracked ? '<span class="search-tracked">●&nbsp;LIVE</span>' : '';
+                const trackedBadge = r.tracked
+                    ? '<span class="search-tracked">●&nbsp;LIVE</span>'
+                    : '';
+                // Dynamic results validated in real-time: show live price
+                const dynamicBadge = r.dynamic && r.price
+                    ? `<span style="font-size:0.68rem;color:var(--green);font-family:var(--font-mono);font-weight:700;">₹${r.price.toLocaleString('en-IN')}</span>`
+                    : trackedBadge;
+                const icon = r.type === 'CRYPTO' ? '₿'
+                    : (r.symbol.includes('NIFTY') || r.symbol.includes('SENSEX') || r.symbol.includes('BANK') ? '📊' : '📈');
+                const subLabel = r.opportunity
+                    ? `Screener Opportunity · ${r.signal}`
+                    : (r.dynamic ? `${r.ticker} · NSE Live · ₹${(r.price || 0).toLocaleString('en-IN')}` : r.ticker);
+                
+                let extraTag = '';
+                if (r.opportunity) extraTag = ' <span style="font-size:0.6rem;background:rgba(234,179,8,0.15);color:#eab308;border:1px solid rgba(234,179,8,0.3);padding:1px 5px;border-radius:3px;margin-left:0.3rem;">⚡ OPP</span>';
+                else if (r.dynamic) extraTag = ' <span style="font-size:0.6rem;background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.3);padding:1px 5px;border-radius:3px;">NSE</span>';
+
                 return `
-                    <div class="search-item" onclick="fetchAndShowQuote('${r.symbol.replace(/'/g, '')}')">
-                        <span class="search-item-icon">${r.type === 'CRYPTO' ? '₿' : (r.symbol.includes('NIFTY') || r.symbol.includes('SENSEX') || r.symbol.includes('BANK') ? '📊' : '📈')}</span>
+                    <div class="search-item" onclick="fetchAndShowQuote('${r.symbol.replace(/'/g, '')}')"
+                         title="Load ${r.symbol} signal card">
+                        <span class="search-item-icon">${icon}</span>
                         <div class="search-item-info">
-                            <span class="search-item-sym">${r.symbol}</span>
-                            <span class="search-item-sub">${r.ticker}</span>
+                            <span class="search-item-sym">${r.symbol}${extraTag}</span>
+                            <span class="search-item-sub" style="${r.opportunity ? 'color:var(--yellow);font-weight:600;' : ''}">${subLabel}</span>
                         </div>
-                        ${trackedBadge}
+                        ${dynamicBadge}
                         <span class="search-item-arrow">→</span>
                     </div>`;
             }).join('');
-            // Add fetch-any option at bottom
-            resultsEl.innerHTML += `
-                <div class="search-item search-item-fetch" onclick="fetchAndShowQuote('${query.replace(/'/g, '')}')">
-                    <span class="search-item-icon">🌐</span>
-                    <div class="search-item-info">
-                        <span class="search-item-sym">Search "${query.toUpperCase()}" directly</span>
-                        <span class="search-item-sub">Fetch from yFinance (any global ticker)</span>
-                    </div>
-                    <span class="search-item-arrow">→</span>
-                </div>`;
+            // Only show direct NSE fetch if query isn't already in results
+            const alreadyExact = results.some(r => r.symbol === q || r.ticker === `${q}.NS`);
+            if (!alreadyExact) resultsEl.innerHTML += nseDirectHTML;
         }
 
         dropdown.classList.add('visible');
@@ -2195,10 +2691,16 @@ async function fetchAndShowQuote(symbol) {
     closeSearchDropdown();
     document.getElementById('globalSearchInput').value = '';
 
-    // Show loading modal
-    document.getElementById('modalTitle').textContent = `Loading ${symbol.toUpperCase()}...`;
+    // Show loading modal immediately
+    const titleEl = document.getElementById('modalTitle');
+    const infoGrid = document.getElementById('modalInfoGrid');
+    titleEl.textContent = `Loading ${symbol.toUpperCase()}...`;
     document.getElementById('modalBackdrop').classList.add('visible');
-    document.getElementById('modalInfoGrid').innerHTML = '<div class="loading-state"><div class="loader"></div><p>Fetching data...</p></div>';
+    infoGrid.innerHTML = `
+        <div class="loading-state" style="grid-column:1/-1;padding:2rem;text-align:center">
+            <div class="loader"></div>
+            <p style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted)">Fetching ${symbol.toUpperCase()} from NSE...</p>
+        </div>`;
 
     // Clear the chart
     const canvas = document.getElementById('modalChart');
@@ -2213,61 +2715,99 @@ async function fetchAndShowQuote(symbol) {
         const res = await fetch(`${API}/api/search/quote/${encodeURIComponent(urlSym)}`);
         if (!res.ok) {
             const err = await res.json();
-            document.getElementById('modalTitle').textContent = symbol.toUpperCase();
-            document.getElementById('modalInfoGrid').innerHTML = `
-                <div class="search-empty" style="grid-column:1/-1;text-align:center;padding:2rem;">
-                    ⚠️ ${err.error || 'Symbol not found'}
+            titleEl.textContent = symbol.toUpperCase();
+            infoGrid.innerHTML = `
+                <div style="grid-column:1/-1;text-align:center;padding:2rem;">
+                    <div style="font-size:2rem;margin-bottom:0.75rem;">⚠️</div>
+                    <div style="color:var(--red);font-weight:600;margin-bottom:0.5rem;">Symbol Not Found</div>
+                    <div style="color:var(--text-muted);font-size:0.8rem;">${err.error || 'Symbol not found on NSE or yFinance'}</div>
+                    <div style="margin-top:1rem;font-size:0.75rem;color:var(--text-muted);">
+                        💡 Make sure the NSE symbol is correct (e.g. <code style="color:var(--cyan)">PRECWIRE</code>, <code style="color:var(--cyan)">NAUKRI</code>)
+                    </div>
                 </div>`;
             return;
         }
 
         const data = await res.json();
-        document.getElementById('modalTitle').textContent = data.symbol;
+        titleEl.textContent = data.symbol;
 
-        // Draw chart
+        // ── Draw chart ─────────────────────────────────────────────
         if (data.chart && data.chart.length > 1) {
             drawModalChart(data.chart, '5m');
         }
 
-        // Render signal info
+        // ── Rich signal card — matches dashboard card format ───────
         const sig = data.signal || {};
         const isCrypto = data.symbol.includes('/');
         const curr = isCrypto ? '$' : '₹';
         const last = data.chart && data.chart.length > 0 ? data.chart[data.chart.length - 1] : {};
 
+        const sigVal   = sig?.signal || 'HOLD';
+        const sigDir   = sig?.direction || sigVal;
+        const sigColor = ['LONG','BUY'].includes(sigVal)   ? 'var(--green)'
+                       : ['SHORT','SELL'].includes(sigVal) ? 'var(--red)'
+                       : sigVal === 'SKIP' ? 'var(--text-muted)'
+                       : 'var(--cyan)';
+
+        // MACD color
+        const macdHist = data.macd_hist ?? last.macd_hist;
+        const macdColor = macdHist > 0 ? 'var(--green)' : macdHist < 0 ? 'var(--red)' : 'var(--text-muted)';
+        const macdIcon  = macdHist > 0 ? '▲' : macdHist < 0 ? '▼' : '—';
+
+        // RSI color
+        const rsiVal = data.rsi;
+        const rsiColor = rsiVal < 30 ? 'var(--green)' : rsiVal > 70 ? 'var(--red)' : 'var(--text-secondary)';
+
+        // Entry/SL/Target section
+        const hasSignal = ['LONG', 'SHORT', 'BUY', 'SELL'].includes(sigDir);
+        const entryVal  = sig?.entry ?? data.close;
+        const slVal     = sig?.stop_loss;
+        const tpVal     = sig?.target;
+
+        const tradeSectionHTML = hasSignal && (slVal || tpVal) ? `
+            <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.6rem;margin-top:0.1rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;">
+                <div style="text-align:center">
+                    <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Entry</div>
+                    <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
+                </div>
+                <div style="text-align:center">
+                    <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Stop Loss</div>
+                    <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${slVal ? curr + slVal.toFixed(2) : '—'}</div>
+                </div>
+                <div style="text-align:center">
+                    <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Target</div>
+                    <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tpVal ? curr + tpVal.toFixed(2) : '—'}</div>
+                </div>
+            </div>` : '';
+
         const items = [
-            { label: 'Close', value: `${curr}${data.close.toFixed(2)}` },
-            { label: 'RSI', value: data.rsi ?? '—', color: data.rsi < 30 ? 'var(--green)' : data.rsi > 70 ? 'var(--red)' : null },
-            { label: 'VWAP', value: last.vwap ? `${curr}${last.vwap.toFixed(2)}` : '—' },
-            { label: 'EMA 20', value: last.ema_20 ? `${curr}${last.ema_20.toFixed(2)}` : '—' },
-            { label: 'EMA 50', value: last.ema_50 ? `${curr}${last.ema_50.toFixed(2)}` : '—' },
+            { label: 'Close',      value: `${curr}${(data.close||0).toLocaleString('en-IN', { minimumFractionDigits:2, maximumFractionDigits:2 })}` },
+            { label: 'RSI (14)',   value: rsiVal != null ? rsiVal.toFixed(1) : '—', color: rsiColor },
+            { label: 'MACD Hist', value: macdHist != null ? `${macdIcon} ${Math.abs(macdHist).toFixed(4)}` : '—', color: macdColor },
+            { label: 'Signal',     value: sigVal, color: sigColor },
+            { label: 'Confidence', value: sig?.confidence != null ? `${sig.confidence}%` : '—' },
+            { label: 'Regime',     value: sig?.regime || data.regime || '—' },
+            { label: 'Trend',      value: (sig?.trend || '—').replace('TrendDirection.', '') },
+            { label: 'EMA 20',     value: last.ema_20 ? `${curr}${last.ema_20.toFixed(2)}` : '—' },
+            { label: 'EMA 50',     value: last.ema_50 ? `${curr}${last.ema_50.toFixed(2)}` : '—' },
+            { label: 'VWAP',       value: last.vwap   ? `${curr}${last.vwap.toFixed(2)}` : '—' },
         ];
 
-        if (sig) {
-            items.push(
-                { label: 'Signal', value: sig.signal || 'HOLD', color: sig.signal === 'BUY' ? 'var(--green)' : sig.signal === 'SELL' ? 'var(--red)' : 'var(--cyan)' },
-                { label: 'Confidence', value: `${sig.confidence || 0}%` },
-                { label: 'Regime', value: data.regime || 'RANGING' },
-                { label: 'Trend', value: (sig.trend || 'NEUTRAL').replace('TrendDirection.', '') },
-            );
-
-            if (sig.stop_loss) items.push({ label: 'Stop Loss', value: `${curr}${sig.stop_loss.toFixed(2)}`, color: 'var(--red)' });
-            if (sig.target) items.push({ label: 'Target', value: `${curr}${sig.target.toFixed(2)}`, color: 'var(--green)' });
-        }
-
-        const grid = document.getElementById('modalInfoGrid');
-        grid.innerHTML = items.map(item => `
-            <div class="info-item">
-                <span class="info-label">${item.label}</span>
-                <span class="info-value" ${item.color ? `style="color:${item.color}"` : ''}>${item.value}</span>
-            </div>
-        `).join('');
+        infoGrid.innerHTML =
+            items.map(item => `
+                <div class="info-item">
+                    <span class="info-label">${item.label}</span>
+                    <span class="info-value" ${item.color ? `style="color:${item.color}"` : ''}>${item.value}</span>
+                </div>
+            `).join('') + tradeSectionHTML;
 
     } catch (err) {
         console.error('Quote fetch error:', err);
         document.getElementById('modalInfoGrid').innerHTML = `
-            <div class="search-empty" style="grid-column:1/-1;text-align:center;padding:2rem;">
-                ⚠️ Failed to fetch data. Check if server is running.
+            <div style="grid-column:1/-1;text-align:center;padding:2rem;">
+                <div style="font-size:2rem;margin-bottom:0.75rem;">⚠️</div>
+                <div style="color:var(--red);font-weight:600;">Failed to fetch data</div>
+                <div style="color:var(--text-muted);font-size:0.78rem;margin-top:0.5rem;">Check if the server is running</div>
             </div>`;
     }
 }

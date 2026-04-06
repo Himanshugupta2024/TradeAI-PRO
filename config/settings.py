@@ -106,7 +106,32 @@ BREAKEVEN_ATR_THRESHOLD = float(os.getenv("BREAKEVEN_ATR_THRESHOLD", "1.0"))
 COOLDOWN_CANDLES = int(os.getenv("COOLDOWN_CANDLES", "3"))
 
 # ── Signal Thresholds ────────────────────────────────────
-AI_CONFIDENCE_THRESHOLD = 50  # percent — raised from 25. Below 50% = near coin-toss, don't trade.
+AI_CONFIDENCE_THRESHOLD = 40  # Lowered from 50 — 40% is the new SKIP threshold
+
+# ── Volume Spike Confirmation ─────────────────────────────────────────────────
+# Signal is "volume-confirmed" when current volume > this × 20-bar avg.
+# Volume-confirmed signals get bonus score + confidence.
+VOLUME_SPIKE_MULTIPLIER  = float(os.getenv("VOLUME_SPIKE_MULTIPLIER",  "1.5"))  # 1.5x avg
+VOLUME_SPIKE_SCORE_BONUS = int(os.getenv("VOLUME_SPIKE_SCORE_BONUS",   "15"))   # +15 pts buy/sell score
+VOLUME_SPIKE_CONF_BONUS  = int(os.getenv("VOLUME_SPIKE_CONF_BONUS",    "20"))   # +20 pts confidence
+
+# ── Multi-Timeframe Alignment Bonus ───────────────────────────────────────────
+# When 15m + 1h + 1d all agree on direction → add to confidence.
+MTF_ALIGNMENT_CONF_BONUS = int(os.getenv("MTF_ALIGNMENT_CONF_BONUS", "15"))  # +15 pts
+
+# ── RSI Divergence Confidence Boost ───────────────────────────────────────────
+# Bullish/bearish RSI divergence → add to AI confidence (on top of score logic).
+RSI_DIVERGENCE_CONF_BONUS = int(os.getenv("RSI_DIVERGENCE_CONF_BONUS", "15"))  # +15 pts
+
+# ── S/R Level Test Confidence Bonus ───────────────────────────────────────────
+# Price testing key S/R level (within 0.5% of support/resistance) → +10 conf pts.
+SR_TEST_CONF_BONUS = int(os.getenv("SR_TEST_CONF_BONUS", "10"))  # +10 pts
+
+# ── SKIP Confidence Threshold ─────────────────────────────────────────────────
+# Signals with AI confidence below this → SKIP (not LONG/SHORT).
+# Lowered from 55 → 40: 40-55% confidence setups are valid in trending markets.
+SKIP_CONFIDENCE_THRESHOLD = int(os.getenv("SKIP_CONFIDENCE_THRESHOLD", "40"))
+
 RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
 
@@ -115,28 +140,32 @@ RSI_OVERSOLD_RANGING = 25   # Stricter in ranging markets
 RSI_OVERBOUGHT_RANGING = 75
 ATR_SL_MULTIPLIER_HIGHVOL = 2.0  # Wider SL in high volatility
 
-# ── Adaptive per-regime quality & confidence thresholds ─────────────────────
-# Quality score (0-100) minimum to emit LONG/SHORT (below → SKIP)
+# ── Adaptive per-regime quality & confidence thresholds ──────────────────────
+# Quality score (0-100) minimum to emit LONG/SHORT (below → SKIP).
+# Lowered from 60-65 to reduce the double-gatekeeping that caused 34-46% stagnation.
 REGIME_QUALITY_THRESHOLDS: dict[str, int] = {
-    "TRENDING":        60,   # Restored — momentum trades need solid confirmation
-    "RANGING":         65,   # Restored — ranging market signals must be high quality
-    "HIGH_VOLATILITY": 62,   # Restored — noise is high, only take clean setups
+    "TRENDING":        52,   # Lowered from 60: trending setups need less confirmation
+    "RANGING":         58,   # Lowered from 65: ranging needs quality but not perfection
+    "HIGH_VOLATILITY": 55,   # Lowered from 62: vol setups often look "noisy" but valid
 }
 
-# AI confidence minimum per regime (overrides global AI_CONFIDENCE_THRESHOLD)
+# AI confidence minimum per regime.
+# Key fix: lowered from 50-55 → 38-45. The fallback composite realistically peaks at
+# ~54 in normal markets, so 50-55 was blocking virtually every signal.
 REGIME_CONFIDENCE_THRESHOLDS: dict[str, int] = {
-    "TRENDING":        50,   # Raised from 20 — even in strong trends, need 50%+ confidence
-    "RANGING":         55,   # Raised from 25 — ranging markets are tricky, need more conviction
-    "HIGH_VOLATILITY": 52,   # Raised from 22 — high vol requires confident signals only
+    "TRENDING":        42,   # Lowered from 50: strong trend = directional clarity
+    "RANGING":         45,   # Lowered from 55: ranging still needs more conviction
+    "HIGH_VOLATILITY": 40,   # Lowered from 52: volatile = allow lower conf, quality gates it
 }
 
-# Weighted Signal Scoring thresholds (raised to require stronger confirmation)
+# Weighted Signal Scoring thresholds (buy_score/sell_score must exceed this).
+# Score thresholds kept near previous — score is not the bottleneck, confidence is.
 SIGNAL_SCORE_THRESHOLDS: dict[str, int] = {
-    "TRENDING":        32,   # Raised from 28 — HTF(12) + RSI/EMA trigger + some confirmation
-    "RANGING":         35,   # Raised from 30 — need multiple active triggers in ranging market
-    "HIGH_VOLATILITY": 33,   # Raised from 30 — volatile markets, require solid setup
+    "TRENDING":        30,   # Slightly lower: trending market needs fewer triggers
+    "RANGING":         35,   # Keep: ranging needs multiple active triggers
+    "HIGH_VOLATILITY": 32,   # Slightly lower: vol spikes add lots of noise
 }
-SIGNAL_SCORE_DEFAULT = 33   # Raised from 30 — requires real directional conviction
+SIGNAL_SCORE_DEFAULT = 32   # Real conviction still required
 
 # Outcome label parameters
 OUTCOME_FORWARD_BARS = int(os.getenv("OUTCOME_FORWARD_BARS", "5"))   # candles to look forward
