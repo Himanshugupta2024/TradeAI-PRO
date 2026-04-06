@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradeAI PRO — Autonomous Trading Dashboard</title>
+    <meta name="description"
+        content="AI-powered autonomous trading dashboard with signals, portfolio, sectoral heatmap, PCR analysis and institutional trade flow">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        /* ── Stale signal badge ── */
+        .card-stale { opacity: 0.55; border-color: #4b5563 !important; }
+        .stale-badge {
+            background: #374151; color: #9ca3af;
+            font-size: 0.65rem; font-weight: 700; letter-spacing: 0.05em;
+            padding: 2px 6px; border-radius: 4px;
+            text-transform: uppercase; vertical-align: middle;
+        }
+
+        /* ── Modal header layout with timeframe selector ── */
+        .modal-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+        .modal-header-right { display: flex; align-items: center; gap: 0.75rem; }
+        .tf-selector { display: flex; gap: 0.25rem; }
+        .tf-btn {
+            background: var(--card-bg, #1e1e2e); color: var(--text-muted, #9ca3af);
+            border: 1px solid var(--border-color, #374151);
+            padding: 3px 10px; border-radius: 5px; font-size: 0.75rem;
+            font-family: var(--font-mono, monospace); cursor: pointer; transition: all 0.15s;
+        }
+        .tf-btn:hover { color: var(--text-primary, #f1f5f9); border-color: #6366f1; }
+        .tf-btn.active {
+            background: #6366f1; color: #fff; border-color: #6366f1;
+        }
+
+        /* ── Signal quality badge on cards ── */
+        .quality-badge {
+            display: inline-flex; align-items: center; gap: 3px;
+            font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em;
+            padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
+        }
+        .quality-A { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+        .quality-B { background: rgba(99,102,241,0.15); color: #818cf8; border: 1px solid rgba(99,102,241,0.3); }
+        .quality-C { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+        .quality-D { background: rgba(107,114,128,0.1);  color: #6b7280; border: 1px solid rgba(107,114,128,0.25); }
+
+        /* ── SKIP signal cards ── */
+        .card-skip { opacity: 0.45; pointer-events: none; filter: grayscale(0.6); }
+        .skip-badge {
+            background: #374151; color: #9ca3af;
+            font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em;
+            padding: 2px 7px; border-radius: 4px; text-transform: uppercase;
+        }
+
+        /* ── Data quality dot ── */
+        .dq-dot {
+            display: inline-block; width: 7px; height: 7px;
+            border-radius: 50%; margin-left: 4px; vertical-align: middle;
+        }
+        .dq-good  { background: #10b981; }
+        .dq-warn  { background: #f59e0b; }
+        .dq-bad   { background: #ef4444; }
+
+        /* ── Scorecard styles ── */
+        .kpi-card {
+            display: flex; flex-direction: column; align-items: center;
+            background: var(--card-bg, #1e1e2e); border: 1px solid var(--border-color, #374151);
+            border-radius: 10px; padding: 1rem; text-align: center;
+        }
+        .kpi-val { font-size: 1.5rem; font-weight: 800; font-family: var(--font-mono, monospace); color: var(--text-primary, #f1f5f9); }
+        .kpi-lbl { font-size: 0.7rem; color: var(--text-muted, #9ca3af); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+        .sc-wr-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0.45rem 0; border-bottom: 1px solid var(--border-color, #374151);
+            font-size: 0.82rem;
+        }
+        .sc-wr-row:last-child { border-bottom: none; }
+        .sc-wr-bar-wrap { flex: 1; max-width: 120px; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; margin: 0 0.75rem; overflow: hidden; }
+        .sc-wr-bar { height: 100%; border-radius: 3px; transition: width 0.5s; }
+        .sc-wr-pct { font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 700; min-width: 3.5rem; text-align: right; }
+        .sc-wr-count { color: var(--text-muted, #9ca3af); font-size: 0.72rem; min-width: 3rem; text-align: right; }
+
+        .sc-false-row {
+            display: flex; align-items: center; gap: 0.5rem;
+            padding: 0.35rem 0; font-size: 0.78rem;
+        }
+        .sc-false-name { flex: 1; color: var(--text-secondary, #d1d5db); text-transform: lowercase; }
+        .sc-false-bar-wrap { flex: 0 0 80px; height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+        .sc-false-bar { height: 100%; background: #ef4444; border-radius: 3px; }
+        .sc-false-count { font-family: var(--font-mono, monospace); font-size: 0.75rem; color: #ef4444; min-width: 1.5rem; text-align: right; }
+
+        /* ── Backtest section in modal ── */
+        .modal-backtest-section {
+            border-top: 1px solid var(--border-color, #374151);
+            padding: 0.75rem 0 0.25rem;
+            margin-top: 0.5rem;
+        }
+        .modal-backtest-section::before {
+            content: 'Backtest (5-day cache)';
+            display: block; color: var(--text-muted, #9ca3af);
+            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+            margin-bottom: 0.5rem;
+        }
+        .backtest-grid {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem;
+        }
+        .bt-metric {
+            display: flex; flex-direction: column; align-items: center;
+            background: var(--card-bg, #1e1e2e); border-radius: 6px;
+            padding: 0.4rem 0.5rem;
+        }
+        .bt-val { font-size: 0.85rem; font-weight: 700; font-family: var(--font-mono, monospace); }
+        .bt-label { font-size: 0.65rem; color: var(--text-muted, #9ca3af); margin-top: 1px; }
+
+        /* ── Overview market intelligence panel ── */
+        .refresh-btn {
+            margin-left: 0.6rem;
+            background: rgba(99, 102, 241, 0.18);
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            color: var(--text-primary, #f1f5f9);
+            padding: 0.22rem 0.55rem;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            cursor: pointer;
+        }
+        .overview-intel {
+            margin-top: 0.9rem;
+            display: grid;
+            grid-template-columns: 1.1fr 1.4fr;
+            gap: 0.75rem;
+        }
+        .intel-card {
+            background: var(--card-bg, #1e1e2e);
+            border: 1px solid var(--border-color, #374151);
+            border-radius: 10px;
+            padding: 0.75rem 0.9rem;
+        }
+        .intel-title {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted, #9ca3af);
+            margin-bottom: 0.45rem;
+        }
+        .mood-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+        .mood-badge {
+            font-size: 0.75rem;
+            font-weight: 700;
+            border-radius: 999px;
+            padding: 0.2rem 0.55rem;
+            border: 1px solid transparent;
+        }
+        .mood-bullish { color: #10b981; border-color: rgba(16,185,129,0.5); background: rgba(16,185,129,0.12); }
+        .mood-neutral { color: #22d3ee; border-color: rgba(34,211,238,0.5); background: rgba(34,211,238,0.12); }
+        .mood-cautious { color: #f59e0b; border-color: rgba(245,158,11,0.5); background: rgba(245,158,11,0.12); }
+        .mood-bearish { color: #ef4444; border-color: rgba(239,68,68,0.5); background: rgba(239,68,68,0.12); }
+        .mood-score {
+            font-family: var(--font-mono, monospace);
+            color: var(--text-primary, #f1f5f9);
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+        .mover-chips { margin-top: 0.55rem; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+        .mover-chip {
+            font-size: 0.68rem;
+            border-radius: 999px;
+            padding: 0.16rem 0.44rem;
+            background: rgba(148,163,184,0.12);
+            border: 1px solid rgba(148,163,184,0.24);
+            color: var(--text-secondary, #d1d5db);
+        }
+        .mover-chip.up { color: #10b981; border-color: rgba(16,185,129,0.45); background: rgba(16,185,129,0.11); }
+        .mover-chip.down { color: #ef4444; border-color: rgba(239,68,68,0.45); background: rgba(239,68,68,0.11); }
+        .ai-summary-text { font-size: 0.8rem; line-height: 1.45; color: var(--text-secondary, #d1d5db); }
+
+        @media (max-width: 960px) {
+            .overview-intel { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- ── Header ──────────────────────────── -->
+    <header class="header" id="header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">◈</span>
+                <span class="logo-text">TradeAI</span>
+                <span class="logo-badge">PRO</span>
+            </div>
+        </div>
+        <div class="header-center">
+            <nav class="tab-nav" id="tabNav">
+                <button class="tab-btn active" data-tab="overview" id="tabOverview">
+                    <span class="tab-icon">📊</span><span class="tab-label"> Overview</span>
+                </button>
+                <button class="tab-btn" data-tab="market" id="tabMarket">
+                    <span class="tab-icon">📈</span><span class="tab-label"> Market</span>
+                </button>
+                <button class="tab-btn" data-tab="options" id="tabOptions">
+                    <span class="tab-icon">⚙️</span><span class="tab-label"> Options</span>
+                </button>
+                <button class="tab-btn" data-tab="tradeflow" id="tabTradeflow">
+                    <span class="tab-icon">💰</span><span class="tab-label"> Trade Flow</span>
+                </button>
+                <button class="tab-btn" data-tab="portfolio" id="tabPortfolio">
+                    <span class="tab-icon">💼</span><span class="tab-label"> Portfolio</span>
+                </button>
+                <button class="tab-btn" data-tab="performance" id="tabPerformance">
+                    <span class="tab-icon">🏆</span><span class="tab-label"> Performance</span>
+                </button>
+                <button class="tab-btn" data-tab="scorecard" id="tabScorecard">
+                    <span class="tab-icon">📋</span><span class="tab-label"> Scorecard</span>
+                </button>
+                <button class="tab-btn" data-tab="swing" id="tabSwing">
+                    <span class="tab-icon">🔄</span><span class="tab-label"> Swing</span>
+                </button>
+                <button class="tab-btn" data-tab="indexmover" id="tabIndexMover">
+                    <span class="tab-icon">🏗️</span><span class="tab-label"> Index Mover</span>
+                </button>
+                <button class="tab-btn" data-tab="breakouts" id="tabBreakouts">
+                    <span class="tab-icon">🚀</span><span class="tab-label"> Breakouts</span>
+                </button>
+            </nav>
+        </div>
+        <div class="header-right">
+            <div class="global-search-wrap" id="globalSearchWrap">
+                <div class="search-input-row">
+                    <span class="search-icon">🔍</span>
+                    <input class="global-search-input" id="globalSearchInput" type="text"
+                        placeholder="Search any stock... (e.g. TATA, ZOMATO, AAPL)"
+                        autocomplete="off" spellcheck="false">
+                    <kbd class="search-kbd" id="searchKbd">/</kbd>
+                </div>
+                <div class="search-dropdown" id="searchDropdown">
+                    <div class="search-results" id="searchResults"></div>
+                </div>
+            </div>
+            <a class="trial-badge" href="/landing" id="trialBadge">🎉 Free Trial</a>
+            <button class="theme-toggle" id="themeToggle" title="Toggle theme">
+                <span class="theme-icon" id="themeIcon">🌙</span>
+            </button>
+            <div class="market-status" id="marketStatus">
+                <span class="status-dot live"></span>
+                <span>LIVE</span>
+            </div>
+            <div class="clock" id="clock"></div>
+        </div>
+    </header>
+
+    <!-- ── Main Content ──────────────────────── -->
+    <main class="main-content">
+
+        <!-- ════════ OVERVIEW TAB ════════ -->
+        <section class="tab-content active" id="overviewTab">
+            <div class="stats-strip" id="statsStrip">
+                <div class="stat-chip">
+                    <span class="stat-value" id="statCapital">₹0</span>
+                    <span class="stat-label">Capital</span>
+                </div>
+                <div class="stat-chip accent">
+                    <span class="stat-value" id="statPnl">₹0</span>
+                    <span class="stat-label">Total P&L</span>
+                </div>
+                <div class="stat-chip">
+                    <span class="stat-value" id="statWinRate">0%</span>
+                    <span class="stat-label">Win Rate</span>
+                </div>
+                <div class="stat-chip">
+                    <span class="stat-value" id="statTrades">0</span>
+                    <span class="stat-label">Trades</span>
+                </div>
+            </div>
+            <div class="update-bar">
+                <span class="update-label">Last updated:</span>
+                <span class="update-time" id="lastUpdated">—</span>
+                <span class="update-dot" id="refreshDot"></span>
+                <span class="auto-refresh-label">Auto-refresh 60s</span>
+                <button class="refresh-btn" id="manualRefreshBtn">↻ Refresh</button>
+            </div>
+            <div class="signals-grid" id="signalsGrid">
+                <div class="loading-state" id="loadingState">
+                    <div class="loader"></div>
+                    <p>Fetching signals...</p>
+                </div>
+            </div>
+            <div class="summary-bar" id="summaryBar">
+                <div class="summary-item">
+                    <span class="summary-value" id="sumBuy" style="color:var(--green)">0</span>
+                    <span class="summary-label">BUY</span>
+                </div>
+                <div class="summary-divider"></div>
+                <div class="summary-item">
+                    <span class="summary-value" id="sumSell" style="color:var(--red)">0</span>
+                    <span class="summary-label">SELL</span>
+                </div>
+                <div class="summary-divider"></div>
+                <div class="summary-item">
+                    <span class="summary-value" id="sumHold" style="color:var(--cyan)">0</span>
+                    <span class="summary-label">HOLD</span>
+                </div>
+            </div>
+            <div class="overview-intel">
+                <div class="intel-card">
+                    <div class="intel-title">Market Mood</div>
+                    <div class="mood-row">
+                        <span class="mood-badge mood-neutral" id="marketMoodBadge">NEUTRAL</span>
+                        <span class="mood-score" id="marketMoodScore">50.0 / 100</span>
+                    </div>
+                    <div class="mover-chips" id="topMoverChips"></div>
+                </div>
+                <div class="intel-card">
+                    <div class="intel-title">AI Market Summary</div>
+                    <div class="ai-summary-text" id="aiSummaryText">Waiting for live summary...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════ MARKET TAB ════════ -->
+        <section class="tab-content" id="marketTab">
+            <div class="market-top-row">
+                <!-- Gainers/Losers Toggle -->
+                <div class="screener-card">
+                    <div class="screener-header">
+                        <div class="screener-title-row">
+                            <h2 class="section-title">Market Wise</h2>
+                            <div class="live-pill"><span class="status-dot live"></span> LIVE</div>
+                        </div>
+                        <div class="screener-toggle">
+                            <button class="toggle-btn active" id="gainersBtn" onclick="showScreener('gainers')">▲
+                                Gainers</button>
+                            <button class="toggle-btn" id="losersBtn" onclick="showScreener('losers')">▼ Losers</button>
+                        </div>
+                        <div class="screener-meta" id="screenerMeta">
+                            <span class="screener-count" id="screenerPill" style="color:var(--green)">● 0 stocks
+                                up</span>
+                        </div>
+                    </div>
+                    <div class="screener-search-wrap">
+                        <input class="screener-search" id="screenerSearch" type="text"
+                            placeholder="Search symbol or company..." oninput="filterScreener()">
+                    </div>
+                    <div class="screener-table-wrap">
+                        <table class="screener-table" id="screenerTable">
+                            <thead>
+                                <tr>
+                                    <th>SYMBOL</th>
+                                    <th>LTP</th>
+                                    <th>%CHG</th>
+                                    <th>X FAC</th>
+                                    <th>VOL (Cr)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="screenerBody">
+                                <tr>
+                                    <td colspan="5" class="empty-row">Loading...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Sectoral Heatmap -->
+                <div class="sector-card">
+                    <div class="screener-header">
+                        <h2 class="section-title">Sector Heatmap</h2>
+                        <div class="live-pill"><span class="status-dot live"></span> LIVE</div>
+                    </div>
+                    <div class="sector-grid" id="sectorGrid">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════ OPTIONS TAB ════════ -->
+        <section class="tab-content" id="optionsTab">
+            <div class="options-header">
+                <h2 class="section-title">Option Chain & PCR Analysis</h2>
+                <div class="options-selector">
+                    <select class="symbol-select" id="pcrSymbol" onchange="loadPCR()">
+                        <option value="NIFTY_50">NIFTY 50</option>
+                        <option value="BANKNIFTY">BANKNIFTY</option>
+                        <option value="BTC/USDT">BTC/USDT</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- PCR Summary -->
+            <div class="pcr-summary" id="pcrSummary">
+                <div class="pcr-main">
+                    <div class="pcr-value-wrap">
+                        <span class="pcr-big" id="pcrValue">—</span>
+                        <span class="pcr-label">PCR</span>
+                    </div>
+                    <div class="pcr-sentiment" id="pcrSentiment">—</div>
+                </div>
+                <div class="pcr-stats">
+                    <div class="pcr-stat">
+                        <span class="pcr-stat-val" id="pcrCallOI">—</span>
+                        <span class="pcr-stat-label">Total Call OI</span>
+                    </div>
+                    <div class="pcr-stat">
+                        <span class="pcr-stat-val" id="pcrPutOI">—</span>
+                        <span class="pcr-stat-label">Total Put OI</span>
+                    </div>
+                    <div class="pcr-stat">
+                        <span class="pcr-stat-val" id="pcrMaxPain">—</span>
+                        <span class="pcr-stat-label">Max Pain</span>
+                    </div>
+                    <div class="pcr-stat">
+                        <span class="pcr-stat-val" id="pcrATM">—</span>
+                        <span class="pcr-stat-label">ATM Strike</span>
+                    </div>
+                </div>
+                <!-- PCR History Chart -->
+                <div class="pcr-chart-wrap">
+                    <canvas id="pcrChart" width="600" height="80"></canvas>
+                </div>
+            </div>
+
+            <!-- Option Chain Table -->
+            <div class="option-chain-table-wrap">
+                <table class="option-chain-table" id="optionChainTable">
+                    <thead>
+                        <tr>
+                            <th colspan="3" class="call-header">CALLS</th>
+                            <th class="strike-header">STRIKE</th>
+                            <th colspan="3" class="put-header">PUTS</th>
+                        </tr>
+                        <tr>
+                            <th>OI</th>
+                            <th>OI CHG</th>
+                            <th>LTP</th>
+                            <th class="strike-header">—</th>
+                            <th>LTP</th>
+                            <th>OI CHG</th>
+                            <th>OI</th>
+                        </tr>
+                    </thead>
+                    <tbody id="optionChainBody">
+                        <tr>
+                            <td colspan="7" class="empty-row">Select a symbol above</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ════════ TRADE FLOW TAB ════════ -->
+        <section class="tab-content" id="tradeflowTab">
+            <div class="tradeflow-header">
+                <h2 class="section-title">Institutional Trade Flow</h2>
+                <div class="tradeflow-legend">
+                    <span class="legend-item fii">■ FII</span>
+                    <span class="legend-item dii">■ DII</span>
+                    <span class="legend-item retail">■ Retail</span>
+                </div>
+            </div>
+            <div class="tradeflow-grid" id="tradeflowGrid">
+                <div class="loading-state">
+                    <div class="loader"></div>
+                    <p>Loading flows...</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════ PORTFOLIO TAB ════════ -->
+        <section class="tab-content" id="portfolioTab">
+            <div class="portfolio-header">
+                <h2 class="section-title">Open Positions</h2>
+                <div class="portfolio-summary">
+                    <span class="portfolio-stat" id="portOpenCount">0 open</span>
+                    <span class="portfolio-stat" id="portUnrealized">₹0.00 unrealized</span>
+                </div>
+            </div>
+            <div class="positions-table-wrap">
+                <table class="positions-table" id="positionsTable">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Direction</th>
+                            <th>Entry</th>
+                            <th>Current</th>
+                            <th>P&L</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positionsBody">
+                        <tr>
+                            <td colspan="6" class="empty-row">No open positions</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <h2 class="section-title" style="margin-top:2rem">Trade History</h2>
+            <div class="positions-table-wrap">
+                <table class="positions-table" id="historyTable">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Symbol</th>
+                            <th>Side</th>
+                            <th>Entry</th>
+                            <th>Exit</th>
+                            <th>P&L</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyBody">
+                        <tr>
+                            <td colspan="7" class="empty-row">No trade history</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ════════ PERFORMANCE TAB ════════ -->
+        <section class="tab-content" id="performanceTab">
+
+            <!-- KPI Strip -->
+            <div class="perf-kpi-row" id="perfKpiRow">
+                <div class="perf-kpi-card" id="pkCapital">
+                    <span class="pkv" id="pkCapitalVal">₹1,00,000</span>
+                    <span class="pkl">Current Capital</span>
+                </div>
+                <div class="perf-kpi-card" id="pkPnl">
+                    <span class="pkv" id="pkPnlVal">₹0</span>
+                    <span class="pkl">Total P&amp;L</span>
+                </div>
+                <div class="perf-kpi-card" id="pkReturn">
+                    <span class="pkv" id="pkReturnVal">0.00%</span>
+                    <span class="pkl">Total Return</span>
+                </div>
+                <div class="perf-kpi-card" id="pkWinRate">
+                    <span class="pkv" id="pkWinRateVal">0%</span>
+                    <span class="pkl">Win Rate</span>
+                </div>
+                <div class="perf-kpi-card" id="pkTrades">
+                    <span class="pkv" id="pkTradesVal">0</span>
+                    <span class="pkl">Total Trades</span>
+                </div>
+                <div class="perf-kpi-card" id="pkSharpe">
+                    <span class="pkv" id="pkSharpeVal">0.00</span>
+                    <span class="pkl">Sharpe Ratio</span>
+                </div>
+                <div class="perf-kpi-card" id="pkDrawdown">
+                    <span class="pkv" id="pkDrawdownVal">0.0%</span>
+                    <span class="pkl">Max Drawdown</span>
+                </div>
+                <div class="perf-kpi-card" id="pkPF">
+                    <span class="pkv" id="pkPFVal">0.00</span>
+                    <span class="pkl">Profit Factor</span>
+                </div>
+                <div class="perf-kpi-card" id="pkBest">
+                    <span class="pkv" id="pkBestVal">₹0</span>
+                    <span class="pkl">Best Trade</span>
+                </div>
+                <div class="perf-kpi-card" id="pkWorst">
+                    <span class="pkv" id="pkWorstVal">₹0</span>
+                    <span class="pkl">Worst Trade</span>
+                </div>
+            </div>
+
+            <!-- Equity Curve + Breakdown -->
+            <div class="perf-main-row">
+                <div class="chart-card perf-equity-card">
+                    <div class="perf-card-header">
+                        <h3 class="chart-title">Equity Curve</h3>
+                        <span class="perf-return-pill" id="perfReturnPill"></span>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="equityChart"></canvas>
+                    </div>
+                </div>
+                <div class="perf-breakdown-col">
+                    <!-- Win / Loss -->
+                    <div class="perf-breakdown-card">
+                        <h3 class="chart-title">Win / Loss</h3>
+                        <div class="winloss-bar" id="winlossBar">
+                            <div class="winloss-fill win" id="winBar" style="width:50%"></div>
+                            <div class="winloss-fill loss" id="lossBar" style="width:50%"></div>
+                        </div>
+                        <div class="winloss-labels">
+                            <span id="winLabel">0 wins</span>
+                            <span id="perfWinPct">50%</span>
+                            <span id="lossLabel">0 losses</span>
+                        </div>
+                        <div class="perf-avg-row">
+                            <span class="perf-avg-item positive">Avg Win: <b id="metAvgWin">₹0</b></span>
+                            <span class="perf-avg-item negative">Avg Loss: <b id="metAvgLoss">₹0</b></span>
+                        </div>
+                    </div>
+                    <!-- Exit Reasons -->
+                    <div class="perf-breakdown-card">
+                        <h3 class="chart-title">Exit Reasons</h3>
+                        <div class="perf-exit-list" id="perfExitList">
+                            <div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No closed trades yet</p></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Monthly P&L Heatmap -->
+            <div class="chart-card perf-monthly-card">
+                <h3 class="chart-title">Monthly P&amp;L</h3>
+                <div class="perf-monthly-grid" id="perfMonthlyGrid">
+                    <div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No monthly data yet</p></div>
+                </div>
+            </div>
+
+            <!-- Symbol Breakdown -->
+            <div class="chart-card perf-symbol-card">
+                <h3 class="chart-title">P&amp;L by Symbol</h3>
+                <div class="perf-symbol-bars" id="perfSymbolBars">
+                    <div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No trade data yet</p></div>
+                </div>
+            </div>
+
+            <!-- Trade History -->
+            <div class="chart-card perf-history-card">
+                <div class="perf-card-header">
+                    <h3 class="chart-title">Trade History</h3>
+                    <span class="perf-trade-count" id="perfTradeCount"></span>
+                </div>
+                <div class="perf-table-wrap">
+                    <table class="perf-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Symbol</th>
+                                <th>Dir</th>
+                                <th>Entry</th>
+                                <th>Exit</th>
+                                <th>Qty</th>
+                                <th>P&amp;L / unit</th>
+                                <th>P&amp;L%</th>
+                                <th>Status</th>
+                                <th>Closed</th>
+                            </tr>
+                        </thead>
+                        <tbody id="perfTradesBody">
+                            <tr><td colspan="10" style="text-align:center;padding:1.5rem;color:var(--text-muted)">No closed trades yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ── Scorecard Tab ──────────────────────────── -->
+        <section class="tab-panel" id="panel-scorecard" style="display:none">
+            <div class="section-header">
+                <h2 class="section-title">Signal Scorecard</h2>
+                <p class="section-subtitle" style="color:var(--text-muted);font-size:0.8rem;margin-top:0.25rem">
+                    Win rates by regime, symbol, hour, and confidence. Builds as signals complete.
+                </p>
+            </div>
+
+            <!-- Top KPI row -->
+            <div class="sc-kpi-row" id="scKpiRow" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;">
+                <div class="kpi-card" id="scTotalSignals"><span class="kpi-val">—</span><span class="kpi-lbl">Total Signals</span></div>
+                <div class="kpi-card" id="scWinRate"><span class="kpi-val">—</span><span class="kpi-lbl">Overall Win Rate</span></div>
+                <div class="kpi-card" id="scBestRegime"><span class="kpi-val">—</span><span class="kpi-lbl">Best Regime</span></div>
+                <div class="kpi-card" id="scPending"><span class="kpi-val">—</span><span class="kpi-lbl">Pending Outcomes</span></div>
+            </div>
+
+            <!-- 2-column grid: regime + quality grade -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem;">
+                <!-- By Regime -->
+                <div class="card" style="padding:1rem;">
+                    <div class="card-section-title" style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;color:var(--text-muted);text-transform:uppercase;margin-bottom:0.75rem;">Win Rate by Regime</div>
+                    <div id="scRegimeGrid"></div>
+                </div>
+                <!-- By Quality Grade -->
+                <div class="card" style="padding:1rem;">
+                    <div class="card-section-title" style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;color:var(--text-muted);text-transform:uppercase;margin-bottom:0.75rem;">Win Rate by Quality Grade</div>
+                    <div id="scGradeGrid"></div>
+                </div>
+            </div>
+
+            <!-- By Hour chart -->
+            <div class="card" style="padding:1rem;margin-bottom:1.5rem;">
+                <div class="card-section-title" style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;color:var(--text-muted);text-transform:uppercase;margin-bottom:0.75rem;">Win Rate by Hour (IST)</div>
+                <canvas id="scHourChart" height="100" style="width:100%"></canvas>
+            </div>
+
+            <!-- 2-column: by confidence + false reasons -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem;">
+                <div class="card" style="padding:1rem;">
+                    <div class="card-section-title" style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;color:var(--text-muted);text-transform:uppercase;margin-bottom:0.75rem;">Win Rate by Confidence</div>
+                    <div id="scConfGrid"></div>
+                </div>
+                <div class="card" style="padding:1rem;">
+                    <div class="card-section-title" style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;color:var(--text-muted);text-transform:uppercase;margin-bottom:0.75rem;">False Signal Reasons</div>
+                    <div id="scFalseReasons"></div>
+                </div>
+            </div>
+
+            <!-- By Symbol table -->
+            <div class="card" style="padding:1rem;">
+                <div class="card-section-title" style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;color:var(--text-muted);text-transform:uppercase;margin-bottom:0.75rem;">Win Rate by Symbol (Top 15)</div>
+                <div style="overflow-x:auto;">
+                    <table class="data-table" style="width:100%">
+                        <thead>
+                            <tr><th>Symbol</th><th>Signals</th><th>Wins</th><th>Losses</th><th>Timeouts</th><th>Win Rate</th></tr>
+                        </thead>
+                        <tbody id="scSymbolTable">
+                            <tr><td colspan="6" class="empty-row">No data yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════ SWING SCANNER TAB ════════ -->
+        <section class="tab-content" id="swingTab">
+            <div class="swing-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;">
+                <div>
+                    <h2 class="section-title">🔄 SwingSpectrum Scanner</h2>
+                    <p style="color:var(--text-muted);font-size:0.78rem;margin-top:0.25rem;">Multi-day swing trade setups across all tracked symbols</p>
+                </div>
+                <div class="live-pill"><span class="status-dot live"></span> LIVE</div>
+            </div>
+            <div class="swing-stats-row" id="swingStatsRow" style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem;">
+                <div class="kpi-card"><span class="kpi-val" id="swingTotal">—</span><span class="kpi-lbl">Setups Found</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="swingLong" style="color:var(--green)">—</span><span class="kpi-lbl">Long Setups</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="swingShort" style="color:var(--red)">—</span><span class="kpi-lbl">Short Setups</span></div>
+            </div>
+            <div class="swing-grid" id="swingGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:1rem;">
+                <div class="loading-state"><div class="loader"></div><p>Scanning for swing setups...</p></div>
+            </div>
+        </section>
+
+        <!-- ════════ INDEX MOVER TAB ════════ -->
+        <section class="tab-content" id="indexmoverTab">
+            <div class="index-mover-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;">
+                <div>
+                    <h2 class="section-title">🏗️ Index Contribution Analyzer</h2>
+                    <p style="color:var(--text-muted);font-size:0.78rem;margin-top:0.25rem;">Which stocks are moving Nifty/BankNifty up or down</p>
+                </div>
+                <div class="options-selector">
+                    <select class="symbol-select" id="indexMoverSelect" onchange="loadIndexMover()">
+                        <option value="nifty50">NIFTY 50</option>
+                        <option value="banknifty">BANKNIFTY</option>
+                    </select>
+                </div>
+            </div>
+            <div class="index-summary-row" id="indexSummaryRow" style="display:grid;grid-template-columns:repeat(5,1fr);gap:1rem;margin-bottom:1.5rem;">
+                <div class="kpi-card"><span class="kpi-val" id="idxLevel">—</span><span class="kpi-lbl">Index Level</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="idxChange">—</span><span class="kpi-lbl">Change (pts)</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="idxPct">—</span><span class="kpi-lbl">Change %</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="idxUp" style="color:var(--green)">—</span><span class="kpi-lbl">Stocks Up</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="idxDown" style="color:var(--red)">—</span><span class="kpi-lbl">Stocks Down</span></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+                <!-- Top Gainers -->
+                <div class="card" style="padding:1rem;">
+                    <h3 class="chart-title" style="color:var(--green);margin-bottom:0.75rem;">▲ Top Positive Contributors</h3>
+                    <div id="idxTopGainers">
+                        <div class="loading-state"><div class="loader"></div><p>Loading...</p></div>
+                    </div>
+                </div>
+                <!-- Top Draggers -->
+                <div class="card" style="padding:1rem;">
+                    <h3 class="chart-title" style="color:var(--red);margin-bottom:0.75rem;">▼ Top Negative Contributors</h3>
+                    <div id="idxTopDraggers">
+                        <div class="loading-state"><div class="loader"></div><p>Loading...</p></div>
+                    </div>
+                </div>
+            </div>
+            <!-- Full Movers Table -->
+            <div class="card" style="padding:1rem;margin-top:1.5rem;">
+                <h3 class="chart-title" style="margin-bottom:0.75rem;">All Constituents by Impact</h3>
+                <div style="overflow-x:auto;max-height:400px;overflow-y:auto;">
+                    <table class="positions-table" style="width:100%;">
+                        <thead style="position:sticky;top:0;background:var(--card-bg,#1e1e2e);z-index:2;">
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Weight %</th>
+                                <th>% Change</th>
+                                <th>Points</th>
+                                <th>Direction</th>
+                            </tr>
+                        </thead>
+                        <tbody id="idxMoversBody">
+                            <tr><td colspan="5" class="empty-row">Loading index data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ════════ BREAKOUT SCANNER TAB ════════ -->
+        <section class="tab-content" id="breakoutsTab">
+            <div class="breakout-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;">
+                <div>
+                    <h2 class="section-title">🚀 Breakout Scanner</h2>
+                    <p style="color:var(--text-muted);font-size:0.78rem;margin-top:0.25rem;">Volume-confirmed 10-day, 50-day, and 52-week breakouts</p>
+                </div>
+                <div class="live-pill"><span class="status-dot live"></span> LIVE</div>
+            </div>
+            <div class="breakout-stats-row" id="breakoutStatsRow" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;">
+                <div class="kpi-card"><span class="kpi-val" id="boTotal">—</span><span class="kpi-lbl">Total Breakouts</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="boGradeA" style="color:var(--green)">—</span><span class="kpi-lbl">Grade A (Strong)</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="boGradeB" style="color:var(--accent)">—</span><span class="kpi-lbl">Grade B (Moderate)</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="bo52W" style="color:#f59e0b">—</span><span class="kpi-lbl">52-Week Breakouts</span></div>
+            </div>
+            <!-- Breakout filter tabs -->
+            <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+                <button class="toggle-btn active" id="boFilterAll" onclick="filterBreakouts('all')">All</button>
+                <button class="toggle-btn" id="boFilter10H" onclick="filterBreakouts('bullish_10d')">▲ 10D High</button>
+                <button class="toggle-btn" id="boFilter10L" onclick="filterBreakouts('bearish_10d')">▼ 10D Low</button>
+                <button class="toggle-btn" id="boFilter50H" onclick="filterBreakouts('bullish_50d')">▲ 50D High</button>
+                <button class="toggle-btn" id="boFilter50L" onclick="filterBreakouts('bearish_50d')">▼ 50D Low</button>
+                <button class="toggle-btn" id="boFilter52W" onclick="filterBreakouts('52w')">52W H/L</button>
+            </div>
+            <div style="overflow-x:auto;">
+                <table class="positions-table" style="width:100%;">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Type</th>
+                            <th>Dir</th>
+                            <th>Grade</th>
+                            <th>LTP</th>
+                            <th>Breakout Level</th>
+                            <th>Distance %</th>
+                            <th>Vol Ratio</th>
+                            <th>Strength</th>
+                        </tr>
+                    </thead>
+                    <tbody id="breakoutsBody">
+                        <tr><td colspan="9" class="empty-row">Scanning for breakouts...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ── Symbol Detail Modal ────────────── -->
+    <div class="modal-backdrop" id="modalBackdrop">
+        <div class="modal" id="symbolModal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="modalTitle">BTC/USDT</h2>
+                <div class="modal-header-right">
+                    <div class="tf-selector">
+                        <button class="tf-btn active" data-tf="5m" onclick="switchModalTimeframe('5m')">5m</button>
+                        <button class="tf-btn" data-tf="15m" onclick="switchModalTimeframe('15m')">15m</button>
+                        <button class="tf-btn" data-tf="1h" onclick="switchModalTimeframe('1h')">1h</button>
+                        <button class="tf-btn" data-tf="1d" onclick="switchModalTimeframe('1d')">1D</button>
+                    </div>
+                    <button class="modal-close" id="modalClose">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="modal-chart-wrap">
+                    <canvas id="modalChart" width="700" height="260"></canvas>
+                </div>
+                <div class="modal-info-grid" id="modalInfoGrid"></div>
+                <div class="modal-backtest-section" id="modalBacktestSection">
+                    <p style="color:var(--text-muted);font-size:0.8rem">Backtest loading...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Mobile Bottom Nav ────────────────── -->
+    <nav class="mobile-bottom-nav" id="mobileBottomNav">
+        <button class="bottom-nav-item active" data-tab="overview" id="bnOverview">
+            <span class="bottom-nav-icon">◈</span>
+            <span class="bottom-nav-label">Brahmand</span>
+        </button>
+        <button class="bottom-nav-item" data-tab="market" id="bnMarket">
+            <span class="bottom-nav-icon">⚙</span>
+            <span class="bottom-nav-label">Market</span>
+        </button>
+        <button class="bottom-nav-item" data-tab="tradeflow" id="bnTradeflow">
+            <span class="bottom-nav-icon">📈</span>
+            <span class="bottom-nav-label">Trade Fl...</span>
+        </button>
+        <button class="bottom-nav-item" data-tab="options" id="bnOptions">
+            <span class="bottom-nav-icon">$</span>
+            <span class="bottom-nav-label">Index</span>
+        </button>
+        <button class="bottom-nav-item" id="bnMore">
+            <span class="bottom-nav-icon">≡</span>
+            <span class="bottom-nav-label">More</span>
+        </button>
+    </nav>
+
+    <!-- More menu overlay -->
+    <div class="more-menu-overlay" id="moreMenuOverlay">
+        <div class="more-menu" id="moreMenu">
+            <div class="more-menu-header">
+                <span class="more-menu-title">More</span>
+                <button class="more-menu-close" id="moreMenuClose">✕</button>
+            </div>
+            <button class="more-menu-item" data-tab="portfolio">
+                <span class="more-menu-icon">💼</span>
+                <span>Portfolio</span>
+            </button>
+            <button class="more-menu-item" data-tab="performance">
+                <span class="more-menu-icon">🏆</span>
+                <span>Performance</span>
+            </button>
+            <button class="more-menu-item" data-tab="swing">
+                <span class="more-menu-icon">🔄</span>
+                <span>Swing Scanner</span>
+            </button>
+            <button class="more-menu-item" data-tab="indexmover">
+                <span class="more-menu-icon">🏗️</span>
+                <span>Index Mover</span>
+            </button>
+            <button class="more-menu-item" data-tab="breakouts">
+                <span class="more-menu-icon">🚀</span>
+                <span>Breakouts</span>
+            </button>
+            <a class="more-menu-item" href="/landing">
+                <span class="more-menu-icon">🎉</span>
+                <span>Free Trial</span>
+            </a>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>⚠️ AI signals are for reference only. Always do your own analysis before trading real money.</p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IntradayPulse — Find Precision Signals. Trade Smarter. Grow Faster.</title>
+    <meta name="description"
+        content="AI-powered trading signals, sectoral heatmap, option chain analysis, institutional trade flow — everything a trader needs in one platform.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/static/landing.css">
+</head>
+
+<body>
+    <!-- ── Floating Nav ──────────────────────────── -->
+    <nav class="landing-nav" id="landingNav">
+        <div class="nav-inner">
+            <div class="nav-logo">
+                <span class="nav-logo-icon">◈</span>
+                <span class="nav-logo-text">IntradayPulse</span>
+            </div>
+            <div class="nav-links">
+                <a href="#features" class="nav-link">Features</a>
+                <a href="#products" class="nav-link">Products</a>
+                <a href="#why" class="nav-link">Why Us</a>
+                <a href="/" class="nav-cta-btn">Open Dashboard →</a>
+            </div>
+            <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Menu">☰</button>
+        </div>
+    </nav>
+
+    <!-- Mobile slide menu -->
+    <div class="mobile-menu" id="mobileMenu">
+        <a href="#features" class="mobile-link">Features</a>
+        <a href="#products" class="mobile-link">Products</a>
+        <a href="#why" class="mobile-link">Why Us</a>
+        <a href="/" class="mobile-link cta">Open Dashboard →</a>
+    </div>
+
+    <!-- ── Hero Section ──────────────────────────── -->
+    <section class="hero">
+        <div class="hero-bg-orbs">
+            <div class="orb orb-1"></div>
+            <div class="orb orb-2"></div>
+            <div class="orb orb-3"></div>
+        </div>
+        <div class="hero-content">
+            <div class="hero-badge">🚀 AI-Powered Trading Platform</div>
+            <h1 class="hero-title">
+                Find precision signals.<br>
+                <span class="gradient-text">Trade smarter.</span><br>
+                Grow faster.
+            </h1>
+            <p class="hero-subtitle">
+                Real-time market intelligence, AI-driven signals, and institutional trade flow — 
+                everything you need to make confident trading decisions.
+            </p>
+            <div class="hero-actions">
+                <a href="/" class="btn-primary" id="heroCta">
+                    <span>Start Trading Now</span>
+                    <span class="btn-arrow">→</span>
+                </a>
+                <a href="#features" class="btn-secondary">Explore Features</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Free Trial Banner ─────────────────────── -->
+    <section class="trial-banner" id="trialBanner">
+        <div class="trial-inner">
+            <div class="trial-content">
+                <span class="trial-emoji">🎉</span>
+                <div class="trial-text">
+                    <span class="trial-heading">Avail Free Trial for</span>
+                    <span class="trial-days">15 Days</span>
+                </div>
+            </div>
+            <a href="/" class="trial-cta-btn">Start Free Trial →</a>
+        </div>
+    </section>
+
+    <!-- ── Feature Highlights ────────────────────── -->
+    <section class="feature-highlights" id="features">
+        <div class="section-container">
+            <div class="highlights-grid">
+                <div class="highlight-card">
+                    <div class="highlight-icon">🏆</div>
+                    <h3 class="highlight-title">Find Best Trades In Live Market</h3>
+                    <p class="highlight-desc">AI scans 500+ stocks in real-time to surface the highest-probability setups with momentum confirmation.</p>
+                </div>
+                <div class="highlight-card">
+                    <div class="highlight-icon">💎</div>
+                    <h3 class="highlight-title">Use Small Capital Efficiently</h3>
+                    <p class="highlight-desc">Smart position sizing and capital allocation — optimized for Indian retail traders starting with ₹10K–₹1L.</p>
+                </div>
+                <div class="highlight-card">
+                    <div class="highlight-icon">⚡</div>
+                    <h3 class="highlight-title">Real-Time AI-Powered Signals</h3>
+                    <p class="highlight-desc">Multi-timeframe analysis with RSI, VWAP, EMA crossovers, and trend regime detection — updated every 30 seconds.</p>
+                </div>
+                <div class="highlight-card">
+                    <div class="highlight-icon">🎯</div>
+                    <h3 class="highlight-title">Track All Sectors At A Glance</h3>
+                    <p class="highlight-desc">Live sectoral heatmap covers IT, Finance, Auto, Pharma, Energy, Metals, Infra, and more — see rotation instantly.</p>
+                </div>
+                <div class="highlight-card">
+                    <div class="highlight-icon">📊</div>
+                    <h3 class="highlight-title">Option Chain & PCR Analysis</h3>
+                    <p class="highlight-desc">NIFTY & BANKNIFTY put-call ratio, max pain, OI buildup — understand market sentiment before placing trades.</p>
+                </div>
+                <div class="highlight-card">
+                    <div class="highlight-icon">💰</div>
+                    <h3 class="highlight-title">Institutional Trade Flow</h3>
+                    <p class="highlight-desc">Track FII, DII and retail positioning in real-time. Follow the smart money and ride institutional momentum.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Feature Showcase Sections ─────────────── -->
+    <section class="showcase-section">
+        <div class="section-container">
+            <div class="showcase-row">
+                <div class="showcase-info">
+                    <span class="showcase-tag">Everything A Trader Needs</span>
+                    <h2 class="showcase-title">All-In-One Trading Intelligence</h2>
+                    <ul class="showcase-list">
+                        <li><span class="list-check">✓</span> Real-time AI-powered signals with confidence scores</li>
+                        <li><span class="list-check">✓</span> Complete sectoral heatmap with advancing/declining count</li>
+                        <li><span class="list-check">✓</span> Option chain & PCR analysis for NIFTY, BANKNIFTY</li>
+                        <li><span class="list-check">✓</span> Portfolio tracking with unrealized P&L</li>
+                        <li><span class="list-check">✓</span> Performance metrics — Sharpe, drawdown, profit factor</li>
+                    </ul>
+                </div>
+                <div class="showcase-visual">
+                    <div class="showcase-card-stack">
+                        <div class="mini-signal-card buy-card">
+                            <div class="mini-card-top">
+                                <span class="mini-symbol">RELIANCE</span>
+                                <span class="mini-badge buy">BUY</span>
+                            </div>
+                            <span class="mini-price">₹2,891.45</span>
+                            <div class="mini-levels">
+                                <span class="mini-entry">Entry ₹2,885</span>
+                                <span class="mini-sl">SL ₹2,840</span>
+                                <span class="mini-tp">TP ₹2,960</span>
+                            </div>
+                        </div>
+                        <div class="mini-signal-card sell-card">
+                            <div class="mini-card-top">
+                                <span class="mini-symbol">BANKNIFTY</span>
+                                <span class="mini-badge sell">SELL</span>
+                            </div>
+                            <span class="mini-price">₹47,234</span>
+                            <div class="mini-levels">
+                                <span class="mini-entry">Entry ₹47,250</span>
+                                <span class="mini-sl">SL ₹47,500</span>
+                                <span class="mini-tp">TP ₹46,800</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="showcase-section alt">
+        <div class="section-container">
+            <div class="showcase-row reverse">
+                <div class="showcase-info">
+                    <span class="showcase-tag">Trade Flow</span>
+                    <h2 class="showcase-title">Follow The Smart Money</h2>
+                    <ul class="showcase-list">
+                        <li><span class="list-check">✓</span> Track real-time trade movements across institutions</li>
+                        <li><span class="list-check">✓</span> Identify FII/DII accumulation and distribution</li>
+                        <li><span class="list-check">✓</span> Catch momentum before it fades with flow analysis</li>
+                        <li><span class="list-check">✓</span> Zero-sum breakdown: where retail is losing money</li>
+                    </ul>
+                </div>
+                <div class="showcase-visual">
+                    <div class="flow-demo-card">
+                        <div class="flow-demo-header">
+                            <span class="flow-demo-sym">NIFTY 50</span>
+                            <span class="flow-tag buy">BUY</span>
+                        </div>
+                        <div class="flow-demo-row">
+                            <span class="flow-label fii-c">FII</span>
+                            <div class="flow-bar-bg"><div class="flow-fill fii-f" style="width:72%"></div></div>
+                            <span class="flow-val positive">+₹342Cr</span>
+                        </div>
+                        <div class="flow-demo-row">
+                            <span class="flow-label dii-c">DII</span>
+                            <div class="flow-bar-bg"><div class="flow-fill dii-f" style="width:55%"></div></div>
+                            <span class="flow-val positive">+₹218Cr</span>
+                        </div>
+                        <div class="flow-demo-row">
+                            <span class="flow-label ret-c">Retail</span>
+                            <div class="flow-bar-bg"><div class="flow-fill ret-f" style="width:60%"></div></div>
+                            <span class="flow-val negative">-₹560Cr</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="showcase-section">
+        <div class="section-container">
+            <div class="showcase-row">
+                <div class="showcase-info">
+                    <span class="showcase-tag">Market Wise</span>
+                    <h2 class="showcase-title">Smarter Market Screening</h2>
+                    <ul class="showcase-list">
+                        <li><span class="list-check">✓</span> Hold winning trades with confidence-based signals</li>
+                        <li><span class="list-check">✓</span> Avoid false breakouts using multi-timeframe analysis</li>
+                        <li><span class="list-check">✓</span> X-Factor scoring — find stocks outperforming their sector</li>
+                        <li><span class="list-check">✓</span> Increase trading accuracy with AI regime detection</li>
+                    </ul>
+                </div>
+                <div class="showcase-visual">
+                    <div class="screener-demo">
+                        <div class="screener-demo-header">
+                            <span>MARKET WISE GAINERS</span>
+                            <span class="demo-live-pill">● LIVE</span>
+                        </div>
+                        <div class="screener-demo-row">
+                            <div class="demo-avatar" style="background:linear-gradient(135deg,#6366f1,#818cf8)">TI</div>
+                            <div class="demo-stock-info">
+                                <span class="demo-sym">TITAN</span>
+                                <span class="demo-name">TITAN COMPANY</span>
+                            </div>
+                            <span class="demo-chg up">▲ 1.64%</span>
+                            <span class="demo-xf strong">2.10x</span>
+                        </div>
+                        <div class="screener-demo-row">
+                            <div class="demo-avatar" style="background:linear-gradient(135deg,#10b981,#34d399)">SU</div>
+                            <div class="demo-stock-info">
+                                <span class="demo-sym">SUPREMEIND</span>
+                                <span class="demo-name">SUPREME INDUSTRIES</span>
+                            </div>
+                            <span class="demo-chg up">▲ 4.09%</span>
+                            <span class="demo-xf strong">2.88x</span>
+                        </div>
+                        <div class="screener-demo-row">
+                            <div class="demo-avatar" style="background:linear-gradient(135deg,#f59e0b,#fbbf24)">VE</div>
+                            <div class="demo-stock-info">
+                                <span class="demo-sym">VEDL</span>
+                                <span class="demo-name">VEDANTA</span>
+                            </div>
+                            <span class="demo-chg up">▲ 3.66%</span>
+                            <span class="demo-xf med">2.33x</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="showcase-section alt">
+        <div class="section-container">
+            <div class="showcase-row reverse">
+                <div class="showcase-info">
+                    <span class="showcase-tag">Swing Spectrum</span>
+                    <h2 class="showcase-title">Catch Every Move</h2>
+                    <ul class="showcase-list">
+                        <li><span class="list-check">✓</span> Find breakout stocks before the crowd</li>
+                        <li><span class="list-check">✓</span> Identify reversal patterns for early entry</li>
+                        <li><span class="list-check">✓</span> Get broader market trend context (bullish/bearish regime)</li>
+                        <li><span class="list-check">✓</span> ADX + RSI + EMA confluence for high-probability setups</li>
+                    </ul>
+                </div>
+                <div class="showcase-visual">
+                    <div class="spectrum-demo">
+                        <div class="spectrum-label">Market Regime</div>
+                        <div class="spectrum-bars">
+                            <div class="spectrum-item">
+                                <span class="spectrum-name">TRENDING</span>
+                                <div class="spectrum-bar-bg"><div class="spectrum-fill trending" style="width:68%"></div></div>
+                            </div>
+                            <div class="spectrum-item">
+                                <span class="spectrum-name">RANGING</span>
+                                <div class="spectrum-bar-bg"><div class="spectrum-fill ranging" style="width:22%"></div></div>
+                            </div>
+                            <div class="spectrum-item">
+                                <span class="spectrum-name">HIGH VOL</span>
+                                <div class="spectrum-bar-bg"><div class="spectrum-fill highvol" style="width:10%"></div></div>
+                            </div>
+                        </div>
+                        <div class="spectrum-tags">
+                            <span class="spec-tag bullish">NIFTY ▲ Bullish</span>
+                            <span class="spec-tag bearish">BANKNIFTY ▼ Bearish</span>
+                            <span class="spec-tag bullish">RELIANCE ▲ Breakout</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Product Cards ─────────────────────────── -->
+    <section class="products-section" id="products">
+        <div class="section-container">
+            <div class="section-header">
+                <span class="section-tag">Why Choose IntradayPulse?</span>
+                <h2 class="section-heading">Complete Trading Universe</h2>
+                <p class="section-desc">Every tool you need, unified in one platform. No switching apps. No missing data.</p>
+            </div>
+            <div class="products-grid">
+                <div class="product-card">
+                    <div class="product-icon-wrap brahmand">◈</div>
+                    <h3 class="product-name">TradeBrahmand</h3>
+                    <p class="product-desc">Complete trading universe at a glance — AI signals, market data, portfolio, all in one dashboard.</p>
+                </div>
+                <div class="product-card">
+                    <div class="product-icon-wrap market">⚙</div>
+                    <h3 class="product-name">MarketWise</h3>
+                    <p class="product-desc">Smart market insights and analysis — X-Factor scoring, sector rotation, volume breakouts.</p>
+                </div>
+                <div class="product-card">
+                    <div class="product-icon-wrap tradeflow">📈</div>
+                    <h3 class="product-name">TradeFlow</h3>
+                    <p class="product-desc">Track real-time institutional movements — FII/DII positioning, smart money flow detection.</p>
+                </div>
+                <div class="product-card">
+                    <div class="product-icon-wrap stockon">🔔</div>
+                    <h3 class="product-name">StockOn</h3>
+                    <p class="product-desc">Instant stock alerts and signals — get notified the moment high-confidence setups appear.</p>
+                </div>
+                <div class="product-card">
+                    <div class="product-icon-wrap swing">🌊</div>
+                    <h3 class="product-name">SwingSpectrum</h3>
+                    <p class="product-desc">Identify swing trading opportunities — multi-day setups with trend and momentum confluence.</p>
+                </div>
+                <div class="product-card">
+                    <div class="product-icon-wrap tradex">⚡</div>
+                    <h3 class="product-name">TradeX</h3>
+                    <p class="product-desc">Advanced trading execution tools — automated trailing stops, position sizing, risk management.</p>
+                </div>
+                <div class="product-card">
+                    <div class="product-icon-wrap optionclock">⏱</div>
+                    <h3 class="product-name">OptionClock</h3>
+                    <p class="product-desc">Real-time option chain tracking — PCR, max pain, OI buildup, time decay analysis.</p>
+                </div>
+                <div class="product-card">
+                    <div class="product-icon-wrap indexmover">📊</div>
+                    <h3 class="product-name">IndexMover</h3>
+                    <p class="product-desc">See which stocks move the index — impact analysis for NIFTY 50, BANKNIFTY constituents.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Why Choose Us ─────────────────────────── -->
+    <section class="why-section" id="why">
+        <div class="section-container">
+            <div class="section-header">
+                <span class="section-tag">Built For Indian Traders</span>
+                <h2 class="section-heading">Numbers That Speak</h2>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-block">
+                    <span class="stat-number">500+</span>
+                    <span class="stat-name">Stocks Tracked</span>
+                </div>
+                <div class="stat-block">
+                    <span class="stat-number">12</span>
+                    <span class="stat-name">Sectors Covered</span>
+                </div>
+                <div class="stat-block">
+                    <span class="stat-number">30s</span>
+                    <span class="stat-name">Signal Refresh</span>
+                </div>
+                <div class="stat-block">
+                    <span class="stat-number">24/7</span>
+                    <span class="stat-name">Crypto + NSE</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Final CTA ─────────────────────────────── -->
+    <section class="final-cta">
+        <div class="section-container">
+            <h2 class="cta-title">Ready to trade with AI precision?</h2>
+            <p class="cta-subtitle">Start your 15-day free trial. No credit card required.</p>
+            <a href="/" class="btn-primary large">
+                <span>Open Dashboard Now</span>
+                <span class="btn-arrow">→</span>
+            </a>
+        </div>
+    </section>
+
+    <!-- ── Footer ────────────────────────────────── -->
+    <footer class="landing-footer">
+        <div class="footer-inner">
+            <div class="footer-brand">
+                <span class="nav-logo-icon">◈</span>
+                <span class="nav-logo-text">IntradayPulse</span>
+            </div>
+            <p class="footer-disclaimer">⚠️ AI signals are for educational purposes only. Always do your own analysis before trading real money. Past performance does not guarantee future results.</p>
+            <p class="footer-copy">© 2026 IntradayPulse. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script>
+        // Mobile menu toggle
+        const menuBtn = document.getElementById('mobileMenuBtn');
+        const mobileMenu = document.getElementById('mobileMenu');
+        menuBtn.addEventListener('click', () => {
+            mobileMenu.classList.toggle('open');
+            menuBtn.textContent = mobileMenu.classList.contains('open') ? '✕' : '☰';
+        });
+        // Close on link click
+        mobileMenu.querySelectorAll('.mobile-link').forEach(link => {
+            link.addEventListener('click', () => {
+                mobileMenu.classList.remove('open');
+                menuBtn.textContent = '☰';
+            });
+        });
+        // Scroll nav background
+        window.addEventListener('scroll', () => {
+            document.getElementById('landingNav').classList.toggle('scrolled', window.scrollY > 40);
+        });
+        // Animate on scroll
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+        }, { threshold: 0.15 });
+        document.querySelectorAll('.highlight-card, .product-card, .showcase-row, .stat-block').forEach(el => observer.observe(el));
+    </script>
+</body>
+
+</html>
