@@ -30,6 +30,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
+from utils.atomic_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +95,7 @@ class TradeJournal:
     def _save(self) -> None:
         path = os.path.abspath(_JOURNAL_FILE)
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump([asdict(r) for r in self._records], f, ensure_ascii=False, indent=2)
+            atomic_write_json(path, [asdict(r) for r in self._records], ensure_ascii=False, indent=2)
         except Exception as exc:
             logger.warning("Could not save trade journal: %s", exc)
 

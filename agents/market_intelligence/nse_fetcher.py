@@ -1,6 +1,10 @@
 """
 NSE Real-Time Data Fetcher using yFinance.
 
+Canonical symbol map and fetch helpers for the API/dashboard layer. For the
+ingestion-pipeline variant, see ``agents.data_ingestion.nse_fetcher`` and
+``docs/nse_fetcher_modules.md``.
+
 Fetches real OHLCV data for Indian markets:
 - NIFTY 50, BANKNIFTY (indices)
 - Top NSE stocks (RELIANCE, TCS, etc.)
@@ -10,12 +14,20 @@ Fetches real OHLCV data for Indian markets:
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
+
+from db.ohlcv_cache import (
+    ensure_ohlcv_cache_table,
+    get_latest_timestamp,
+    read_cached_ohlcv,
+    upsert_ohlcv,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +59,8 @@ NSE_SYMBOLS = {
     "MARUTI":      "MARUTI.NS",
     "TITAN":       "TITAN.NS",
     "WIPRO":       "WIPRO.NS",
-    "TATAMOTORS":  "TATAMOTORS.NS",
+    "TATAMOTORS":  "TATAMOTORDVR.NS",  # Tata Motors DVR
+    "SWIGGY":      "SWIGGY.NS",        # Swiggy — food delivery
     "SUNPHARMA":   "SUNPHARMA.NS",
     "ULTRACEMCO":  "ULTRACEMCO.NS",
     "ADANIENT":    "ADANIENT.NS",
@@ -104,8 +117,7 @@ NSE_SYMBOLS = {
     "HAL":         "HAL.NS",
     "BEL":         "BEL.NS",
     "IRCTC":       "IRCTC.NS",
-    "ZOMATO":      "ZOMATO.NS",
-    "PAYTM":       "PAYTM.NS",
+    "SWIGGY":      "SWIGGY.NS",
     "NYKAA":       "NYKAA.NS",
     "POLICYBZR":   "POLICYBZR.NS",
     "DELHIVERY":   "DELHIVERY.NS",
@@ -130,6 +142,28 @@ NSE_SYMBOLS = {
     "DIXON":       "DIXON.NS",
     "POLYCAB":     "POLYCAB.NS",
     "KALYANKJIL":  "KALYANKJIL.NS",
+
+    # ── Swing Trading Watchlist (Small/Mid-Cap High-Volatility) ──────────────
+    # These are specifically added for the SwingSpectrum scanner.
+    "CUPID":       "CUPID.NS",         # Small-cap medical devices — high %move
+    "PRECWIRE":    "PRECWIRE.NS",      # Precision wires — small-cap
+    "TATASTEEL":   "TATASTEEL.NS",     # Large-cap metals — strong swing mover
+    "WELSPUNIND":  "WELSPUNIND.NS",    # Textiles mid-cap
+    "RAILVIKAS":   "RVNL.NS",          # Rail Vikas Nigam — PSU infra
+    "IRFC":        "IRFC.NS",          # Indian Railway Finance
+    "MAZDOCK":     "MAZDOCK.NS",       # Mazagon Dock — defence
+    "COCHINSHIP":  "COCHINSHIP.NS",    # Cochin Shipyard — defence/PSU
+    "NATIONALUM":  "NATIONALUM.NS",    # National Aluminium
+    "JINDALSAW":   "JINDALSAW.NS",     # Jindal SAW — pipes
+    "MOLDTKPAC":   "MOLDTKPAC.NS",     # Mold-Tek Packaging
+    "TIINDIA":     "TIINDIA.NS",       # Tube Investments
+    "GRINDWELL":   "GRINDWELL.NS",     # Grindwell Norton — abrasives
+    "ELECON":      "ELECON.NS",        # Elecon Engineering
+    "DYNAMATECH":  "DYNAMATECH.NS",    # Dynamatic Tech — aerospace
+    "GMDCLTD":     "GMDCLTD.NS",       # GMDC — mining
+    "RITES":       "RITES.NS",         # RITES — PSU infra consulting
+    "HGINFRA":     "HGINFRA.NS",       # H.G. Infra Engineering
+    "CAPLIPOINT":  "CAPLIPOINT.NS",    # Caplin Point — pharma mid
 }
 
 # Reverse map: yf ticker → display name
@@ -138,6 +172,53 @@ _YF_TO_DISPLAY = {v: k for k, v in NSE_SYMBOLS.items()}
 # ── Cache to avoid hammering yfinance ────────────────────
 _cache: dict[str, dict] = {}
 CACHE_TTL_SECONDS = 60  # Refresh every 60 seconds
+
+_INTERVAL_SECONDS = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "1d": 86400,
+}
+
+
+def _fetch_history_with_timeout(
+    ticker: str,
+    *,
+    period: Optional[str],
+    interval: str,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    timeout_sec: int = 15,
+) -> pd.DataFrame:
+    """Windows-safe timeout wrapper around yfinance history fetch."""
+
+    def _fetch() -> pd.DataFrame:
+        tk = yf.Ticker(ticker)
+        kwargs = {
+            "interval": interval,
+            "auto_adjust": True,
+            "prepost": False,
+        }
+        if start is not None:
+            # Daily bars expect date-only boundaries in some yfinance paths.
+            if interval in ("1d", "1wk", "1mo", "3mo"):
+                kwargs["start"] = start.strftime("%Y-%m-%d")
+                kwargs["end"] = (end or datetime.now()).strftime("%Y-%m-%d")
+            else:
+                kwargs["start"] = start.strftime("%Y-%m-%d %H:%M:%S")
+                kwargs["end"] = (end or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            kwargs["period"] = period or "5d"
+        return tk.history(**kwargs)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(_fetch)
+        try:
+            return fut.result(timeout=timeout_sec)
+        except FutureTimeoutError:
+            logger.warning("Timed out fetching %s interval=%s", ticker, interval)
+            return pd.DataFrame()
 
 
 def _is_cache_valid(key: str) -> bool:
@@ -186,7 +267,12 @@ def _normalise_df(df: pd.DataFrame) -> pd.DataFrame:
     elif "timestamp" not in df.columns:
         df = df.reset_index()
 
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    # Mixed date/datetime values can appear across providers and pandas versions.
+    # Coerce invalid rows instead of raising so upstream fetch does not fail hard.
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", format="mixed")
+
+    # Drop rows with unparseable timestamps before timezone normalization.
+    df = df.dropna(subset=["timestamp"]).reset_index(drop=True)
 
     # Strip timezone
     if df["timestamp"].dt.tz is not None:
@@ -214,6 +300,8 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
         DataFrame with columns: timestamp, open, high, low, close, volume
         None on failure.
     """
+    ensure_ohlcv_cache_table()
+
     ticker = NSE_SYMBOLS.get(display_name)
     if not ticker:
         logger.warning(f"Unknown symbol: {display_name}")
@@ -225,30 +313,67 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
         logger.debug(f"Cache hit: {display_name}")
         return _cache[cache_key]["df"].copy()  # return copy so callers can't mutate cache
 
+    # Persistent cache read path first.
+    cached_df = read_cached_ohlcv(display_name, interval, period=period)
+    latest_cached_ts = get_latest_timestamp(display_name, interval)
+    now = datetime.now()
+
+    interval_sec = _INTERVAL_SECONDS.get(interval, 300)
+    if latest_cached_ts and (now - latest_cached_ts).total_seconds() <= interval_sec * 2:
+        if not cached_df.empty:
+            _cache[cache_key] = {"df": cached_df, "fetched_at": time.time()}
+            return cached_df.copy()
+
     try:
         logger.info(f"Fetching yFinance: {display_name} ({ticker}) period={period} interval={interval}")
-        # Use Ticker.history() — returns plain columns, never MultiIndex
-        raw = yf.Ticker(ticker).history(
-            period=period,
-            interval=interval,
-            auto_adjust=True,
-            prepost=False,
-        )
+
+        # Delta fetch from latest cached candle when available.
+        if latest_cached_ts:
+            start = latest_cached_ts - timedelta(seconds=interval_sec)
+            raw = _fetch_history_with_timeout(
+                ticker,
+                period=None,
+                interval=interval,
+                start=start,
+                end=now,
+            )
+        else:
+            raw = _fetch_history_with_timeout(
+                ticker,
+                period=period,
+                interval=interval,
+            )
 
         if raw.empty:
+            if not cached_df.empty:
+                logger.warning("Using stale cache for %s after empty upstream response", display_name)
+                _cache[cache_key] = {"df": cached_df, "fetched_at": time.time()}
+                return cached_df.copy()
             logger.warning(f"No data returned for {display_name}")
             return None
 
         df = _normalise_df(raw)
         if df.empty:
+            if not cached_df.empty:
+                _cache[cache_key] = {"df": cached_df, "fetched_at": time.time()}
+                return cached_df.copy()
             return None
 
-        _cache[cache_key] = {"df": df, "fetched_at": time.time()}
-        logger.info(f"Fetched {len(df)} candles for {display_name}")
-        return df.copy()
+        upsert_ohlcv(display_name, interval, df, source="yfinance")
+        merged_df = read_cached_ohlcv(display_name, interval, period=period)
+        if merged_df.empty:
+            merged_df = df
+
+        _cache[cache_key] = {"df": merged_df, "fetched_at": time.time()}
+        logger.info(f"Fetched {len(df)} new candles for {display_name} (cached total={len(merged_df)})")
+        return merged_df.copy()
 
     except Exception as e:
         logger.error(f"yFinance fetch failed for {display_name}: {e}")
+        if not cached_df.empty:
+            logger.warning("Serving stale cache for %s due to fetch exception", display_name)
+            _cache[cache_key] = {"df": cached_df, "fetched_at": time.time()}
+            return cached_df.copy()
         return None
 
 

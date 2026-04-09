@@ -2,13 +2,16 @@
 NSE Data Fetcher — Historical OHLCV via yfinance.
 
 Free, no API key needed. Maps internal symbols to yfinance tickers.
+
+Note: This module is separate from ``agents.market_intelligence.nse_fetcher``
+(the dashboard/API symbol map and live-oriented helpers). See
+``docs/nse_fetcher_modules.md``.
 """
 
 from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
-import signal
-from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from config import settings
 from config.logger import get_logger
@@ -21,23 +24,25 @@ class TimeoutException(Exception):
     pass
 
 
-@contextmanager
-def timeout(seconds: int):
-    """Context manager for per-call timeout on Unix/Windows.
-    Note: On Windows, SIGALRM is not available; this is a best-effort.
-    For production reliability, use async.wait_for() instead.
-    """
-    def _timeout_handler(signum, frame):
-        raise TimeoutException(f"Operation timed out after {seconds}s")
-    
-    # Save original handler
-    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-    signal.alarm(seconds)
-    try:
-        yield
-    finally:
-        signal.alarm(0)  # Cancel alarm
-        signal.signal(signal.SIGALRM, old_handler)  # Restore handler
+def _history_with_timeout(ticker: str, *, start: str, end: str, interval: str, timeout_sec: int = 15) -> pd.DataFrame:
+    """Run yfinance history call in a thread with a hard timeout (Windows-safe)."""
+
+    def _fetch() -> pd.DataFrame:
+        tk = yf.Ticker(ticker, session=None)
+        return tk.history(
+            start=start,
+            end=end,
+            interval=interval,
+            auto_adjust=False,
+            timeout=timeout_sec,
+        )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(_fetch)
+        try:
+            return fut.result(timeout=timeout_sec)
+        except FutureTimeoutError as exc:
+            raise TimeoutException(f"Operation timed out after {timeout_sec}s") from exc
 
 
 # Timeframe mapping: our notation → yfinance interval
@@ -101,13 +106,12 @@ def fetch_historical(
     last_exc = None
     for attempt in range(max_retries):
         try:
-            tk = yf.Ticker(ticker, session=None)  # Fresh session each attempt
-            df = tk.history(
+            df = _history_with_timeout(
+                ticker,
                 start=start_dt.strftime("%Y-%m-%d"),
                 end=end_dt.strftime("%Y-%m-%d"),
                 interval=yf_interval,
-                auto_adjust=False,
-                timeout=15,  # yfinance timeout per request
+                timeout_sec=15,
             )
             
             if df.empty:

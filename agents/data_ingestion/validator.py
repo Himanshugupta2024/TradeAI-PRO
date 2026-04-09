@@ -143,6 +143,9 @@ def validate(
     # ── Check 3: Abnormal price spikes ────────────────────────────────────
     result = _check_spikes(result, report, fix_inplace)
 
+    # ── Check 3b: Corporate action shift detection (adj_close/close ratio) ─
+    _check_corporate_actions(result, report)
+
     # ── Check 4: Stale data (frozen WebSocket rows) ───────────────────────
     _check_stale(result, report)
 
@@ -318,6 +321,29 @@ def _check_stale(df: pd.DataFrame, report: DataQualityReport) -> None:
                 f"{n_stale} identical-to-previous bar(s) — possible low liquidity",
                 0,
             )
+
+
+def _check_corporate_actions(df: pd.DataFrame, report: DataQualityReport) -> None:
+    """Detect probable splits/dividends from abrupt adj_close/close ratio shifts."""
+    if "adj_close" not in df.columns or "close" not in df.columns:
+        return
+
+    base = df["close"].replace(0, np.nan)
+    ratio = (df["adj_close"] / base).replace([np.inf, -np.inf], np.nan)
+    if ratio.dropna().empty:
+        return
+
+    ratio_change = ratio.pct_change().abs()
+    # 8%+ abrupt ratio step between bars is suspicious for corporate action.
+    flagged = ratio_change > 0.08
+    n_flagged = int(flagged.sum())
+    if n_flagged > 0:
+        report.add_issue(
+            "corporate_action",
+            "warning",
+            f"{n_flagged} adj/close ratio jump(s) detected — possible split/dividend adjustment",
+            0,
+        )
 
 
 def _check_zero_volume(df: pd.DataFrame, report: DataQualityReport) -> None:

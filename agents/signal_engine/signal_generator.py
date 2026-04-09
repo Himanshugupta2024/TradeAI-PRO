@@ -22,8 +22,224 @@ from config import settings
 from config.logger import get_logger
 from db.models import TrendDirection
 from agents.feature_engine.regime_detector import MarketRegime
+from agents.data_ingestion.context_fetcher import build_context_fetcher
 
 log = get_logger(__name__)
+
+
+def _compute_feature_drift(
+    df: pd.DataFrame,
+    lookback_bars: int = 120,
+    recent_bars: int = 20,
+) -> tuple[float, bool, str]:
+    """Compute simple distribution-shift score using recent-vs-baseline z-delta."""
+    if df is None or df.empty or len(df) < max(lookback_bars, recent_bars * 2):
+        return 0.0, False, ""
+
+    candidate_cols = ["RSI_14", "MACD_hist", "ATR_14", "volume", "close"]
+    scores: dict[str, float] = {}
+
+    for col in candidate_cols:
+        if col not in df.columns:
+            continue
+        series = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(series) < recent_bars * 2:
+            continue
+
+        recent = series.tail(recent_bars)
+        baseline_window = series.iloc[-(lookback_bars + recent_bars):-recent_bars]
+        if len(baseline_window) < recent_bars:
+            baseline_window = series.iloc[:-recent_bars]
+        if len(baseline_window) < recent_bars:
+            continue
+
+        base_mean = float(baseline_window.mean())
+        base_std = float(baseline_window.std(ddof=0))
+        if base_std <= 1e-9:
+            continue
+
+        z_delta = abs(float(recent.mean()) - base_mean) / base_std
+        scores[col] = float(z_delta)
+
+    if not scores:
+        return 0.0, False, ""
+
+    top_feature, top_score = max(scores.items(), key=lambda kv: kv[1])
+    drift_detected = top_score >= float(settings.DRIFT_Z_THRESHOLD)
+    return round(float(top_score), 4), drift_detected, top_feature
+
+
+def _is_altcoin_symbol(symbol: str) -> bool:
+    """Return True when symbol is a non-BTC USDT pair."""
+    if not symbol:
+        return False
+    normalized = symbol.replace("/", "").upper()
+    return normalized.endswith("USDT") and normalized != "BTCUSDT"
+
+
+def _apply_context_rules(
+    direction: str,
+    confidence: float,
+    context_score: float,
+    event_risk_active: bool,
+    news_volume_spike: bool,
+    btc_dominance_7d_trend: str,
+    symbol: str,
+) -> tuple[float, bool, str | None, list[str]]:
+    """Apply ordered context confidence adjustments for one signal direction."""
+    if direction in ("SKIP", "HOLD"):
+        return confidence, False, None, []
+
+    original = float(confidence)
+    updated = float(confidence)
+    reasons: list[str] = []
+    warning: str | None = None
+
+    # 1) Event-risk dampener.
+    if event_risk_active:
+        updated *= 0.75
+        reasons.append("event_risk_active")
+
+    # 2) Context opposing direction dampener.
+    if direction == "LONG" and context_score < settings.CONTEXT_STRONG_NEGATIVE:
+        updated *= 0.80
+        reasons.append("negative_context_vs_long")
+    elif direction == "SHORT" and context_score > 0.30:
+        updated *= 0.80
+        reasons.append("positive_context_vs_short")
+
+    # 3) Strong positive context boost for LONG.
+    if direction == "LONG" and context_score > settings.CONTEXT_STRONG_POSITIVE:
+        updated = min(updated * 1.10, 95.0)
+        reasons.append("strong_positive_context_long")
+
+    # 4) News spike warning for directional signals.
+    if news_volume_spike:
+        warning = "NEWS_SPIKE - verify before trusting signal"
+
+    # 5) Altcoin LONG penalty when BTC dominance is rising.
+    if direction == "LONG" and btc_dominance_7d_trend == "RISING" and _is_altcoin_symbol(symbol):
+        updated *= 0.85
+        reasons.append("btc_dominance_rising_altcoin_long")
+
+    adjusted = len(reasons) > 0
+    if adjusted:
+        log.info(
+            "[CONTEXT] %s confidence adjusted from %.2f to %.2f - reason: %s",
+            symbol,
+            original,
+            updated,
+            ",".join(reasons),
+        )
+
+    return round(max(0.0, min(updated, 100.0)), 1), adjusted, warning, reasons
+
+
+def _candle_quality_confidence_penalty(result: pd.DataFrame) -> pd.Series:
+    """Negative confidence points for indecision candles, tiny range vs ATR, color fighting signal."""
+    z = pd.Series(0.0, index=result.index)
+    if not getattr(settings, "CANDLE_QUALITY_CONF_ADJUST_ENABLED", True):
+        return z
+    if "_raw_direction" not in result.columns or "close" not in result.columns:
+        return z
+
+    if "candle_body_ratio" in result.columns:
+        br = pd.to_numeric(result["candle_body_ratio"], errors="coerce").fillna(0.5).clip(0, 1)
+    else:
+        rng = (result["high"] - result["low"]).replace(0, np.nan)
+        body = (result["close"] - result["open"]).abs()
+        br = (body / rng).clip(0, 1).fillna(0.5)
+
+    min_br = float(getattr(settings, "CANDLE_QUALITY_MIN_BODY_RATIO", 0.35))
+    low_body = br < min_br
+    atr_col = f"ATR_{settings.ATR_PERIOD}"
+    if atr_col in result.columns:
+        atr = pd.to_numeric(result[atr_col], errors="coerce").replace(0, np.nan)
+        bar_rng = (result["high"] - result["low"]).abs()
+        rel = bar_rng / atr
+        tiny_range = rel < float(getattr(settings, "CANDLE_QUALITY_MIN_RANGE_ATR_RATIO", 0.25))
+    else:
+        tiny_range = pd.Series(False, index=result.index)
+
+    pb = float(getattr(settings, "CANDLE_QUALITY_BODY_PENALTY", 8.0))
+    pr = float(getattr(settings, "CANDLE_QUALITY_RANGE_PENALTY", 5.0))
+    pf = float(getattr(settings, "CANDLE_QUALITY_DIRECTION_FIGHT_PENALTY", 6.0))
+
+    z = z - low_body.astype(float) * pb
+    z = z - tiny_range.astype(float) * pr
+
+    rd = result["_raw_direction"].astype(str).str.upper()
+    red = result["close"] < result["open"]
+    green = result["close"] > result["open"]
+    z = z - ((rd == "LONG") & red).astype(float) * pf
+    z = z - ((rd == "SHORT") & green).astype(float) * pf
+
+    mask = rd.isin(["LONG", "SHORT"])
+    return z.where(mask, 0.0)
+
+
+def _mtf_agreement_votes_and_penalty(
+    result: pd.DataFrame,
+    htf_bull: pd.Series,
+    htf_bear: pd.Series,
+    ema_align_buy: pd.Series,
+    ema_align_sell: pd.Series,
+    macd_bull: pd.Series,
+    macd_bear: pd.Series,
+    vwap_bull: pd.Series,
+    vwap_bear: pd.Series,
+    mtf_score: float | None,
+) -> tuple[pd.Series, pd.Series]:
+    """
+    Returns (mtf_agreement_votes per row, confidence_delta negative/positive).
+    When mtf_score is provided, votes are mapped from |score|; weak scores get a small penalty.
+    """
+    votes_out = pd.Series(0, index=result.index, dtype=int)
+    delta = pd.Series(0.0, index=result.index)
+    if not getattr(settings, "MTF_VOTE_CONF_ADJUST_ENABLED", True):
+        return votes_out, delta
+    if "_raw_direction" not in result.columns:
+        return votes_out, delta
+
+    rd = result["_raw_direction"].astype(str).str.upper()
+    has_vwap = "VWAP" in result.columns and result["VWAP"].notna().any()
+
+    vl = htf_bull.astype(int) + ema_align_buy.astype(int) + macd_bull.astype(int)
+    vs = htf_bear.astype(int) + ema_align_sell.astype(int) + macd_bear.astype(int)
+    if has_vwap:
+        vl = vl + vwap_bull.astype(int)
+        vs = vs + vwap_bear.astype(int)
+    max_v = 4 if has_vwap else 3
+
+    if mtf_score is not None:
+        mag = abs(float(mtf_score))
+        mapped = int(round(mag / 100.0 * max_v))
+        directional = rd.isin(["LONG", "SHORT"])
+        votes_out = pd.Series(
+            np.where(directional, mapped, 0),
+            index=result.index,
+            dtype=int,
+        )
+        weak_thr = float(getattr(settings, "MTF_SCORE_WEAK_THRESHOLD", 35))
+        weak_pen = float(getattr(settings, "MTF_SCORE_WEAK_PENALTY", 6.0))
+        if mag < weak_thr:
+            dmag = -((weak_thr - mag) / weak_thr * weak_pen)
+            delta = pd.Series(dmag, index=result.index) * directional.astype(float)
+        return votes_out, delta
+
+    min_v = max(1, int(getattr(settings, "MTF_AGREEMENT_MIN_VOTES", 2)))
+    pen_unit = float(getattr(settings, "MTF_AGREEMENT_LOW_VOTE_PENALTY", 7.0)) / float(min_v)
+
+    shortfall_l = (min_v - vl.astype(float)).clip(lower=0)
+    shortfall_s = (min_v - vs.astype(float)).clip(lower=0)
+
+    delta = delta - (rd == "LONG").astype(float) * shortfall_l * pen_unit
+    delta = delta - (rd == "SHORT").astype(float) * shortfall_s * pen_unit
+
+    votes_out = np.where(rd == "LONG", vl, np.where(rd == "SHORT", vs, 0))
+    votes_out = pd.Series(votes_out, index=result.index, dtype=int)
+
+    return votes_out, delta
 
 
 def generate_signals(
@@ -55,6 +271,9 @@ def generate_signals(
         - stop_loss:         ATR-based SL price
         - target:            ATR-based target price
         - confidence:        composite confidence score (0-100)
+        - candle_quality_penalty: confidence points deducted for weak candle structure
+        - mtf_agreement_votes: 0–4 alignment stack (HTF/EMA/MACD[/VWAP]) or mapped from mtf_score
+        - mtf_vote_confidence_delta: net confidence change from MTF vote / weak-score logic
         - quality_score:     Signal quality score (0-100)
         - quality_grade:     "A" | "B" | "C" | "D"
         - quality_breakdown: JSON string with per-component scores
@@ -674,9 +893,87 @@ def generate_signals(
     # Apply all boosts (cap at 100)
     result["confidence"] = (result["confidence"] + conf_boost).clip(0, 100).round(1)
 
+    # (E) Candle quality + MTF alignment vote-stack — penalize indecision / weak stack
+    candle_pen = _candle_quality_confidence_penalty(result)
+    result["candle_quality_penalty"] = candle_pen.round(1)
+    vote_series, mtf_adj = _mtf_agreement_votes_and_penalty(
+        result,
+        htf_bull,
+        htf_bear,
+        ema_align_buy,
+        ema_align_sell,
+        macd_bull,
+        macd_bear,
+        vwap_bull,
+        vwap_bear,
+        mtf_score,
+    )
+    result["mtf_agreement_votes"] = vote_series
+    result["mtf_vote_confidence_delta"] = mtf_adj.round(1)
+    result["confidence"] = (result["confidence"] + candle_pen + mtf_adj).clip(0, 100).round(1)
+
     # Floor: LONG/SHORT signals always show at least 25% on dashboard
     long_or_short = result["signal"].isin(["LONG", "SHORT"])
     result.loc[long_or_short & (result["confidence"] < 25), "confidence"] = 25.0
+
+    # ── Context Layer modifier (Step 7 in lifecycle) ───────────────────────
+    # Applied after AI confidence and quality gates, before returning signals.
+    try:
+        context_fetcher = build_context_fetcher()
+        context_snapshot = context_fetcher.get_snapshot_sync(symbol)
+    except Exception as ctx_exc:
+        log.warning("Context fetch failed for %s: %s", symbol, ctx_exc)
+        context_snapshot = None
+
+    context_score = float(getattr(context_snapshot, "context_score", 0.0) or 0.0)
+    event_risk_active = bool(getattr(context_snapshot, "event_risk_active", False))
+    days_to_next_event = int(getattr(context_snapshot, "days_to_next_event", 99) or 99)
+    news_volume_spike = bool(getattr(context_snapshot, "news_volume_spike", False))
+    news_sentiment_24hr = float(getattr(context_snapshot, "news_sentiment_24hr", 0.0) or 0.0)
+    news_sentiment_7d = float(getattr(context_snapshot, "news_sentiment_7d", 0.0) or 0.0)
+    btc_dominance_7d_trend = str(getattr(context_snapshot, "btc_dominance_7d_trend", "FLAT") or "FLAT")
+
+    result["context_score"] = context_score
+    result["event_risk_active"] = event_risk_active
+    result["days_to_next_event"] = days_to_next_event
+    result["news_sentiment_24hr"] = news_sentiment_24hr
+    result["news_sentiment_7d"] = news_sentiment_7d
+    result["context_adjusted"] = False
+    result["context_warning"] = None
+
+    for idx, row in result.iterrows():
+        direction = str(row.get("signal", "HOLD") or "HOLD").upper()
+        new_conf, adjusted, warning, _ = _apply_context_rules(
+            direction=direction,
+            confidence=float(row.get("confidence", 0.0) or 0.0),
+            context_score=context_score,
+            event_risk_active=event_risk_active,
+            news_volume_spike=news_volume_spike,
+            btc_dominance_7d_trend=btc_dominance_7d_trend,
+            symbol=symbol,
+        )
+        result.at[idx, "confidence"] = new_conf
+        result.at[idx, "context_adjusted"] = adjusted
+        if warning and direction not in ("SKIP", "HOLD"):
+            result.at[idx, "context_warning"] = warning
+
+    # ── Feature Drift Guardrail ───────────────────────────────────────────
+    drift_z, drift_detected, drift_feature = _compute_feature_drift(result)
+    result["drift_z_score"] = drift_z
+    result["drift_detected"] = drift_detected
+    result["drift_feature"] = drift_feature
+    result["drift_adjusted"] = False
+
+    if drift_detected:
+        penalty_factor = max(0.0, 1.0 - float(settings.DRIFT_CONFIDENCE_PENALTY))
+        directional_mask = result["signal"].isin(["LONG", "SHORT"])
+        result.loc[directional_mask, "confidence"] = (
+            result.loc[directional_mask, "confidence"] * penalty_factor
+        ).clip(0, 100).round(1)
+        result.loc[directional_mask, "drift_adjusted"] = True
+
+        warning_mask = directional_mask & result["context_warning"].isna()
+        result.loc[warning_mask, "context_warning"] = f"FEATURE_DRIFT({drift_feature})"
 
     # Cleanup helper column used only during conflict penalty application.
     if "_conflict_penalty" in result.columns:
@@ -712,7 +1009,7 @@ def generate_signals(
         log.info(
             "Signal summary: %d LONG, %d SHORT, %d SKIP, %d HOLD | "
             "AI rejected: %d | Gate blocked: %d | conf_thresh=%d | quality_thresh=%d | "
-            "Latest: %s (conf=%.1f%%, QS=%d/%s, RSI=%.1f, Regime=%s%s)",
+            "Latest: %s (conf=%.1f%%, QS=%d/%s, RSI=%.1f, Regime=%s, Drift=%.2f/%s%s)",
             long_mask.sum(), short_mask.sum(), skip_count, hold_count,
             ai_rejected, gate_blocked, conf_threshold, quality_threshold,
             last.get("signal", "HOLD"),
@@ -721,6 +1018,8 @@ def generate_signals(
             last.get("quality_grade", "?"),
             last.get("RSI_14", 0) if pd.notna(last.get("RSI_14")) else 0,
             regime.value if regime else "N/A",
+            drift_z,
+            drift_feature or "none",
             f", Gate={gate_reason}" if gate_reason else "",
         )
 

@@ -431,6 +431,139 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 .ai-icon { font-size: 1.3rem; flex-shrink: 0; margin-top: 2px; }
 .ai-text { font-size: 0.82rem; line-height: 1.55; color: var(--text2); }
 
+/* ── Prediction + Signals ───────────────────────── */
+.insight-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.insight-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.15rem;
+}
+.insight-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text2);
+  margin-bottom: 0.7rem;
+}
+.pred-top { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+.pred-direction {
+  font-family: var(--mono);
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+.pred-direction.bullish { color: var(--green); }
+.pred-direction.bearish { color: var(--red); }
+.pred-direction.neutral { color: var(--cyan); }
+.pred-meta { font-size: 0.72rem; color: var(--text3); }
+.pred-conf-wrap { margin-top: 0.65rem; }
+.pred-conf-track {
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  overflow: hidden;
+}
+.pred-conf-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.45s ease;
+  background: linear-gradient(90deg, var(--accent), var(--cyan));
+}
+.pred-reasons {
+  margin-top: 0.7rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.reason-pill {
+  font-size: 0.66rem;
+  color: var(--text2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgba(255,255,255,0.02);
+}
+
+.signal-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.signal-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+.signal-row-sym { font-weight: 700; font-size: 0.78rem; }
+.signal-row-action {
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  border-radius: 999px;
+  padding: 3px 8px;
+  text-transform: uppercase;
+}
+.signal-row-action.buy { background: rgba(16,185,129,0.15); color: var(--green); }
+.signal-row-action.sell { background: rgba(239,68,68,0.15); color: var(--red); }
+.signal-row-action.hold { background: rgba(34,211,238,0.1); color: var(--cyan); }
+.signal-row-conf { font-family: var(--mono); color: var(--text2); font-size: 0.72rem; }
+
+/* ── News Feed ───────────────────────────────────── */
+.news-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.95rem 1.1rem;
+  margin-bottom: 1.5rem;
+}
+.news-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
+}
+.news-sources {
+  font-size: 0.67rem;
+  color: var(--text3);
+}
+.news-list { display: grid; grid-template-columns: 1fr; gap: 0.45rem; }
+.news-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.5rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.04);
+  background: rgba(255,255,255,0.01);
+}
+.news-source {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--cyan);
+  border: 1px solid rgba(34,211,238,0.25);
+  border-radius: 999px;
+  padding: 2px 7px;
+  margin-top: 2px;
+}
+.news-link {
+  font-size: 0.76rem;
+  color: var(--text2);
+  text-decoration: none;
+  line-height: 1.4;
+}
+.news-link:hover { color: var(--text); }
+.news-time { display: block; font-size: 0.64rem; color: var(--text3); margin-top: 2px; }
+
 /* ── Notification Toast ──────────────────────────── */
 .toast-container {
   position: fixed;
@@ -478,12 +611,181 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-text { font-size: 0.85rem; color: var(--text2); font-family: var(--mono); }
 
+/* ── Cockpit Setup Cards ──────────────────────────── */
+.cockpit-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+@media (max-width: 900px) { .cockpit-row { grid-template-columns: 1fr; } }
+
+.cockpit-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.cockpit-panel-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+.cockpit-panel-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text2);
+}
+.cockpit-panel-body { padding: 0.6rem 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.cockpit-empty { padding: 1rem; text-align: center; color: var(--text3); font-size: 0.78rem; }
+
+.cs-card {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+}
+.cs-card.long-card  { border-left: 3px solid var(--green); }
+.cs-card.short-card { border-left: 3px solid var(--red); }
+.cs-card.avoid-card { border-left: 3px solid var(--yellow); opacity: 0.82; }
+
+.cs-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+.cs-sym { font-weight: 700; font-size: 0.9rem; }
+.cs-signal {
+  font-size: 0.63rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.cs-signal.long  { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+.cs-signal.short { background: rgba(239,68,68,0.15);  color: var(--red);   border: 1px solid rgba(239,68,68,0.3); }
+.cs-signal.skip  { background: rgba(245,158,11,0.12); color: var(--yellow);border: 1px solid rgba(245,158,11,0.28); }
+
+.cs-rank-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.3rem 0; }
+.cs-rank-bar-wrap { flex: 1; height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; }
+.cs-rank-bar { height: 100%; border-radius: 2px; transition: width 0.4s; }
+.cs-rank-val { font-family: var(--mono); font-size: 0.68rem; color: var(--text2); min-width: 2.5rem; text-align: right; }
+
+.cs-thesis { font-size: 0.74rem; color: var(--text2); line-height: 1.4; margin-bottom: 0.3rem; }
+.cs-meta { font-size: 0.66rem; color: var(--text3); display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.cs-meta span { display: flex; align-items: center; gap: 2px; }
+.cs-conf-line { font-size: 0.66rem; color: var(--accent); margin-top: 0.25rem; }
+.cs-futures-line { font-size: 0.64rem; color: var(--yellow); margin-top: 0.2rem; }
+.cs-blockers { font-size: 0.63rem; color: var(--red); margin-top: 0.25rem; }
+.cs-theme-pill {
+  display: inline-block;
+  font-size: 0.58rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(99,102,241,0.12);
+  border: 1px solid rgba(99,102,241,0.25);
+  color: var(--accent);
+  margin-left: 4px;
+}
+
+/* ── Futures Context Panel ─────────────────────────── */
+.futures-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+}
+.futures-panel-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+.futures-advisory {
+  font-size: 0.6rem;
+  color: var(--yellow);
+  border: 1px solid rgba(245,158,11,0.3);
+  background: rgba(245,158,11,0.08);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-weight: 600;
+}
+.futures-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1px;
+  background: var(--border);
+}
+.futures-cell {
+  background: var(--card);
+  padding: 0.75rem 1rem;
+}
+.futures-cell-sym { font-size: 0.72rem; font-weight: 700; color: var(--text); margin-bottom: 0.35rem; }
+.futures-cell-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.66rem; color: var(--text3); margin-bottom: 0.18rem; }
+.futures-cell-val { font-family: var(--mono); font-size: 0.68rem; font-weight: 600; color: var(--text2); }
+.futures-cell-val.positive { color: var(--green); }
+.futures-cell-val.negative { color: var(--red); }
+.futures-cell-val.warn { color: var(--yellow); }
+
+/* ── Theme Leadership Panel ───────────────────────── */
+.theme-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+}
+.theme-grid { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0.75rem 1rem; }
+.theme-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.74rem;
+}
+.theme-chip-name { font-weight: 600; color: var(--text); }
+.theme-chip-qs { font-family: var(--mono); font-size: 0.7rem; }
+.theme-chip-qs.hi { color: var(--green); }
+.theme-chip-qs.lo { color: var(--red); }
+.theme-chip-qs.mid { color: var(--yellow); }
+
+/* ── Why Market Strip ─────────────────────────────── */
+.why-strip {
+  background: rgba(99,102,241,0.06);
+  border: 1px solid rgba(99,102,241,0.18);
+  border-radius: var(--radius);
+  padding: 0.7rem 1rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.why-strip-icon { font-size: 1.1rem; flex-shrink: 0; }
+.why-strip-text { font-size: 0.8rem; color: var(--text2); line-height: 1.55; }
+
 /* ── Responsive ──────────────────────────────────── */
 @media (max-width: 600px) {
   .coins-grid { grid-template-columns: 1fr; }
   .market-bar { gap: 1rem; }
   .mover-row { grid-template-columns: 1.5rem 1fr 4rem 3.5rem; }
   .mover-row .rsi-pill { display: none; }
+}
+@media (max-width: 900px) {
+  .insight-grid { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -514,6 +816,52 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 </header>
 
 <main class="main">
+
+  <!-- ── Why Market Looks This Way ── -->
+  <div class="why-strip" id="whyStrip" style="display:none">
+    <div class="why-strip-icon">🧭</div>
+    <div class="why-strip-text" id="whyStripText">Analyzing market context...</div>
+  </div>
+
+  <!-- ── Best Right Now / Avoid For Now ── -->
+  <div class="cockpit-row">
+    <div class="cockpit-panel">
+      <div class="cockpit-panel-hd">
+        <span class="cockpit-panel-title">🎯 Best Right Now</span>
+        <span id="bestRightNowMeta" style="font-size:0.65rem;color:var(--text3)">—</span>
+      </div>
+      <div class="cockpit-panel-body" id="bestRightNow">
+        <div class="cockpit-empty">Fetching cockpit intelligence...</div>
+      </div>
+    </div>
+    <div class="cockpit-panel">
+      <div class="cockpit-panel-hd">
+        <span class="cockpit-panel-title">⛔ Avoid For Now</span>
+        <span style="font-size:0.63rem;color:var(--yellow);border:1px solid rgba(245,158,11,0.3);padding:2px 6px;border-radius:4px">Quality-blocked</span>
+      </div>
+      <div class="cockpit-panel-body" id="avoidForNow">
+        <div class="cockpit-empty">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Futures Context Advisory ── -->
+  <div class="futures-panel" id="futuresPanel" style="display:none">
+    <div class="futures-panel-hd">
+      <span class="cockpit-panel-title">⚡ Futures Context</span>
+      <span class="futures-advisory">Advisory · Binance FAPI public</span>
+    </div>
+    <div class="futures-grid" id="futuresGrid"></div>
+  </div>
+
+  <!-- ── Theme Leadership ── -->
+  <div class="theme-panel" id="themePanel" style="display:none">
+    <div class="futures-panel-hd">
+      <span class="cockpit-panel-title">🗂 Theme Leadership</span>
+      <span style="font-size:0.65rem;color:var(--text3)">Avg Quality Score by theme</span>
+    </div>
+    <div class="theme-grid" id="themeGrid"></div>
+  </div>
 
   <!-- ── Market Summary Bar ── -->
   <div class="market-bar" id="marketBar">
@@ -552,6 +900,51 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   <div class="ai-card" id="aiCard">
     <div class="ai-icon">🧠</div>
     <div class="ai-text" id="aiSummary">Analyzing market data...</div>
+  </div>
+
+  <!-- ── Prediction + Signal Board ── -->
+  <div class="insight-grid">
+    <div class="insight-card">
+      <div class="insight-title">📡 Market Prediction (Next 6-24h)</div>
+      <div class="pred-top">
+        <div class="pred-direction neutral" id="predDirection">NEUTRAL</div>
+        <div class="pred-meta" id="predMeta">Confidence 0% · horizon 6-24h</div>
+      </div>
+      <div class="pred-conf-wrap">
+        <div class="pred-conf-track">
+          <div class="pred-conf-fill" id="predConfFill" style="width:0%"></div>
+        </div>
+      </div>
+      <div class="pred-reasons" id="predReasons">
+        <span class="reason-pill">Waiting for live data...</span>
+      </div>
+    </div>
+    <div class="insight-card">
+      <div class="insight-title">🎯 Actionable Buy/Sell Signals</div>
+      <div class="signal-list" id="signalBoard">
+        <div class="signal-row">
+          <span class="signal-row-sym">Loading...</span>
+          <span class="signal-row-action hold">HOLD</span>
+          <span class="signal-row-conf">0%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Multi-source Crypto News ── -->
+  <div class="news-card" id="newsCard">
+    <div class="news-head">
+      <div class="insight-title" style="margin-bottom:0">📰 Multi-source Crypto News</div>
+      <div class="news-sources" id="newsSourcesMeta">Sources: loading...</div>
+    </div>
+    <div class="news-list" id="newsList">
+      <div class="news-item">
+        <span class="news-source">NEWS</span>
+        <div>
+          <span class="news-link">Loading latest crypto headlines...</span>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ── Hero Coins ── -->
@@ -614,6 +1007,9 @@ let notifPermission = Notification.permission ?? 'default';
 let prevPrices     = {};     // for flash detect
 let refreshTimer   = null;
 let countdown      = REFRESH_SEC;
+let fearGreedValue = null;
+let contextMoodCache = null;
+let cryptoIntelCache = null;  // Phase 6: cockpit intelligence cache
 
 // ── Utility ──────────────────────────────────────────────
 const fmt  = (n, d=2) => Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -623,6 +1019,13 @@ const fmtB = (n) => {
   if (n >= 1e6)  return '$' + (n / 1e6).toFixed(2)  + 'M';
   return '$' + fmt(n);
 };
+const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
+const escapeHtml = (s) => String(s || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 
 // Calculate RSI from closes array
 function calcRSI(closes, period = 14) {
@@ -682,6 +1085,11 @@ function generateAISummary(btc, eth, gainers, losers, mood) {
   const topGainer = gainers[0];
   const topLoser  = losers[0];
 
+  const _symLabel = (row) => {
+    const raw = String(row?.symbol || row?.sym || '').trim();
+    return raw ? raw.replace('USDT', '') : 'N/A';
+  };
+
   let lines = [];
 
   if (moodStr === 'BULLISH') {
@@ -693,10 +1101,10 @@ function generateAISummary(btc, eth, gainers, losers, mood) {
   }
 
   if (topGainer) {
-    lines.push(`Top gainer: ${topGainer.sym.replace('USDT','')} +${parseFloat(topGainer.priceChangePercent).toFixed(2)}% — watch for RSI overbought warning.`);
+    lines.push(`Top gainer: ${_symLabel(topGainer)} +${parseFloat(topGainer?.priceChangePercent ?? 0).toFixed(2)}% — watch for RSI overbought warning.`);
   }
   if (topLoser) {
-    lines.push(`Top loser: ${topLoser.sym.replace('USDT','')} ${parseFloat(topLoser.priceChangePercent).toFixed(2)}% — potential bounce zone if RSI <30.`);
+    lines.push(`Top loser: ${_symLabel(topLoser)} ${parseFloat(topLoser?.priceChangePercent ?? 0).toFixed(2)}% — potential bounce zone if RSI <30.`);
   }
 
   return lines.join(' ');
@@ -788,6 +1196,22 @@ function setCryptoUnavailable(message) {
 
   document.getElementById('gainersBody').innerHTML = `<div style="padding:1.5rem;text-align:center;color:#fca5a5;font-size:0.8rem;">No live data</div>`;
   document.getElementById('losersBody').innerHTML = `<div style="padding:1.5rem;text-align:center;color:#fca5a5;font-size:0.8rem;">No live data</div>`;
+
+  const predDirection = document.getElementById('predDirection');
+  const predMeta = document.getElementById('predMeta');
+  const predConfFill = document.getElementById('predConfFill');
+  const predReasons = document.getElementById('predReasons');
+  const signalBoard = document.getElementById('signalBoard');
+  if (predDirection && predMeta && predConfFill && predReasons) {
+    predDirection.textContent = 'NEUTRAL';
+    predDirection.className = 'pred-direction neutral';
+    predMeta.textContent = 'Confidence 20% · horizon 6-24h';
+    predConfFill.style.width = '20%';
+    predReasons.innerHTML = '<span class="reason-pill">Live ticker feed unavailable</span>';
+  }
+  if (signalBoard) {
+    signalBoard.innerHTML = '<div class="signal-row"><span class="signal-row-sym">No actionable signals</span><span class="signal-row-action hold">HOLD</span><span class="signal-row-conf">0%</span></div>';
+  }
 }
 
 // ── Fetch Klines for hero coins ──────────────────────────
@@ -822,10 +1246,238 @@ async function fetchFearGreed() {
     const data = await res.json();
     const val  = data.data?.[0]?.value ?? '—';
     const cls  = data.data?.[0]?.value_classification ?? '';
+    const numericVal = Number(val);
+    fearGreedValue = Number.isFinite(numericVal) ? numericVal : null;
     const el   = document.getElementById('fearGreed');
     el.textContent = `${val} (${cls})`;
     el.style.color = val < 25 ? 'var(--red)' : val > 75 ? 'var(--green)' : 'var(--yellow)';
+    return fearGreedValue;
   } catch { /* ignore */ }
+  fearGreedValue = null;
+  return null;
+}
+
+async function fetchContextMood() {
+  try {
+    const res = await fetch('/api/context/market-mood');
+    if (!res.ok) return null;
+    const data = await res.json();
+    contextMoodCache = data;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchCryptoNews() {
+  const listEl = document.getElementById('newsList');
+  const metaEl = document.getElementById('newsSourcesMeta');
+  if (!listEl || !metaEl) return;
+  try {
+    const res = await fetch('/api/crypto/news?limit=10');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    const okSources = Array.isArray(data.sources_ok) ? data.sources_ok : [];
+    const failed = Array.isArray(data.failed_sources) ? data.failed_sources : [];
+    metaEl.textContent = `Sources: ${okSources.join(', ') || 'none'}${failed.length ? ` · failed: ${failed.join(', ')}` : ''}`;
+    if (!items.length) {
+      listEl.innerHTML = '<div class="news-item"><span class="news-source">NEWS</span><div><span class="news-link">No headlines available right now.</span></div></div>';
+      return;
+    }
+    listEl.innerHTML = items.map((n) => {
+      const src = escapeHtml(n.source || 'NEWS');
+      const title = escapeHtml(n.title || 'Untitled headline');
+      const url = escapeHtml(n.url || '#');
+      const published = escapeHtml(n.published || '');
+      return `<div class="news-item">
+        <span class="news-source">${src}</span>
+        <div>
+          <a class="news-link" href="${url}" target="_blank" rel="noopener noreferrer">${title}</a>
+          ${published ? `<span class="news-time">${published}</span>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    metaEl.textContent = 'Sources: unavailable';
+    listEl.innerHTML = `<div class="news-item"><span class="news-source">NEWS</span><div><span class="news-link">News fetch failed: ${escapeHtml(e?.message || 'unknown error')}</span></div></div>`;
+  }
+}
+
+function buildHeroSignal(sym, ticker) {
+  const pct = Number.parseFloat(ticker?.priceChangePercent ?? 0) || 0;
+  const closes = klineCache[sym]?.closes ?? [];
+  const volumes = klineCache[sym]?.volumes ?? [];
+  const rsi = closes.length >= 15 ? calcRSI(closes) : null;
+  const vs = volSpike(volumes);
+  const mom = closes.length >= 8 ? ((closes[closes.length - 1] - closes[closes.length - 8]) / closes[closes.length - 8]) * 100 : 0;
+
+  let score = 0;
+  const reasons = [];
+
+  if (pct >= 2.5) { score += 1.2; reasons.push('24h momentum strong'); }
+  else if (pct <= -2.5) { score -= 1.2; reasons.push('24h momentum weak'); }
+
+  if (rsi != null) {
+    if (rsi < 33) { score += 1.4; reasons.push('RSI oversold rebound zone'); }
+    else if (rsi > 68) { score -= 1.4; reasons.push('RSI overbought risk'); }
+  }
+
+  if (mom >= 0.8) { score += 0.8; reasons.push('short-term trend up'); }
+  else if (mom <= -0.8) { score -= 0.8; reasons.push('short-term trend down'); }
+
+  if (vs >= 1.8 && pct > 0) { score += 0.6; reasons.push(`volume spike x${vs.toFixed(1)}`); }
+  if (vs >= 1.8 && pct < 0) { score -= 0.6; reasons.push(`sell volume spike x${vs.toFixed(1)}`); }
+
+  let action = 'HOLD';
+  if (score >= 1.9) action = 'BUY';
+  else if (score <= -1.9) action = 'SELL';
+
+  const confidence = clamp(Math.round(40 + Math.abs(score) * 16 + (rsi != null ? 6 : 0)), 35, 95);
+  return { sym, action, confidence, reasons };
+}
+
+function renderSignalBoard(tickerMap) {
+  const board = document.getElementById('signalBoard');
+  if (!board) return;
+  const rows = HERO_COINS
+    .map(c => ({ key: c.sym, ticker: tickerMap[c.sym] }))
+    .filter(x => !!x.ticker)
+    .map(x => buildHeroSignal(x.key, x.ticker))
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 5);
+
+  if (!rows.length) {
+    board.innerHTML = '<div class="signal-row"><span class="signal-row-sym">No signals yet</span><span class="signal-row-action hold">HOLD</span><span class="signal-row-conf">0%</span></div>';
+    return;
+  }
+
+  board.innerHTML = rows.map((r) => {
+    const label = r.sym.replace('USDT', '');
+    const cls = r.action.toLowerCase();
+    return `<div class="signal-row" title="${escapeHtml(r.reasons.join(' · ') || 'No additional context')}">
+      <span class="signal-row-sym">${escapeHtml(label)}</span>
+      <span class="signal-row-action ${cls}">${r.action}</span>
+      <span class="signal-row-conf">${r.confidence}%</span>
+    </div>`;
+  }).join('');
+}
+
+function renderPrediction(tickerMap, gainers, losers) {
+  const predDirection = document.getElementById('predDirection');
+  const predMeta = document.getElementById('predMeta');
+  const predConfFill = document.getElementById('predConfFill');
+  const predReasons = document.getElementById('predReasons');
+  if (!predDirection || !predMeta || !predConfFill || !predReasons) return;
+
+  const btcPct = Number.parseFloat(tickerMap?.BTCUSDT?.priceChangePercent ?? 0) || 0;
+  const ethPct = Number.parseFloat(tickerMap?.ETHUSDT?.priceChangePercent ?? 0) || 0;
+  const breadth = (gainers.length - losers.length) / Math.max(gainers.length + losers.length, 1);
+  const fg = fearGreedValue;
+  const ctx = contextMoodCache;
+
+  let score = 0;
+  const reasons = [];
+
+  if (btcPct >= 2) { score += 1.2; reasons.push(`BTC +${btcPct.toFixed(2)}%`); }
+  else if (btcPct <= -2) { score -= 1.2; reasons.push(`BTC ${btcPct.toFixed(2)}%`); }
+
+  if (ethPct >= 2) { score += 0.8; reasons.push(`ETH +${ethPct.toFixed(2)}%`); }
+  else if (ethPct <= -2) { score -= 0.8; reasons.push(`ETH ${ethPct.toFixed(2)}%`); }
+
+  score += breadth * 2.0;
+  reasons.push(`breadth ${(breadth * 100).toFixed(0)}%`);
+
+  if (fg != null) {
+    if (fg < 30) { score += 0.7; reasons.push(`Fear&Greed ${fg} (contrarian bullish)`); }
+    else if (fg > 70) { score -= 0.7; reasons.push(`Fear&Greed ${fg} (greed risk)`); }
+  }
+
+  const ctxMood = String(ctx?.crypto_mood || '').toUpperCase();
+  if (ctxMood === 'RISK_ON') { score += 0.8; reasons.push('context mood risk-on'); }
+  if (ctxMood === 'RISK_OFF') { score -= 0.8; reasons.push('context mood risk-off'); }
+  if (ctx?.active_event_risk) { score -= 0.5; reasons.push('event risk active'); }
+  if (typeof ctx?.avg_news_sentiment === 'number') {
+    if (ctx.avg_news_sentiment > 0.15) { score += 0.5; reasons.push('news sentiment positive'); }
+    else if (ctx.avg_news_sentiment < -0.10) { score -= 0.5; reasons.push('news sentiment weak'); }
+  }
+
+  let direction = 'NEUTRAL';
+  let cls = 'neutral';
+  if (score >= 1.0) { direction = 'BULLISH BIAS'; cls = 'bullish'; }
+  else if (score <= -1.0) { direction = 'BEARISH BIAS'; cls = 'bearish'; }
+
+  const confidence = clamp(Math.round(38 + Math.abs(score) * 18), 35, 92);
+  predDirection.textContent = direction;
+  predDirection.className = `pred-direction ${cls}`;
+  predMeta.textContent = `Confidence ${confidence}% · horizon 6-24h`;
+  predConfFill.style.width = `${confidence}%`;
+  predReasons.innerHTML = reasons.slice(0, 5).map(r => `<span class="reason-pill">${escapeHtml(r)}</span>`).join('') || '<span class="reason-pill">Insufficient data</span>';
+}
+
+async function fetchCalculatedPrediction() {
+  try {
+    const res = await fetch('/api/crypto/prediction');
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function renderPredictionFromServer(payload) {
+  const predDirection = document.getElementById('predDirection');
+  const predMeta = document.getElementById('predMeta');
+  const predConfFill = document.getElementById('predConfFill');
+  const predReasons = document.getElementById('predReasons');
+  const signalBoard = document.getElementById('signalBoard');
+  if (!predDirection || !predMeta || !predConfFill || !predReasons || !signalBoard) return;
+
+  const pred = payload?.prediction || {};
+  const directionRaw = String(pred.direction || 'NEUTRAL').toUpperCase();
+  const confidence = Number(pred.confidence || 0);
+  const score = Number(pred.score || 0);
+  const horizon = String(pred.horizon || '6-24h');
+
+  let cls = 'neutral';
+  let label = 'NEUTRAL';
+  if (directionRaw.includes('BULLISH')) {
+    cls = 'bullish';
+    label = 'BULLISH BIAS';
+  } else if (directionRaw.includes('BEARISH')) {
+    cls = 'bearish';
+    label = 'BEARISH BIAS';
+  }
+
+  predDirection.textContent = label;
+  predDirection.className = `pred-direction ${cls}`;
+  predMeta.textContent = `Confidence ${confidence}% · horizon ${horizon} · score ${score.toFixed(2)}`;
+  predConfFill.style.width = `${clamp(confidence, 0, 100)}%`;
+
+  const reasons = Array.isArray(pred.reasons) ? pred.reasons : [];
+  predReasons.innerHTML = reasons.length
+    ? reasons.slice(0, 6).map(r => `<span class="reason-pill">${escapeHtml(r)}</span>`).join('')
+    : '<span class="reason-pill">No reason breakdown available</span>';
+
+  const rows = Array.isArray(payload?.signals) ? payload.signals : [];
+  if (!rows.length) {
+    signalBoard.innerHTML = '<div class="signal-row"><span class="signal-row-sym">No signals from model</span><span class="signal-row-action hold">HOLD</span><span class="signal-row-conf">0%</span></div>';
+  } else {
+    signalBoard.innerHTML = rows.slice(0, 5).map((r) => {
+      const raw = String(r.symbol || 'UNKNOWN');
+      const sym = raw.replace('USDT', '');
+      const action = String(r.action || 'HOLD').toUpperCase();
+      const clsA = action === 'BUY' ? 'buy' : action === 'SELL' ? 'sell' : 'hold';
+      const conf = Number(r.confidence || 0);
+      const details = Array.isArray(r.reasons) ? r.reasons.join(' · ') : '';
+      return `<div class="signal-row" title="${escapeHtml(details)}">
+        <span class="signal-row-sym">${escapeHtml(sym)}</span>
+        <span class="signal-row-action ${clsA}">${action}</span>
+        <span class="signal-row-conf">${conf}%</span>
+      </div>`;
+    }).join('');
+  }
 }
 
 // ── Render Hero Coin Cards ────────────────────────────────
@@ -930,12 +1582,14 @@ function renderMoverList(containerId, coins, dir) {
   const el = document.getElementById(containerId);
   if (!coins.length) { el.innerHTML = `<div style="padding:1.5rem;text-align:center;color:var(--text3);font-size:0.8rem">No data</div>`; return; }
   el.innerHTML = coins.map((t, i) => {
+    const rawSymbol = String(t?.symbol || '').trim();
+    if (!rawSymbol) return '';
     const pct   = parseFloat(t.priceChangePercent);
     const price = parseFloat(t.lastPrice);
-    const sym   = t.symbol.replace('USDT','');
+    const sym   = rawSymbol.replace('USDT','');
 
     // RSI from kline cache if available
-    const closes = klineCache[t.symbol]?.closes ?? [];
+    const closes = klineCache[rawSymbol]?.closes ?? [];
     const rsi = closes.length >= 15 ? calcRSI(closes) : null;
     const rsiCls = rsi == null ? 'normal' : rsi < 35 ? 'oversold' : rsi > 65 ? 'overbought' : 'normal';
     const rsiTxt = rsi != null ? rsi.toFixed(0) : '—';
@@ -1017,6 +1671,169 @@ function startCountdown() {
   }, 1000);
 }
 
+// ── Phase 6: Crypto Intelligence Cockpit ─────────────────
+
+async function fetchCryptoIntelligence() {
+  try {
+    const res = await fetch('/api/crypto/intelligence');
+    if (!res.ok) return null;
+    cryptoIntelCache = await res.json();
+    return cryptoIntelCache;
+  } catch { return null; }
+}
+
+function _signalCls(sig) {
+  const s = String(sig || '').toUpperCase();
+  if (s === 'LONG') return 'long';
+  if (s === 'SHORT') return 'short';
+  return 'skip';
+}
+
+function _signalLabel(sig) {
+  const s = String(sig || '').toUpperCase();
+  if (s === 'LONG') return 'LONG ▲';
+  if (s === 'SHORT') return 'SHORT ▼';
+  return 'SKIP';
+}
+
+function _fmtFundingLabel(label) {
+  if (label === 'HIGH_POSITIVE') return '<span class="futures-cell-val warn">HIGH +</span>';
+  if (label === 'HIGH_NEGATIVE') return '<span class="futures-cell-val positive">HIGH −</span>';
+  if (label === 'NEUTRAL')       return '<span class="futures-cell-val">NEUTRAL</span>';
+  return `<span class="futures-cell-val">${escapeHtml(label || '—')}</span>`;
+}
+
+function renderCockpitSetups(setups, containerId, isAvoid) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!setups || !setups.length) {
+    el.innerHTML = `<div class="cockpit-empty">${isAvoid ? 'No blocked setups right now' : 'No actionable setups yet'}</div>`;
+    return;
+  }
+  el.innerHTML = setups.slice(0, 4).map(s => {
+    const sigCls = _signalCls(s.signal);
+    const cardCls = isAvoid ? 'avoid-card' : `${sigCls}-card`;
+    const sym = escapeHtml(String(s.symbol || '').replace('/USDT', ''));
+    const theme = escapeHtml(s.theme || '');
+    const qs = Number(s.quality_score || 0);
+    const conf = Number(s.confidence || 0);
+    const cr = Number(s.composite_rank || 0);
+    const rsi = s.rsi != null ? Number(s.rsi).toFixed(1) : '—';
+    const thesis = escapeHtml(s.thesis || '—');
+    const rr = escapeHtml(s.rr || '—');
+    const confl = s.confluence_score != null ? Number(s.confluence_score) : null;
+    const conflFactors = (s.confluence_factors || []).slice(0, 2).join(', ');
+    const ftx = s.futures_context || {};
+    const frPct = ftx.funding_rate_pct != null ? Number(ftx.funding_rate_pct).toFixed(4) : null;
+    const frLabel = ftx.funding_label || '';
+    const blockers = (s.blockers || []);
+    const rankBar = cr;
+
+    let futuresLine = '';
+    if (frPct !== null && frLabel && frLabel !== 'NEUTRAL') {
+      futuresLine = `<div class="cs-futures-line">Funding ${frPct}% · ${escapeHtml(frLabel)}</div>`;
+    }
+    let confLine = '';
+    if (confl !== null) {
+      confLine = `<div class="cs-conf-line" title="${escapeHtml(conflFactors)}">Confluence ${confl}${conflFactors ? ` · ${escapeHtml(conflFactors)}` : ''}</div>`;
+    }
+    let blockLine = '';
+    if (blockers.length) {
+      blockLine = `<div class="cs-blockers">⛔ ${escapeHtml(blockers.slice(0,2).join(', '))}</div>`;
+    }
+    return `<div class="cs-card ${cardCls}">
+      <div class="cs-top">
+        <span class="cs-sym">${sym}${theme ? `<span class="cs-theme-pill">${theme}</span>` : ''}</span>
+        <span class="cs-signal ${sigCls}">${_signalLabel(s.signal)}</span>
+      </div>
+      <div class="cs-rank-row">
+        <div class="cs-rank-bar-wrap"><div class="cs-rank-bar" style="width:${rankBar}%;background:${sigCls==='long'?'var(--green)':sigCls==='short'?'var(--red)':'var(--yellow)'}"></div></div>
+        <span class="cs-rank-val">${cr.toFixed(0)}</span>
+      </div>
+      <div class="cs-thesis">${thesis}</div>
+      <div class="cs-meta">
+        <span>QS <b style="color:var(--text)">${qs}</b></span>
+        <span>Conf <b style="color:var(--text)">${conf.toFixed(0)}%</b></span>
+        <span>RSI <b style="color:var(--text)">${rsi}</b></span>
+        <span>R:R <b style="color:var(--text)">${rr}</b></span>
+      </div>
+      ${confLine}${futuresLine}${blockLine}
+    </div>`;
+  }).join('');
+}
+
+function renderFuturesPanel(futuresCtx) {
+  const panel = document.getElementById('futuresPanel');
+  const grid = document.getElementById('futuresGrid');
+  if (!panel || !grid) return;
+  const syms = (futuresCtx && futuresCtx.per_symbol) || [];
+  if (!syms.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  grid.innerHTML = syms.map(fc => {
+    const sym = escapeHtml(String(fc.symbol || '').replace('/USDT', ''));
+    const fr = fc.funding_rate_pct != null ? Number(fc.funding_rate_pct).toFixed(4) : '—';
+    const frCls = fc.funding_label === 'HIGH_POSITIVE' ? 'warn' : fc.funding_label === 'HIGH_NEGATIVE' ? 'positive' : '';
+    const oi = fc.open_interest > 0 ? fmtB(fc.open_interest) : '—';
+    const basis = fc.basis_pct != null ? (Number(fc.basis_pct) >= 0 ? '+' : '') + Number(fc.basis_pct).toFixed(3) + '%' : '—';
+    return `<div class="futures-cell">
+      <div class="futures-cell-sym">${sym}/USDT</div>
+      <div class="futures-cell-row"><span>Funding</span><span class="futures-cell-val ${frCls}">${fr}%</span></div>
+      <div class="futures-cell-row"><span>OI</span><span class="futures-cell-val">${oi}</span></div>
+      <div class="futures-cell-row"><span>Basis</span><span class="futures-cell-val">${basis}</span></div>
+    </div>`;
+  }).join('');
+}
+
+function renderThemePanel(themes) {
+  const panel = document.getElementById('themePanel');
+  const grid = document.getElementById('themeGrid');
+  if (!panel || !grid || !themes || !themes.length) {
+    if (panel) panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = '';
+  grid.innerHTML = themes.map(t => {
+    const qs = Number(t.avg_qs || 0);
+    const cls = qs >= 60 ? 'hi' : qs < 45 ? 'lo' : 'mid';
+    return `<div class="theme-chip">
+      <span class="theme-chip-name">${escapeHtml(t.theme || '—')}</span>
+      <span class="theme-chip-qs ${cls}">${qs.toFixed(0)}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderWhyStrip(hint) {
+  const strip = document.getElementById('whyStrip');
+  const text = document.getElementById('whyStripText');
+  if (!strip || !text) return;
+  if (hint) {
+    text.textContent = hint;
+    strip.style.display = '';
+  } else {
+    strip.style.display = 'none';
+  }
+}
+
+function renderCryptoIntelligence(data) {
+  if (!data) return;
+  const grd = data.market_guardrails || {};
+  const moodLbl = String(grd.mood || 'NEUTRAL');
+  const moodCls = moodLbl.includes('BULL') ? 'mood-bullish' : moodLbl.includes('BEAR') ? 'mood-bearish' : 'mood-neutral';
+  const moodEl = document.getElementById('moodBadge');
+  if (moodEl) moodEl.innerHTML = `<span class="mood-badge ${moodCls}">${moodLbl} (${Number(grd.mood_score || 50).toFixed(0)})</span>`;
+
+  renderWhyStrip(grd.why_market_hint);
+  renderCockpitSetups(data.top_setups || [], 'bestRightNow', false);
+  renderCockpitSetups(data.avoid_list || [], 'avoidForNow', true);
+
+  const meta = data.ranking_meta || {};
+  const metaEl = document.getElementById('bestRightNowMeta');
+  if (metaEl) metaEl.textContent = `${meta.actionable || 0} setups · ${meta.total_tracked || 0} tracked`;
+
+  renderFuturesPanel(data.futures_context || {});
+  renderThemePanel(data.theme_leadership || []);
+}
+
 // ── Main Fetch Cycle ──────────────────────────────────────
 async function fetchAll(manual = false) {
   const btn = document.getElementById('refreshBtn');
@@ -1035,6 +1852,7 @@ async function fetchAll(manual = false) {
 
     renderHeroCoins(tickerMap);
     const { gainers, losers } = renderMovers(tickerMap);
+    renderSignalBoard(tickerMap);
 
     // Market mood
     const btc = tickerMap['BTCUSDT'];
@@ -1048,19 +1866,44 @@ async function fetchAll(manual = false) {
     document.getElementById('aiSummary').textContent =
       generateAISummary(btc, eth, gainers, losers, mood);
 
+    // Enriched context: external mood + fear/greed + news sources + cockpit intelligence
+    const [, , , , intelResult] = await Promise.allSettled([
+      fetchGlobalStats(),
+      fetchFearGreed(),
+      fetchContextMood(),
+      fetchCryptoNews(),
+      fetchCryptoIntelligence(),
+    ]);
+    const intel = intelResult?.status === 'fulfilled' ? intelResult.value : null;
+    if (intel) renderCryptoIntelligence(intel);
+
+    // Prefer backend calculated model (live market + news + context), fallback to local heuristic.
+    const modelPayload = await fetchCalculatedPrediction();
+    if (modelPayload && modelPayload.prediction) {
+      renderPredictionFromServer(modelPayload);
+    } else {
+      renderPrediction(tickerMap, gainers, losers);
+    }
+
     // Timestamp
     const now = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
     document.getElementById('lastRefreshTime').textContent = now;
-
-    // Fetch global stats (slower — non-blocking)
-    fetchGlobalStats();
-    fetchFearGreed();
 
   } catch (err) {
     console.error('Fetch error:', err);
     showToast('⚠️ Binance API error — retrying...', 'alert');
     setCryptoUnavailable(err && err.message ? err.message : 'Live feed unavailable.');
     document.getElementById('lastRefreshTime').textContent = 'Fetch failed';
+    await Promise.allSettled([fetchContextMood(), fetchCryptoNews(), fetchFearGreed(), fetchGlobalStats()]);
+
+    const modelPayload = await fetchCalculatedPrediction();
+    if (modelPayload && modelPayload.prediction) {
+      renderPredictionFromServer(modelPayload);
+    }
+
+    // Cockpit intelligence is server-driven — works even without Binance spot
+    const intelFallback = await fetchCryptoIntelligence();
+    if (intelFallback) renderCryptoIntelligence(intelFallback);
   } finally {
     if (btn) { btn.textContent = '↻'; btn.disabled = false; }
 

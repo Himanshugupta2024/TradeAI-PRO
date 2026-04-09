@@ -36,6 +36,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from utils.atomic_io import atomic_write_json
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -387,8 +388,7 @@ class WeightAdapter:
 
         try:
             _WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(_WEIGHTS_PATH, "w") as f:
-                json.dump(new_weights, f, indent=2)
+            atomic_write_json(_WEIGHTS_PATH, new_weights, indent=2)
             log.info("✅ Learned weights updated → %s", _WEIGHTS_PATH)
         except Exception as exc:
             log.error("WeightAdapter.update_weights write failed: %s", exc)

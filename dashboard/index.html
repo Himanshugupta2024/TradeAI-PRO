@@ -11,12 +11,172 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
         rel="stylesheet">
+    <script>
+        (function () {
+            try {
+                var savedTheme = localStorage.getItem('theme');
+                var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                var theme = savedTheme || (prefersDark ? 'dark' : 'light');
+                document.documentElement.setAttribute('data-theme', theme);
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
     <link rel="stylesheet" href="/static/styles.css">
     <style>
+        /* ═══ NEW 3-ZONE LAYOUT ═══ */
+        :root {
+            --sidebar-w: 220px;
+            --topbar-h: 42px;
+            --bg-base: var(--bg-primary);
+            --bg-surface: var(--bg-secondary);
+            --bg-raised: var(--bg-card);
+            --bdr: var(--border-color);
+            --txt: var(--text-primary);
+            --txt-muted: var(--text-muted);
+            --green2: #22c55e;
+            --red2: #ef4444;
+            --amber: #f59e0b;
+            --teal: #14b8a6;
+            --teal-dim: rgba(20,184,166,0.12);
+        }
+        [data-theme="light"] {
+            --teal-dim: rgba(20,184,166,0.08);
+        }
+        html, body { height: 100%; overflow: hidden; }
+        body { display: flex; flex-direction: column; background: var(--bg-base); font-family: var(--font-body); color: var(--txt); }
+
+        /* ── Market Mood Strip (top bar) ── */
+        .mood-strip {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+            height: var(--topbar-h);
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--bdr);
+            display: flex; align-items: center; gap: 0; padding: 0 1rem;
+        }
+        .mood-strip-logo { display: flex; align-items: center; gap: 0.45rem; margin-right: 1.25rem; flex-shrink: 0; }
+        .mood-strip-logo .logo-text { font-weight: 800; font-size: 0.95rem; letter-spacing: -0.3px; color: var(--txt); }
+        .mood-strip-logo .logo-badge { background: var(--teal); color: var(--text-inverse); font-size: 0.55rem; font-weight: 800; padding: 1px 5px; border-radius: 3px; letter-spacing: 1px; }
+        .mood-pill {
+            display: flex; align-items: center; gap: 0.4rem;
+            padding: 0.2rem 0.65rem; border-radius: 4px;
+            font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
+            background: var(--teal-dim); color: var(--teal); border: 1px solid rgba(20,184,166,0.3);
+            margin-right: 0.75rem;
+        }
+        .mood-pill .mood-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); }
+        .mood-ticker {
+            display: flex; align-items: center; gap: 1.25rem; flex: 1;
+            overflow: hidden;
+        }
+        .mood-ticker-item {
+            display: flex; align-items: center; gap: 0.35rem;
+            font-size: 0.73rem; font-weight: 500; white-space: nowrap;
+        }
+        .mood-ticker-sym { color: var(--txt-muted); font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+        .mood-ticker-val { font-family: var(--font-mono); font-size: 0.78rem; font-weight: 700; color: var(--txt); }
+        .mood-ticker-chg.up { color: var(--green2); }
+        .mood-ticker-chg.dn { color: var(--red2); }
+        .mood-event {
+            display: flex; align-items: center; gap: 0.35rem; margin-left: auto;
+            font-size: 0.7rem; color: var(--txt-muted); flex-shrink: 0;
+        }
+        .mood-event-badge { background: rgba(245,158,11,0.12); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.65rem; font-weight: 700; }
+        .mood-strip-right { display: flex; align-items: center; gap: 0.75rem; margin-left: 1rem; flex-shrink: 0; }
+        .mood-clock { font-family: var(--font-mono); font-size: 0.72rem; color: var(--txt-muted); }
+        .mood-search-wrap { position: relative; }
+        .mood-search-input {
+            background: var(--bg-raised); border: 1px solid var(--bdr); color: var(--txt);
+            font-family: var(--font-body); font-size: 0.73rem;
+            padding: 0.25rem 0.6rem; border-radius: 5px; width: 200px;
+            transition: border-color 0.15s;
+        }
+        .mood-search-input:focus { outline: none; border-color: var(--teal); }
+        .mood-search-input::placeholder { color: var(--txt-muted); }
+
+        /* ── Vertical Sidebar ── */
+        .sidebar {
+            position: fixed; top: var(--topbar-h); left: 0; bottom: 0; z-index: 100;
+            width: var(--sidebar-w);
+            background: var(--bg-surface);
+            border-right: 1px solid var(--bdr);
+            display: flex; flex-direction: column;
+            overflow-y: auto; overflow-x: hidden;
+            padding: 0.5rem 0;
+        }
+        .sidebar::-webkit-scrollbar { width: 3px; }
+        .sidebar::-webkit-scrollbar-thumb { background: var(--bdr); border-radius: 3px; }
+        .sidebar-group { margin-bottom: 0.25rem; }
+        .sidebar-group-label {
+            font-size: 0.58rem; font-weight: 700; letter-spacing: 0.1em;
+            text-transform: uppercase; color: var(--txt-muted);
+            padding: 0.5rem 1rem 0.2rem;
+        }
+        .sidebar-item {
+            display: flex; align-items: center; gap: 0.65rem;
+            padding: 0.48rem 1rem; margin: 0.08rem 0.4rem;
+            border-radius: 6px; cursor: pointer;
+            font-size: 0.82rem; font-weight: 500; color: var(--txt-muted);
+            background: transparent; border: none; width: calc(100% - 0.8rem);
+            text-align: left; text-decoration: none;
+            transition: color 0.12s, background 0.12s;
+            white-space: nowrap;
+        }
+        .sidebar-item:hover {
+            color: var(--txt); background: var(--bg-raised);
+        }
+        .sidebar-item.active {
+            color: var(--teal); background: var(--teal-dim);
+            font-weight: 600;
+        }
+        .sidebar-icon { font-size: 0.9rem; flex-shrink: 0; width: 16px; text-align: center; }
+        .sidebar-spacer { flex: 1; }
+        .sidebar-bottom {
+            padding: 0.5rem 0.5rem; border-top: 1px solid var(--bdr);
+            display: flex; flex-direction: column; gap: 0.35rem;
+        }
+        .sidebar-bottom-item {
+            display: flex; align-items: center; gap: 0.55rem;
+            padding: 0.38rem 0.5rem; border-radius: 5px; cursor: pointer;
+            font-size: 0.75rem; color: var(--txt-muted); background: none; border: none;
+            text-decoration: none; width: 100%; text-align: left;
+        }
+        .sidebar-bottom-item:hover { color: var(--txt); background: var(--bg-raised); }
+
+        /* ── App Shell ── */
+        .app-shell {
+            display: flex; flex: 1; overflow: hidden;
+            margin-top: var(--topbar-h);
+        }
+        .app-main {
+            margin-left: var(--sidebar-w);
+            flex: 1; overflow-y: auto; overflow-x: hidden;
+            padding: 1.1rem 1.4rem 2rem;
+            height: calc(100vh - var(--topbar-h));
+        }
+        .app-main::-webkit-scrollbar { width: 5px; }
+        .app-main::-webkit-scrollbar-thumb { background: var(--bdr); border-radius: 3px; }
+
+        /* ── Override old body::before gradient on new layout ── */
+        body::before { display: none; }
+
+        /* ── Mobile: hide sidebar, show bottom nav ── */
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .app-main { margin-left: 0; padding: 0.75rem 0.75rem 5rem; }
+            .mood-ticker { display: none; }
+            .mood-search-wrap { display: none; }
+        }
+        @media (min-width: 769px) {
+            .bottom-nav, .more-menu-overlay { display: none !important; }
+        }
+    </style>
+    <style>
         /* ── Stale signal badge ── */
-        .card-stale { opacity: 0.55; border-color: #4b5563 !important; }
+        .card-stale { opacity: 0.55; border-color: var(--text-muted) !important; }
         .stale-badge {
-            background: #374151; color: #9ca3af;
+            background: var(--bg-input); color: var(--text-muted);
             font-size: 0.65rem; font-weight: 700; letter-spacing: 0.05em;
             padding: 2px 6px; border-radius: 4px;
             text-transform: uppercase; vertical-align: middle;
@@ -27,14 +187,14 @@
         .modal-header-right { display: flex; align-items: center; gap: 0.75rem; }
         .tf-selector { display: flex; gap: 0.25rem; }
         .tf-btn {
-            background: var(--card-bg, #1e1e2e); color: var(--text-muted, #9ca3af);
-            border: 1px solid var(--border-color, #374151);
+            background: var(--bg-card); color: var(--text-muted);
+            border: 1px solid var(--border-color);
             padding: 3px 10px; border-radius: 5px; font-size: 0.75rem;
             font-family: var(--font-mono, monospace); cursor: pointer; transition: all 0.15s;
         }
-        .tf-btn:hover { color: var(--text-primary, #f1f5f9); border-color: #6366f1; }
+        .tf-btn:hover { color: var(--text-primary); border-color: var(--accent); }
         .tf-btn.active {
-            background: #6366f1; color: #fff; border-color: #6366f1;
+            background: var(--accent); color: #fff; border-color: var(--accent);
         }
 
         /* ── Signal quality badge on cards ── */
@@ -68,28 +228,28 @@
         /* ── Scorecard styles ── */
         .kpi-card {
             display: flex; flex-direction: column; align-items: center;
-            background: var(--card-bg, #1e1e2e); border: 1px solid var(--border-color, #374151);
+            background: var(--bg-card); border: 1px solid var(--border-color);
             border-radius: 10px; padding: 1rem; text-align: center;
         }
-        .kpi-val { font-size: 1.5rem; font-weight: 800; font-family: var(--font-mono, monospace); color: var(--text-primary, #f1f5f9); }
-        .kpi-lbl { font-size: 0.7rem; color: var(--text-muted, #9ca3af); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+        .kpi-val { font-size: 1.5rem; font-weight: 800; font-family: var(--font-mono, monospace); color: var(--text-primary); }
+        .kpi-lbl { font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
 
         .sc-wr-row {
             display: flex; align-items: center; justify-content: space-between;
-            padding: 0.45rem 0; border-bottom: 1px solid var(--border-color, #374151);
+            padding: 0.45rem 0; border-bottom: 1px solid var(--border-color);
             font-size: 0.82rem;
         }
         .sc-wr-row:last-child { border-bottom: none; }
         .sc-wr-bar-wrap { flex: 1; max-width: 120px; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; margin: 0 0.75rem; overflow: hidden; }
         .sc-wr-bar { height: 100%; border-radius: 3px; transition: width 0.5s; }
         .sc-wr-pct { font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 700; min-width: 3.5rem; text-align: right; }
-        .sc-wr-count { color: var(--text-muted, #9ca3af); font-size: 0.72rem; min-width: 3rem; text-align: right; }
+        .sc-wr-count { color: var(--text-muted); font-size: 0.72rem; min-width: 3rem; text-align: right; }
 
         .sc-false-row {
             display: flex; align-items: center; gap: 0.5rem;
             padding: 0.35rem 0; font-size: 0.78rem;
         }
-        .sc-false-name { flex: 1; color: var(--text-secondary, #d1d5db); text-transform: lowercase; }
+        .sc-false-name { flex: 1; color: var(--text-secondary); text-transform: lowercase; }
         .sc-false-bar-wrap { flex: 0 0 80px; height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
         .sc-false-bar { height: 100%; background: #ef4444; border-radius: 3px; }
         .sc-false-count { font-family: var(--font-mono, monospace); font-size: 0.75rem; color: #ef4444; min-width: 1.5rem; text-align: right; }
@@ -181,73 +341,458 @@
         @media (max-width: 960px) {
             .overview-intel { grid-template-columns: 1fr; }
         }
+
+        /* ═══ Decision Cockpit ═══ */
+        .cockpit-section { display: flex; flex-direction: column; gap: 0.65rem; margin-bottom: 0.9rem; }
+        .cockpit-row { display: grid; grid-template-columns: 1fr 1.6fr 1.4fr; gap: 0.65rem; }
+        @media (max-width: 1024px) { .cockpit-row { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 720px) { .cockpit-row { grid-template-columns: 1fr; } }
+        .cockpit-tile {
+            background: var(--card-bg, #1e1e2e);
+            border: 1px solid var(--border-color, #374151);
+            border-radius: 10px; padding: 0.7rem 0.85rem;
+        }
+        .cockpit-tile-label {
+            font-size: 0.67rem; text-transform: uppercase; letter-spacing: 0.08em;
+            color: var(--text-muted, #6b7094); margin-bottom: 0.5rem; font-weight: 700;
+        }
+        .cockpit-skeleton { font-size: 0.78rem; color: var(--text-muted, #6b7094); }
+
+        /* System state tile */
+        .cockpit-sys-row {
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 0.76rem; padding: 0.22rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .cockpit-sys-row:last-child { border-bottom: none; }
+        .cockpit-sys-key { color: var(--text-muted, #6b7094); }
+        .cockpit-sys-val { font-family: var(--font-mono, monospace); font-weight: 700; font-size: 0.78rem; }
+        .circuit-alert {
+            display: flex; align-items: center; gap: 0.35rem;
+            background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.35);
+            border-radius: 6px; padding: 0.3rem 0.5rem; margin-top: 0.35rem;
+            font-size: 0.72rem; color: #fca5a5; font-weight: 600;
+        }
+
+        /* Guardrails tile */
+        .guardrail-row {
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 0.74rem; padding: 0.18rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .guardrail-row:last-child { border-bottom: none; }
+        .guardrail-key { color: var(--text-muted, #6b7094); }
+        .guardrail-val { font-weight: 700; font-size: 0.74rem; }
+
+        /* Advisory learning tile */
+        .advisory-badge {
+            font-size: 0.55rem; background: rgba(99,102,241,0.18); color: #818cf8;
+            border: 1px solid rgba(99,102,241,0.35); padding: 1px 5px; border-radius: 3px;
+            font-weight: 800; letter-spacing: 0.06em; vertical-align: middle; margin-left: 4px;
+        }
+        .learning-advisory-text {
+            font-size: 0.77rem; color: var(--text-secondary, #a0a4b8); line-height: 1.5;
+        }
+        .learning-stat-row {
+            display: flex; justify-content: space-between; font-size: 0.73rem;
+            padding: 0.18rem 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .learning-stat-row:last-child { border-bottom: none; }
+        .learning-stat-key { color: var(--text-muted, #6b7094); }
+        .learning-stat-val { font-weight: 700; font-family: var(--font-mono, monospace); }
+
+        /* Best Right Now setups grid */
+        .cockpit-top-setups { border-left: 3px solid var(--green, #10b981); }
+        .cockpit-setups-grid { display: flex; gap: 0.6rem; overflow-x: auto; padding-bottom: 0.25rem; flex-wrap: nowrap; }
+        .cockpit-setup-card {
+            min-width: 200px; max-width: 230px; flex-shrink: 0;
+            background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.25);
+            border-radius: 8px; padding: 0.6rem 0.7rem; cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .cockpit-setup-card:hover { border-color: rgba(16,185,129,0.55); background: rgba(16,185,129,0.1); }
+        .cockpit-setup-card.short-card { background: rgba(239,68,68,0.06); border-color: rgba(239,68,68,0.25); }
+        .cockpit-setup-card.short-card:hover { border-color: rgba(239,68,68,0.55); background: rgba(239,68,68,0.1); }
+        .cs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
+        .cs-symbol { font-weight: 800; font-size: 0.88rem; color: var(--text-primary, #f0f0f5); }
+        .cs-signal-badge {
+            font-size: 0.6rem; font-weight: 800; padding: 1px 6px; border-radius: 4px;
+            text-transform: uppercase; letter-spacing: 0.06em;
+        }
+        .cs-signal-badge.long { background: rgba(16,185,129,0.2); color: #10b981; }
+        .cs-signal-badge.short { background: rgba(239,68,68,0.2); color: #ef4444; }
+        .cs-rank { font-size: 0.7rem; font-weight: 700; color: #818cf8; font-family: var(--font-mono, monospace); }
+        .cs-thesis { font-size: 0.7rem; color: var(--text-muted, #6b7094); margin: 0.25rem 0; line-height: 1.35; }
+        .cs-levels { display: flex; gap: 0.5rem; font-size: 0.68rem; flex-wrap: wrap; margin-top: 0.2rem; }
+        .cs-level { background: rgba(255,255,255,0.04); border-radius: 4px; padding: 1px 5px; }
+        .cs-level-key { color: var(--text-muted, #6b7094); }
+        .cs-level-val { font-family: var(--font-mono, monospace); font-weight: 600; color: var(--text-primary, #f0f0f5); }
+        .cs-blocker {
+            margin-top: 0.3rem; font-size: 0.65rem; color: #f59e0b;
+            display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;
+        }
+        .cs-blocker-chip {
+            background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.3);
+            border-radius: 3px; padding: 0px 4px; font-size: 0.62rem; font-weight: 700;
+        }
+        .cockpit-count-badge {
+            font-size: 0.7rem; font-weight: 800; background: rgba(16,185,129,0.15);
+            color: #10b981; border-radius: 4px; padding: 0px 6px; margin-left: 4px;
+            font-family: var(--font-mono, monospace); vertical-align: middle;
+        }
+        .cockpit-meta-label { font-size: 0.68rem; color: var(--text-muted, #6b7094); }
+        .cockpit-empty-msg { font-size: 0.8rem; color: var(--text-muted, #6b7094); padding: 0.5rem 0; }
+
+        /* Avoid For Now list */
+        .cockpit-avoid { border-left: 3px solid #f59e0b; }
+        .cockpit-count-warn { background: rgba(245,158,11,0.15); color: #f59e0b; }
+        .cockpit-avoid-list { display: flex; flex-direction: column; gap: 0.3rem; }
+        .avoid-row {
+            display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem;
+            padding: 0.35rem 0.45rem; border-radius: 6px;
+            background: rgba(245,158,11,0.05); border: 1px solid rgba(245,158,11,0.15);
+            cursor: pointer; transition: background 0.12s;
+        }
+        .avoid-row:hover { background: rgba(245,158,11,0.1); }
+        .avoid-sym { font-weight: 800; font-size: 0.82rem; color: var(--text-primary, #f0f0f5); min-width: 80px; }
+        .avoid-qs { font-size: 0.7rem; font-weight: 700; color: #818cf8; font-family: var(--font-mono, monospace); white-space: nowrap; }
+        .avoid-blockers { display: flex; gap: 0.25rem; flex-wrap: wrap; flex: 1; }
+        .avoid-blocker-chip {
+            font-size: 0.62rem; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+            background: rgba(239,68,68,0.12); color: #fca5a5; border: 1px solid rgba(239,68,68,0.25);
+        }
+
+        /* Risk-aware filter strip */
+        .cockpit-filter-strip {
+            display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+            margin: 0 0 0.4rem;
+        }
+        .cockpit-filter-btn {
+            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+            color: var(--text-muted, #6b7094); padding: 0.22rem 0.6rem;
+            border-radius: 6px; font-size: 0.73rem; cursor: pointer; font-weight: 500;
+            transition: all 0.13s;
+        }
+        .cockpit-filter-btn:hover { color: var(--text-primary, #f0f0f5); border-color: rgba(255,255,255,0.25); }
+        .cockpit-filter-btn.active {
+            background: rgba(99,102,241,0.18); border-color: rgba(99,102,241,0.5);
+            color: #818cf8; font-weight: 700;
+        }
+        .cockpit-error {
+            font-size: 0.78rem; color: #fca5a5; line-height: 1.45;
+            padding: 0.35rem 0;
+        }
+        .why-market-hint {
+            margin-top: 0.45rem; padding-top: 0.45rem;
+            border-top: 1px solid rgba(255,255,255,0.06);
+            font-size: 0.72rem; line-height: 1.45; color: var(--text-muted, #6b7094);
+        }
+        .phase2-calib-note {
+            font-size: 0.68rem; line-height: 1.4; color: var(--text-muted, #6b7094);
+            margin-bottom: 0.35rem; padding: 0.35rem 0.4rem;
+            background: rgba(99,102,241,0.06); border-radius: 6px; border: 1px solid rgba(99,102,241,0.15);
+        }
+        .cs-calib-hint { font-size: 0.65rem; color: #94a3b8; margin: 0.2rem 0 0.15rem; line-height: 1.35; }
+        .cs-explain-line { font-size: 0.62rem; color: #64748b; margin-bottom: 0.25rem; line-height: 1.35; font-family: var(--font-mono, monospace); }
+        .cs-band-pill { font-size: 0.58rem; font-weight: 800; padding: 1px 6px; border-radius: 4px; border: 1px solid; text-transform: uppercase; letter-spacing: 0.04em; }
+        .cs-pct-badge { font-size: 0.62rem; color: #818cf8; font-weight: 700; margin-left: 0.2rem; }
+
+        /* ═══ Phase 3: Freshness badge ═══ */
+        .cs-fresh-badge {
+            font-size: 0.58rem; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+            letter-spacing: 0.03em; margin-left: auto;
+        }
+
+        /* ═══ Phase 3: Portfolio Caution Banner ═══ */
+        .p3-caution-banner {
+            display: flex; align-items: center; gap: 0.5rem;
+            padding: 0.45rem 0.75rem; border-radius: 8px;
+            font-size: 0.78rem; font-weight: 600;
+        }
+        .p3-caution-icon { font-size: 1rem; }
+        .p3-caution-msg { flex: 1; color: var(--text-primary, #f0f0f5); }
+        .p3-caution-heat { font-family: var(--font-mono, monospace); font-size: 0.72rem; white-space: nowrap; }
+
+        /* ═══ Phase 3: Intel Row (Delta + Sector + Index) ═══ */
+        .p3-intel-row { grid-template-columns: 1.4fr 1fr 1fr; }
+        @media (max-width: 1024px) { .p3-intel-row { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 720px) { .p3-intel-row { grid-template-columns: 1fr; } }
+
+        /* Delta panel */
+        .p3-live-dot {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: #10b981; margin-left: 4px; vertical-align: middle;
+            animation: pulse-dot 1.8s ease-in-out infinite;
+        }
+        @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+        .p3-delta-since { font-size: 0.65rem; color: var(--text-muted, #6b7094); margin-bottom: 0.35rem; }
+        .p3-delta-quiet { font-size: 0.75rem; color: var(--text-muted, #6b7094); }
+        .p3-delta-row { display: flex; align-items: flex-start; gap: 0.45rem; margin-bottom: 0.3rem; flex-wrap: wrap; }
+        .p3-delta-label {
+            font-size: 0.62rem; font-weight: 800; padding: 1px 6px; border-radius: 4px;
+            white-space: nowrap; text-transform: uppercase; letter-spacing: 0.04em;
+        }
+        .p3-new-long  { background: rgba(16,185,129,0.18); color: #10b981; border: 1px solid rgba(16,185,129,0.35); }
+        .p3-new-short { background: rgba(239,68,68,0.18); color: #ef4444; border: 1px solid rgba(239,68,68,0.35); }
+        .p3-dropped   { background: rgba(148,163,184,0.12); color: #94a3b8; border: 1px solid rgba(148,163,184,0.25); }
+        .p3-improved  { background: rgba(99,102,241,0.15); color: #818cf8; border: 1px solid rgba(99,102,241,0.3); }
+        .p3-degraded  { background: rgba(245,158,11,0.12); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+        .p3-mood-shift { background: rgba(34,211,238,0.12); color: #22d3ee; border: 1px solid rgba(34,211,238,0.3); }
+        .p3-delta-syms { font-size: 0.72rem; color: var(--text-primary, #f0f0f5); font-weight: 600; line-height: 1.4; }
+
+        /* Sector rotation panel */
+        .p3-sector-row {
+            display: flex; align-items: center; gap: 0.45rem;
+            font-size: 0.74rem; padding: 0.22rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .p3-sector-row:last-child { border-bottom: none; }
+        .p3-sector-icon { font-size: 0.9rem; }
+        .p3-sector-name { flex: 1; color: var(--text-secondary, #a0a4b8); font-weight: 500; }
+        .p3-sector-pct { font-family: var(--font-mono, monospace); font-weight: 800; font-size: 0.73rem; white-space: nowrap; }
+
+        /* Index leadership panel */
+        .p3-index-row {
+            display: flex; align-items: center; gap: 0.5rem;
+            font-size: 0.74rem; padding: 0.25rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .p3-index-row:last-child { border-bottom: none; }
+        .p3-index-name { font-weight: 800; font-size: 0.78rem; color: var(--text-primary, #f0f0f5); min-width: 48px; }
+        .p3-index-close { font-family: var(--font-mono, monospace); font-size: 0.72rem; color: var(--text-secondary, #a0a4b8); flex: 1; }
+        .p3-index-pct { font-family: var(--font-mono, monospace); font-weight: 800; font-size: 0.73rem; white-space: nowrap; }
+        .p3-index-regime { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+
+        /* ═══ Phase 4: Power Row ═══ */
+        .p4-power-row { grid-template-columns: 1fr 1.4fr 1.2fr; }
+        @media (max-width: 1024px) { .p4-power-row { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 720px) { .p4-power-row { grid-template-columns: 1fr; } }
+
+        /* Watchlist tile */
+        .p4-watchlist-empty { font-size: 0.73rem; color: var(--text-muted, #6b7094); }
+        .p4-wl-count {
+            font-size: 0.68rem; font-weight: 800; background: rgba(99,102,241,0.15);
+            color: #818cf8; border-radius: 4px; padding: 0px 5px; margin-left: 3px;
+            font-family: var(--font-mono, monospace); vertical-align: middle;
+        }
+        .p4-pin-row {
+            display: flex; align-items: center; gap: 0.4rem;
+            padding: 0.28rem 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+            font-size: 0.74rem;
+        }
+        .p4-pin-row:last-child { border-bottom: none; }
+        .p4-pin-sym { font-weight: 800; color: var(--text-primary, #f0f0f5); cursor: pointer; flex: 1; }
+        .p4-pin-sym:hover { color: #818cf8; }
+        .p4-pin-sig { font-weight: 700; font-size: 0.7rem; min-width: 40px; }
+        .p4-pin-qs { font-family: var(--font-mono, monospace); font-size: 0.68rem; color: #818cf8; }
+        .p4-pin-conf { font-family: var(--font-mono, monospace); font-size: 0.68rem; color: var(--text-muted, #6b7094); }
+        .p4-pin-alert-btn, .p4-pin-remove {
+            background: none; border: none; cursor: pointer; font-size: 0.78rem;
+            color: var(--text-muted, #6b7094); padding: 0 2px; line-height: 1;
+            transition: color 0.12s;
+        }
+        .p4-pin-alert-btn:hover { color: #f59e0b; }
+        .p4-pin-remove:hover { color: #ef4444; }
+
+        /* Pin button on signal cards */
+        .p4-card-pin {
+            background: none; border: none; cursor: pointer; font-size: 0.82rem;
+            color: var(--text-muted, #6b7094); padding: 0; line-height: 1;
+            transition: color 0.12s; margin-left: 2px;
+        }
+        .p4-card-pin:hover, .p4-card-pin.pinned { color: #f59e0b; }
+
+        /* Morning scan tile */
+        .p4-scan-time { font-size: 0.62rem; color: var(--text-muted, #6b7094); font-family: var(--font-mono, monospace); }
+        .p4-ms-row {
+            display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem;
+            padding: 0.3rem 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+            cursor: pointer; transition: background 0.12s; border-radius: 4px;
+        }
+        .p4-ms-row:last-child { border-bottom: none; }
+        .p4-ms-row:hover { background: rgba(255,255,255,0.03); }
+        .p4-ms-left { display: flex; align-items: center; gap: 0.3rem; flex: 1; min-width: 0; }
+        .p4-ms-right { display: flex; align-items: center; gap: 0.4rem; }
+        .p4-ms-sym { font-weight: 800; font-size: 0.82rem; color: var(--text-primary, #f0f0f5); }
+        .p4-ms-conf { font-family: var(--font-mono, monospace); font-weight: 700; font-size: 0.72rem; }
+        .p4-ms-rsi { font-family: var(--font-mono, monospace); font-size: 0.68rem; }
+        .p4-ms-reason { width: 100%; font-size: 0.67rem; color: var(--text-muted, #6b7094); line-height: 1.35; padding-left: 0.1rem; }
+        .p4-ms-vol-badge {
+            font-size: 0.6rem; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+            background: rgba(99,102,241,0.15); color: #818cf8; border: 1px solid rgba(99,102,241,0.3);
+        }
+        .p4-ms-pin {
+            background: none; border: none; cursor: pointer; font-size: 0.82rem;
+            color: var(--text-muted, #6b7094); padding: 0; line-height: 1; transition: color 0.12s;
+        }
+        .p4-ms-pin:hover, .p4-ms-pin.pinned { color: #f59e0b; }
+
+        /* Opportunity timeline tile */
+        .p4-tl-row {
+            display: flex; gap: 0.5rem; align-items: flex-start;
+            padding: 0.3rem 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .p4-tl-row:last-child { border-bottom: none; }
+        .p4-tl-dot {
+            width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+            margin-top: 0.3rem; box-shadow: 0 0 5px currentColor;
+        }
+        .p4-tl-body { flex: 1; min-width: 0; }
+        .p4-tl-header { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+        .p4-tl-sym { font-weight: 800; font-size: 0.82rem; color: var(--text-primary, #f0f0f5); cursor: pointer; }
+        .p4-tl-sym:hover { color: #818cf8; }
+        .p4-tl-sig { font-size: 0.65rem; font-weight: 800; text-transform: uppercase; }
+        .p4-tl-age { font-size: 0.63rem; color: var(--text-muted, #6b7094); font-family: var(--font-mono, monospace); margin-left: auto; }
+        .p4-tl-meta { font-size: 0.67rem; color: var(--text-muted, #6b7094); line-height: 1.35; margin-top: 0.1rem; }
+
+        /* Alert modal */
+        .p4-alert-modal-box {
+            background: var(--bg-secondary, #1a1a2e); border: 1px solid var(--border-color, #374151);
+            border-radius: 12px; padding: 1.25rem 1.5rem; width: 320px; max-width: 92vw;
+        }
+        .p4-alert-modal-title { font-size: 0.9rem; font-weight: 800; color: var(--text-primary, #f0f0f5); margin-bottom: 1rem; }
+        .p4-alert-modal-body { display: flex; flex-direction: column; gap: 0.75rem; }
+        .p4-alert-label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.75rem; color: var(--text-secondary, #a0a4b8); }
+        .p4-alert-input {
+            background: var(--bg-input, #0f0f1a); border: 1px solid var(--border-color, #374151);
+            color: var(--text-primary, #f0f0f5); border-radius: 6px; padding: 0.4rem 0.6rem;
+            font-size: 0.85rem; font-family: var(--font-mono, monospace);
+        }
+        .p4-alert-modal-footer { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
+        .p4-alert-btn-cancel {
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+            color: var(--text-muted, #6b7094); padding: 0.4rem 0.9rem; border-radius: 6px;
+            font-size: 0.78rem; cursor: pointer; font-weight: 600;
+        }
+        .p4-alert-btn-save {
+            background: rgba(99,102,241,0.2); border: 1px solid rgba(99,102,241,0.45);
+            color: #818cf8; padding: 0.4rem 0.9rem; border-radius: 6px;
+            font-size: 0.78rem; cursor: pointer; font-weight: 700;
+        }
+        .p4-alert-btn-save:hover { background: rgba(99,102,241,0.35); }
+
+        @keyframes fadeInUp {
+            from { transform: translateY(10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        /* ═══ Phase 5: Feed banner + toolbar + shortcuts ═══ */
+        .p5-feed-banner {
+            align-items: center; gap: 0.5rem;
+            padding: 0.45rem 0.65rem; border-radius: 8px; font-size: 0.78rem; font-weight: 600;
+            margin-bottom: 0.35rem;
+        }
+        .p5-feed-banner.p5-feed-warn {
+            background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.35); color: #fbbf24;
+        }
+        .p5-feed-banner.p5-feed-danger {
+            background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.35); color: #fca5a5;
+        }
+        /* ── Phase 6: Crypto Mini-Panel ─────────────────── */
+        .p6-crypto-tile {
+            grid-column: 1 / -1;
+            border: 1px solid rgba(99,102,241,0.22);
+            background: linear-gradient(135deg, rgba(99,102,241,0.06), rgba(139,92,246,0.03));
+        }
+        .p5-cockpit-toolbar {
+            display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .p5-toolbar-left { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+        .p5-btn {
+            background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.35);
+            color: #a5b4fc; padding: 0.28rem 0.65rem; border-radius: 6px;
+            font-size: 0.72rem; font-weight: 700; cursor: pointer; font-family: inherit;
+        }
+        .p5-btn:hover { background: rgba(99,102,241,0.28); color: #c7d2fe; }
+        .p5-btn-ghost {
+            background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.12); color: var(--text-secondary, #a0a4b8);
+        }
+        .p5-kbd-hint { font-size: 0.65rem; color: var(--text-muted, #6b7094); margin-left: 0.25rem; }
+        .p5-kbd-hint kbd {
+            font-family: var(--font-mono, monospace); font-size: 0.62rem;
+            background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.1);
+        }
+        .p5-trader-notes-wrap { margin-bottom: 0.55rem; }
+        .p5-notes-label { display: block; font-size: 0.65rem; color: var(--text-muted, #6b7094); margin-bottom: 0.25rem; }
+        .p5-trader-notes {
+            width: 100%; box-sizing: border-box;
+            background: var(--bg-input, #0f0f1a); border: 1px solid var(--border-color, #374151);
+            color: var(--text-primary, #f0f0f5); border-radius: 8px; padding: 0.5rem 0.65rem;
+            font-size: 0.78rem; line-height: 1.45; resize: vertical; min-height: 64px; font-family: inherit;
+        }
+        .cs-conf-line { font-size: 0.62rem; color: #a78bfa; margin: 0.15rem 0 0.2rem; line-height: 1.35; }
+        .p5-shortcuts-modal {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 10001;
+            display: none; align-items: center; justify-content: center;
+        }
+        .p5-shortcuts-box {
+            background: var(--bg-secondary, #1a1a2e); border: 1px solid var(--border-color, #374151);
+            border-radius: 12px; padding: 1rem 1.25rem; max-width: 360px; font-size: 0.82rem;
+        }
+        .p5-shortcuts-box h3 { margin: 0 0 0.75rem; font-size: 0.95rem; }
+        .p5-shortcuts-box dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 1rem; align-items: baseline; }
+        .p5-shortcuts-box dt { color: var(--text-muted, #6b7094); font-family: var(--font-mono, monospace); }
+        .p5-shortcuts-box dd { margin: 0; color: var(--text-primary, #f0f0f5); }
+        .p5-shortcuts-close { margin-top: 1rem; width: 100%; padding: 0.4rem; border-radius: 6px; cursor: pointer;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--text-primary, #f0f0f5); font-weight: 600; }
     </style>
 </head>
 
 <body>
-    <!-- ── Header ──────────────────────────── -->
-    <header class="header" id="header">
-        <div class="header-left">
-            <div class="logo">
-                <span class="logo-icon">◈</span>
-                <span class="logo-text">TradeAI</span>
-                <span class="logo-badge">PRO</span>
+
+    <!-- ── Market Mood Strip (Top Bar) ── -->
+    <div class="mood-strip" id="moodStrip">
+        <div class="mood-strip-logo">
+            <span class="logo-text">TradeAI</span>
+            <span class="logo-badge">PRO</span>
+        </div>
+        <div class="mood-pill" id="moodStripPill">
+            <span class="mood-dot"></span>
+            <span id="moodStripLabel">NEUTRAL</span>
+        </div>
+        <div class="mood-ticker">
+            <div class="mood-ticker-item">
+                <span class="mood-ticker-sym">NIFTY</span>
+                <span class="mood-ticker-val" id="moodNifty">—</span>
+                <span class="mood-ticker-chg" id="moodNiftyChg">—</span>
+            </div>
+            <div class="mood-ticker-item">
+                <span class="mood-ticker-sym">SENSEX</span>
+                <span class="mood-ticker-val" id="moodSensex">—</span>
+                <span class="mood-ticker-chg" id="moodSensexChg">—</span>
+            </div>
+            <div class="mood-ticker-item">
+                <span class="mood-ticker-sym">BTC</span>
+                <span class="mood-ticker-val" id="moodBtc">—</span>
+                <span class="mood-ticker-chg" id="moodBtcChg">—</span>
+            </div>
+            <div class="mood-ticker-item">
+                <span class="mood-ticker-sym">BANK NF</span>
+                <span class="mood-ticker-val" id="moodBanknifty">—</span>
+                <span class="mood-ticker-chg" id="moodBankniftyChg">—</span>
             </div>
         </div>
-        <div class="header-center">
-            <nav class="tab-nav" id="tabNav">
-                <button class="tab-btn active" data-tab="overview" id="tabOverview">
-                    <span class="tab-icon">📊</span><span class="tab-label"> Overview</span>
-                </button>
-                <button class="tab-btn" data-tab="market" id="tabMarket">
-                    <span class="tab-icon">📈</span><span class="tab-label"> Market</span>
-                </button>
-                <button class="tab-btn" data-tab="options" id="tabOptions">
-                    <span class="tab-icon">⚙️</span><span class="tab-label"> Options</span>
-                </button>
-                <button class="tab-btn" data-tab="tradeflow" id="tabTradeflow">
-                    <span class="tab-icon">💰</span><span class="tab-label"> Trade Flow</span>
-                </button>
-                <button class="tab-btn" data-tab="portfolio" id="tabPortfolio">
-                    <span class="tab-icon">💼</span><span class="tab-label"> Portfolio</span>
-                </button>
-                <button class="tab-btn" data-tab="performance" id="tabPerformance">
-                    <span class="tab-icon">🏆</span><span class="tab-label"> Performance</span>
-                </button>
-                <button class="tab-btn" data-tab="learning" id="tabLearning">
-                    <span class="tab-icon">🧠</span><span class="tab-label"> Learning</span>
-                </button>
-                <button class="tab-btn" data-tab="scorecard" id="tabScorecard">
-                    <span class="tab-icon">📋</span><span class="tab-label"> Scorecard</span>
-                </button>
-                <button class="tab-btn" data-tab="swing" id="tabSwing">
-                    <span class="tab-icon">🔄</span><span class="tab-label"> Swing</span>
-                </button>
-                <button class="tab-btn" data-tab="indexmover" id="tabIndexMover">
-                    <span class="tab-icon">🏗️</span><span class="tab-label"> Index Mover</span>
-                </button>
-                <button class="tab-btn" data-tab="breakouts" id="tabBreakouts">
-                    <span class="tab-icon">🚀</span><span class="tab-label"> Breakouts</span>
-                </button>
-                <a class="tab-btn" href="/crypto" style="text-decoration:none;display:inline-flex;align-items:center;" id="tabCrypto">
-                    <span class="tab-icon">₿</span><span class="tab-label"> Crypto</span>
-                </a>
-            </nav>
+        <div class="mood-event" id="moodEvent">
+            <span class="mood-event-badge">⏱ EVENT</span>
+            <span id="moodEventLabel">Checking calendar...</span>
         </div>
-        <div class="header-right">
-            <div class="global-search-wrap" id="globalSearchWrap">
-                <div class="search-input-row">
-                    <span class="search-icon">🔍</span>
-                    <input class="global-search-input" id="globalSearchInput" type="text"
-                        placeholder="Search any stock... (e.g. TATA, ZOMATO, AAPL)"
-                        autocomplete="off" spellcheck="false">
-                    <kbd class="search-kbd" id="searchKbd">/</kbd>
-                </div>
-                <div class="search-dropdown" id="searchDropdown">
-                    <div class="search-results" id="searchResults"></div>
+        <div class="mood-strip-right">
+            <div class="mood-clock" id="clock"></div>
+            <div class="mood-search-wrap">
+                <div class="global-search-wrap" id="globalSearchWrap">
+                    <div class="search-input-row">
+                        <span class="search-icon">🔍</span>
+                        <input class="mood-search-input global-search-input" id="globalSearchInput" type="text"
+                            placeholder="Search stock... (/)"
+                            autocomplete="off" spellcheck="false">
+                        <kbd class="search-kbd" id="searchKbd">/</kbd>
+                    </div>
+                    <div class="search-dropdown" id="searchDropdown">
+                        <div class="search-results" id="searchResults"></div>
+                    </div>
                 </div>
             </div>
-            <a class="trial-badge" href="/landing" id="trialBadge">🎉 Free Trial</a>
             <button class="theme-toggle" id="themeToggle" title="Toggle theme">
                 <span class="theme-icon" id="themeIcon">🌙</span>
             </button>
@@ -255,12 +800,69 @@
                 <span class="status-dot live"></span>
                 <span>LIVE</span>
             </div>
-            <div class="clock" id="clock"></div>
         </div>
-    </header>
+    </div>
 
-    <!-- ── Main Content ──────────────────────── -->
-    <main class="main-content">
+    <!-- ── App Shell ── -->
+    <div class="app-shell">
+
+    <!-- ── Vertical Sidebar ── -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-group">
+            <div class="sidebar-group-label">Market</div>
+            <button class="sidebar-item active tab-btn" data-tab="overview" id="tabOverview">
+                <span class="sidebar-icon">◈</span> Overview
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="market" id="tabMarket">
+                <span class="sidebar-icon">📈</span> Market
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="tradeflow" id="tabTradeflow">
+                <span class="sidebar-icon">💰</span> Trade Flow
+            </button>
+            <a class="sidebar-item" href="/crypto" id="tabCryptoMain">
+                <span class="sidebar-icon">₿</span> Crypto
+            </a>
+        </div>
+        <div class="sidebar-group">
+            <div class="sidebar-group-label">Trading</div>
+            <button class="sidebar-item tab-btn" data-tab="portfolio" id="tabPortfolio">
+                <span class="sidebar-icon">💼</span> Portfolio
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="performance" id="tabPerformance">
+                <span class="sidebar-icon">🏆</span> Performance
+            </button>
+        </div>
+        <div class="sidebar-group">
+            <div class="sidebar-group-label">Analytics</div>
+            <button class="sidebar-item tab-btn" data-tab="scorecard" id="tabScorecard">
+                <span class="sidebar-icon">📋</span> Scorecard
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="learning" id="tabLearning">
+                <span class="sidebar-icon">🧠</span> Learning
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="swing" id="tabSwing">
+                <span class="sidebar-icon">🔄</span> Swing
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="indexmover" id="tabIndexMover">
+                <span class="sidebar-icon">🏗️</span> Index Mover
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="breakouts" id="tabBreakouts">
+                <span class="sidebar-icon">🚀</span> Breakouts
+            </button>
+        </div>
+        <div class="sidebar-spacer"></div>
+        <div class="sidebar-bottom">
+            <a class="sidebar-bottom-item" href="/crypto" id="tabCryptoBottom">
+                <span>₿</span> Crypto
+            </a>
+            <a class="sidebar-bottom-item" href="/landing" id="trialBadge">
+                <span>🎉</span> Free Trial
+            </a>
+        </div>
+    </nav>
+
+    <!-- ── Main Content Area ── -->
+    <main class="app-main" id="appMain">
 
         <!-- ════════ OVERVIEW TAB ════════ -->
         <section class="tab-content active" id="overviewTab">
@@ -307,6 +909,170 @@
                     <option value="signal_type">Signal Type (BUY/SELL)</option>
                 </select>
             </div>
+            <!-- ── Decision Cockpit ────────────────────────── -->
+            <div id="cockpitSection" class="cockpit-section">
+                <!-- Phase 5: Feed health banner (hidden when OK) -->
+                <div id="cockpitFeedBanner" class="p5-feed-banner" style="display:none;" role="status"></div>
+
+                <!-- Phase 5: Export + trader notes -->
+                <div class="p5-cockpit-toolbar">
+                    <div class="p5-toolbar-left">
+                        <button type="button" class="p5-btn" id="p5ExportJsonBtn" title="Download cockpit + briefing as JSON">Export JSON</button>
+                        <button type="button" class="p5-btn" id="p5ExportCsvBtn" title="Top setups as CSV">Export CSV</button>
+                        <span class="p5-kbd-hint" title="Keyboard shortcuts">Press <kbd>r</kbd> refresh · <kbd>?</kbd> help</span>
+                    </div>
+                    <button type="button" class="p5-btn p5-btn-ghost" id="p5ToggleNotesBtn" aria-expanded="false">Trader notes ▾</button>
+                </div>
+                <div id="p5TraderNotesWrap" class="p5-trader-notes-wrap" style="display:none;">
+                    <label class="p5-notes-label">Private notes (stored in this browser only)</label>
+                    <textarea id="p5TraderNotes" class="p5-trader-notes" rows="3" placeholder="Journal: thesis, size, what you’ll watch next…"></textarea>
+                </div>
+
+                <!-- Row 1: System State + Market Guardrails -->
+                <div class="cockpit-row" id="cockpitStateRow">
+                    <div class="cockpit-tile cockpit-system" id="cockpitSystemState">
+                        <div class="cockpit-tile-label">System State</div>
+                        <div class="cockpit-sys-inner" id="cockpitSysInner">
+                            <span class="cockpit-skeleton">Loading…</span>
+                        </div>
+                    </div>
+                    <div class="cockpit-tile cockpit-guardrails" id="cockpitGuardrails">
+                        <div class="cockpit-tile-label">Market Guardrails</div>
+                        <div id="cockpitGuardrailsInner">
+                            <span class="cockpit-skeleton">Loading…</span>
+                        </div>
+                    </div>
+                    <div class="cockpit-tile cockpit-learning" id="cockpitLearning">
+                        <div class="cockpit-tile-label">Learning Overlay <span class="advisory-badge">ADVISORY</span></div>
+                        <div id="cockpitLearningInner">
+                            <span class="cockpit-skeleton">Loading…</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: Best Right Now -->
+                <div class="cockpit-tile cockpit-top-setups" id="cockpitTopSetups">
+                    <div class="cockpit-tile-label" style="display:flex;align-items:center;justify-content:space-between;">
+                        <span>Best Right Now <span id="cockpitTopCount" class="cockpit-count-badge"></span></span>
+                        <span class="cockpit-meta-label" id="cockpitRankMeta"></span>
+                    </div>
+                    <div class="cockpit-setups-grid" id="cockpitSetupsGrid">
+                        <span class="cockpit-skeleton">Loading ranked setups…</span>
+                    </div>
+                </div>
+
+                <!-- Row 3: Avoid For Now -->
+                <div class="cockpit-tile cockpit-avoid" id="cockpitAvoid">
+                    <div class="cockpit-tile-label">
+                        Avoid For Now <span id="cockpitAvoidCount" class="cockpit-count-badge cockpit-count-warn"></span>
+                    </div>
+                    <div class="cockpit-avoid-list" id="cockpitAvoidList">
+                        <span class="cockpit-skeleton">Checking…</span>
+                    </div>
+                </div>
+
+                <!-- Row 4 (Phase 3): Portfolio Caution Banner -->
+                <div id="cockpitPortfolioCaution" class="p3-caution-banner" style="display:none;"></div>
+
+                <!-- Row 5 (Phase 3): Delta + Sector Rotation + Index Leadership -->
+                <div class="cockpit-row p3-intel-row" id="cockpitIntelRow">
+                    <div class="cockpit-tile p3-delta-tile" id="cockpitDeltaTile">
+                        <div class="cockpit-tile-label">What Changed <span class="p3-live-dot"></span></div>
+                        <div id="cockpitDeltaPanel">
+                            <span class="cockpit-skeleton">Waiting for first cycle…</span>
+                        </div>
+                    </div>
+                    <div class="cockpit-tile p3-sector-tile" id="cockpitSectorTile">
+                        <div class="cockpit-tile-label">Sector Rotation</div>
+                        <div id="cockpitSectorRotation">
+                            <span class="cockpit-skeleton">Loading…</span>
+                        </div>
+                    </div>
+                    <div class="cockpit-tile p3-index-tile" id="cockpitIndexTile">
+                        <div class="cockpit-tile-label">Index Leadership</div>
+                        <div id="cockpitIndexLeadership">
+                            <span class="cockpit-skeleton">Loading…</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 6 (Phase 4): Watchlist + Morning Scan + Opportunity Timeline -->
+                <div class="cockpit-row p4-power-row" id="cockpitPowerRow">
+                    <div class="cockpit-tile p4-watchlist-tile" id="cockpitWatchlistTile">
+                        <div class="cockpit-tile-label" style="display:flex;align-items:center;justify-content:space-between;">
+                            <span>Watchlist <span class="p4-wl-count" id="cockpitWatchlistCount"></span></span>
+                            <span style="font-size:0.62rem;color:var(--text-muted);">★ to pin</span>
+                        </div>
+                        <div id="cockpitWatchlist">
+                            <span class="p4-watchlist-empty">No pinned symbols. Click ★ on any signal card to pin.</span>
+                        </div>
+                    </div>
+                    <div class="cockpit-tile p4-morning-tile" id="cockpitMorningScanTile">
+                        <div class="cockpit-tile-label" style="display:flex;align-items:center;justify-content:space-between;">
+                            <span>Today's Briefing</span>
+                            <span class="p4-scan-time" id="cockpitMorningScanTime"></span>
+                        </div>
+                        <div id="cockpitMorningScan">
+                            <span class="cockpit-skeleton">Loading morning scan…</span>
+                        </div>
+                    </div>
+                    <div class="cockpit-tile p4-timeline-tile" id="cockpitTimelineTile">
+                        <div class="cockpit-tile-label">Opportunity Timeline</div>
+                        <div id="cockpitOppTimeline">
+                            <span class="cockpit-skeleton">Loading…</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Phase 6: Crypto Mini-Panel ─────────────── -->
+                <div class="cockpit-tile p6-crypto-tile" id="cockpitCryptoMini" style="display:none">
+                </div>
+            </div>
+
+            <!-- ── Phase 4: Alert Threshold Modal ──────────────── -->
+            <div id="p4AlertModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;align-items:center;justify-content:center;">
+                <div class="p4-alert-modal-box">
+                    <div class="p4-alert-modal-title">Set Alert — <span id="p4AlertSym"></span></div>
+                    <div class="p4-alert-modal-body">
+                        <label class="p4-alert-label">Min Quality Score (QS)
+                            <input type="number" id="p4AlertQsInput" class="p4-alert-input" min="0" max="100" value="70">
+                        </label>
+                        <label class="p4-alert-label">Min Confidence (%)
+                            <input type="number" id="p4AlertConfInput" class="p4-alert-input" min="0" max="100" value="65">
+                        </label>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.3rem;">Alert fires when signal is LONG/SHORT and both thresholds are met. Max once per 5 min.</div>
+                    </div>
+                    <div class="p4-alert-modal-footer">
+                        <button class="p4-alert-btn-cancel" onclick="closeAlertModal()">Cancel</button>
+                        <button class="p4-alert-btn-save" onclick="saveAlertThreshold()">Save Alert</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Phase 5: Keyboard shortcuts help ──────────────── -->
+            <div id="p5ShortcutsModal" class="p5-shortcuts-modal" style="display:none;">
+                <div class="p5-shortcuts-box">
+                    <h3>Shortcuts</h3>
+                    <dl>
+                        <dt>r</dt><dd>Reload dashboard data (same as refresh, without forcing backend ingest)</dd>
+                        <dt>?</dt><dd>Show this panel</dd>
+                        <dt>Esc</dt><dd>Close modals</dd>
+                    </dl>
+                    <button type="button" class="p5-shortcuts-close" onclick="closeP5Shortcuts()">Close</button>
+                </div>
+            </div>
+
+            <!-- ── Risk-Aware Filter Toggles ──────────────── -->
+            <div class="cockpit-filter-strip" id="cockpitFilterStrip">
+                <button class="cockpit-filter-btn active" data-cf="all" type="button">All</button>
+                <button class="cockpit-filter-btn" data-cf="actionable" type="button">Actionable</button>
+                <button class="cockpit-filter-btn" data-cf="high_conv" type="button">High Conviction</button>
+                <button class="cockpit-filter-btn" data-cf="trend_aligned" type="button">Trend Aligned</button>
+                <button class="cockpit-filter-btn" data-cf="no_drift" type="button">No Drift</button>
+                <button class="cockpit-filter-btn" data-cf="event_safe" type="button">Event Safe</button>
+                <button class="cockpit-filter-btn" data-cf="low_risk" type="button">Low Risk</button>
+            </div>
+
             <div id="signalsFilterNote" style="margin:0.35rem 0 0.55rem;color:var(--text-muted);font-size:0.75rem;">Showing all signals</div>
             <div class="signals-grid" id="signalsGrid">
                 <div class="loading-state" id="loadingState">
@@ -412,79 +1178,12 @@
                     </div>
                 </div>
             </div>
-        </section>
 
-        <!-- ════════ OPTIONS TAB ════════ -->
-        <section class="tab-content" id="optionsTab">
-            <div class="options-header">
-                <h2 class="section-title">Option Chain & PCR Analysis</h2>
-                <div class="options-selector">
-                    <select class="symbol-select" id="pcrSymbol" onchange="loadPCR()">
-                        <option value="NIFTY_50">NIFTY 50</option>
-                        <option value="BANKNIFTY">BANKNIFTY</option>
-                        <option value="BTC/USDT">BTC/USDT</option>
-                    </select>
+            <div style="margin-top:0.9rem;background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:0.75rem 0.9rem;">
+                <div style="font-size:0.76rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin-bottom:0.55rem;">Upcoming High-Impact Events</div>
+                <div id="contextEventsAccordion" style="display:grid;gap:0.45rem;">
+                    <div style="color:var(--text-muted);font-size:0.78rem;">Loading events...</div>
                 </div>
-            </div>
-
-            <!-- PCR Summary -->
-            <div class="pcr-summary" id="pcrSummary">
-                <div class="pcr-main">
-                    <div class="pcr-value-wrap">
-                        <span class="pcr-big" id="pcrValue">—</span>
-                        <span class="pcr-label">PCR</span>
-                    </div>
-                    <div class="pcr-sentiment" id="pcrSentiment">—</div>
-                </div>
-                <div class="pcr-stats">
-                    <div class="pcr-stat">
-                        <span class="pcr-stat-val" id="pcrCallOI">—</span>
-                        <span class="pcr-stat-label">Total Call OI</span>
-                    </div>
-                    <div class="pcr-stat">
-                        <span class="pcr-stat-val" id="pcrPutOI">—</span>
-                        <span class="pcr-stat-label">Total Put OI</span>
-                    </div>
-                    <div class="pcr-stat">
-                        <span class="pcr-stat-val" id="pcrMaxPain">—</span>
-                        <span class="pcr-stat-label">Max Pain</span>
-                    </div>
-                    <div class="pcr-stat">
-                        <span class="pcr-stat-val" id="pcrATM">—</span>
-                        <span class="pcr-stat-label">ATM Strike</span>
-                    </div>
-                </div>
-                <!-- PCR History Chart -->
-                <div class="pcr-chart-wrap">
-                    <canvas id="pcrChart" width="600" height="80"></canvas>
-                </div>
-            </div>
-
-            <!-- Option Chain Table -->
-            <div class="option-chain-table-wrap">
-                <table class="option-chain-table" id="optionChainTable">
-                    <thead>
-                        <tr>
-                            <th colspan="3" class="call-header">CALLS</th>
-                            <th class="strike-header">STRIKE</th>
-                            <th colspan="3" class="put-header">PUTS</th>
-                        </tr>
-                        <tr>
-                            <th>OI</th>
-                            <th>OI CHG</th>
-                            <th>LTP</th>
-                            <th class="strike-header">—</th>
-                            <th>LTP</th>
-                            <th>OI CHG</th>
-                            <th>OI</th>
-                        </tr>
-                    </thead>
-                    <tbody id="optionChainBody">
-                        <tr>
-                            <td colspan="7" class="empty-row">Select a symbol above</td>
-                        </tr>
-                    </tbody>
-                </table>
             </div>
         </section>
 
@@ -838,15 +1537,25 @@
             <div class="swing-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;">
                 <div>
                     <h2 class="section-title">🔄 SwingSpectrum Scanner</h2>
-                    <p style="color:var(--text-muted);font-size:0.78rem;margin-top:0.25rem;">Multi-day swing trade setups across all tracked symbols</p>
+                    <p style="color:var(--text-muted);font-size:0.78rem;margin-top:0.25rem;">Multi-day setups from <strong>daily</strong> candles (yFinance — can be delayed vs exchange). Not intraday live LTP.</p>
                 </div>
-                <div class="live-pill"><span class="status-dot live"></span> LIVE</div>
+                <div class="live-pill" title="End-of-day bars, refreshed with server cache"><span class="status-dot" style="background:#6366f1;"></span> DAILY</div>
             </div>
+            <div id="swingMetaBar" style="font-size:0.72rem;color:var(--text-muted);margin:-0.5rem 0 1rem;line-height:1.45;padding:0.5rem 0.65rem;background:rgba(99,102,241,0.08);border-radius:6px;border:1px solid var(--border-color,#374151);"></div>
             <div class="swing-stats-row" id="swingStatsRow" style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem;">
                 <div class="kpi-card"><span class="kpi-val" id="swingTotal">—</span><span class="kpi-lbl">Setups Found</span></div>
                 <div class="kpi-card"><span class="kpi-val" id="swingLong" style="color:var(--green)">—</span><span class="kpi-lbl">Long Setups</span></div>
                 <div class="kpi-card"><span class="kpi-val" id="swingShort" style="color:var(--red)">—</span><span class="kpi-lbl">Short Setups</span></div>
             </div>
+            
+            <!-- Filters & Toggles -->
+            <div class="swing-filters" id="swingFilters" style="display:flex;gap:0.5rem;margin-bottom:1.5rem;overflow-x:auto;padding-bottom:0.5rem;">
+                <button class="toggle-btn" id="swFilterAll" onclick="filterSwing('all')">All Setups</button>
+                <button class="toggle-btn" id="swFilterU200" onclick="filterSwing('u200')">Under ₹200</button>
+                <button class="toggle-btn" id="swFilterU500" onclick="filterSwing('u500')">Under ₹500</button>
+                <button class="toggle-btn active" id="swFilterU1000" onclick="filterSwing('u1000')">Under ₹1000</button>
+            </div>
+
             <div class="swing-grid" id="swingGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:1rem;">
                 <div class="loading-state"><div class="loader"></div><p>Scanning for swing setups...</p></div>
             </div>
@@ -986,8 +1695,11 @@
         </div>
     </div>
 
-    <!-- ── Mobile Bottom Nav ────────────────── -->
-    <nav class="mobile-bottom-nav" id="mobileBottomNav">
+    </main><!-- end .app-main -->
+    </div><!-- end .app-shell -->
+
+    <!-- ── Mobile Bottom Nav ────────────── -->
+    <nav class="mobile-bottom-nav bottom-nav" id="mobileBottomNav">
         <button class="bottom-nav-item active" data-tab="overview" id="bnOverview">
             <span class="bottom-nav-icon">◈</span>
             <span class="bottom-nav-label">Brahmand</span>
@@ -999,10 +1711,6 @@
         <button class="bottom-nav-item" data-tab="tradeflow" id="bnTradeflow">
             <span class="bottom-nav-icon">📈</span>
             <span class="bottom-nav-label">Trade Fl...</span>
-        </button>
-        <button class="bottom-nav-item" data-tab="options" id="bnOptions">
-            <span class="bottom-nav-icon">$</span>
-            <span class="bottom-nav-label">Index</span>
         </button>
         <button class="bottom-nav-item" id="bnMore">
             <span class="bottom-nav-icon">≡</span>
@@ -1037,6 +1745,10 @@
                 <span class="more-menu-icon">🚀</span>
                 <span>Breakouts</span>
             </button>
+            <a class="more-menu-item" href="/crypto">
+                <span class="more-menu-icon">₿</span>
+                <span>Crypto</span>
+            </a>
             <a class="more-menu-item" href="/landing">
                 <span class="more-menu-icon">🎉</span>
                 <span>Free Trial</span>

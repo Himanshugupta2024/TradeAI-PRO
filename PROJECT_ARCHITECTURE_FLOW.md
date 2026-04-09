@@ -202,3 +202,5 @@ sequenceDiagram
 - Autonomous trading runtime: autonomous_runner.py
 - Batch pipeline runtime: main.py
 - Core domain logic lives under agents/
+- Context state files: context_cache.json, news_cache.json, daily_api_usage.json
+  (cache-first ingestion for 24hr + 7-day context layer)

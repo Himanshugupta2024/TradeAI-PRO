@@ -6,7 +6,7 @@ Tables: Candle, Feature, Signal, Trade
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, Float, String, DateTime, Date, Enum, ForeignKey,
-    UniqueConstraint,
+    UniqueConstraint, Text,
     Index,
 )
 from sqlalchemy.orm import relationship, DeclarativeBase
@@ -186,3 +186,83 @@ class MorningScan(Base):
             f"<MorningScan {self.symbol} score={self.confidence_score:.1f} "
             f"entry={self.entry_price:.2f}>"
         )
+
+
+# ── OHLCV Cache ────────────────────────────────────────
+
+class OhlcvCache(Base):
+    __tablename__ = "ohlcv_cache"
+
+    symbol = Column(String(30), primary_key=True)
+    timeframe = Column(String(5), primary_key=True)
+    timestamp = Column(DateTime, primary_key=True)
+    open = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    low = Column(Float, nullable=True)
+    close = Column(Float, nullable=True)
+    volume = Column(Float, nullable=True)
+    source = Column(String(30), nullable=False, default="yfinance")
+    fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_ohlcv_sym_tf", "symbol", "timeframe", "timestamp"),
+    )
+
+
+# ── Model Performance ───────────────────────────────────
+
+class ModelPerformance(Base):
+    __tablename__ = "model_performance"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_name = Column(String(30), nullable=False, index=True)
+    predicted = Column(String(10), nullable=False)
+    actual = Column(String(10), nullable=False)
+    symbol = Column(String(30), nullable=True, index=True)
+    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("idx_model_perf_model_ts", "model_name", "timestamp"),
+    )
+
+
+# ── Context Snapshots ──────────────────────────────────
+
+class ContextSnapshot(Base):
+    __tablename__ = "context_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(30), nullable=False, index=True)
+    timestamp_utc = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    # 24-hour context
+    price_change_24hr_pct = Column(Float, nullable=False, default=0.0)
+    volume_change_24hr_pct = Column(Float, nullable=False, default=0.0)
+    news_sentiment_24hr = Column(Float, nullable=False, default=0.0)
+    news_volume_spike = Column(Integer, nullable=False, default=0)
+
+    # 7-day context
+    weekly_trend_bias = Column(String(20), nullable=False, default="NEUTRAL")
+    oi_change_7d_pct = Column(Float, nullable=False, default=0.0)
+    btc_dominance_7d_trend = Column(String(20), nullable=False, default="FLAT")
+
+    # Event risk
+    days_to_next_event = Column(Integer, nullable=False, default=99)
+    event_risk_active = Column(Integer, nullable=False, default=0)
+
+    # Composite score
+    context_score = Column(Float, nullable=False, default=0.0)
+
+    __table_args__ = (
+        Index("idx_context_snapshots_symbol_ts", "symbol", "timestamp_utc"),
+    )
+
+
+# ── Runtime Key-Value State ───────────────────────────
+
+class RuntimeState(Base):
+    __tablename__ = "runtime_state"
+
+    state_key = Column(String(120), primary_key=True)
+    state_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

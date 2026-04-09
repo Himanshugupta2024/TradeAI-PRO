@@ -119,6 +119,28 @@ VOLUME_SPIKE_CONF_BONUS  = int(os.getenv("VOLUME_SPIKE_CONF_BONUS",    "20"))   
 # When 15m + 1h + 1d all agree on direction → add to confidence.
 MTF_ALIGNMENT_CONF_BONUS = int(os.getenv("MTF_ALIGNMENT_CONF_BONUS", "15"))  # +15 pts
 
+# Post-boost confidence: candle structure (indecision / micro-range / wrong-color bar)
+CANDLE_QUALITY_CONF_ADJUST_ENABLED = os.getenv(
+    "CANDLE_QUALITY_CONF_ADJUST_ENABLED", "true"
+).lower() in ("1", "true", "yes")
+CANDLE_QUALITY_MIN_BODY_RATIO = float(os.getenv("CANDLE_QUALITY_MIN_BODY_RATIO", "0.35"))
+CANDLE_QUALITY_MIN_RANGE_ATR_RATIO = float(os.getenv("CANDLE_QUALITY_MIN_RANGE_ATR_RATIO", "0.25"))
+CANDLE_QUALITY_BODY_PENALTY = float(os.getenv("CANDLE_QUALITY_BODY_PENALTY", "8.0"))
+CANDLE_QUALITY_RANGE_PENALTY = float(os.getenv("CANDLE_QUALITY_RANGE_PENALTY", "5.0"))
+CANDLE_QUALITY_DIRECTION_FIGHT_PENALTY = float(os.getenv("CANDLE_QUALITY_DIRECTION_FIGHT_PENALTY", "6.0"))
+
+# MTF agreement (HTF + EMA + MACD [+ VWAP] stack) when full mtf_score is not passed
+MTF_VOTE_CONF_ADJUST_ENABLED = os.getenv("MTF_VOTE_CONF_ADJUST_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+MTF_AGREEMENT_MIN_VOTES = int(os.getenv("MTF_AGREEMENT_MIN_VOTES", "2"))
+MTF_AGREEMENT_LOW_VOTE_PENALTY = float(os.getenv("MTF_AGREEMENT_LOW_VOTE_PENALTY", "7.0"))
+# When caller passes mtf_score (-100..100), map to 0–4 display votes; penalize very weak alignment
+MTF_SCORE_WEAK_THRESHOLD = float(os.getenv("MTF_SCORE_WEAK_THRESHOLD", "35"))
+MTF_SCORE_WEAK_PENALTY = float(os.getenv("MTF_SCORE_WEAK_PENALTY", "6.0"))
+
 # ── RSI Divergence Confidence Boost ───────────────────────────────────────────
 # Bullish/bearish RSI divergence → add to AI confidence (on top of score logic).
 RSI_DIVERGENCE_CONF_BONUS = int(os.getenv("RSI_DIVERGENCE_CONF_BONUS", "15"))  # +15 pts
@@ -187,3 +209,307 @@ WS_RECONNECT_MAX = int(os.getenv("WS_RECONNECT_MAX", "50"))
 WS_STALE_THRESHOLD_MULT = float(os.getenv("WS_STALE_THRESHOLD_MULT", "2.0"))
 # If WebSocket is unavailable for this many seconds, fall back to CCXT polling
 WS_FALLBACK_TIMEOUT = int(os.getenv("WS_FALLBACK_TIMEOUT", "30"))
+
+# ── Context Layer (24hr + 7-day) ───────────────────────
+# Default: no paid/keyed APIs — RSS, public Binance/CoinGecko, yfinance, NSE calendar HTTP.
+# Set CONTEXT_USE_PAID_APIS=true only if you want MarketAux + RapidAPI calendar (keys required).
+CONTEXT_USE_PAID_APIS = os.getenv("CONTEXT_USE_PAID_APIS", "false").lower() in ("1", "true", "yes")
+
+# Try nsepython first for NSE day change in context layer (no key). Disable if NSE blocks your host.
+NSEPYTHON_QUOTES_ENABLED = os.getenv("NSEPYTHON_QUOTES_ENABLED", "true").lower() in ("1", "true", "yes")
+
+MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY", "")
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
+
+# Legacy keys kept for compatibility; free-only policy does not use paid endpoints.
+CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY", "")
+COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY", "")
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
+
+# Context fetcher intervals (seconds)
+CONTEXT_REFRESH_INTERVAL = int(os.getenv("CONTEXT_REFRESH_INTERVAL", "900"))
+NEWS_REFRESH_INTERVAL = int(os.getenv("NEWS_REFRESH_INTERVAL", "1800"))
+CALENDAR_REFRESH_INTERVAL = int(os.getenv("CALENDAR_REFRESH_INTERVAL", "14400"))
+
+# Free-source cache/rate controls
+COINGECKO_CACHE_MINUTES = int(os.getenv("COINGECKO_CACHE_MINUTES", "60"))
+NEWS_CACHE_MINUTES = int(os.getenv("NEWS_CACHE_MINUTES", "240"))
+CALENDAR_CACHE_HOURS = int(os.getenv("CALENDAR_CACHE_HOURS", "4"))
+NSE_EVENTS_CACHE_HOURS = int(os.getenv("NSE_EVENTS_CACHE_HOURS", "24"))
+MARKETAUX_DAILY_LIMIT = int(os.getenv("MARKETAUX_DAILY_LIMIT", "100"))
+MARKETAUX_TOP_SYMBOLS = int(os.getenv("MARKETAUX_TOP_SYMBOLS", "10"))
+
+# Context state files
+CONTEXT_CACHE_FILE = os.getenv("CONTEXT_CACHE_FILE", "context_cache.json")
+NEWS_CACHE_FILE = os.getenv("NEWS_CACHE_FILE", "news_cache.json")
+DAILY_API_USAGE_FILE = os.getenv("DAILY_API_USAGE_FILE", "daily_api_usage.json")
+
+# Context modifier thresholds
+EVENT_RISK_DAYS_THRESHOLD = int(os.getenv("EVENT_RISK_DAYS_THRESHOLD", "2"))
+NEWS_SPIKE_MULTIPLIER = float(os.getenv("NEWS_SPIKE_MULTIPLIER", "2.5"))
+CONTEXT_STRONG_NEGATIVE = float(os.getenv("CONTEXT_STRONG_NEGATIVE", "-0.30"))
+CONTEXT_STRONG_POSITIVE = float(os.getenv("CONTEXT_STRONG_POSITIVE", "0.40"))
+EVENT_RISK_CONFIDENCE_PENALTY = float(os.getenv("EVENT_RISK_CONFIDENCE_PENALTY", "0.25"))
+
+# Blend last-24h vs last-7d news narrative into context_score (sum ~0.30 by default).
+CONTEXT_NEWS_WEIGHT_24HR = float(os.getenv("CONTEXT_NEWS_WEIGHT_24HR", "0.15"))
+CONTEXT_NEWS_WEIGHT_7D = float(os.getenv("CONTEXT_NEWS_WEIGHT_7D", "0.15"))
+
+# Ensemble dynamic weights
+ENSEMBLE_WEIGHTS = {
+    "TRENDING": {"xgboost": 0.40, "lightgbm": 0.35, "lstm": 0.25},
+    "RANGING": {"xgboost": 0.30, "lightgbm": 0.25, "lstm": 0.45},
+    "VOLATILE": {"xgboost": 0.50, "lightgbm": 0.35, "lstm": 0.15},
+    "DEFAULT": {"xgboost": 0.35, "lightgbm": 0.35, "lstm": 0.30},
+}
+
+# Risk management and sizing
+MAX_PORTFOLIO_HEAT_PCT = float(os.getenv("MAX_PORTFOLIO_HEAT_PCT", "0.06"))
+CIRCUIT_BREAKER_THRESHOLD = float(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "0.12"))
+FRACTIONAL_KELLY = float(os.getenv("FRACTIONAL_KELLY", "0.50"))
+CORRELATION_GROUPS = [
+    ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"],
+    ["RELIANCE.NS", "ONGC.NS"],
+    ["HDFCBANK.NS", "ICICIBANK.NS", "KOTAKBANK.NS"],
+]
+
+# Feature drift controls
+DRIFT_Z_THRESHOLD = float(os.getenv("DRIFT_Z_THRESHOLD", "3.0"))
+DRIFT_CONFIDENCE_PENALTY = float(os.getenv("DRIFT_CONFIDENCE_PENALTY", "0.20"))
+
+# Telegram deduplication
+TELEGRAM_ALERT_COOLDOWN_HOURS = int(os.getenv("TELEGRAM_ALERT_COOLDOWN_HOURS", "4"))
+
+# Backtest defaults
+DEFAULT_SLIPPAGE_PCT = float(os.getenv("DEFAULT_SLIPPAGE_PCT", "0.001"))
+MIN_TRADES_FOR_RETRAIN = int(os.getenv("MIN_TRADES_FOR_RETRAIN", "200"))
+
+# ── Swing Scanner Volume Thresholds ─────────────────────────────────────────
+# Raised from 1.3x to eliminate false breakouts on mid/small-cap NSE stocks.
+# Research: 1.5x-2x is the reliable threshold for sub-₹1000 Indian stocks.
+SWING_VOL_RANGE_BREAKOUT = float(os.getenv("SWING_VOL_RANGE_BREAKOUT", "1.8"))   # 20-day range breakout
+SWING_VOL_INSIDE_BAR     = float(os.getenv("SWING_VOL_INSIDE_BAR",     "2.0"))   # Inside bar breakout
+SWING_VOL_BB_SQUEEZE     = float(os.getenv("SWING_VOL_BB_SQUEEZE",     "1.5"))   # BB squeeze expansion
+SWING_VOL_EMA_PULLBACK   = float(os.getenv("SWING_VOL_EMA_PULLBACK",   "0.8"))   # EMA pullback (min interest)
+SWING_VOL_52W_BREAKOUT   = float(os.getenv("SWING_VOL_52W_BREAKOUT",   "1.5"))   # 52-week high proximity
+SWING_VOL_POST_RESULT    = float(os.getenv("SWING_VOL_POST_RESULT",    "3.0"))   # Post-result gap up
+
+# Minimum average daily volume (shares) — below this = illiquid, penalise heavily.
+SWING_MIN_AVG_VOL_SHARES = int(os.getenv("SWING_MIN_AVG_VOL_SHARES", "50000"))
+SWING_LOW_LIQIDITY_PENALTY = int(os.getenv("SWING_LOW_LIQUIDITY_PENALTY", "20"))
+
+# ── Swing Scanner SL Caps by Price Band ─────────────────────────────────────
+# ATR-based SL for cheap stocks can be 5-8% which is too wide.
+# Cap the SL at these levels; if exceeded, signal a "reduce qty" warning.
+SWING_MAX_SL_PCT_BY_PRICE_BAND: dict[str, float] = {
+    "under_200":   0.06,   # max 6% SL for stocks under ₹200
+    "200_to_500":  0.05,   # max 5% SL
+    "500_to_1000": 0.04,   # max 4% SL
+}
+
+# Minimum Risk:Reward for swing setups — lowered from 1.8 to 1.5 to allow more setups through.
+SWING_MIN_RISK_REWARD = float(os.getenv("SWING_MIN_RISK_REWARD", "1.5"))
+
+# Reference index for swing regime gate (must match NSE_SYMBOLS display name).
+SWING_INDEX_SYMBOL = os.getenv("SWING_INDEX_SYMBOL", "NIFTY 50").strip() or "NIFTY 50"
+
+# When True, drop LONG swing setups if index htf_trend is BEARISH (and optionally mirror for shorts).
+SWING_REGIME_GATE_ENABLED = os.getenv("SWING_REGIME_GATE_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+# When True, drop LONG swing setups if index htf_trend is BEARISH.
+# DEFAULT: False — individual stocks can have valid LONG setups even in a bearish index.
+# Individual pattern R:R + strength gates already protect against weak setups.
+SWING_BLOCK_LONG_IN_BEARISH_TREND = os.getenv(
+    "SWING_BLOCK_LONG_IN_BEARISH_TREND", "false"
+).lower() in ("1", "true", "yes")
+SWING_BLOCK_SHORT_IN_BULLISH_TREND = os.getenv(
+    "SWING_BLOCK_SHORT_IN_BULLISH_TREND", "false"
+).lower() in ("1", "true", "yes")
+
+# Skip scanning a symbol if the last daily bar is older than N calendar days (0 = off).
+SWING_MAX_BAR_AGE_DAYS = float(os.getenv("SWING_MAX_BAR_AGE_DAYS", "10"))
+
+# Keep only the single strongest setup per symbol when multiple patterns fire.
+SWING_DEDUPE_ONE_PER_SYMBOL = os.getenv("SWING_DEDUPE_ONE_PER_SYMBOL", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+# Multi-pattern confluence: when several patterns agree (same direction), merge into one row
+# with a strength bonus (capped). Conflicting LONG vs SHORT resolved by peak strength, then count.
+SWING_CONFLUENCE_ENABLED = os.getenv("SWING_CONFLUENCE_ENABLED", "true").lower() in ("1", "true", "yes")
+SWING_CONFLUENCE_BONUS_PER_EXTRA = int(os.getenv("SWING_CONFLUENCE_BONUS_PER_EXTRA", "5"))
+SWING_CONFLUENCE_MAX_BONUS = int(os.getenv("SWING_CONFLUENCE_MAX_BONUS", "15"))
+
+# ── NSE Sector Map ──────────────────────────────────────────────────────────
+# Static mapping of tracked symbols → sector for sector momentum calculation.
+# Key = display name used in NSE_SYMBOLS, Value = sector bucket.
+NSE_SECTOR_MAP: dict[str, str] = {
+    # Indices (excluded from sector momentum)
+    "NIFTY 50":     "_INDEX",
+    "BANKNIFTY":    "_INDEX",
+    "SENSEX":       "_INDEX",
+    "NIFTY IT":     "_INDEX",
+    "NIFTY BANK":   "_INDEX",
+    # Banking & Financials
+    "HDFCBANK":     "Banking",
+    "ICICIBANK":    "Banking",
+    "KOTAKBANK":    "Banking",
+    "SBIN":         "Banking",
+    "AXISBANK":     "Banking",
+    "BAJFINANCE":   "Banking",
+    # IT / Technology
+    "TCS":          "IT",
+    "INFY":         "IT",
+    "WIPRO":        "IT",
+    "HCLTECH":      "IT",
+    "TECHM":        "IT",
+    "LTIM":         "IT",
+    # Oil & Gas / Energy
+    "RELIANCE":     "Energy",
+    "ONGC":         "Energy",
+    "BPCL":         "Energy",
+    "IOC":          "Energy",
+    # Auto & Auto Ancillary
+    "MARUTI":       "Auto",
+    "TATAMOTORS":   "Auto",
+    "BAJAJ-AUTO":   "Auto",
+    "EICHERMOT":    "Auto",
+    "HEROMOTOCO":   "Auto",
+    # Pharma & Healthcare
+    "SUNPHARMA":    "Pharma",
+    "DRREDDY":      "Pharma",
+    "CIPLA":        "Pharma",
+    "DIVISLAB":     "Pharma",
+    # FMCG / Consumer
+    "HINDUNILVR":   "FMCG",
+    "ITC":          "FMCG",
+    "NESTLEIND":    "FMCG",
+    "TITAN":        "FMCG",
+    # Infrastructure & Capital Goods
+    "LT":           "Infra",
+    "ADANIENT":     "Infra",
+    "ADANIPORTS":   "Infra",
+    "POWERGRID":    "Infra",
+    "NTPC":         "Infra",
+    "BHARTIARTL":   "Telecom",
+    # Metals & Mining
+    "TATASTEEL":    "Metals",
+    "JSWSTEEL":     "Metals",
+    "HINDALCO":     "Metals",
+    "SAIL":         "Metals",
+    "NATIONALUM":   "Metals",
+    "NMDC":         "Metals",
+    "GMDCLTD":      "Metals",
+    "JINDALSAW":    "Metals",
+    "JINDALSTEL":   "Metals",
+    "VEDL":         "Metals",
+    # Defence & PSU
+    "HAL":          "Defence",
+    "BEL":          "Defence",
+    "MAZDOCK":      "Defence",
+    "COCHINSHIP":   "Defence",
+    "RITES":        "Infra",
+    "RAILVIKAS":    "Infra",
+    "IRFC":         "Finance",
+    "HGINFRA":      "Infra",
+    "KALPATPOWR":   "Infra",
+    # Pharma Small/Mid
+    "CAPLIPOINT":   "Pharma",
+    "APOLLOHOSP":   "Pharma",
+    "CUPID":        "Pharma",
+    # Industrials / Engineering
+    "TIINDIA":      "Capital Goods",
+    "GRINDWELL":    "Capital Goods",
+    "ELECON":       "Capital Goods",
+    "DYNAMATECH":   "Capital Goods",
+    "SIEMENS":      "Capital Goods",
+    "ABB":          "Capital Goods",
+    "BHEL":         "Capital Goods",
+    "POLYCAB":      "Capital Goods",
+    "HAVELLS":      "Capital Goods",
+    "VOLTAS":       "Capital Goods",
+    # Wires & Cables
+    "PRECWIRE":     "Capital Goods",
+    "MOLDTKPAC":    "Consumer",
+    # Consumer / Discretionary
+    "TITAN":        "Consumer",
+    "KALYANKJIL":   "Consumer",
+    "DMART":        "Consumer",
+    "TRENT":        "Consumer",
+    "DIXON":        "Consumer",
+    # Realty
+    "DLF":          "Realty",
+    "GODREJPROP":   "Realty",
+    "PRESTIGE":     "Realty",
+    # New Economy
+    "IRCTC":        "Consumer",
+    "ZOMATO":       "Consumer",
+    "TATAPOWER":    "Energy",
+    "COALINDIA":    "Energy",
+    "GAIL":         "Energy",
+}
+
+# ── Swing Trading Watchlist ──────────────────────────────────────────────────
+# Curated list of symbols the SwingSpectrum scanner should focus on.
+# Mix of: user's preferred small/mid-caps + liquid large-caps for context.
+# Order matters: first 20 are priority-loaded in Phase 3 of initial load.
+SWING_WATCHLIST: list[str] = [
+    # ─ User's target stocks ────────────────────────────
+    "CUPID",        # Small-cap — high % moves, great swing candidate
+    "PRECWIRE",     # Small-cap wires — volatile, good R:R setups
+    "TATASTEEL",    # Large-cap metals — strong trend/momentum
+    "ITC",          # Large-cap FMCG — reliable support/resistance
+
+    # ─ Metals & Mining (high-beta swing plays) ─────────
+    "JSWSTEEL",
+    "HINDALCO",
+    "SAIL",
+    "NATIONALUM",
+    "NMDC",
+    "JINDALSAW",
+    "VEDL",
+    "COALINDIA",
+
+    # ─ Defence & PSU (strong chart patterns) ───────────
+    "HAL",
+    "BEL",
+    "MAZDOCK",
+    "COCHINSHIP",
+    "RAILVIKAS",
+    "IRFC",
+    "RITES",
+    "BHEL",
+
+    # ─ Capital Goods / Engineering ─────────────────────
+    "TIINDIA",
+    "GRINDWELL",
+    "ELECON",
+    "SIEMENS",
+    "ABB",
+    "POLYCAB",
+    "HAVELLS",
+    "HGINFRA",
+
+    # ─ Pharma Mid-Cap ──────────────────────────────────
+    "CAPLIPOINT",
+    "SUNPHARMA",
+    "CIPLA",
+
+    # ─ Consumer / Discretionary ─────────────────────────
+    "TRENT",
+    "DIXON",
+    "IRCTC",
+    "KALYANKJIL",
+
+    # ─ Large-cap for market context ────────────────────
+    "RELIANCE",
+    "SBIN",
+    "TATAMOTORS",
+    "ADANIPORTS",
+    "TATAPOWER",
+]

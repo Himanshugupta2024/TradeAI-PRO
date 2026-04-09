@@ -17,6 +17,7 @@ from datetime import datetime, date, timezone, timedelta
 from dataclasses import dataclass, field, asdict
 
 from config import settings
+from db.runtime_state import get_runtime_state, set_runtime_state
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -103,12 +104,15 @@ class PaperTradingEngine:
         self.initial_capital = initial_capital
         self.capital = initial_capital
         self.log_file = log_file
+        self._state_key = f"paper_trading_state:{os.path.abspath(self.log_file)}"
         self.trades: list[PaperTrade] = []
         self.open_trades: list[PaperTrade] = []
         self._trade_counter = 0
         self._consecutive_losses = 0
         self._daily_pnl: dict[str, float] = {}  # date_str (IST) → cumulative PnL
         self._last_trade_date: str = _today_ist()  # Track day for loss counter reset
+        self._circuit_breaker_active = False
+        self._circuit_breaker_reason = ""
 
         # Trailing SL manager
         self.trailing_manager = TrailingStopManager()
@@ -163,6 +167,12 @@ class PaperTradingEngine:
             log.warning("BLOCKED: %d consecutive losses — pausing", self._consecutive_losses)
             return None
 
+        # Risk check: circuit breaker drawdown gate (latched until reset)
+        self._update_circuit_breaker_state()
+        if self._circuit_breaker_active:
+            log.warning("BLOCKED: Circuit breaker active (%s)", self._circuit_breaker_reason or "risk breach")
+            return None
+
         # Risk check: daily loss limit
         today = _today_ist()
         daily = self._daily_pnl.get(today, 0.0)
@@ -200,8 +210,19 @@ class PaperTradingEngine:
             entry=entry,
             stop_loss=sl,
         )
+        qty = self._apply_correlation_size_reduction(symbol, qty)
         if qty <= 0:
             qty = 1.0  # Fallback to 1 unit
+
+        # Risk check: portfolio heat (projected risk after this trade)
+        projected_heat = self._projected_portfolio_heat_pct(entry, sl, qty)
+        if projected_heat > settings.MAX_PORTFOLIO_HEAT_PCT:
+            log.warning(
+                "BLOCKED: Portfolio heat %.2f%% exceeds max %.2f%%",
+                projected_heat * 100,
+                settings.MAX_PORTFOLIO_HEAT_PCT * 100,
+            )
+            return None
 
         # Execute
         self._trade_counter += 1
@@ -403,7 +424,97 @@ class PaperTradingEngine:
             "profit_factor": round(profit_factor, 2),
         }
 
+    def get_portfolio_heat_pct(self) -> float:
+        """Current portfolio heat = open risk / capital."""
+        if self.capital <= 0:
+            return 0.0
+        open_risk = 0.0
+        for trade in self.open_trades:
+            risk_per_unit = abs(trade.entry_price - trade.stop_loss)
+            open_risk += risk_per_unit * max(trade.quantity, 0.0)
+        return max(open_risk / self.capital, 0.0)
+
+    def get_risk_state(self) -> dict:
+        """Expose live risk guard state for API consumers."""
+        self._update_circuit_breaker_state()
+        daily = self._daily_pnl.get(_today_ist(), 0.0)
+        drawdown_pct = 0.0
+        if self.initial_capital > 0:
+            drawdown_pct = max((self.initial_capital - self.capital) / self.initial_capital, 0.0)
+        daily_loss_pct = abs(daily) / max(self.capital, 1.0)
+        return {
+            "circuit_breaker_active": self._circuit_breaker_active,
+            "circuit_breaker_reason": self._circuit_breaker_reason,
+            "drawdown_pct": round(drawdown_pct, 6),
+            "drawdown_threshold": float(settings.CIRCUIT_BREAKER_THRESHOLD),
+            "portfolio_heat_pct": round(self.get_portfolio_heat_pct(), 6),
+            "portfolio_heat_max": float(settings.MAX_PORTFOLIO_HEAT_PCT),
+            "consecutive_losses": int(self._consecutive_losses),
+            "max_consecutive_losses": int(settings.MAX_CONSECUTIVE_LOSSES),
+            "daily_loss_pct": round(daily_loss_pct, 6),
+            "daily_loss_limit_pct": float(settings.DAILY_LOSS_LIMIT_PCT / 100.0),
+        }
+
+    def reset_circuit_breaker(self, rebase_capital: bool = False) -> dict:
+        """Manual risk reset; can optionally rebase initial capital to current capital."""
+        if rebase_capital and self.capital > 0:
+            self.initial_capital = self.capital
+
+        self._circuit_breaker_active = False
+        self._circuit_breaker_reason = ""
+        self._consecutive_losses = 0
+        self._save()
+        return self.get_risk_state()
+
     # ── Internal ─────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_symbol(symbol: str) -> str:
+        s = (symbol or "").upper().replace("/", "")
+        aliases = {
+            "RELIANCE": "RELIANCE.NS",
+            "ONGC": "ONGC.NS",
+            "HDFCBANK": "HDFCBANK.NS",
+            "ICICIBANK": "ICICIBANK.NS",
+            "KOTAKBANK": "KOTAKBANK.NS",
+        }
+        return aliases.get(s, s)
+
+    def _has_correlated_open_position(self, symbol: str) -> bool:
+        candidate = self._normalize_symbol(symbol)
+        for group in settings.CORRELATION_GROUPS:
+            normalized_group = {self._normalize_symbol(item) for item in group}
+            if candidate not in normalized_group:
+                continue
+            for trade in self.open_trades:
+                open_symbol = self._normalize_symbol(trade.symbol)
+                if open_symbol in normalized_group and open_symbol != candidate:
+                    return True
+        return False
+
+    def _apply_correlation_size_reduction(self, symbol: str, qty: float) -> float:
+        if qty <= 0:
+            return 0.0
+        if self._has_correlated_open_position(symbol):
+            return round(qty * 0.5, 6)
+        return qty
+
+    def _projected_portfolio_heat_pct(self, entry: float, stop_loss: float, qty: float) -> float:
+        if self.capital <= 0:
+            return 1.0
+        existing_risk = self.get_portfolio_heat_pct() * self.capital
+        new_risk = abs(entry - stop_loss) * max(qty, 0.0)
+        return max((existing_risk + new_risk) / self.capital, 0.0)
+
+    def _update_circuit_breaker_state(self) -> None:
+        if self.initial_capital <= 0:
+            return
+        drawdown = max((self.initial_capital - self.capital) / self.initial_capital, 0.0)
+        if drawdown >= settings.CIRCUIT_BREAKER_THRESHOLD:
+            self._circuit_breaker_active = True
+            self._circuit_breaker_reason = (
+                f"drawdown {drawdown * 100:.2f}% >= {settings.CIRCUIT_BREAKER_THRESHOLD * 100:.2f}%"
+            )
 
     def _close_trade(self, trade: PaperTrade, exit_price: float, status: str):
         """Close a trade and update metrics."""
@@ -473,7 +584,7 @@ class PaperTradingEngine:
             log.debug("Feedback logger skipped: %s", _fb_err)
 
     def _save(self):
-        """Persist trades to JSON file."""
+        """Persist paper trading state to DB runtime state."""
         data = {
             "capital": self.capital,
             "initial_capital": self.initial_capital,
@@ -483,12 +594,44 @@ class PaperTradingEngine:
             "cooldowns": self._cooldowns,
             "equity_history": self.equity_history[-500:],  # Keep last 500 points
             "trades": [asdict(t) for t in self.trades],
+            "circuit_breaker_active": self._circuit_breaker_active,
+            "circuit_breaker_reason": self._circuit_breaker_reason,
         }
-        with open(self.log_file, "w") as f:
-            json.dump(data, f, indent=2, default=str)
+        set_runtime_state(self._state_key, data)
+
+    def _load_from_payload(self, data: dict) -> None:
+        self.capital = data.get("capital", self.initial_capital)
+        self.initial_capital = data.get("initial_capital", self.initial_capital)
+        self._consecutive_losses = data.get("consecutive_losses", 0)
+        self._last_trade_date = data.get("last_trade_date", _today_ist())
+        self._daily_pnl = data.get("daily_pnl", {})
+        self._cooldowns = data.get("cooldowns", {})
+        self._circuit_breaker_active = bool(data.get("circuit_breaker_active", False))
+        self._circuit_breaker_reason = str(data.get("circuit_breaker_reason", ""))
+        self.equity_history = data.get("equity_history", [])
+
+        for td in data.get("trades", []):
+            # Handle older trade format without quantity
+            if "quantity" not in td:
+                td["quantity"] = 1.0
+            trade = PaperTrade(**td)
+            self.trades.append(trade)
+            if trade.status == "OPEN":
+                self.open_trades.append(trade)
+
+        self._trade_counter = max((t.id for t in self.trades), default=0)
 
     def _load(self):
-        """Load trades from JSON file if it exists."""
+        """Load state from DB runtime state, then fallback legacy JSON once."""
+        data = get_runtime_state(self._state_key)
+        if isinstance(data, dict):
+            try:
+                self._load_from_payload(data)
+                log.debug("Loaded %d trades from DB runtime state", len(self.trades))
+                return
+            except Exception as exc:
+                log.error("Could not load DB paper trading state: %s", exc)
+
         if not os.path.exists(self.log_file):
             return
 
@@ -496,23 +639,8 @@ class PaperTradingEngine:
             with open(self.log_file) as f:
                 data = json.load(f)
 
-            self.capital = data.get("capital", self.initial_capital)
-            self._consecutive_losses = data.get("consecutive_losses", 0)
-            self._last_trade_date = data.get("last_trade_date", _today_ist())
-            self._daily_pnl = data.get("daily_pnl", {})
-            self._cooldowns = data.get("cooldowns", {})
-            self.equity_history = data.get("equity_history", [])
-
-            for td in data.get("trades", []):
-                # Handle older trade format without quantity
-                if "quantity" not in td:
-                    td["quantity"] = 1.0
-                trade = PaperTrade(**td)
-                self.trades.append(trade)
-                if trade.status == "OPEN":
-                    self.open_trades.append(trade)
-
-            self._trade_counter = max((t.id for t in self.trades), default=0)
+            self._load_from_payload(data)
+            set_runtime_state(self._state_key, data)
             log.debug("Loaded %d trades from %s", len(self.trades), self.log_file)
         except (json.JSONDecodeError, TypeError):
             log.error("Could not load trade history from %s — starting fresh", self.log_file)

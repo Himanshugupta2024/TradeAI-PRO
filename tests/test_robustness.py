@@ -157,10 +157,11 @@ class TestDataValidation:
 
 class TestPaperTradingRiskManagement:
     """Test paper trading engine risk controls."""
-    
-    def test_trade_valid_execution(self):
+
+    def test_trade_valid_execution(self, tmp_path):
         """Valid trade should execute."""
-        engine = PaperTradingEngine(initial_capital=100_000)
+        log_file = tmp_path / "paper_trades.json"
+        engine = PaperTradingEngine(initial_capital=100_000, log_file=str(log_file))
         
         trade = engine.execute(
             symbol="TEST",
@@ -176,9 +177,10 @@ class TestPaperTradingRiskManagement:
         assert trade.direction == "LONG"
         assert trade.status == "OPEN"
     
-    def test_trade_min_risk_reward(self):
+    def test_trade_min_risk_reward(self, tmp_path):
         """Trade with low RR should be rejected."""
-        engine = PaperTradingEngine(initial_capital=100_000)
+        log_file = tmp_path / "paper_trades.json"
+        engine = PaperTradingEngine(initial_capital=100_000, log_file=str(log_file))
         
         trade = engine.execute(
             symbol="TEST",

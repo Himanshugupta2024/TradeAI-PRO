@@ -5,7 +5,7 @@ Production-grade runner with event-driven architecture:
   - Binance WebSocket for real-time crypto data (sub-second)
   - Fallback to CCXT polling when WebSocket unavailable
   - Self-healing with exponential backoff on failures
-  - Health heartbeat written to health.json
+    - Health heartbeat persisted in DB runtime_state
   - Regime detection per symbol with change alerts
   - Data staleness detection and gap filling
   - Scheduled daily summary at market close
@@ -22,7 +22,6 @@ import sys
 import os
 import asyncio
 import argparse
-import json
 import pandas as pd
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -48,6 +47,7 @@ from agents.alerts.telegram_bot import (
     send_data_feed_alert, send_stale_data_alert, send_websocket_alert,
     send_consecutive_loss_alert,
 )
+from db.runtime_state import set_runtime_state
 
 log = get_logger("autonomous")
 
@@ -70,7 +70,7 @@ _stale_alerted: set[str] = set()
 # ── Health Heartbeat ──────────────────────────────────
 
 def write_health(status: str = "alive", extra: dict = None):
-    """Write health status to a JSON file for external monitoring."""
+    """Write health status to DB runtime state for monitoring."""
     health = {
         "status": status,
         "timestamp": datetime.now().isoformat(),
@@ -80,8 +80,7 @@ def write_health(status: str = "alive", extra: dict = None):
         health.update(extra)
 
     try:
-        with open(settings.HEALTH_FILE, "w") as f:
-            json.dump(health, f, indent=2)
+        set_runtime_state("health", health)
     except Exception:
         pass  # Non-critical
 

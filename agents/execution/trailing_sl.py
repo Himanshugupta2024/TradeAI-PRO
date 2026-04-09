@@ -16,6 +16,7 @@ import os
 from dataclasses import dataclass, asdict
 from config import settings
 from config.logger import get_logger
+from db.runtime_state import get_runtime_state, set_runtime_state
 
 log = get_logger(__name__)
 
@@ -51,6 +52,7 @@ class TrailingStopManager:
         self.breakeven_threshold = breakeven_atr_threshold
         self._states: dict[int, TrailingState] = {}
         self._state_file = state_file
+        self._state_key = f"trailing_sl_state:{self._state_file}"
         self._load_state()
 
     def register(self, trade_id: int, direction: str, entry: float, sl: float, atr: float):
@@ -139,18 +141,27 @@ class TrailingStopManager:
         self._save_state()
 
     def _save_state(self):
-        """Persist trailing SL state to JSON file."""
+        """Persist trailing SL state to DB runtime state."""
         try:
             data = {}
             for tid, state in self._states.items():
                 data[str(tid)] = asdict(state)
-            with open(self._state_file, "w") as f:
-                json.dump(data, f, indent=2)
+            set_runtime_state(self._state_key, data)
         except Exception as e:
             log.error("Failed to save trailing SL state: %s", e)
 
     def _load_state(self):
-        """Restore trailing SL state from JSON file."""
+        """Restore trailing SL state from DB runtime state, then legacy JSON."""
+        data = get_runtime_state(self._state_key)
+        if isinstance(data, dict):
+            try:
+                for tid_str, state_dict in data.items():
+                    self._states[int(tid_str)] = TrailingState(**state_dict)
+                log.info("Restored %d trailing SL states from DB runtime state", len(self._states))
+                return
+            except Exception as e:
+                log.error("Failed to load trailing SL DB state: %s", e)
+
         if not os.path.exists(self._state_file):
             return
         try:
@@ -158,6 +169,7 @@ class TrailingStopManager:
                 data = json.load(f)
             for tid_str, state_dict in data.items():
                 self._states[int(tid_str)] = TrailingState(**state_dict)
+            set_runtime_state(self._state_key, data)
             log.info("Restored %d trailing SL states from %s", len(self._states), self._state_file)
         except (json.JSONDecodeError, TypeError, KeyError) as e:
             log.error("Failed to load trailing SL state: %s — starting fresh", e)

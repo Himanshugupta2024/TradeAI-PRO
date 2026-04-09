@@ -7,6 +7,7 @@ python-dotenv>=1.0.0
 requests>=2.31.0
 ccxt>=4.0.0
 yfinance>=0.2.30
+nsepython>=2.0.0
 websockets>=12.0
 pandas-ta>=0.3.14b0
 
@@ -20,12 +21,6 @@ uvicorn>=0.27.0
 
 # Alerts
 python-telegram-bot>=20.0
-
-# Broker APIs — install ONE for real NSE option chain data (OI, PCR, Max Pain)
-# NSE public site is Akamai-protected and blocks Python — broker API is required
-# kiteconnect>=5.0.0           # Zerodha Kite Connect (needs daily access token)
-# smartapi-python>=1.3.4       # Angel Broking SmartAPI (auto TOTP — recommended)
-# pyotp>=2.9.0                 # Required with smartapi-python for TOTP auth
 
 # ML / AI — Tier 3 Ensemble Stack
 # XGBoost (tabular predictor — no Python version restriction)

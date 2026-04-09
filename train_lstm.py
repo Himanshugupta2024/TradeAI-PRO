@@ -18,6 +18,7 @@ and is automatically used by the ensemble predictor.
 import argparse
 import os
 import sys
+from utils.atomic_io import atomic_write_json
 
 # Check Python version before importing torch
 if sys.version_info >= (3, 14):
@@ -111,8 +112,7 @@ def train_on_symbol(
     scaler_params["symbol"] = symbol
     scaler_params["timeframe"] = timeframe
     scaler_params["seq_length"] = seq_length
-    with open("models/scaler_params.json", "w") as f:
-        json.dump(scaler_params, f, indent=2)
+    atomic_write_json("models/scaler_params.json", scaler_params, indent=2)
 
     log.info(
         "LSTM trained: best_val_acc=%.1f%% in %d epochs",

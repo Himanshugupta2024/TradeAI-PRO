@@ -18,6 +18,7 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 import numpy as np
+from utils.atomic_io import atomic_write_json
 import pandas as pd
 import json
 import os
@@ -308,8 +309,7 @@ if TORCH_AVAILABLE:
                     "batch_size": batch_size,
                     "learning_rate": learning_rate,
                 }
-                with open(os.path.join(save_path, "model_meta.json"), "w") as f:
-                    json.dump(meta, f, indent=2)
+                atomic_write_json(os.path.join(save_path, "model_meta.json"), meta, indent=2)
             else:
                 epochs_no_improve += 1
                 if epochs_no_improve >= patience:
