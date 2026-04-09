@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: trading-api
+    env: python
+    plan: free
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DATABASE_URL
+        value: sqlite:////var/data/trading.db
+      - key: HEALTH_FILE
+        value: /var/data/health.json
+      - key: CONTEXT_CACHE_FILE
+        value: /var/data/context_cache.json
+      - key: NEWS_CACHE_FILE
+        value: /var/data/news_cache.json
+      - key: DAILY_API_USAGE_FILE
+        value: /var/data/daily_api_usage.json
+      - key: CONTEXT_USE_PAID_APIS
+        value: true
+      - key: MARKETAUX_API_KEY
+        sync: false
+    disk:
+      name: trading-data
+      mountPath: /var/data
+      sizeGB: 1
