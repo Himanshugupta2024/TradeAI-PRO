@@ -201,13 +201,17 @@ def _fetch_history_with_timeout(
             "prepost": False,
         }
         if start is not None:
-            # Daily bars expect date-only boundaries in some yfinance paths.
+            # Pass native datetime/date boundaries (instead of formatted strings)
+            # to avoid provider-side parsing errors on mixed timestamp formats.
+            end_dt = end or datetime.now()
+
+            # Daily bars are more stable with date-only boundaries.
             if interval in ("1d", "1wk", "1mo", "3mo"):
-                kwargs["start"] = start.strftime("%Y-%m-%d")
-                kwargs["end"] = (end or datetime.now()).strftime("%Y-%m-%d")
+                kwargs["start"] = start.date()
+                kwargs["end"] = end_dt.date()
             else:
-                kwargs["start"] = start.strftime("%Y-%m-%d %H:%M:%S")
-                kwargs["end"] = (end or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+                kwargs["start"] = start
+                kwargs["end"] = end_dt
         else:
             kwargs["period"] = period or "5d"
         return tk.history(**kwargs)

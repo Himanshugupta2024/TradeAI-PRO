@@ -3,6 +3,8 @@ import asyncio
 import json
 import logging
 import os
+import time
+from collections import deque
 from datetime import datetime
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
@@ -42,6 +44,8 @@ from api.paths import STATIC_DIR
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_CRYPTO_PREDICTION_HISTORY: deque[dict] = deque(maxlen=60)
 
 @router.get("/api/health")
 async def health_check():
@@ -102,6 +106,11 @@ async def get_market_data(
     Supports ?interval=5m|15m|1h|1d for the chart timeframe selector.
     Non-5m intervals are fetched on-demand and indicators are calculated fresh.
     """
+    # Guard against route shadowing: /api/market/mood can be captured here
+    # when dynamic routes are registered before static ones.
+    if symbol.lower() == "mood":
+        return svc._compute_market_mood()
+
     symbol = symbol.replace("-", "/")
     if interval not in ("5m", "15m", "1h", "1d"):
         interval = "5m"
@@ -156,7 +165,13 @@ async def get_risk_state():
 @router.get("/api/ai/weights")
 async def get_ai_weight_state():
     """Expose dynamic ensemble weight state for monitoring and debugging."""
-    return get_dynamic_weight_state()
+    try:
+        from agents.ai_engine.ensemble import get_dynamic_weight_state
+
+        return get_dynamic_weight_state()
+    except Exception as exc:
+        logger.error("AI weight state error: %s", exc)
+        return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
 @router.post("/api/risk/reset-circuit")
@@ -1401,6 +1416,8 @@ async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
         ("Cointelegraph", "https://cointelegraph.com/rss"),
         ("Decrypt", "https://decrypt.co/feed"),
         ("CryptoSlate", "https://cryptoslate.com/feed/"),
+        ("The Block", "https://www.theblock.co/rss.xml"),
+        ("Blockworks", "https://blockworks.co/feed"),
     ]
 
     def _norm_text(node: ET.Element | None) -> str:
@@ -1410,37 +1427,62 @@ async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
         return " ".join(txt.split())
 
     def _fetch_feed(source: str, url: str) -> list[dict]:
-        req = Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                )
-            },
-        )
-        with urlopen(req, timeout=10) as resp:
-            payload = resp.read()
+        last_exc: Exception | None = None
 
-        root = ET.fromstring(payload)
-        items = root.findall(".//item")
-        out: list[dict] = []
-        for it in items[:15]:
-            title = _norm_text(it.find("title"))
-            link = _norm_text(it.find("link"))
-            pub = _norm_text(it.find("pubDate")) or _norm_text(it.find("published"))
-            if not title or not link:
-                continue
-            out.append(
-                {
-                    "title": title,
-                    "url": link,
-                    "source": source,
-                    "published": pub,
-                }
-            )
-        return out
+        # Retry with exponential backoff to reduce transient source failures.
+        for attempt in range(3):
+            try:
+                req = Request(
+                    url,
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/124.0.0.0 Safari/537.36"
+                        )
+                    },
+                )
+                with urlopen(req, timeout=10) as resp:
+                    payload = resp.read()
+
+                root = ET.fromstring(payload)
+                # Support RSS (<item>) and Atom (<entry>) feeds.
+                items = root.findall(".//item")
+                if not items:
+                    items = root.findall(".//{http://www.w3.org/2005/Atom}entry")
+
+                out: list[dict] = []
+                for it in items[:20]:
+                    title = _norm_text(it.find("title")) or _norm_text(it.find("{http://www.w3.org/2005/Atom}title"))
+                    link = _norm_text(it.find("link"))
+                    if not link:
+                        atom_link = it.find("{http://www.w3.org/2005/Atom}link")
+                        if atom_link is not None:
+                            link = str(atom_link.attrib.get("href") or "").strip()
+                    pub = (
+                        _norm_text(it.find("pubDate"))
+                        or _norm_text(it.find("published"))
+                        or _norm_text(it.find("{http://www.w3.org/2005/Atom}updated"))
+                    )
+                    if not title or not link:
+                        continue
+                    out.append(
+                        {
+                            "title": title,
+                            "url": link,
+                            "source": source,
+                            "published": pub,
+                        }
+                    )
+                return out
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep(0.35 * (2**attempt))
+
+        if last_exc is not None:
+            raise last_exc
+        return []
 
     all_news: list[dict] = []
     sources_ok: list[str] = []
@@ -1497,8 +1539,11 @@ async def get_crypto_intelligence():
 
 
 @router.get("/api/crypto/prediction")
-async def get_crypto_prediction():
+async def get_crypto_prediction(timeframe: str = Query(default="1h")):
     """Calculated crypto prediction from live market, news sentiment, and macro context."""
+
+    if timeframe not in ("1h", "4h", "1d"):
+        timeframe = "1h"
 
     def _fetch_json(url: str) -> object:
         req = Request(
@@ -1547,6 +1592,52 @@ async def get_crypto_prediction():
         base = float(np.mean(volumes[-21:-1]))
         return recent / base if base > 0 else 1.0
 
+    def _ema(values: list[float], period: int) -> float | None:
+        if len(values) < period:
+            return None
+        alpha = 2.0 / (period + 1)
+        v = float(np.mean(values[:period]))
+        for x in values[period:]:
+            v = alpha * x + (1.0 - alpha) * v
+        return float(v)
+
+    def _macd_hist(closes: list[float]) -> float | None:
+        if len(closes) < 35:
+            return None
+
+        alpha12 = 2.0 / 13.0
+        alpha26 = 2.0 / 27.0
+        alpha9 = 2.0 / 10.0
+
+        ema12 = float(np.mean(closes[:12]))
+        ema26 = float(np.mean(closes[:26]))
+        macd_series: list[float] = []
+        for c in closes:
+            ema12 = alpha12 * c + (1.0 - alpha12) * ema12
+            ema26 = alpha26 * c + (1.0 - alpha26) * ema26
+            macd_series.append(ema12 - ema26)
+
+        signal = float(np.mean(macd_series[:9]))
+        for m in macd_series[9:]:
+            signal = alpha9 * m + (1.0 - alpha9) * signal
+
+        return float(macd_series[-1] - signal)
+
+    def _bb_pos(closes: list[float], period: int = 20) -> float | None:
+        if len(closes) < period:
+            return None
+        window = closes[-period:]
+        mid = float(np.mean(window))
+        std = float(np.std(window))
+        if std == 0:
+            return 0.5
+        upper = mid + 2 * std
+        lower = mid - 2 * std
+        band = upper - lower
+        if band <= 0:
+            return 0.5
+        return float((closes[-1] - lower) / band)
+
     def _sentiment_from_titles(items: list[dict]) -> tuple[float, int, int]:
         pos_words = {
             "surge", "rally", "breakout", "adoption", "approval", "launch", "partnership", "bull", "bullish",
@@ -1578,54 +1669,66 @@ async def get_crypto_prediction():
         pct = float(ticker.get("priceChangePercent") or 0.0)
         rsi = _calc_rsi(closes)
         vs = _vol_spike(volumes)
+        macd_h = _macd_hist(closes)
+        bb_pos = _bb_pos(closes)
         mom = 0.0
         if len(closes) >= 8 and closes[-8] != 0:
             mom = ((closes[-1] - closes[-8]) / closes[-8]) * 100.0
 
         score = 0.0
         reasons: list[str] = []
-        if pct >= 2.5:
-            score += 1.2
-            reasons.append(f"24h momentum +{pct:.2f}%")
-        elif pct <= -2.5:
-            score -= 1.2
-            reasons.append(f"24h momentum {pct:.2f}%")
+
+        pct_component = max(-1.2, min(1.2, pct / 4.0))
+        score += pct_component
+        reasons.append(f"24h momentum {pct:+.2f}%")
 
         if rsi is not None:
+            rsi_component = max(-1.2, min(1.2, (50.0 - rsi) / 16.0))
+            score += rsi_component
             if rsi < 33:
-                score += 1.4
                 reasons.append(f"RSI {rsi:.1f} oversold")
             elif rsi > 68:
-                score -= 1.4
                 reasons.append(f"RSI {rsi:.1f} overbought")
 
-        if mom >= 0.8:
-            score += 0.8
-            reasons.append("short trend up")
-        elif mom <= -0.8:
-            score -= 0.8
-            reasons.append("short trend down")
+        mom_component = max(-1.0, min(1.0, mom / 2.8))
+        score += mom_component
+        if abs(mom) >= 0.5:
+            reasons.append(f"trend impulse {mom:+.2f}%")
 
-        if vs >= 1.8 and pct > 0:
-            score += 0.6
-            reasons.append(f"volume spike x{vs:.1f}")
-        elif vs >= 1.8 and pct < 0:
-            score -= 0.6
-            reasons.append(f"sell volume x{vs:.1f}")
+        if macd_h is not None:
+            macd_component = max(-0.8, min(0.8, macd_h * 250.0))
+            score += macd_component
+            reasons.append("MACD hist positive" if macd_h >= 0 else "MACD hist negative")
+
+        if bb_pos is not None:
+            # Lower band (0.0) is rebound-positive, upper (1.0) is mean-revert risk.
+            bb_component = max(-0.6, min(0.6, (0.5 - bb_pos) * 1.8))
+            score += bb_component
+
+        if vs >= 1.8:
+            vol_component = min(0.9, (vs - 1.0) * 0.35)
+            if pct >= 0:
+                score += vol_component
+                reasons.append(f"volume confirmation x{vs:.1f}")
+            else:
+                score -= vol_component
+                reasons.append(f"sell volume x{vs:.1f}")
 
         action = "HOLD"
-        if score >= 1.9:
+        if score >= 1.7:
             action = "BUY"
-        elif score <= -1.9:
+        elif score <= -1.7:
             action = "SELL"
 
-        conf = int(max(35, min(95, round(40 + abs(score) * 16 + (6 if rsi is not None else 0)))))
+        conf = int(max(35, min(95, round(42 + abs(score) * 13 + min(abs(pct), 9.0) * 1.2))))
         return {
             "symbol": sym,
             "action": action,
             "confidence": conf,
             "score": round(score, 3),
             "rsi": round(rsi, 2) if rsi is not None else None,
+            "macd_hist": round(macd_h, 5) if macd_h is not None else None,
+            "bb_pos": round(bb_pos, 3) if bb_pos is not None else None,
             "volume_spike": round(vs, 2),
             "momentum_8h_pct": round(mom, 2),
             "reasons": reasons[:4],
@@ -1685,7 +1788,7 @@ async def get_crypto_prediction():
             if not ticker:
                 continue
             try:
-                kline_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=1h&limit=50"
+                kline_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval={timeframe}&limit=80"
                 kraw = await asyncio.to_thread(_fetch_json, kline_url)
                 if not isinstance(kraw, list):
                     continue
@@ -1759,12 +1862,45 @@ async def get_crypto_prediction():
 
         confidence = int(max(35, min(93, round(38 + abs(score) * 18))))
 
+        horizon_map = {"1h": "6-24h", "4h": "1-3d", "1d": "3-10d"}
+        horizon = horizon_map.get(timeframe, "6-24h")
+
+        # Resolve previous pending outcome using latest BTC move sign as a proxy.
+        if _CRYPTO_PREDICTION_HISTORY:
+            prev = _CRYPTO_PREDICTION_HISTORY[-1]
+            if prev.get("actual") is None:
+                actual = "UP" if btc_pct > 0.15 else "DOWN" if btc_pct < -0.15 else "FLAT"
+                prev_dir = str(prev.get("direction") or "")
+                hit: bool | None = None
+                if prev_dir == "BULLISH_BIAS":
+                    hit = actual == "UP"
+                elif prev_dir == "BEARISH_BIAS":
+                    hit = actual == "DOWN"
+                prev["actual"] = actual
+                prev["hit"] = hit
+
+        _CRYPTO_PREDICTION_HISTORY.append(
+            {
+                "ts": datetime.utcnow().isoformat(),
+                "direction": direction,
+                "confidence": confidence,
+                "score": round(score, 3),
+                "btc_24h_pct": round(btc_pct, 3),
+                "timeframe": timeframe,
+                "actual": None,
+                "hit": None,
+            }
+        )
+
+        resolved = [h for h in _CRYPTO_PREDICTION_HISTORY if h.get("hit") is not None]
+        hit_rate = round(100.0 * sum(1 for h in resolved if h.get("hit")) / len(resolved), 1) if resolved else None
+
         return {
             "prediction": {
                 "direction": direction,
                 "confidence": confidence,
                 "score": round(score, 3),
-                "horizon": "6-24h",
+                "horizon": horizon,
                 "reasons": reasons[:6],
                 "inputs": {
                     "btc_24h_pct": round(btc_pct, 3),
@@ -1777,6 +1913,12 @@ async def get_crypto_prediction():
                 },
             },
             "signals": hero_signals[:5],
+            "signal_timeframe": timeframe,
+            "prediction_history": list(_CRYPTO_PREDICTION_HISTORY)[-12:],
+            "accuracy_tracker": {
+                "resolved": len(resolved),
+                "hit_rate_pct": hit_rate,
+            },
             "sources": {
                 "market": ["Binance Spot /api/v3"],
                 "sentiment": ["Alternative.me Fear&Greed", "Internal context mood", "Crypto RSS headlines"],
@@ -1798,6 +1940,8 @@ async def get_crypto_prediction():
                 "inputs": {},
             },
             "signals": [],
+            "prediction_history": list(_CRYPTO_PREDICTION_HISTORY)[-12:],
+            "accuracy_tracker": {"resolved": 0, "hit_rate_pct": None},
             "sources": {
                 "market": ["Binance Spot /api/v3"],
                 "sentiment": ["Alternative.me", "Internal context", "Crypto RSS"],
@@ -1861,14 +2005,40 @@ async def get_market_mood_api():
         else:
             crypto_mood = "NEUTRAL"
 
+        dominance_source = "cache"
         # Read BTC dominance from context fetcher global cache if available.
         btc_dominance = float(
             fetcher._global_cache.get("coingecko_global", {}).get("payload", {}).get("btc_dominance", 0.0)  # type: ignore[attr-defined]
         )
 
+        # Fallback to direct CoinGecko global endpoint when cache is empty/stale.
+        if btc_dominance <= 0:
+            try:
+                req = Request(
+                    "https://api.coingecko.com/api/v3/global",
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/124.0.0.0 Safari/537.36"
+                        )
+                    },
+                )
+                with urlopen(req, timeout=8) as resp:
+                    payload = json.loads(resp.read())
+                btc_dominance = float(
+                    ((payload or {}).get("data") or {}).get("market_cap_percentage", {}).get("btc", 0.0)
+                )
+                if btc_dominance > 0:
+                    dominance_source = "coingecko_live"
+            except Exception as exc:
+                logger.warning("BTC dominance fallback fetch failed: %s", exc)
+                dominance_source = "unavailable"
+
         return {
             "crypto_mood": crypto_mood,
-            "btc_dominance": round(btc_dominance, 2),
+            "btc_dominance": round(btc_dominance, 2) if btc_dominance > 0 else None,
+            "btc_dominance_source": dominance_source,
             "btc_24hr_change": round(float(btc_snapshot.price_change_24hr_pct or 0.0), 2),
             "nifty_24hr_change": round(float(nifty_change), 2),
             "avg_news_sentiment": round(avg_sent, 3),
@@ -1879,7 +2049,8 @@ async def get_market_mood_api():
         logger.error("Error fetching market mood: %s", e)
         return {
             "crypto_mood": "NEUTRAL",
-            "btc_dominance": 0.0,
+            "btc_dominance": None,
+            "btc_dominance_source": "error",
             "btc_24hr_change": 0.0,
             "nifty_24hr_change": 0.0,
             "avg_news_sentiment": 0.0,

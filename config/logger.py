@@ -16,6 +16,7 @@ import sys
 import json
 import logging
 import logging.handlers
+import threading
 from datetime import datetime, timezone
 
 
@@ -23,6 +24,9 @@ LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
 LOG_FILE = os.path.join(LOG_DIR, "trading.log")
 ERROR_LOG = os.path.join(LOG_DIR, "errors.log")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+
+_HANDLER_LOCK = threading.Lock()
+_SHARED_HANDLERS: tuple[logging.Handler, ...] | None = None
 
 
 class JsonFormatter(logging.Formatter):
@@ -66,6 +70,43 @@ class ConsoleFormatter(logging.Formatter):
         return f"{color}{ts} {record.levelname[0]} {module} {record.getMessage()}{self.RESET}"
 
 
+def _build_shared_handlers() -> tuple[logging.Handler, ...]:
+    """Create shared handlers once to avoid rotating the same file from many handlers."""
+    os.makedirs(LOG_DIR, exist_ok=True)
+
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(logging.INFO)
+    console.setFormatter(ConsoleFormatter())
+
+    file_handler = logging.handlers.RotatingFileHandler(
+        LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(JsonFormatter())
+
+    error_handler = logging.handlers.RotatingFileHandler(
+        ERROR_LOG, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(JsonFormatter())
+
+    return (console, file_handler, error_handler)
+
+
+def _get_shared_handlers() -> tuple[logging.Handler, ...]:
+    """Return process-wide shared handlers, initializing once in a thread-safe way."""
+    global _SHARED_HANDLERS
+
+    if _SHARED_HANDLERS is not None:
+        return _SHARED_HANDLERS
+
+    with _HANDLER_LOCK:
+        if _SHARED_HANDLERS is None:
+            _SHARED_HANDLERS = _build_shared_handlers()
+
+    return _SHARED_HANDLERS
+
+
 def get_logger(name: str) -> logging.Logger:
     """
     Get a configured logger.
@@ -77,36 +118,11 @@ def get_logger(name: str) -> logging.Logger:
         logging.Logger with console + file handlers.
     """
     logger = logging.getLogger(name)
-
-    # Avoid adding handlers multiple times
-    if logger.handlers:
-        return logger
-
     logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
     logger.propagate = False
 
-    # ── Console Handler ──
-    console = logging.StreamHandler(sys.stdout)
-    console.setLevel(logging.INFO)
-    console.setFormatter(ConsoleFormatter())
-    logger.addHandler(console)
-
-    # ── File Handler (JSON, rotated) ──
-    os.makedirs(LOG_DIR, exist_ok=True)
-
-    file_handler = logging.handlers.RotatingFileHandler(
-        LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(JsonFormatter())
-    logger.addHandler(file_handler)
-
-    # ── Error File Handler ──
-    error_handler = logging.handlers.RotatingFileHandler(
-        ERROR_LOG, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
-    )
-    error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(JsonFormatter())
-    logger.addHandler(error_handler)
+    for handler in _get_shared_handlers():
+        if handler not in logger.handlers:
+            logger.addHandler(handler)
 
     return logger

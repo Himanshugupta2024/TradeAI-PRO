@@ -340,7 +340,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 
 .mover-row {
   display: grid;
-  grid-template-columns: 2rem 1fr 5rem 4.5rem 3.5rem;
+  grid-template-columns: 2rem 1fr 5rem 4.5rem 3.5rem 4.2rem;
   align-items: center;
   gap: 0.5rem;
   padding: 0.6rem 1rem;
@@ -388,6 +388,13 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 .rsi-pill.overbought { background: rgba(239,68,68,0.15); color: var(--red); }
 .rsi-pill.normal { background: rgba(148,163,184,0.1); color: var(--text2); }
 
+.mover-vol {
+  font-size: 0.62rem;
+  font-family: var(--mono);
+  text-align: right;
+  color: var(--yellow);
+}
+
 /* ── Market Summary Bar ──────────────────────────── */
 .market-bar {
   background: var(--card);
@@ -404,6 +411,37 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 .bar-label { font-size: 0.6rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.07em; }
 .bar-val { font-family: var(--mono); font-size: 0.9rem; font-weight: 700; }
 .bar-divider { width: 1px; height: 36px; background: var(--border); }
+
+.bar-val.skeleton {
+  min-width: 3rem;
+  border-radius: 5px;
+  color: transparent;
+  background: linear-gradient(90deg, rgba(148,163,184,0.12), rgba(148,163,184,0.24), rgba(148,163,184,0.12));
+  background-size: 220% 100%;
+  animation: pulseShimmer 1.2s linear infinite;
+}
+
+@keyframes pulseShimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.source-warnings {
+  margin-top: -0.9rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.source-badge {
+  font-size: 0.62rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--yellow);
+  background: rgba(245, 158, 11, 0.1);
+}
 
 /* Mood badge */
 .mood-badge {
@@ -451,6 +489,30 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   letter-spacing: 0.08em;
   color: var(--text2);
   margin-bottom: 0.7rem;
+}
+.insight-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.7rem;
+}
+
+.tf-tabs { display: flex; gap: 0.35rem; }
+.tf-btn {
+  font-size: 0.63rem;
+  font-weight: 700;
+  color: var(--text3);
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03);
+  border-radius: 5px;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.tf-btn.active {
+  color: var(--text);
+  border-color: rgba(99,102,241,0.45);
+  background: rgba(99,102,241,0.12);
 }
 .pred-top { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
 .pred-direction {
@@ -515,6 +577,25 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 .signal-row-action.sell { background: rgba(239,68,68,0.15); color: var(--red); }
 .signal-row-action.hold { background: rgba(34,211,238,0.1); color: var(--cyan); }
 .signal-row-conf { font-family: var(--mono); color: var(--text2); font-size: 0.72rem; }
+.signal-row-meta {
+  grid-column: 1 / -1;
+  font-size: 0.64rem;
+  color: var(--text3);
+}
+
+.pred-history {
+  margin-top: 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  font-size: 0.66rem;
+  color: var(--text3);
+  border-top: 1px dashed rgba(148,163,184,0.2);
+  padding-top: 0.55rem;
+}
+
+.pred-hit-rate { font-family: var(--mono); color: var(--text2); }
 
 /* ── News Feed ───────────────────────────────────── */
 .news-card {
@@ -747,21 +828,37 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   overflow: hidden;
 }
 .theme-grid { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0.75rem 1rem; }
-.theme-chip {
-  display: flex;
+.theme-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr minmax(150px, 3fr) 2.4rem;
   align-items: center;
-  gap: 0.4rem;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.45rem 0.75rem;
-  font-size: 0.74rem;
+  gap: 0.55rem;
 }
-.theme-chip-name { font-weight: 600; color: var(--text); }
-.theme-chip-qs { font-family: var(--mono); font-size: 0.7rem; }
-.theme-chip-qs.hi { color: var(--green); }
-.theme-chip-qs.lo { color: var(--red); }
-.theme-chip-qs.mid { color: var(--yellow); }
+.theme-name { font-size: 0.72rem; color: var(--text2); font-weight: 600; }
+.theme-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.07);
+  overflow: hidden;
+}
+.theme-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22d3ee, #6366f1);
+}
+.theme-score { font-family: var(--mono); font-size: 0.68rem; text-align: right; color: var(--text2); }
+
+.setup-wait {
+  text-align: left;
+  padding: 0.7rem 0.8rem;
+  border: 1px dashed rgba(148,163,184,0.35);
+  border-radius: 8px;
+  background: rgba(148,163,184,0.06);
+}
+.setup-wait-title { font-size: 0.7rem; color: var(--text2); font-weight: 700; margin-bottom: 0.35rem; }
+.setup-wait ul { margin: 0; padding-left: 1rem; }
+.setup-wait li { font-size: 0.66rem; color: var(--text3); line-height: 1.45; }
 
 /* ── Why Market Strip ─────────────────────────────── */
 .why-strip {
@@ -781,7 +878,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 @media (max-width: 600px) {
   .coins-grid { grid-template-columns: 1fr; }
   .market-bar { gap: 1rem; }
-  .mover-row { grid-template-columns: 1.5rem 1fr 4rem 3.5rem; }
+  .mover-row { grid-template-columns: 1.5rem 1fr 4rem 3.5rem 3rem; }
   .mover-row .rsi-pill { display: none; }
 }
 @media (max-width: 900px) {
@@ -867,7 +964,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   <div class="market-bar" id="marketBar">
     <div class="bar-item">
       <span class="bar-label">BTC Dominance</span>
-      <span class="bar-val" id="btcDom">—</span>
+      <span class="bar-val skeleton" id="btcDom">Loading</span>
     </div>
     <div class="bar-divider"></div>
     <div class="bar-item">
@@ -895,6 +992,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
       <span class="bar-val" id="countdownEl" style="font-size:0.8rem;color:var(--text3)">30s</span>
     </div>
   </div>
+  <div class="source-warnings" id="sourceWarnings"></div>
 
   <!-- ── AI Summary ── -->
   <div class="ai-card" id="aiCard">
@@ -918,9 +1016,20 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
       <div class="pred-reasons" id="predReasons">
         <span class="reason-pill">Waiting for live data...</span>
       </div>
+      <div class="pred-history">
+        <span id="predHistoryInfo">History: loading...</span>
+        <span class="pred-hit-rate" id="predHitRate">Hit rate: —</span>
+      </div>
     </div>
     <div class="insight-card">
-      <div class="insight-title">🎯 Actionable Buy/Sell Signals</div>
+      <div class="insight-head">
+        <div class="insight-title" style="margin-bottom:0">🎯 Actionable Buy/Sell Signals</div>
+        <div class="tf-tabs" id="signalTfTabs">
+          <button class="tf-btn active" data-tf="1h" type="button">1H</button>
+          <button class="tf-btn" data-tf="4h" type="button">4H</button>
+          <button class="tf-btn" data-tf="1d" type="button">1D</button>
+        </div>
+      </div>
       <div class="signal-list" id="signalBoard">
         <div class="signal-row">
           <span class="signal-row-sym">Loading...</span>
@@ -989,6 +1098,7 @@ const BINANCE_API   = 'https://api.binance.com/api/v3';
 const BINANCE_FAPI  = 'https://fapi.binance.com/fapi/v1';   // Futures (for OI later)
 const COINGECKO     = 'https://api.coingecko.com/api/v3';
 const REFRESH_SEC   = 30;
+const NEWS_CACHE_KEY = 'tradeai_crypto_news_cache_v2';
 
 // Hero coins to always show
 const HERO_COINS = [
@@ -1010,6 +1120,12 @@ let countdown      = REFRESH_SEC;
 let fearGreedValue = null;
 let contextMoodCache = null;
 let cryptoIntelCache = null;  // Phase 6: cockpit intelligence cache
+let signalTimeframe = '1h';
+
+const sourceWarnings = new Map();
+const thresholdRules = {
+  BTCUSDT: { above: 73000 },
+};
 
 // ── Utility ──────────────────────────────────────────────
 const fmt  = (n, d=2) => Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -1026,6 +1142,32 @@ const escapeHtml = (s) => String(s || '')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;');
+
+function setSourceWarning(key, message) {
+  sourceWarnings.set(key, message);
+  renderSourceWarnings();
+}
+
+function clearSourceWarning(key) {
+  sourceWarnings.delete(key);
+  renderSourceWarnings();
+}
+
+function renderSourceWarnings() {
+  const el = document.getElementById('sourceWarnings');
+  if (!el) return;
+  if (!sourceWarnings.size) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = Array.from(sourceWarnings.values())
+    .map((m) => `<span class="source-badge">⚠ ${escapeHtml(m)}</span>`)
+    .join('');
+}
+
+function getKlineData(symbol, interval = '1h') {
+  return klineCache?.[symbol]?.[interval] || null;
+}
 
 // Calculate RSI from closes array
 function calcRSI(closes, period = 14) {
@@ -1051,8 +1193,54 @@ function calcRSI(closes, period = 14) {
 function volSpike(volumes) {
   if (volumes.length < 5) return 1;
   const recent = volumes[volumes.length - 1];
-  const avg = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+  const base = volumes.slice(-21, -1);
+  if (!base.length) return 1;
+  const avg = base.reduce((a, b) => a + b, 0) / base.length;
   return avg > 0 ? recent / avg : 1;
+}
+
+function calcEMA(values, period) {
+  if (!values || values.length < period) return null;
+  const alpha = 2 / (period + 1);
+  let out = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < values.length; i++) {
+    out = alpha * values[i] + (1 - alpha) * out;
+  }
+  return out;
+}
+
+function calcMACDHist(closes) {
+  if (!closes || closes.length < 35) return null;
+  const alpha12 = 2 / 13;
+  const alpha26 = 2 / 27;
+  const alpha9 = 2 / 10;
+  let ema12 = closes.slice(0, 12).reduce((a, b) => a + b, 0) / 12;
+  let ema26 = closes.slice(0, 26).reduce((a, b) => a + b, 0) / 26;
+  const macd = [];
+  for (const c of closes) {
+    ema12 = alpha12 * c + (1 - alpha12) * ema12;
+    ema26 = alpha26 * c + (1 - alpha26) * ema26;
+    macd.push(ema12 - ema26);
+  }
+  let signal = macd.slice(0, 9).reduce((a, b) => a + b, 0) / 9;
+  for (let i = 9; i < macd.length; i++) {
+    signal = alpha9 * macd[i] + (1 - alpha9) * signal;
+  }
+  return macd[macd.length - 1] - signal;
+}
+
+function calcBBPos(closes, period = 20) {
+  if (!closes || closes.length < period) return null;
+  const win = closes.slice(-period);
+  const mid = win.reduce((a, b) => a + b, 0) / win.length;
+  const variance = win.reduce((a, b) => a + Math.pow(b - mid, 2), 0) / win.length;
+  const std = Math.sqrt(variance);
+  if (!std) return 0.5;
+  const upper = mid + 2 * std;
+  const lower = mid - 2 * std;
+  const band = upper - lower;
+  if (!band) return 0.5;
+  return (closes[closes.length - 1] - lower) / band;
 }
 
 // Simple signal: RSI + price vs EMA
@@ -1185,6 +1373,7 @@ async function fetchTickers() {
 function setCryptoUnavailable(message) {
   const reason = message || 'Unable to load Binance market feed right now.';
   document.getElementById('btcDom').textContent = 'Unavailable';
+  document.getElementById('btcDom').classList.remove('skeleton');
   document.getElementById('fearGreed').textContent = 'Unavailable';
   document.getElementById('totalMcap').textContent = 'Unavailable';
   document.getElementById('totalVol').textContent = 'Unavailable';
@@ -1215,28 +1404,50 @@ function setCryptoUnavailable(message) {
 }
 
 // ── Fetch Klines for hero coins ──────────────────────────
-async function fetchKlines(symbol) {
+async function fetchKlines(symbol, interval = signalTimeframe) {
   try {
-    const res = await fetch(`${BINANCE_API}/klines?symbol=${symbol}&interval=1h&limit=50`);
+    const cached = getKlineData(symbol, interval);
+    if (cached && Date.now() - (cached.fetchedAt || 0) < 25_000) {
+      return;
+    }
+
+    const res = await fetch(`${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}&limit=80`);
     const data = await res.json();
+    if (!Array.isArray(data)) return;
     const closes  = data.map(c => parseFloat(c[4]));
     const volumes = data.map(c => parseFloat(c[5]));
-    klineCache[symbol] = { closes, volumes };
+    klineCache[symbol] = klineCache[symbol] || {};
+    klineCache[symbol][interval] = { closes, volumes, fetchedAt: Date.now() };
   } catch { /* ignore */ }
 }
 
 // ── Fetch Global Market Stats (CoinGecko) ────────────────
 async function fetchGlobalStats() {
+  const btcEl = document.getElementById('btcDom');
   try {
+    if (btcEl) btcEl.classList.add('skeleton');
     const res = await fetch(`${COINGECKO}/global`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const { data } = await res.json();
     const btcDom = data.market_cap_percentage?.bitcoin?.toFixed(1) ?? '—';
     const mcap   = data.total_market_cap?.usd ?? 0;
     const vol    = data.total_volume?.usd ?? 0;
     document.getElementById('btcDom').textContent = btcDom + '%';
+    if (btcEl) btcEl.classList.remove('skeleton');
     document.getElementById('totalMcap').textContent = fmtB(mcap);
     document.getElementById('totalVol').textContent  = fmtB(vol);
-  } catch { /* rate-limited sometimes */ }
+    clearSourceWarning('btc_dom');
+  } catch {
+    const dom = Number(contextMoodCache?.btc_dominance);
+    if (Number.isFinite(dom) && dom > 0) {
+      document.getElementById('btcDom').textContent = `${dom.toFixed(1)}%`;
+      clearSourceWarning('btc_dom');
+    } else {
+      document.getElementById('btcDom').textContent = '—%';
+      setSourceWarning('btc_dom', 'BTC Dominance source unavailable');
+    }
+    if (btcEl) btcEl.classList.remove('skeleton');
+  }
 }
 
 // Fetch Fear & Greed Index
@@ -1263,78 +1474,135 @@ async function fetchContextMood() {
     if (!res.ok) return null;
     const data = await res.json();
     contextMoodCache = data;
+    const dom = Number(data?.btc_dominance);
+    if (Number.isFinite(dom) && dom > 0) {
+      const btcEl = document.getElementById('btcDom');
+      btcEl.textContent = `${dom.toFixed(1)}%`;
+      btcEl.classList.remove('skeleton');
+      clearSourceWarning('btc_dom');
+    }
     return data;
   } catch {
     return null;
   }
 }
 
-async function fetchCryptoNews() {
+function renderNewsPayload(data) {
   const listEl = document.getElementById('newsList');
   const metaEl = document.getElementById('newsSourcesMeta');
   if (!listEl || !metaEl) return;
+
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const okSources = Array.isArray(data?.sources_ok) ? data.sources_ok : [];
+  const failed = Array.isArray(data?.failed_sources) ? data.failed_sources : [];
+  metaEl.textContent = `Sources: ${okSources.join(', ') || 'none'}${failed.length ? ` · failed: ${failed.join(', ')}` : ''}`;
+
+  if (failed.length) {
+    setSourceWarning('crypto_news', `News source issues: ${failed.join(', ')}`);
+  } else {
+    clearSourceWarning('crypto_news');
+  }
+
+  if (!items.length) {
+    listEl.innerHTML = '<div class="news-item"><span class="news-source">NEWS</span><div><span class="news-link">No headlines available right now.</span></div></div>';
+    return;
+  }
+
+  listEl.innerHTML = items.map((n) => {
+    const src = escapeHtml(n.source || 'NEWS');
+    const title = escapeHtml(n.title || 'Untitled headline');
+    const url = escapeHtml(n.url || '#');
+    const published = escapeHtml(n.published || '');
+    return `<div class="news-item">
+      <span class="news-source">${src}</span>
+      <div>
+        <a class="news-link" href="${url}" target="_blank" rel="noopener noreferrer">${title}</a>
+        ${published ? `<span class="news-time">${published}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function fetchCryptoNews() {
+  const nowMs = Date.now();
+  try {
+    const cachedRaw = localStorage.getItem(NEWS_CACHE_KEY);
+    if (cachedRaw) {
+      const cached = JSON.parse(cachedRaw);
+      if (cached && cached.at && nowMs - cached.at < 5 * 60 * 1000 && cached.payload) {
+        renderNewsPayload(cached.payload);
+      }
+    }
+  } catch {
+    // ignore cache parse failures
+  }
+
   try {
     const res = await fetch('/api/crypto/news?limit=10');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const items = Array.isArray(data.items) ? data.items : [];
-    const okSources = Array.isArray(data.sources_ok) ? data.sources_ok : [];
-    const failed = Array.isArray(data.failed_sources) ? data.failed_sources : [];
-    metaEl.textContent = `Sources: ${okSources.join(', ') || 'none'}${failed.length ? ` · failed: ${failed.join(', ')}` : ''}`;
-    if (!items.length) {
-      listEl.innerHTML = '<div class="news-item"><span class="news-source">NEWS</span><div><span class="news-link">No headlines available right now.</span></div></div>';
-      return;
+    renderNewsPayload(data);
+    try {
+      localStorage.setItem(NEWS_CACHE_KEY, JSON.stringify({ at: nowMs, payload: data }));
+    } catch {
+      // storage quota or privacy mode
     }
-    listEl.innerHTML = items.map((n) => {
-      const src = escapeHtml(n.source || 'NEWS');
-      const title = escapeHtml(n.title || 'Untitled headline');
-      const url = escapeHtml(n.url || '#');
-      const published = escapeHtml(n.published || '');
-      return `<div class="news-item">
-        <span class="news-source">${src}</span>
-        <div>
-          <a class="news-link" href="${url}" target="_blank" rel="noopener noreferrer">${title}</a>
-          ${published ? `<span class="news-time">${published}</span>` : ''}
-        </div>
-      </div>`;
-    }).join('');
   } catch (e) {
-    metaEl.textContent = 'Sources: unavailable';
-    listEl.innerHTML = `<div class="news-item"><span class="news-source">NEWS</span><div><span class="news-link">News fetch failed: ${escapeHtml(e?.message || 'unknown error')}</span></div></div>`;
+    setSourceWarning('crypto_news', 'Live news refresh failed');
+    const listEl = document.getElementById('newsList');
+    const metaEl = document.getElementById('newsSourcesMeta');
+    if (metaEl) metaEl.textContent = 'Sources: unavailable';
+    if (listEl) {
+      listEl.innerHTML = `<div class="news-item"><span class="news-source">NEWS</span><div><span class="news-link">News fetch failed: ${escapeHtml(e?.message || 'unknown error')}</span></div></div>`;
+    }
   }
 }
 
 function buildHeroSignal(sym, ticker) {
   const pct = Number.parseFloat(ticker?.priceChangePercent ?? 0) || 0;
-  const closes = klineCache[sym]?.closes ?? [];
-  const volumes = klineCache[sym]?.volumes ?? [];
+  const kd = getKlineData(sym, signalTimeframe) || getKlineData(sym, '1h') || {};
+  const closes = kd.closes ?? [];
+  const volumes = kd.volumes ?? [];
   const rsi = closes.length >= 15 ? calcRSI(closes) : null;
+  const macdHist = closes.length >= 35 ? calcMACDHist(closes) : null;
+  const bbPos = closes.length >= 20 ? calcBBPos(closes) : null;
   const vs = volSpike(volumes);
   const mom = closes.length >= 8 ? ((closes[closes.length - 1] - closes[closes.length - 8]) / closes[closes.length - 8]) * 100 : 0;
 
   let score = 0;
   const reasons = [];
 
-  if (pct >= 2.5) { score += 1.2; reasons.push('24h momentum strong'); }
-  else if (pct <= -2.5) { score -= 1.2; reasons.push('24h momentum weak'); }
+  const pctComponent = clamp(pct / 4, -1.2, 1.2);
+  score += pctComponent;
+  reasons.push(`24h momentum ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`);
 
   if (rsi != null) {
-    if (rsi < 33) { score += 1.4; reasons.push('RSI oversold rebound zone'); }
-    else if (rsi > 68) { score -= 1.4; reasons.push('RSI overbought risk'); }
+    score += clamp((50 - rsi) / 16, -1.2, 1.2);
+    if (rsi < 33) reasons.push(`RSI ${rsi.toFixed(1)} oversold`);
+    else if (rsi > 68) reasons.push(`RSI ${rsi.toFixed(1)} overbought`);
   }
 
-  if (mom >= 0.8) { score += 0.8; reasons.push('short-term trend up'); }
-  else if (mom <= -0.8) { score -= 0.8; reasons.push('short-term trend down'); }
+  score += clamp(mom / 2.8, -1.0, 1.0);
+  if (Math.abs(mom) >= 0.5) reasons.push(`trend impulse ${mom >= 0 ? '+' : ''}${mom.toFixed(2)}%`);
 
-  if (vs >= 1.8 && pct > 0) { score += 0.6; reasons.push(`volume spike x${vs.toFixed(1)}`); }
-  if (vs >= 1.8 && pct < 0) { score -= 0.6; reasons.push(`sell volume spike x${vs.toFixed(1)}`); }
+  if (macdHist != null) {
+    score += clamp(macdHist * 250, -0.8, 0.8);
+    reasons.push(macdHist >= 0 ? 'MACD hist positive' : 'MACD hist negative');
+  }
+
+  if (bbPos != null) {
+    score += clamp((0.5 - bbPos) * 1.8, -0.6, 0.6);
+  }
+
+  if (vs >= 1.8 && pct > 0) { score += Math.min(0.9, (vs - 1) * 0.35); reasons.push(`volume confirmation x${vs.toFixed(1)}`); }
+  if (vs >= 1.8 && pct < 0) { score -= Math.min(0.9, (vs - 1) * 0.35); reasons.push(`sell volume x${vs.toFixed(1)}`); }
 
   let action = 'HOLD';
-  if (score >= 1.9) action = 'BUY';
-  else if (score <= -1.9) action = 'SELL';
+  if (score >= 1.7) action = 'BUY';
+  else if (score <= -1.7) action = 'SELL';
 
-  const confidence = clamp(Math.round(40 + Math.abs(score) * 16 + (rsi != null ? 6 : 0)), 35, 95);
-  return { sym, action, confidence, reasons };
+  const confidence = clamp(Math.round(42 + Math.abs(score) * 13 + Math.min(Math.abs(pct), 9) * 1.2), 35, 95);
+  return { sym, action, confidence, reasons, rsi, macdHist, bbPos, vs };
 }
 
 function renderSignalBoard(tickerMap) {
@@ -1355,10 +1623,17 @@ function renderSignalBoard(tickerMap) {
   board.innerHTML = rows.map((r) => {
     const label = r.sym.replace('USDT', '');
     const cls = r.action.toLowerCase();
+    const meta = [
+      r.rsi != null ? `RSI ${r.rsi.toFixed(1)}` : null,
+      r.macdHist != null ? `MACD ${r.macdHist.toFixed(4)}` : null,
+      r.bbPos != null ? `BB ${(r.bbPos * 100).toFixed(0)}%` : null,
+      r.vs >= 1.8 ? `Vol x${r.vs.toFixed(1)}` : null,
+    ].filter(Boolean).join(' · ');
     return `<div class="signal-row" title="${escapeHtml(r.reasons.join(' · ') || 'No additional context')}">
       <span class="signal-row-sym">${escapeHtml(label)}</span>
       <span class="signal-row-action ${cls}">${r.action}</span>
       <span class="signal-row-conf">${r.confidence}%</span>
+      <span class="signal-row-meta">${escapeHtml(meta || 'Indicators unavailable')}</span>
     </div>`;
   }).join('');
 }
@@ -1413,11 +1688,16 @@ function renderPrediction(tickerMap, gainers, losers) {
   predMeta.textContent = `Confidence ${confidence}% · horizon 6-24h`;
   predConfFill.style.width = `${confidence}%`;
   predReasons.innerHTML = reasons.slice(0, 5).map(r => `<span class="reason-pill">${escapeHtml(r)}</span>`).join('') || '<span class="reason-pill">Insufficient data</span>';
+
+  const infoEl = document.getElementById('predHistoryInfo');
+  const hitEl = document.getElementById('predHitRate');
+  if (infoEl) infoEl.textContent = 'History: server model unavailable (local fallback active)';
+  if (hitEl) hitEl.textContent = 'Hit rate: —';
 }
 
 async function fetchCalculatedPrediction() {
   try {
-    const res = await fetch('/api/crypto/prediction');
+    const res = await fetch(`/api/crypto/prediction?timeframe=${encodeURIComponent(signalTimeframe)}`);
     if (!res.ok) return null;
     const data = await res.json();
     return data;
@@ -1452,7 +1732,8 @@ function renderPredictionFromServer(payload) {
 
   predDirection.textContent = label;
   predDirection.className = `pred-direction ${cls}`;
-  predMeta.textContent = `Confidence ${confidence}% · horizon ${horizon} · score ${score.toFixed(2)}`;
+  const tf = String(payload?.signal_timeframe || signalTimeframe).toUpperCase();
+  predMeta.textContent = `Confidence ${confidence}% · horizon ${horizon} · timeframe ${tf} · score ${score.toFixed(2)}`;
   predConfFill.style.width = `${clamp(confidence, 0, 100)}%`;
 
   const reasons = Array.isArray(pred.reasons) ? pred.reasons : [];
@@ -1470,13 +1751,30 @@ function renderPredictionFromServer(payload) {
       const action = String(r.action || 'HOLD').toUpperCase();
       const clsA = action === 'BUY' ? 'buy' : action === 'SELL' ? 'sell' : 'hold';
       const conf = Number(r.confidence || 0);
+      const rsi = r.rsi != null ? Number(r.rsi).toFixed(1) : '—';
+      const macd = r.macd_hist != null ? Number(r.macd_hist).toFixed(4) : '—';
+      const bb = r.bb_pos != null ? `${(Number(r.bb_pos) * 100).toFixed(0)}%` : '—';
       const details = Array.isArray(r.reasons) ? r.reasons.join(' · ') : '';
       return `<div class="signal-row" title="${escapeHtml(details)}">
         <span class="signal-row-sym">${escapeHtml(sym)}</span>
         <span class="signal-row-action ${clsA}">${action}</span>
         <span class="signal-row-conf">${conf}%</span>
+        <span class="signal-row-meta">RSI ${rsi} · MACD ${macd} · BB ${bb}</span>
       </div>`;
     }).join('');
+  }
+
+  const history = Array.isArray(payload?.prediction_history) ? payload.prediction_history : [];
+  const tracker = payload?.accuracy_tracker || {};
+  const infoEl = document.getElementById('predHistoryInfo');
+  const hitEl = document.getElementById('predHitRate');
+  if (infoEl) infoEl.textContent = `History: ${history.length} recent predictions`;
+  if (hitEl) {
+    const resolved = Number(tracker?.resolved || 0);
+    const hitRate = tracker?.hit_rate_pct;
+    hitEl.textContent = resolved > 0 && hitRate != null
+      ? `Hit rate: ${hitRate.toFixed ? hitRate.toFixed(1) : hitRate}% (${resolved} resolved)`
+      : 'Hit rate: collecting samples';
   }
 }
 
@@ -1496,10 +1794,12 @@ function renderHeroCoins(tickers) {
     const flashed = price > prev ? 'flash-g' : price < prev ? 'flash-r' : '';
     prevPrices[sym] = price;
 
-    const kd = klineCache[sym] ?? {};
+    const kd = getKlineData(sym, signalTimeframe) || getKlineData(sym, '1h') || {};
     const closes  = kd.closes  ?? [];
     const volumes = kd.volumes ?? [];
     const rsi = closes.length >= 15 ? calcRSI(closes) : null;
+    const macdHist = closes.length >= 35 ? calcMACDHist(closes) : null;
+    const bbPos = closes.length >= 20 ? calcBBPos(closes) : null;
     const vs  = volSpike(volumes);
     const sig = computeSignal(closes, rsi);
 
@@ -1550,6 +1850,14 @@ function renderHeroCoins(tickers) {
           <span class="coin-metric-lbl">Volume</span>
           <span class="coin-metric-val">${fmtB(vol1)}</span>
         </div>
+        <div class="coin-metric">
+          <span class="coin-metric-lbl">MACD Hist</span>
+          <span class="coin-metric-val">${macdHist != null ? macdHist.toFixed(4) : '—'}</span>
+        </div>
+        <div class="coin-metric">
+          <span class="coin-metric-lbl">BB Pos</span>
+          <span class="coin-metric-val">${bbPos != null ? `${(bbPos * 100).toFixed(0)}%` : '—'}</span>
+        </div>
       </div>`;
     grid.appendChild(card);
 
@@ -1561,16 +1869,21 @@ function renderHeroCoins(tickers) {
 
     // ── 5%+ move notification ──
     checkPriceAlert(label, sym, pct);
+    checkRuleAlerts(label, sym, price, rsi);
   });
 }
 
 // ── Render Movers ────────────────────────────────────────
-function renderMovers(tickers) {
+async function renderMovers(tickers) {
   const sorted = Object.values(tickers).sort((a, b) =>
     parseFloat(b.priceChangePercent) - parseFloat(a.priceChangePercent)
   );
   const gainers = sorted.filter(t => parseFloat(t.priceChangePercent) > 0).slice(0, 7);
   const losers  = sorted.filter(t => parseFloat(t.priceChangePercent) < 0).reverse().slice(0, 7);
+
+  // Prefetch RSI/volume context for movers so rows don't show placeholders.
+  const moverSymbols = [...gainers, ...losers].map((t) => t.symbol).filter(Boolean);
+  await Promise.allSettled(moverSymbols.map((sym) => fetchKlines(sym, signalTimeframe)));
 
   renderMoverList('gainersBody', gainers, 'up');
   renderMoverList('losersBody', losers, 'down');
@@ -1589,10 +1902,14 @@ function renderMoverList(containerId, coins, dir) {
     const sym   = rawSymbol.replace('USDT','');
 
     // RSI from kline cache if available
-    const closes = klineCache[rawSymbol]?.closes ?? [];
+    const kd = getKlineData(rawSymbol, signalTimeframe) || getKlineData(rawSymbol, '1h') || {};
+    const closes = kd.closes ?? [];
+    const volumes = kd.volumes ?? [];
     const rsi = closes.length >= 15 ? calcRSI(closes) : null;
+    const vs = volSpike(volumes);
     const rsiCls = rsi == null ? 'normal' : rsi < 35 ? 'oversold' : rsi > 65 ? 'overbought' : 'normal';
     const rsiTxt = rsi != null ? rsi.toFixed(0) : '—';
+    const volTxt = vs >= 1.8 ? `⚡x${vs.toFixed(1)}` : '';
 
     return `<div class="mover-row" onclick="copyToClipboard('${sym}')">
       <span class="mover-rank">${i+1}</span>
@@ -1600,6 +1917,7 @@ function renderMoverList(containerId, coins, dir) {
       <span class="mover-price">$${price >= 1 ? fmt(price) : price.toFixed(6)}</span>
       <span class="mover-pct ${dir}">${dir === 'up' ? '+' : ''}${pct.toFixed(2)}%</span>
       <span class="rsi-pill ${rsiCls}">${rsiTxt}</span>
+      <span class="mover-vol">${volTxt}</span>
     </div>`;
   }).join('');
 }
@@ -1626,6 +1944,41 @@ function checkPriceAlert(label, sym, pct) {
   }
 }
 
+const alertedRules = new Set();
+function checkRuleAlerts(label, sym, price, rsi) {
+  if (!notifEnabled) return;
+
+  const threshold = thresholdRules[sym]?.above;
+  if (threshold && price >= threshold) {
+    const key = `${sym}-above-${threshold}`;
+    if (!alertedRules.has(key)) {
+      alertedRules.add(key);
+      const msg = `${label} crossed $${threshold.toLocaleString()} (now $${price.toLocaleString()})`;
+      showToast(`🎯 ${msg}`, 'alert');
+      if (Notification.permission === 'granted') {
+        new Notification('TradeAI PRO — Threshold Alert', { body: msg, icon: '/favicon.ico' });
+      }
+      setTimeout(() => alertedRules.delete(key), 15 * 60 * 1000);
+    }
+  }
+
+  if (typeof rsi === 'number') {
+    if (rsi < 30 || rsi > 70) {
+      const side = rsi < 30 ? 'oversold' : 'overbought';
+      const key = `${sym}-rsi-${side}`;
+      if (!alertedRules.has(key)) {
+        alertedRules.add(key);
+        const msg = `${label} RSI is ${rsi.toFixed(1)} (${side})`;
+        showToast(`📉 ${msg}`, 'alert');
+        if (Notification.permission === 'granted') {
+          new Notification('TradeAI PRO — RSI Alert', { body: msg, icon: '/favicon.ico' });
+        }
+        setTimeout(() => alertedRules.delete(key), 20 * 60 * 1000);
+      }
+    }
+  }
+}
+
 async function toggleNotifications() {
   if (!notifEnabled) {
     if (Notification.permission === 'default') {
@@ -1635,7 +1988,7 @@ async function toggleNotifications() {
     notifEnabled = true;
     document.getElementById('notifBtn').textContent = '🔔 Alerts ON';
     document.getElementById('notifBtn').classList.add('enabled');
-    showToast('Notifications enabled — you\'ll be alerted on 5%+ moves', 'info');
+    showToast('Notifications enabled — 5% moves, BTC threshold, and RSI extremes', 'info');
   } else {
     notifEnabled = false;
     document.getElementById('notifBtn').textContent = '🔔 Alerts Off';
@@ -1707,7 +2060,18 @@ function renderCockpitSetups(setups, containerId, isAvoid) {
   const el = document.getElementById(containerId);
   if (!el) return;
   if (!setups || !setups.length) {
-    el.innerHTML = `<div class="cockpit-empty">${isAvoid ? 'No blocked setups right now' : 'No actionable setups yet'}</div>`;
+    if (isAvoid) {
+      el.innerHTML = '<div class="cockpit-empty">No blocked setups right now</div>';
+    } else {
+      el.innerHTML = `<div class="setup-wait">
+        <div class="setup-wait-title">Waiting for trigger alignment</div>
+        <ul>
+          <li>Trend + regime confirmation</li>
+          <li>Quality score above gate threshold</li>
+          <li>Context/event risk filters clear</li>
+        </ul>
+      </div>`;
+    }
     return;
   }
   el.innerHTML = setups.slice(0, 4).map(s => {
@@ -1792,12 +2156,14 @@ function renderThemePanel(themes) {
     return;
   }
   panel.style.display = '';
-  grid.innerHTML = themes.map(t => {
+  const rows = themes.slice(0, 8);
+  grid.innerHTML = rows.map(t => {
     const qs = Number(t.avg_qs || 0);
-    const cls = qs >= 60 ? 'hi' : qs < 45 ? 'lo' : 'mid';
-    return `<div class="theme-chip">
-      <span class="theme-chip-name">${escapeHtml(t.theme || '—')}</span>
-      <span class="theme-chip-qs ${cls}">${qs.toFixed(0)}</span>
+    const width = clamp(qs, 0, 100);
+    return `<div class="theme-row">
+      <span class="theme-name">${escapeHtml(t.theme || '—')}</span>
+      <div class="theme-bar"><div class="theme-bar-fill" style="width:${width}%"></div></div>
+      <span class="theme-score">${qs.toFixed(0)}</span>
     </div>`;
   }).join('');
 }
@@ -1841,7 +2207,7 @@ async function fetchAll(manual = false) {
 
   try {
     // Fetch klines for hero coins concurrently
-    await Promise.allSettled(HERO_COINS.map(c => fetchKlines(c.sym)));
+    await Promise.allSettled(HERO_COINS.map(c => fetchKlines(c.sym, signalTimeframe)));
 
     const tickers = await fetchTickers();
     if (!tickers.length) {
@@ -1851,7 +2217,7 @@ async function fetchAll(manual = false) {
     tickers.forEach(t => { tickerMap[t.symbol] = t; });
 
     renderHeroCoins(tickerMap);
-    const { gainers, losers } = renderMovers(tickerMap);
+    const { gainers, losers } = await renderMovers(tickerMap);
     renderSignalBoard(tickerMap);
 
     // Market mood
@@ -1918,6 +2284,17 @@ async function fetchAll(manual = false) {
 
 // ── Init ─────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  const tabs = document.querySelectorAll('#signalTfTabs .tf-btn');
+  tabs.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tf = btn.getAttribute('data-tf') || '1h';
+      if (tf === signalTimeframe) return;
+      signalTimeframe = tf;
+      tabs.forEach((b) => b.classList.toggle('active', b === btn));
+      fetchAll(true);
+    });
+  });
+
   fetchAll(true);
 });
 
