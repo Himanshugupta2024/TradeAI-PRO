@@ -72,6 +72,7 @@ class ContextFetcher:
         self._global_cache: dict[str, Any] = self._read_json(self._context_cache_path)
         self._news_cache: dict[str, Any] = self._read_json(self._news_cache_path)
         self._daily_usage: dict[str, Any] = self._read_json(self._usage_path)
+        self._failure_log_state: dict[str, float] = {}
 
     async def get_snapshot(self, symbol: str) -> ContextSnapshotData:
         """Return a context snapshot for symbol using cache-first refresh."""
@@ -92,10 +93,38 @@ class ContextFetcher:
             self._persist_snapshot(snapshot)
             return snapshot
         except Exception as exc:
-            logger.error("Context fetch failed for %s: %s", normalized, exc)
+            self._log_fetch_failure(normalized, exc)
             if cached:
                 return self._snapshot_from_cache(cached)
             return self._neutral_snapshot(normalized, now)
+
+    def _log_fetch_failure(self, symbol: str, exc: Exception) -> None:
+        """Log context fetch failures with cooldown to prevent noisy repeated errors."""
+        now_ts = self._now().timestamp()
+        key = f"{symbol}:{exc.__class__.__name__}:{str(exc)[:120]}"
+        last = self._failure_log_state.get(key, 0.0)
+        # Log at most once every 15 minutes for the same failure fingerprint.
+        if now_ts - last < 900:
+            return
+        self._failure_log_state[key] = now_ts
+
+        status = None
+        if isinstance(exc, requests.HTTPError) and exc.response is not None:
+            status = int(exc.response.status_code)
+
+        if status in (403, 404):
+            logger.warning("Context fetch degraded for %s (HTTP %s): %s", symbol, status, exc)
+        else:
+            logger.error("Context fetch failed for %s: %s", symbol, exc)
+
+    def _log_warning_throttled(self, key: str, message: str, *args: Any) -> None:
+        """Throttle repeating warnings by key (15-minute cooldown)."""
+        now_ts = self._now().timestamp()
+        last = self._failure_log_state.get(key, 0.0)
+        if now_ts - last < 900:
+            return
+        self._failure_log_state[key] = now_ts
+        logger.warning(message, *args)
 
     def get_upcoming_events(self) -> list[dict[str, Any]]:
         """Get upcoming high-impact events from cached or fresh sources."""
@@ -246,7 +275,40 @@ class ContextFetcher:
 
     def _fetch_binance_ticker(self, symbol: str) -> dict[str, float]:
         url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={quote_plus(symbol)}"
-        data = self._get_json(url, timeout=10)
+        try:
+            data = self._get_json(url, timeout=10)
+        except requests.HTTPError as exc:
+            status = int(exc.response.status_code) if exc.response is not None else None
+            if status in (403, 418, 429, 451):
+                self._log_warning_throttled(
+                    f"binance_ticker_{status}",
+                    "Binance ticker degraded for %s (HTTP %s); using neutral fallback.",
+                    symbol,
+                    status,
+                )
+                return {
+                    "price_change_pct": 0.0,
+                    "volume": 0.0,
+                    "high": 0.0,
+                    "low": 0.0,
+                    "trade_count": 0.0,
+                }
+            raise
+        except Exception as exc:
+            self._log_warning_throttled(
+                "binance_ticker_generic",
+                "Binance ticker degraded for %s (%s); using neutral fallback.",
+                symbol,
+                exc,
+            )
+            return {
+                "price_change_pct": 0.0,
+                "volume": 0.0,
+                "high": 0.0,
+                "low": 0.0,
+                "trade_count": 0.0,
+            }
+
         return {
             "price_change_pct": float(data.get("priceChangePercent", 0.0)),
             "volume": float(data.get("volume", 0.0)),
@@ -405,8 +467,20 @@ class ContextFetcher:
         if native is not None:
             return native
 
+        # Known index symbols are not always available in the third-party stock endpoint.
+        index_fallback = self._fetch_nse_index_snapshot(base)
+        if index_fallback is not None:
+            return index_fallback
+
         url = f"https://nse-api-khaki.vercel.app/stock?symbol={quote_plus(base)}"
-        data = self._get_json(url, timeout=12)
+        try:
+            data = self._get_json(url, timeout=12)
+        except requests.HTTPError as exc:
+            status = int(exc.response.status_code) if exc.response is not None else None
+            if status == 404:
+                # Treat symbol-not-found as soft degradation for context; keep pipeline non-blocking.
+                return {"price_change_pct": 0.0, "volume": 0.0}
+            raise
 
         change = data.get("dayChangePercent")
         if change is None and isinstance(data.get("change"), (int, float)) and isinstance(data.get("previousClose"), (int, float)):
@@ -417,6 +491,35 @@ class ContextFetcher:
             "price_change_pct": float(change or 0.0),
             "volume": float(data.get("volume", 0.0) or 0.0),
         }
+
+    def _fetch_nse_index_snapshot(self, base: str) -> dict[str, float] | None:
+        """Fallback quote for major indices via yfinance when stock endpoint doesn't support them."""
+        key = base.strip().upper().replace(" ", "")
+        ticker_map = {
+            "SENSEX": "^BSESN",
+            "BSESN": "^BSESN",
+            "NIFTY": "^NSEI",
+            "NIFTY50": "^NSEI",
+            "BANKNIFTY": "^NSEBANK",
+            "NIFTYIT": "^CNXIT",
+        }
+        ytick = ticker_map.get(key)
+        if not ytick:
+            return None
+
+        try:
+            import yfinance as yf
+
+            hist = yf.Ticker(ytick).history(period="5d", interval="1d")
+            if hist is None or hist.empty or len(hist) < 2:
+                return {"price_change_pct": 0.0, "volume": 0.0}
+            first = float(hist["Close"].iloc[-2])
+            last = float(hist["Close"].iloc[-1])
+            vol = float(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else 0.0
+            change_pct = ((last - first) / first * 100.0) if first else 0.0
+            return {"price_change_pct": change_pct, "volume": vol}
+        except Exception:
+            return {"price_change_pct": 0.0, "volume": 0.0}
 
     def _news_sentiments_from_payload(self, news: dict[str, Any]) -> tuple[float, float]:
         """Normalize legacy single `sentiment` vs split 24h / 7d fields."""

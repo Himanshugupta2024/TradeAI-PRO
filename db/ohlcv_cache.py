@@ -100,6 +100,7 @@ def upsert_ohlcv(
     rows = []
     for _, r in df.iterrows():
         ts = pd.to_datetime(r["timestamp"]).isoformat()
+        fetched_at = datetime.utcnow().isoformat()
         rows.append(
             (
                 symbol,
@@ -111,6 +112,7 @@ def upsert_ohlcv(
                 float(r.get("close", 0.0)),
                 float(r.get("volume", 0.0)),
                 source,
+                fetched_at,
             )
         )
 
@@ -118,8 +120,8 @@ def upsert_ohlcv(
         conn.executemany(
             """
             INSERT INTO ohlcv_cache (
-                symbol, timeframe, timestamp, open, high, low, close, volume, source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                symbol, timeframe, timestamp, open, high, low, close, volume, source, fetched_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(symbol, timeframe, timestamp)
             DO UPDATE SET
                 open=excluded.open,
@@ -128,7 +130,7 @@ def upsert_ohlcv(
                 close=excluded.close,
                 volume=excluded.volume,
                 source=excluded.source,
-                fetched_at=CURRENT_TIMESTAMP
+                fetched_at=excluded.fetched_at
             """,
             rows,
         )

@@ -46,6 +46,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _CRYPTO_PREDICTION_HISTORY: deque[dict] = deque(maxlen=60)
+_NEWS_SOURCE_BACKOFF_UNTIL: dict[str, float] = {}
+_NEWS_SOURCE_FAIL_COUNT: dict[str, int] = {}
+_NEWS_SOURCE_LAST_WARN_TS: dict[str, float] = {}
+_BTC_DOM_BACKOFF_UNTIL: float = 0.0
+_BTC_DOM_LAST_WARN_TS: float = 0.0
 
 @router.get("/api/health")
 async def health_check():
@@ -1487,13 +1492,34 @@ async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
     all_news: list[dict] = []
     sources_ok: list[str] = []
     failed_sources: list[str] = []
+    now_ts = time.time()
 
     for source, url in feeds:
+        backoff_until = _NEWS_SOURCE_BACKOFF_UNTIL.get(source, 0.0)
+        if now_ts < backoff_until:
+            failed_sources.append(source)
+            continue
         try:
             all_news.extend(await asyncio.to_thread(_fetch_feed, source, url))
             sources_ok.append(source)
+            _NEWS_SOURCE_FAIL_COUNT.pop(source, None)
+            _NEWS_SOURCE_BACKOFF_UNTIL.pop(source, None)
         except Exception as exc:
-            logger.warning("Crypto news feed failed (%s): %s", source, exc)
+            fails = _NEWS_SOURCE_FAIL_COUNT.get(source, 0) + 1
+            _NEWS_SOURCE_FAIL_COUNT[source] = fails
+            backoff_seconds = min(1800, 30 * (2 ** min(fails, 6)))
+            _NEWS_SOURCE_BACKOFF_UNTIL[source] = now_ts + backoff_seconds
+
+            last_warn = _NEWS_SOURCE_LAST_WARN_TS.get(source, 0.0)
+            # Avoid warning spam for persistently blocked feeds.
+            if now_ts - last_warn >= 300:
+                logger.warning(
+                    "Crypto news feed failed (%s): %s (backoff %ss)",
+                    source,
+                    exc,
+                    int(backoff_seconds),
+                )
+                _NEWS_SOURCE_LAST_WARN_TS[source] = now_ts
             failed_sources.append(source)
 
     # Deduplicate by URL while preserving source diversity.
@@ -2012,7 +2038,9 @@ async def get_market_mood_api():
         )
 
         # Fallback to direct CoinGecko global endpoint when cache is empty/stale.
-        if btc_dominance <= 0:
+        global _BTC_DOM_BACKOFF_UNTIL, _BTC_DOM_LAST_WARN_TS
+        now_ts = time.time()
+        if btc_dominance <= 0 and now_ts >= _BTC_DOM_BACKOFF_UNTIL:
             try:
                 req = Request(
                     "https://api.coingecko.com/api/v3/global",
@@ -2032,8 +2060,18 @@ async def get_market_mood_api():
                 if btc_dominance > 0:
                     dominance_source = "coingecko_live"
             except Exception as exc:
-                logger.warning("BTC dominance fallback fetch failed: %s", exc)
+                msg = str(exc)
+                if "429" in msg or "Too Many Requests" in msg:
+                    _BTC_DOM_BACKOFF_UNTIL = now_ts + 300
+                else:
+                    _BTC_DOM_BACKOFF_UNTIL = now_ts + 120
+
+                if now_ts - _BTC_DOM_LAST_WARN_TS >= 300:
+                    logger.warning("BTC dominance fallback fetch failed: %s", exc)
+                    _BTC_DOM_LAST_WARN_TS = now_ts
                 dominance_source = "unavailable"
+        elif btc_dominance <= 0:
+            dominance_source = "backoff"
 
         return {
             "crypto_mood": crypto_mood,
