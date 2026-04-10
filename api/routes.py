@@ -1715,9 +1715,9 @@ async def get_crypto_prediction(timeframe: str = Query(default="1h")):
                 reasons.append(f"sell volume x{vs:.1f}")
 
         action = "HOLD"
-        if score >= 1.7:
+        if score >= 1.2:
             action = "BUY"
-        elif score <= -1.7:
+        elif score <= -1.2:
             action = "SELL"
 
         conf = int(max(35, min(95, round(42 + abs(score) * 13 + min(abs(pct), 9.0) * 1.2))))

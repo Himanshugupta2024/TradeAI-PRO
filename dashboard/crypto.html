@@ -1399,7 +1399,7 @@ function setCryptoUnavailable(message) {
     predReasons.innerHTML = '<span class="reason-pill">Live ticker feed unavailable</span>';
   }
   if (signalBoard) {
-    signalBoard.innerHTML = '<div class="signal-row"><span class="signal-row-sym">No actionable signals</span><span class="signal-row-action hold">HOLD</span><span class="signal-row-conf">0%</span></div>';
+    signalBoard.innerHTML = '<div class="signal-row"><span class="signal-row-sym">No live signal feed</span><span class="signal-row-action hold">N/A</span><span class="signal-row-conf">—</span></div>';
   }
 }
 
@@ -1598,11 +1598,11 @@ function buildHeroSignal(sym, ticker) {
   if (vs >= 1.8 && pct < 0) { score -= Math.min(0.9, (vs - 1) * 0.35); reasons.push(`sell volume x${vs.toFixed(1)}`); }
 
   let action = 'HOLD';
-  if (score >= 1.7) action = 'BUY';
-  else if (score <= -1.7) action = 'SELL';
+  if (score >= 1.2) action = 'BUY';
+  else if (score <= -1.2) action = 'SELL';
 
   const confidence = clamp(Math.round(42 + Math.abs(score) * 13 + Math.min(Math.abs(pct), 9) * 1.2), 35, 95);
-  return { sym, action, confidence, reasons, rsi, macdHist, bbPos, vs };
+  return { sym, action, confidence, reasons, rsi, macdHist, bbPos, vs, score };
 }
 
 function renderSignalBoard(tickerMap) {
@@ -1743,7 +1743,11 @@ function renderPredictionFromServer(payload) {
 
   const rows = Array.isArray(payload?.signals) ? payload.signals : [];
   if (!rows.length) {
-    signalBoard.innerHTML = '<div class="signal-row"><span class="signal-row-sym">No signals from model</span><span class="signal-row-action hold">HOLD</span><span class="signal-row-conf">0%</span></div>';
+    if (tickerCache && Object.keys(tickerCache).length) {
+      renderSignalBoard(tickerCache);
+    } else {
+      signalBoard.innerHTML = '<div class="signal-row"><span class="signal-row-sym">No signals from model</span><span class="signal-row-action hold">N/A</span><span class="signal-row-conf">—</span></div>';
+    }
   } else {
     signalBoard.innerHTML = rows.slice(0, 5).map((r) => {
       const raw = String(r.symbol || 'UNKNOWN');
@@ -1801,7 +1805,8 @@ function renderHeroCoins(tickers) {
     const macdHist = closes.length >= 35 ? calcMACDHist(closes) : null;
     const bbPos = closes.length >= 20 ? calcBBPos(closes) : null;
     const vs  = volSpike(volumes);
-    const sig = computeSignal(closes, rsi);
+    const heroSignal = buildHeroSignal(sym, t);
+    const sig = heroSignal.action;
 
     const rsiColor = rsi == null ? 'var(--text3)' :
                      rsi < 30 ? 'var(--green)' :
