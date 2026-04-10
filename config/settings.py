@@ -332,6 +332,9 @@ SWING_BLOCK_SHORT_IN_BULLISH_TREND = os.getenv(
 # Skip scanning a symbol if the last daily bar is older than N calendar days (0 = off).
 SWING_MAX_BAR_AGE_DAYS = float(os.getenv("SWING_MAX_BAR_AGE_DAYS", "10"))
 
+# Number of swing setups returned by API cache (higher = fewer names get hidden).
+SWING_MAX_SETUPS_RETURN = int(os.getenv("SWING_MAX_SETUPS_RETURN", "100"))
+
 # Keep only the single strongest setup per symbol when multiple patterns fire.
 SWING_DEDUPE_ONE_PER_SYMBOL = os.getenv("SWING_DEDUPE_ONE_PER_SYMBOL", "true").lower() in (
     "1",
@@ -442,6 +445,7 @@ NSE_SECTOR_MAP: dict[str, str] = {
     "DMART":        "Consumer",
     "TRENT":        "Consumer",
     "DIXON":        "Consumer",
+    "OLAELEC":      "Auto",
     # Realty
     "DLF":          "Realty",
     "GODREJPROP":   "Realty",
@@ -503,6 +507,7 @@ SWING_WATCHLIST: list[str] = [
     # ─ Consumer / Discretionary ─────────────────────────
     "TRENT",
     "DIXON",
+    "OLAELEC",
     "IRCTC",
     "KALYANKJIL",
 

@@ -133,6 +133,15 @@ _last_intelligence_snapshot: dict = {
 _setup_first_seen: dict[str, str] = {}
 
 
+def _build_swing_symbol_universe(default_symbols: list[str]) -> list[str]:
+    """Return validated swing scan universe with required symbols always included."""
+    watchlist = list(getattr(settings, "SWING_WATCHLIST", []))
+    must_include = ["OLAELEC", "COALINDIA", "PRECWIRE", "TATASTEEL"]
+    merged = list(dict.fromkeys([*watchlist, *must_include]))
+    valid = [s for s in merged if s in NSE_SYMBOLS]
+    return valid or default_symbols
+
+
 def _build_swing_market_context() -> dict[str, object]:
     """
     Benchmark trend/regime for swing LONG/SHORT gating.
@@ -204,7 +213,8 @@ async def _recompute_swing_cache(timeout_sec: float = 120.0) -> bool:
                 setup["current_price"] = None
                 setup["price_vs_entry_pct"] = None
 
-        _swing_cache["setups"] = raw_setups[:30]
+        max_setups = max(1, int(getattr(settings, "SWING_MAX_SETUPS_RETURN", 100) or 100))
+        _swing_cache["setups"] = raw_setups[:max_setups]
         _swing_cache["total_found"] = len(raw_setups)
         _swing_cache["symbols_scanned"] = len(_daily_data_cache)
         _swing_cache["real_data"] = True  # Always mark real after a completed scan
@@ -351,11 +361,8 @@ async def _initial_load():
                     except Exception as e:
                         logger.debug("Daily fetch failed for %s: %s", name, e)
 
-            # Use SWING_WATCHLIST — curated small/mid-cap swing universe
-            _swing_symbols = [
-                s for s in getattr(settings, "SWING_WATCHLIST", _PRIORITY_SYMBOLS)
-                if s in NSE_SYMBOLS
-            ] or _PRIORITY_SYMBOLS
+            # Use swing watchlist universe and force-include key user-requested symbols.
+            _swing_symbols = _build_swing_symbol_universe(_PRIORITY_SYMBOLS)
             daily_tasks = [_fetch_daily_safe(n, daily_sem) for n in _swing_symbols]
             await asyncio.gather(*daily_tasks)
             logger.info(
@@ -636,11 +643,8 @@ async def _refresh_market_data():
                     except Exception as e:
                         logger.debug("Daily fetch failed for %s: %s", name, e)
 
-            # Use SWING_WATCHLIST for targeted swing universe
-            _sw_list = [
-                s for s in getattr(settings, "SWING_WATCHLIST", TOP_NSE_SYMBOLS)
-                if s in NSE_SYMBOLS
-            ] or TOP_NSE_SYMBOLS
+            # Use swing watchlist universe and force-include key user-requested symbols.
+            _sw_list = _build_swing_symbol_universe(TOP_NSE_SYMBOLS)
             daily_tasks = [_fetch_daily(n, daily_sem) for n in _sw_list]
             await asyncio.gather(*daily_tasks)
             logger.info(

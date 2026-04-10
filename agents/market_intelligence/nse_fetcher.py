@@ -119,6 +119,7 @@ NSE_SYMBOLS = {
     "IRCTC":       "IRCTC.NS",
     "SWIGGY":      "SWIGGY.NS",
     "NYKAA":       "NYKAA.NS",
+    "OLAELEC":     "OLAELEC.NS",
     "POLICYBZR":   "POLICYBZR.NS",
     "DELHIVERY":   "DELHIVERY.NS",
     "TATAPOWER":   "TATAPOWER.NS",

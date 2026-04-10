@@ -188,6 +188,14 @@ body {
   transition: border-color 0.2s, transform 0.15s;
 }
 .coin-card:hover { border-color: rgba(99,102,241,0.4); transform: translateY(-2px); }
+.coin-card.active {
+  border-color: rgba(99,102,241,0.9);
+  box-shadow: 0 0 0 1px rgba(99,102,241,0.35), 0 12px 28px rgba(37,99,235,0.15);
+}
+.coin-card:focus-visible {
+  outline: 2px solid rgba(99,102,241,0.9);
+  outline-offset: 2px;
+}
 .coin-card::before {
   content: '';
   position: absolute;
@@ -306,6 +314,58 @@ body {
 .sparkline-wrap { margin-top: 0.5rem; }
 canvas.sparkline { width: 100%; height: 40px; display: block; }
 
+/* ── Selected Coin Graph Panel ───────────────────────── */
+.coin-detail-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  margin-bottom: 1.4rem;
+}
+.coin-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.65rem;
+}
+.coin-detail-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.coin-detail-sub {
+  font-size: 0.72rem;
+  color: var(--text3);
+}
+.coin-detail-tf {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--accent);
+  border: 1px solid rgba(99,102,241,0.35);
+  background: rgba(99,102,241,0.08);
+  padding: 3px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.06em;
+}
+.coin-detail-canvas {
+  width: 100%;
+  height: 220px;
+  display: block;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(30,41,59,0.28), rgba(15,23,42,0.04));
+  border: 1px solid rgba(148,163,184,0.15);
+}
+.coin-detail-meta {
+  margin-top: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
 /* Flash animation */
 @keyframes flash-green { 0%,100% { background: transparent; } 50% { background: rgba(16,185,129,0.18); } }
 @keyframes flash-red   { 0%,100% { background: transparent; } 50% { background: rgba(239,68,68,0.18); } }
@@ -350,6 +410,10 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 }
 .mover-row:hover { background: rgba(255,255,255,0.03); }
 .mover-row:last-child { border-bottom: none; }
+.mover-row.active {
+  background: rgba(99,102,241,0.12);
+  box-shadow: inset 2px 0 0 rgba(99,102,241,0.9);
+}
 
 .mover-rank {
   font-family: var(--mono);
@@ -1065,6 +1129,18 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
     <!-- Populated by JS -->
   </div>
 
+  <div class="coin-detail-card" id="coinDetailPanel">
+    <div class="coin-detail-head">
+      <div>
+        <div class="coin-detail-title" id="coinDetailTitle">BTC/USDT Chart</div>
+        <div class="coin-detail-sub" id="coinDetailSub">Click any coin card or mover row to inspect chart</div>
+      </div>
+      <span class="coin-detail-tf" id="coinDetailTf">TF 1H</span>
+    </div>
+    <canvas id="coinDetailCanvas" class="coin-detail-canvas"></canvas>
+    <div class="coin-detail-meta" id="coinDetailMeta">Waiting for live chart data...</div>
+  </div>
+
   <!-- ── Movers ── -->
   <div class="movers-grid">
     <div class="mover-card">
@@ -1121,6 +1197,7 @@ let fearGreedValue = null;
 let contextMoodCache = null;
 let cryptoIntelCache = null;  // Phase 6: cockpit intelligence cache
 let signalTimeframe = '1h';
+let selectedCoinSymbol = 'BTCUSDT';
 
 const sourceWarnings = new Map();
 const thresholdRules = {
@@ -1343,6 +1420,150 @@ function drawSparkline(canvas, closes, isUp) {
   ctx.lineWidth = 1.5;
   ctx.lineJoin = 'round';
   ctx.stroke();
+}
+
+function drawDetailChart(canvas, closes) {
+  if (!canvas || !Array.isArray(closes) || closes.length < 2) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.offsetWidth || 700;
+  const H = 220;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+
+  const points = closes.slice(-120);
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const padX = 12;
+  const padY = 18;
+  const span = Math.max(max - min, 0.000001);
+  const isUp = points[points.length - 1] >= points[0];
+  const stroke = isUp ? '#10b981' : '#ef4444';
+
+  const toX = (i) => padX + (i / Math.max(points.length - 1, 1)) * (W - padX * 2);
+  const toY = (v) => (H - padY) - ((v - min) / span) * (H - padY * 2);
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Grid lines for easier chart reading.
+  ctx.strokeStyle = 'rgba(148,163,184,0.16)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 3; i++) {
+    const gy = (H / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(0, gy);
+    ctx.lineTo(W, gy);
+    ctx.stroke();
+  }
+
+  // Area fill under price line.
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, isUp ? 'rgba(16,185,129,0.22)' : 'rgba(239,68,68,0.22)');
+  grad.addColorStop(1, 'rgba(15,23,42,0)');
+  ctx.beginPath();
+  ctx.moveTo(toX(0), toY(points[0]));
+  for (let i = 1; i < points.length; i++) ctx.lineTo(toX(i), toY(points[i]));
+  ctx.lineTo(toX(points.length - 1), H - 1);
+  ctx.lineTo(toX(0), H - 1);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Price line.
+  ctx.beginPath();
+  ctx.moveTo(toX(0), toY(points[0]));
+  for (let i = 1; i < points.length; i++) ctx.lineTo(toX(i), toY(points[i]));
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // Last-point marker.
+  const lx = toX(points.length - 1);
+  const ly = toY(points[points.length - 1]);
+  ctx.beginPath();
+  ctx.arc(lx, ly, 3.2, 0, Math.PI * 2);
+  ctx.fillStyle = stroke;
+  ctx.fill();
+}
+
+function refreshActiveCoinHighlights() {
+  document.querySelectorAll('.coin-card').forEach((el) => {
+    const sym = el.getAttribute('data-symbol');
+    el.classList.toggle('active', sym === selectedCoinSymbol);
+  });
+  document.querySelectorAll('.mover-row').forEach((el) => {
+    const sym = el.getAttribute('data-symbol');
+    el.classList.toggle('active', sym === selectedCoinSymbol);
+  });
+}
+
+async function renderSelectedCoinChart() {
+  const titleEl = document.getElementById('coinDetailTitle');
+  const subEl = document.getElementById('coinDetailSub');
+  const tfEl = document.getElementById('coinDetailTf');
+  const metaEl = document.getElementById('coinDetailMeta');
+  const canvas = document.getElementById('coinDetailCanvas');
+  if (!titleEl || !subEl || !tfEl || !metaEl || !canvas) return;
+
+  const symbol = selectedCoinSymbol;
+  const base = String(symbol || '').replace('USDT', '') || '—';
+  titleEl.textContent = `${base}/USDT Chart`;
+  tfEl.textContent = `TF ${String(signalTimeframe).toUpperCase()}`;
+
+  let kd = getKlineData(symbol, signalTimeframe) || getKlineData(symbol, '1h');
+  if ((!kd || !Array.isArray(kd.closes) || kd.closes.length < 2) && symbol) {
+    await fetchKlines(symbol, signalTimeframe);
+    kd = getKlineData(symbol, signalTimeframe) || getKlineData(symbol, '1h');
+  }
+
+  const closes = kd?.closes || [];
+  if (closes.length < 2) {
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width || 0, canvas.height || 0);
+    }
+    subEl.textContent = 'Chart unavailable for selected pair right now';
+    metaEl.textContent = 'Try again after the next refresh cycle.';
+    return;
+  }
+
+  drawDetailChart(canvas, closes);
+
+  const first = closes[0];
+  const last = closes[closes.length - 1];
+  const tfPct = first > 0 ? ((last - first) / first) * 100 : 0;
+  const t = tickerCache?.[symbol];
+  const dayPct = t ? Number(t.priceChangePercent || 0) : null;
+  const quoteVol = t ? Number(t.quoteVolume || 0) : null;
+
+  subEl.textContent = `${base}/USDT · live snapshot`;
+  metaEl.innerHTML = `
+    <span>Last ${closes.length} candles</span>
+    <span>Price <b>$${last >= 1 ? fmt(last) : Number(last).toFixed(6)}</b></span>
+    <span>${String(signalTimeframe).toUpperCase()} change <b style="color:${tfPct >= 0 ? 'var(--green)' : 'var(--red)'}">${tfPct >= 0 ? '+' : ''}${tfPct.toFixed(2)}%</b></span>
+    <span>24h change <b style="color:${(dayPct ?? 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${dayPct == null ? '—' : `${dayPct >= 0 ? '+' : ''}${dayPct.toFixed(2)}%`}</b></span>
+    <span>24h volume <b>${quoteVol == null ? '—' : fmtB(quoteVol)}</b></span>
+  `;
+}
+
+async function selectCoinFromUI(symbol, scroll = true) {
+  const raw = String(symbol || '').toUpperCase().trim();
+  if (!raw) return;
+  const normalized = raw.endsWith('USDT') ? raw : `${raw}USDT`;
+  if (!tickerCache?.[normalized]) {
+    showToast(`${normalized} is not in current live feed`, 'info');
+    return;
+  }
+  selectedCoinSymbol = normalized;
+  refreshActiveCoinHighlights();
+  await renderSelectedCoinChart();
+  if (scroll) {
+    document.getElementById('coinDetailPanel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 }
 
 // ── Fetch Binance 24h All Tickers ────────────────────────
@@ -1819,6 +2040,11 @@ function renderHeroCoins(tickers) {
     const card = document.createElement('div');
     card.className = `coin-card ${isUp ? 'up' : 'down'} ${flashed}`;
     card.id = `coin-${sym}`;
+    card.setAttribute('data-symbol', sym);
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', `Open ${label} chart`);
+    card.setAttribute('title', `Open ${label}/USDT chart`);
     card.innerHTML = `
       <div class="coin-top">
         <div class="coin-name">
@@ -1864,6 +2090,15 @@ function renderHeroCoins(tickers) {
           <span class="coin-metric-val">${bbPos != null ? `${(bbPos * 100).toFixed(0)}%` : '—'}</span>
         </div>
       </div>`;
+
+    card.addEventListener('click', () => { selectCoinFromUI(sym, false); });
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        selectCoinFromUI(sym, false);
+      }
+    });
+
     grid.appendChild(card);
 
     // Draw sparkline after DOM insertion
@@ -1876,6 +2111,8 @@ function renderHeroCoins(tickers) {
     checkPriceAlert(label, sym, pct);
     checkRuleAlerts(label, sym, price, rsi);
   });
+
+  refreshActiveCoinHighlights();
 }
 
 // ── Render Movers ────────────────────────────────────────
@@ -1916,7 +2153,7 @@ function renderMoverList(containerId, coins, dir) {
     const rsiTxt = rsi != null ? rsi.toFixed(0) : '—';
     const volTxt = vs >= 1.8 ? `⚡x${vs.toFixed(1)}` : '';
 
-    return `<div class="mover-row" onclick="copyToClipboard('${sym}')">
+    return `<div class="mover-row" data-symbol="${rawSymbol}" onclick="selectCoinFromUI('${rawSymbol}')" ondblclick="copyToClipboard('${sym}')" title="Click to open chart · Double-click to copy ${sym}USDT">
       <span class="mover-rank">${i+1}</span>
       <span class="mover-sym">${sym}</span>
       <span class="mover-price">$${price >= 1 ? fmt(price) : price.toFixed(6)}</span>
@@ -2224,6 +2461,12 @@ async function fetchAll(manual = false) {
     renderHeroCoins(tickerMap);
     const { gainers, losers } = await renderMovers(tickerMap);
     renderSignalBoard(tickerMap);
+
+    if (!selectedCoinSymbol || !tickerMap[selectedCoinSymbol]) {
+      selectedCoinSymbol = HERO_COINS.find((c) => tickerMap[c.sym])?.sym || Object.keys(tickerMap)[0] || '';
+    }
+    refreshActiveCoinHighlights();
+    await renderSelectedCoinChart();
 
     // Market mood
     const btc = tickerMap['BTCUSDT'];
