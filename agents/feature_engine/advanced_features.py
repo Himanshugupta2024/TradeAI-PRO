@@ -163,7 +163,10 @@ def _pivot_points(
     # Fibonacci zone: which fib level is price closest to?
     fib_levels = pd.concat([s3_fib, s2_fib, s1_fib, pp, r1_fib, r2_fib, r3_fib], axis=1)
     fib_levels.columns = [-3, -2, -1, 0, 1, 2, 3]
-    fib_zone = fib_levels.sub(close, axis=0).abs().idxmin(axis=1).fillna(0).astype(float)
+    fib_dist = fib_levels.sub(close, axis=0).abs()
+    fib_zone = pd.Series(0.0, index=fib_dist.index)
+    valid_rows = fib_dist.notna().any(axis=1)
+    fib_zone.loc[valid_rows] = fib_dist.loc[valid_rows].idxmin(axis=1).astype(float)
 
     return {
         "pivot_pp":       pp,
@@ -521,7 +524,7 @@ def calculate_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
             result[col] = series
         log.debug("Pivot point features added: %d cols", len(pivots))
     except Exception as e:
-        log.warning("Pivot point calculation failed: %s", e)
+        log.debug("Pivot point calculation skipped: %s", e)
 
     # ── 3. Time-Based Features ─────────────────────────────────────────────
     try:

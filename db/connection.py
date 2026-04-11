@@ -13,7 +13,7 @@ def _create_engine():
     """Create the SQLAlchemy engine with appropriate settings."""
     kwargs = {"echo": False}
     if "sqlite" in DATABASE_URL:
-        kwargs["connect_args"] = {"check_same_thread": False}
+        kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
     eng = create_engine(DATABASE_URL, **kwargs)
     # Enable WAL mode for SQLite — allows concurrent reads
     if "sqlite" in DATABASE_URL:
@@ -23,6 +23,7 @@ def _create_engine():
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
             cursor.close()
     return eng
 

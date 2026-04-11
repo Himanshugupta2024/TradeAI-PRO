@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -25,6 +26,7 @@ from urllib.parse import quote_plus
 
 import requests
 from sqlalchemy import delete
+from sqlalchemy.exc import OperationalError
 
 from config import settings
 from db.connection import SessionLocal
@@ -83,6 +85,7 @@ class ContextFetcher:
         self._news_cache: dict[str, Any] = self._read_json(self._news_cache_path)
         self._daily_usage: dict[str, Any] = self._read_json(self._usage_path)
         self._failure_log_state: dict[str, float] = {}
+        self._last_snapshot_cleanup_ts: float = 0.0
 
     async def get_snapshot(self, symbol: str) -> ContextSnapshotData:
         """Return a context snapshot for symbol using cache-first refresh."""
@@ -220,31 +223,47 @@ class ContextFetcher:
 
     def _persist_snapshot(self, snapshot: ContextSnapshotData) -> None:
         """Persist latest snapshot and purge records older than 90 days."""
-        session = SessionLocal()
-        try:
-            row = ContextSnapshot(
-                symbol=snapshot.symbol,
-                timestamp_utc=snapshot.timestamp_utc.replace(tzinfo=None),
-                price_change_24hr_pct=snapshot.price_change_24hr_pct,
-                volume_change_24hr_pct=snapshot.volume_change_24hr_pct,
-                news_sentiment_24hr=snapshot.news_sentiment_24hr,
-                news_volume_spike=1 if snapshot.news_volume_spike else 0,
-                weekly_trend_bias=snapshot.weekly_trend_bias,
-                oi_change_7d_pct=snapshot.oi_change_7d_pct,
-                btc_dominance_7d_trend=snapshot.btc_dominance_7d_trend,
-                days_to_next_event=snapshot.days_to_next_event,
-                event_risk_active=1 if snapshot.event_risk_active else 0,
-                context_score=snapshot.context_score,
-            )
-            session.add(row)
-            cutoff = datetime.utcnow() - timedelta(days=90)
-            session.execute(delete(ContextSnapshot).where(ContextSnapshot.timestamp_utc < cutoff))
-            session.commit()
-        except Exception as exc:
-            session.rollback()
-            logger.error("Context snapshot persistence failed for %s: %s", snapshot.symbol, exc)
-        finally:
-            session.close()
+        for attempt in range(3):
+            session = SessionLocal()
+            try:
+                row = ContextSnapshot(
+                    symbol=snapshot.symbol,
+                    timestamp_utc=snapshot.timestamp_utc.replace(tzinfo=None),
+                    price_change_24hr_pct=snapshot.price_change_24hr_pct,
+                    volume_change_24hr_pct=snapshot.volume_change_24hr_pct,
+                    news_sentiment_24hr=snapshot.news_sentiment_24hr,
+                    news_volume_spike=1 if snapshot.news_volume_spike else 0,
+                    weekly_trend_bias=snapshot.weekly_trend_bias,
+                    oi_change_7d_pct=snapshot.oi_change_7d_pct,
+                    btc_dominance_7d_trend=snapshot.btc_dominance_7d_trend,
+                    days_to_next_event=snapshot.days_to_next_event,
+                    event_risk_active=1 if snapshot.event_risk_active else 0,
+                    context_score=snapshot.context_score,
+                )
+                session.add(row)
+
+                # Avoid expensive DELETE contention on every symbol update.
+                now_ts = self._now().timestamp()
+                if now_ts - self._last_snapshot_cleanup_ts >= 3600:
+                    cutoff = datetime.utcnow() - timedelta(days=90)
+                    session.execute(delete(ContextSnapshot).where(ContextSnapshot.timestamp_utc < cutoff))
+                    self._last_snapshot_cleanup_ts = now_ts
+
+                session.commit()
+                return
+            except OperationalError as exc:
+                session.rollback()
+                if "locked" in str(exc).lower() and attempt < 2:
+                    time.sleep(0.2 * (attempt + 1))
+                    continue
+                logger.error("Context snapshot persistence failed for %s: %s", snapshot.symbol, exc)
+                return
+            except Exception as exc:
+                session.rollback()
+                logger.error("Context snapshot persistence failed for %s: %s", snapshot.symbol, exc)
+                return
+            finally:
+                session.close()
 
     def _save_snapshot_cache(self, snapshot: ContextSnapshotData) -> None:
         data = asdict(snapshot)

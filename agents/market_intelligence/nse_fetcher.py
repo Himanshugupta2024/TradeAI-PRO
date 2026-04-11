@@ -14,7 +14,6 @@ Fetches real OHLCV data for Indian markets:
 
 import logging
 import os
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta
@@ -33,8 +32,6 @@ from db.ohlcv_cache import (
 )
 
 logger = logging.getLogger(__name__)
-
-_YF_LOCK = threading.Lock()
 
 
 def _configure_yfinance_runtime() -> None:
@@ -216,28 +213,27 @@ def _fetch_history_with_timeout(
     """Windows-safe timeout wrapper around yfinance history fetch."""
 
     def _fetch() -> pd.DataFrame:
-        with _YF_LOCK:
-            tk = yf.Ticker(ticker)
-            kwargs = {
-                "interval": interval,
-                "auto_adjust": True,
-                "prepost": False,
-            }
-            if start is not None:
-                # Pass native datetime/date boundaries (instead of formatted strings)
-                # to avoid provider-side parsing errors on mixed timestamp formats.
-                end_dt = end or datetime.now()
+        tk = yf.Ticker(ticker)
+        kwargs = {
+            "interval": interval,
+            "auto_adjust": True,
+            "prepost": False,
+        }
+        if start is not None:
+            # Pass native datetime/date boundaries (instead of formatted strings)
+            # to avoid provider-side parsing errors on mixed timestamp formats.
+            end_dt = end or datetime.now()
 
-                # Daily bars are more stable with date-only boundaries.
-                if interval in ("1d", "1wk", "1mo", "3mo"):
-                    kwargs["start"] = start.date()
-                    kwargs["end"] = end_dt.date()
-                else:
-                    kwargs["start"] = start
-                    kwargs["end"] = end_dt
+            # Daily bars are more stable with date-only boundaries.
+            if interval in ("1d", "1wk", "1mo", "3mo"):
+                kwargs["start"] = start.date()
+                kwargs["end"] = end_dt.date()
             else:
-                kwargs["period"] = period or "5d"
-            return tk.history(**kwargs)
+                kwargs["start"] = start
+                kwargs["end"] = end_dt
+        else:
+            kwargs["period"] = period or "5d"
+        return tk.history(**kwargs)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         fut = pool.submit(_fetch)
@@ -372,6 +368,17 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
             )
 
         if raw.empty:
+            # Lightweight fallback: intraday for a shorter period often succeeds when
+            # provider throttles broader windows.
+            if interval == "5m" and period != "1d":
+                raw = _fetch_history_with_timeout(
+                    ticker,
+                    period="1d",
+                    interval=interval,
+                    timeout_sec=10,
+                )
+
+        if raw.empty:
             if not cached_df.empty:
                 logger.warning("Using stale cache for %s after empty upstream response", display_name)
                 _cache[cache_key] = {"df": cached_df, "fetched_at": time.time()}
@@ -482,9 +489,8 @@ def validate_nse_symbol(symbol: str) -> dict | None:
         dict with {price, currency, exchange} if valid, None otherwise.
     """
     try:
-        with _YF_LOCK:
-            t = yf.Ticker(symbol)
-            info = t.fast_info
+        t = yf.Ticker(symbol)
+        info = t.fast_info
         price = getattr(info, 'last_price', None)
         if price is None or price <= 0:
             return None
@@ -521,24 +527,22 @@ def fetch_arbitrary_symbol(ticker_or_name: str, period: str = "5d", interval: st
     try:
         logger.info(f"Fetching yFinance (search): {ticker} period={period} interval={interval}")
         # Use Ticker.history() — no MultiIndex issues
-        with _YF_LOCK:
-            raw = yf.Ticker(ticker).history(
+        raw = yf.Ticker(ticker).history(
+            period=period,
+            interval=interval,
+            auto_adjust=True,
+            prepost=False,
+        )
+        if raw.empty:
+            # Try with .NS suffix for NSE stocks
+            nse_ticker = f"{ticker}.NS"
+            logger.info(f"Retrying with NSE suffix: {nse_ticker}")
+            raw = yf.Ticker(nse_ticker).history(
                 period=period,
                 interval=interval,
                 auto_adjust=True,
                 prepost=False,
             )
-        if raw.empty:
-            # Try with .NS suffix for NSE stocks
-            nse_ticker = f"{ticker}.NS"
-            logger.info(f"Retrying with NSE suffix: {nse_ticker}")
-            with _YF_LOCK:
-                raw = yf.Ticker(nse_ticker).history(
-                    period=period,
-                    interval=interval,
-                    auto_adjust=True,
-                    prepost=False,
-                )
 
         if raw.empty:
             return None
@@ -583,15 +587,14 @@ def fetch_nse_gainers_losers(mode: str = "gainers") -> list[dict]:
 
     try:
         logger.info("Batch downloading %d NSE stocks for screener...", len(tickers_list))
-        with _YF_LOCK:
-            raw = yf.download(
-                tickers_list,
-                period="2d",
-                interval="1d",
-                progress=False,
-                auto_adjust=True,
-                group_by="ticker",   # gives MultiIndex: (field, ticker)
-            )
+        raw = yf.download(
+            tickers_list,
+            period="2d",
+            interval="1d",
+            progress=False,
+            auto_adjust=True,
+            group_by="ticker",   # gives MultiIndex: (field, ticker)
+        )
 
         if raw.empty:
             logger.warning("Batch screener download returned empty DataFrame")
