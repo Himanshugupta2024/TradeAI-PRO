@@ -222,8 +222,14 @@ class ContextFetcher:
         return max(-1.0, min(1.0, score))
 
     def _persist_snapshot(self, snapshot: ContextSnapshotData) -> None:
-        """Persist latest snapshot and purge records older than 90 days."""
-        for attempt in range(3):
+        """Persist latest snapshot and purge records older than 90 days.
+
+        Uses exponential back-off retries for SQLite lock contention which is
+        common on Render when multiple async tasks write concurrently.
+        Cleanup (DELETE) runs in a separate transaction to avoid holding the
+        write lock while inserting.
+        """
+        for attempt in range(5):
             session = SessionLocal()
             try:
                 row = ContextSnapshot(
@@ -241,20 +247,13 @@ class ContextFetcher:
                     context_score=snapshot.context_score,
                 )
                 session.add(row)
-
-                # Avoid expensive DELETE contention on every symbol update.
-                now_ts = self._now().timestamp()
-                if now_ts - self._last_snapshot_cleanup_ts >= 3600:
-                    cutoff = datetime.utcnow() - timedelta(days=90)
-                    session.execute(delete(ContextSnapshot).where(ContextSnapshot.timestamp_utc < cutoff))
-                    self._last_snapshot_cleanup_ts = now_ts
-
                 session.commit()
-                return
+                break
             except OperationalError as exc:
                 session.rollback()
-                if "locked" in str(exc).lower() and attempt < 2:
-                    time.sleep(0.2 * (attempt + 1))
+                if "locked" in str(exc).lower() and attempt < 4:
+                    # Exponential back-off: 0.5s, 1s, 2s, 4s
+                    time.sleep(0.5 * (2 ** attempt))
                     continue
                 logger.error("Context snapshot persistence failed for %s: %s", snapshot.symbol, exc)
                 return
@@ -264,6 +263,31 @@ class ContextFetcher:
                 return
             finally:
                 session.close()
+
+        # Run cleanup in a separate transaction so it never blocks the INSERT above.
+        now_ts = self._now().timestamp()
+        if now_ts - self._last_snapshot_cleanup_ts >= 3600:
+            self._last_snapshot_cleanup_ts = now_ts
+            for attempt in range(3):
+                session = SessionLocal()
+                try:
+                    cutoff = datetime.utcnow() - timedelta(days=90)
+                    session.execute(delete(ContextSnapshot).where(ContextSnapshot.timestamp_utc < cutoff))
+                    session.commit()
+                    break
+                except OperationalError as exc:
+                    session.rollback()
+                    if "locked" in str(exc).lower() and attempt < 2:
+                        time.sleep(1.0 * (attempt + 1))
+                        continue
+                    logger.warning("Context snapshot cleanup skipped (DB locked): %s", exc)
+                    break
+                except Exception as exc:
+                    session.rollback()
+                    logger.warning("Context snapshot cleanup failed: %s", exc)
+                    break
+                finally:
+                    session.close()
 
     def _save_snapshot_cache(self, snapshot: ContextSnapshotData) -> None:
         data = asdict(snapshot)
@@ -356,17 +380,8 @@ class ContextFetcher:
             )
 
         headlines_api: list[str] = []
-        free_url = f"https://free-crypto-news.vercel.app/api/news?coin={quote_plus(coin.upper())}"
-        try:
-            payload = self._get_json(free_url, timeout=12)
-            headlines_api = self._extract_headlines(payload)
-        except Exception as exc:
-            self._log_warning_throttled(
-                f"free_crypto_news_{coin.upper()}",
-                "Free crypto news failed for %s: %s",
-                coin,
-                exc,
-            )
+        # free-crypto-news.vercel.app is now a paid service (HTTP 402) — removed.
+        # Sentiment is sourced entirely from RSS feeds below.
 
         rss_items = self._fetch_crypto_rss_items()
         titles_24, titles_7 = self._bucket_rss_titles_by_age(rss_items, now, coin)
@@ -1103,6 +1118,17 @@ class ContextFetcher:
         return symbol
 
 
+_shared_fetcher: ContextFetcher | None = None
+
+
 def build_context_fetcher() -> ContextFetcher:
-    """Factory helper for scheduled runners and endpoints."""
-    return ContextFetcher()
+    """Return a shared ContextFetcher singleton.
+
+    Using a single instance ensures the in-memory throttle/failure-log state
+    is preserved across calls, preventing repeated warning spam for persistent
+    geo-blocks (e.g. Binance HTTP 451 on Render).
+    """
+    global _shared_fetcher
+    if _shared_fetcher is None:
+        _shared_fetcher = ContextFetcher()
+    return _shared_fetcher

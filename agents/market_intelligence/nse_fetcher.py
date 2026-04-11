@@ -14,6 +14,7 @@ Fetches real OHLCV data for Indian markets:
 
 import logging
 import os
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta
@@ -208,7 +209,7 @@ def _fetch_history_with_timeout(
     interval: str,
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
-    timeout_sec: int = 15,
+    timeout_sec: int = 20,
 ) -> pd.DataFrame:
     """Windows-safe timeout wrapper around yfinance history fetch."""
 
@@ -348,6 +349,10 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
             return cached_df.copy()
 
     try:
+        # Small random jitter (0.3–1.5s) to spread concurrent fetches and reduce
+        # yFinance rate-limit hits on Render's shared IP.
+        time.sleep(random.uniform(0.3, 1.5))
+
         logger.info(f"Fetching yFinance: {display_name} ({ticker}) period={period} interval={interval}")
 
         # Delta fetch from latest cached candle when available.
