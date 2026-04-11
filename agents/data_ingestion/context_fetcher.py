@@ -36,8 +36,18 @@ logger = logging.getLogger(__name__)
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 
-_BULLISH_WORDS = {"surge", "rally", "bull", "soar", "breakout", "gain", "high", "up"}
-_BEARISH_WORDS = {"crash", "dump", "bear", "fall", "drop", "low", "fear", "down"}
+_BULLISH_WORDS = {
+    "surge", "rally", "bull", "soar", "breakout", "gain", "high", "up",
+    # Meme-specific bullish
+    "moon", "wen moon", "to the moon", "listing", "partnership", "trending",
+    "viral", "pump", "explode", "100x", "airdrop", "burn", "buyback",
+}
+_BEARISH_WORDS = {
+    "crash", "dump", "bear", "fall", "drop", "low", "fear", "down",
+    # Meme-specific bearish / scam alerts
+    "rug", "rugpull", "rug pull", "scam", "dev sold", "honeypot",
+    "exploit", "hack", "hacked", "fraud", "warning", "exit", "manipulation",
+}
 
 
 @dataclass
@@ -112,7 +122,7 @@ class ContextFetcher:
         if isinstance(exc, requests.HTTPError) and exc.response is not None:
             status = int(exc.response.status_code)
 
-        if status in (403, 404):
+        if status in (403, 404, 418, 429, 451):
             logger.warning("Context fetch degraded for %s (HTTP %s): %s", symbol, status, exc)
         else:
             logger.error("Context fetch failed for %s: %s", symbol, exc)
@@ -332,7 +342,12 @@ class ContextFetcher:
             payload = self._get_json(free_url, timeout=12)
             headlines_api = self._extract_headlines(payload)
         except Exception as exc:
-            logger.warning("Free crypto news failed for %s: %s", coin, exc)
+            self._log_warning_throttled(
+                f"free_crypto_news_{coin.upper()}",
+                "Free crypto news failed for %s: %s",
+                coin,
+                exc,
+            )
 
         rss_items = self._fetch_crypto_rss_items()
         titles_24, titles_7 = self._bucket_rss_titles_by_age(rss_items, now, coin)
@@ -373,11 +388,24 @@ class ContextFetcher:
 
     def _fetch_crypto_rss_items(self) -> list[tuple[str, datetime | None]]:
         urls = [
+            # ── News RSS ──────────────────────────────────────────────
             "https://www.coindesk.com/arc/outboundfeeds/rss/",
             "https://cryptopanic.com/news/rss/",
+            "https://feeds.feedburner.com/CoinTelegraph",
+            "https://bitcoinmagazine.com/.rss/full/",
+            # ── Reddit Social Sentiment (free, no API key) ────────────
+            "https://www.reddit.com/r/CryptoCurrency/.rss",
+            "https://www.reddit.com/r/SatoshiStreetBets/.rss",
+            "https://www.reddit.com/r/memecoin/.rss",
+            "https://www.reddit.com/r/CryptoMoonShots/.rss",
+            "https://www.reddit.com/r/dogecoin/.rss",
+            "https://www.reddit.com/r/shib/.rss",
         ]
         items: list[tuple[str, datetime | None]] = []
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/115.0"}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/115.0",
+            "Accept": "application/rss+xml, application/xml, text/xml, */*",
+        }
         for url in urls:
             try:
                 response = self._http_get(url, timeout=10, headers=headers)
@@ -386,7 +414,8 @@ class ContextFetcher:
                 items.extend(self._extract_rss_items(text))
             except Exception:
                 continue
-        return items[:80]
+        return items[:160]  # doubled capacity to handle reddit volume
+
 
     def _bucket_rss_titles_by_age(
         self,
@@ -412,10 +441,41 @@ class ContextFetcher:
         t = title.lower()
         c = coin.upper()
         aliases = {
-            "BTC": ("btc", "bitcoin"),
-            "ETH": ("eth", "ethereum"),
-            "SOL": ("sol", "solana"),
-            "BNB": ("bnb", "binance"),
+            # Major coins
+            "BTC":       ("btc", "bitcoin"),
+            "ETH":       ("eth", "ethereum"),
+            "SOL":       ("sol", "solana"),
+            "BNB":       ("bnb", "binance coin", "binance smart chain"),
+            "XRP":       ("xrp", "ripple"),
+            # OG meme coins
+            "DOGE":      ("doge", "dogecoin", "elon doge", "tesla doge"),
+            "SHIB":      ("shib", "shiba inu", "shibainu"),
+            # Solana meme coins
+            "BONK":      ("bonk", "bonk inu", "bonkinu"),
+            "WIF":       ("wif", "dogwifhat", "dog wif hat", "dogwifhat"),
+            "BOME":      ("bome", "book of meme", "bookofmeme"),
+            "MEW":       ("mew", "cat in a dogs world", "cat in dogs world"),
+            "POPCAT":    ("popcat", "pop cat"),
+            # Ethereum / Base meme coins
+            "PEPE":      ("pepe", "pepe coin", "pepecoin"),
+            "FLOKI":     ("floki", "floki inu"),
+            "BRETT":     ("brett", "based brett"),
+            "TURBO":     ("turbo", "turbo toad"),
+            "NEIRO":     ("neiro", "neiroeth", "neiro ethereum"),
+            # AI-themed meme
+            "GOAT":      ("goat", "goatseus maximus", "terminal of truths"),
+            "CHILLGUY":  ("chill guy", "chillguy", "chill-guy"),
+            # Ecosystem
+            "DEGEN":     ("degen", "farcaster", "base degen"),
+            # Viral / political
+            "PNUT":      ("pnut", "peanut", "peanut squirrel"),
+            "TRUMP":     ("trump coin", "official trump", "maga coin", "$trump"),
+            "FARTCOIN":  ("fartcoin", "fart coin"),
+            "MOODENG":   ("moodeng", "mood eng", "moodeng hippo"),
+            # Newer meme gems
+            "SPX":       ("spx6900", "spx 6900", "spx coin"),
+            "GIGA":      ("giga", "gigachad", "giga chad"),
+            "PONKE":     ("ponke", "ponke solana"),
         }
         if c.lower() in t:
             return True
@@ -424,13 +484,33 @@ class ContextFetcher:
                 return True
         return False
 
+
     def _fetch_coingecko_global(self) -> dict[str, float]:
         cached = self._global_cache.get("coingecko_global", {})
         ttl = max(60, settings.COINGECKO_CACHE_MINUTES * 60)
         if self._is_fresh(cached.get("cached_at"), ttl):
             return cached.get("payload", {})
 
-        data = self._get_json("https://api.coingecko.com/api/v3/global", timeout=12)
+        try:
+            data = self._get_json("https://api.coingecko.com/api/v3/global", timeout=12)
+        except requests.HTTPError as exc:
+            status = int(exc.response.status_code) if exc.response is not None else None
+            if status in (403, 418, 429, 451):
+                self._log_warning_throttled(
+                    f"coingecko_global_{status}",
+                    "CoinGecko global degraded (HTTP %s); using stale/neutral fallback.",
+                    status,
+                )
+                return cached.get("payload", {}) if isinstance(cached.get("payload"), dict) else {}
+            raise
+        except Exception as exc:
+            self._log_warning_throttled(
+                "coingecko_global_generic",
+                "CoinGecko global degraded (%s); using stale/neutral fallback.",
+                exc,
+            )
+            return cached.get("payload", {}) if isinstance(cached.get("payload"), dict) else {}
+
         payload = {
             "btc_dominance": float(data.get("data", {}).get("market_cap_percentage", {}).get("btc", 0.0)),
             "market_cap_change_24h": float(data.get("data", {}).get("market_cap_change_percentage_24h_usd", 0.0)),
@@ -448,7 +528,26 @@ class ContextFetcher:
         if self._is_fresh(cached.get("cached_at"), ttl):
             return set(cached.get("payload", []))
 
-        data = self._get_json("https://api.coingecko.com/api/v3/search/trending", timeout=12)
+        try:
+            data = self._get_json("https://api.coingecko.com/api/v3/search/trending", timeout=12)
+        except requests.HTTPError as exc:
+            status = int(exc.response.status_code) if exc.response is not None else None
+            if status in (403, 418, 429, 451):
+                self._log_warning_throttled(
+                    f"coingecko_trending_{status}",
+                    "CoinGecko trending degraded (HTTP %s); using stale/empty fallback.",
+                    status,
+                )
+                return set(cached.get("payload", []))
+            raise
+        except Exception as exc:
+            self._log_warning_throttled(
+                "coingecko_trending_generic",
+                "CoinGecko trending degraded (%s); using stale/empty fallback.",
+                exc,
+            )
+            return set(cached.get("payload", []))
+
         symbols = {
             str(item.get("item", {}).get("symbol", "")).lower()
             for item in data.get("coins", [])

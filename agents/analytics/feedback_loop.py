@@ -236,6 +236,7 @@ class FeedbackAnalyser:
         Returns structured insights dict.
         """
         try:
+            bootstrap_db()
             with _get_conn() as conn:
                 rows = conn.execute("""
                     SELECT signal_type, regime, rsi_at_entry, volume_above_avg,

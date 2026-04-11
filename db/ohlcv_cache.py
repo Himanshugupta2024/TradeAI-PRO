@@ -10,6 +10,7 @@ This module provides a lightweight cache path for market data fetchers:
 from __future__ import annotations
 
 import sqlite3
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -31,8 +32,11 @@ def _sqlite_db_path() -> Path:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_sqlite_db_path()))
+    conn = sqlite3.connect(str(_sqlite_db_path()), timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
 
@@ -116,25 +120,33 @@ def upsert_ohlcv(
             )
         )
 
-    with _connect() as conn:
-        conn.executemany(
-            """
-            INSERT INTO ohlcv_cache (
-                symbol, timeframe, timestamp, open, high, low, close, volume, source, fetched_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(symbol, timeframe, timestamp)
-            DO UPDATE SET
-                open=excluded.open,
-                high=excluded.high,
-                low=excluded.low,
-                close=excluded.close,
-                volume=excluded.volume,
-                source=excluded.source,
-                fetched_at=excluded.fetched_at
-            """,
-            rows,
-        )
-        conn.commit()
+    for attempt in range(3):
+        try:
+            with _connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO ohlcv_cache (
+                        symbol, timeframe, timestamp, open, high, low, close, volume, source, fetched_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, timeframe, timestamp)
+                    DO UPDATE SET
+                        open=excluded.open,
+                        high=excluded.high,
+                        low=excluded.low,
+                        close=excluded.close,
+                        volume=excluded.volume,
+                        source=excluded.source,
+                        fetched_at=excluded.fetched_at
+                    """,
+                    rows,
+                )
+                conn.commit()
+            break
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or attempt == 2:
+                raise
+            time.sleep(0.15 * (attempt + 1))
+
     return len(rows)
 
 
