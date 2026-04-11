@@ -37,6 +37,10 @@ from agents.market_intelligence.nse_fetcher import (
 from agents.stock_screener import opportunity_stocks
 from agents.data_ingestion.context_fetcher import build_context_fetcher
 from agents.analytics.trade_journal import get_journal
+from agents.analytics.signal_tracker import get_win_rate, get_leaderboard, score_outcomes, log_signal
+from agents.notifications.telegram_alerts import (
+    send_signal_alert, send_whale_alert, is_configured as tg_is_configured,
+)
 
 from api import service as svc
 from api.paths import STATIC_DIR
@@ -92,6 +96,299 @@ async def get_all_signals():
         if sig:
             results.append(sig)
     return {"signals": results, "updated_at": datetime.now().isoformat()}
+
+
+@router.get("/api/crypto/meme")
+async def get_meme_coin_signals():
+    """
+    Dedicated endpoint for the Meme Coin Dashboard section.
+    Fetches live Binance klines for each meme coin and computes
+    RSI-based BUY/SELL/HOLD signals independently (not from NSE cache).
+
+    Signal logic (meme-tuned thresholds):
+      BUY  → RSI < 35 (oversold) + price above EMA20
+      SELL → RSI > 70 (overbought) OR price 8%+ below EMA20
+      HOLD → everything else
+    """
+    import statistics
+    import math
+
+    COIN_EMOJIS = {
+        "DOGE": "🐶", "SHIB": "🐱", "BONK": "🐶", "WIF": "🐶",
+        "PEPE": "🐸", "FLOKI": "🐕", "PNUT": "🐿️", "BOME": "📚",
+        "MEW": "🐱", "POPCAT": "😸", "BRETT": "🧢", "TURBO": "🤖",
+        "NEIRO": "🐶", "GOAT": "🐐", "CHILLGUY": "😎", "DEGEN": "🎰",
+        "TRUMP": "🎩", "FARTCOIN": "💨", "MOODENG": "🦛", "SPX": "📈",
+        "GIGA": "💪", "PONKE": "🐒",
+    }
+
+    def _calc_rsi(closes: list[float], period: int = 14) -> float | None:
+        if len(closes) < period + 1:
+            return None
+        gains, losses = [], []
+        for i in range(1, len(closes)):
+            d = closes[i] - closes[i - 1]
+            gains.append(max(d, 0))
+            losses.append(max(-d, 0))
+        avg_gain = statistics.mean(gains[-period:])
+        avg_loss = statistics.mean(losses[-period:])
+        if avg_loss == 0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return round(100 - (100 / (1 + rs)), 2)
+
+    def _calc_ema(closes: list[float], period: int = 20) -> float | None:
+        if len(closes) < period:
+            return None
+        k = 2 / (period + 1)
+        ema = statistics.mean(closes[:period])
+        for price in closes[period:]:
+            ema = price * k + ema * (1 - k)
+        return round(ema, 8)
+
+    def _vol_spike(volumes: list[float]) -> float:
+        if len(volumes) < 5:
+            return 1.0
+        recent = volumes[-1]
+        avg = statistics.mean(volumes[-22:-1]) if len(volumes) >= 22 else statistics.mean(volumes[:-1])
+        return round(recent / avg, 2) if avg > 0 else 1.0
+
+    def _meme_signal(
+        closes: list[float],
+        rsi: float | None,
+        ema20: float | None,
+        change_24h: float = 0.0,
+        vol_spike: float = 1.0,
+    ) -> tuple[str, float]:
+        """
+        Multi-factor meme signal — combines RSI + EMA + momentum + volume.
+
+        BUY conditions (any one enough):
+          A. RSI < 40 (oversold dip)
+          B. RSI 40-55 + positive 24h momentum (>+2%) + price above EMA20
+          C. Volume spike >2x + RSI < 60 + positive momentum
+
+        SELL conditions (any one enough):
+          A. RSI > 65 (overbought)
+          B. RSI 55-65 + negative 24h momentum (<-3%) + price below EMA20
+          C. Price >20% above EMA20 (extended)
+
+        HOLD: everything else
+        """
+        if rsi is None or not closes:
+            return "HOLD", 0.38
+
+        price = closes[-1]
+        price_vs_ema = ((price - ema20) / ema20 * 100) if ema20 else 0.0
+        above_ema = price_vs_ema > 0
+
+        # ── BUY Logic ───────────────────────────────────────────
+        # A: Oversold RSI
+        if rsi < 40:
+            conf = 0.58 + (40 - rsi) / 40 * 0.28       # 0.58–0.86
+            if price_vs_ema < -20:                        # extreme dump — reduce
+                conf *= 0.80
+            return "BUY", round(min(conf, 0.90), 2)
+
+        # B: Momentum BUY — positive trend in healthy RSI range
+        if 40 <= rsi <= 55 and change_24h >= 2.0 and above_ema:
+            conf = 0.52 + min(change_24h, 15) / 100      # 0.52–0.67
+            if vol_spike >= 1.5:
+                conf = min(conf + 0.08, 0.75)             # volume boost
+            return "BUY", round(conf, 2)
+
+        # C: Volume pump signal
+        if vol_spike >= 2.5 and rsi < 62 and change_24h > 0:
+            conf = 0.50 + (vol_spike - 2.5) / 10         # 0.50–0.65
+            return "BUY", round(min(conf, 0.68), 2)
+
+        # ── SELL Logic ───────────────────────────────────────────
+        # A: Classic overbought
+        if rsi > 65:
+            conf = 0.55 + (rsi - 65) / 35 * 0.30        # 0.55–0.85
+            if price_vs_ema > 20:
+                conf = min(conf + 0.07, 0.88)
+            return "SELL", round(conf, 2)
+
+        # B: Momentum reversal
+        if 55 <= rsi <= 65 and change_24h <= -3.0 and not above_ema:
+            conf = 0.52 + min(abs(change_24h), 15) / 100
+            return "SELL", round(conf, 2)
+
+        # C: Extended far above EMA — take profit zone
+        if price_vs_ema > 22 and rsi > 58:
+            return "SELL", 0.56
+
+        # ── HOLD ─────────────────────────────────────────────────
+        mid_dist = abs(rsi - 52)
+        conf = max(0.35, 0.50 - mid_dist / 120)
+        return "HOLD", round(conf, 2)
+
+    async def _fetch_binance_klines(sym: str, limit: int = 60) -> dict | None:
+        """Fetch 1h klines from Binance public API (no auth needed)."""
+        url = (
+            f"https://api.binance.com/api/v3/klines"
+            f"?symbol={sym}USDT&interval=1h&limit={limit}"
+        )
+        try:
+            resp = await asyncio.to_thread(
+                lambda: __import__("requests").get(url, timeout=8)
+            )
+            if resp.status_code != 200:
+                return None
+            raw = resp.json()
+            closes  = [float(c[4]) for c in raw]
+            volumes = [float(c[5]) for c in raw]
+            price   = closes[-1] if closes else 0.0
+            change  = ((closes[-1] - closes[0]) / closes[0] * 100) if closes[0] else 0.0
+            return {"closes": closes, "volumes": volumes, "price": price, "change_24h": round(change, 2)}
+        except Exception:
+            return None
+
+    # ── Fetch all meme coins concurrently ──────────────────────
+    meme_bases = [sym.split("/")[0] for sym in settings.MEME_COIN_SYMBOLS]
+
+    kline_tasks = {base: asyncio.create_task(_fetch_binance_klines(base)) for base in meme_bases}
+    await asyncio.gather(*kline_tasks.values(), return_exceptions=True)
+
+    results = []
+    for base in meme_bases:
+        data = None
+        try:
+            data = kline_tasks[base].result()
+        except Exception:
+            pass
+
+        # Fallback to service market_data cache if Binance fetch failed
+        if data is None:
+            sym_key = f"{base}/USDT"
+            df = svc._market_data.get(sym_key) or svc._market_data.get(f"{base}USDT")
+            if df is not None and not df.empty and "close" in df.columns:
+                closes  = df["close"].dropna().tolist()
+                volumes = df["volume"].dropna().tolist() if "volume" in df.columns else []
+                price   = closes[-1] if closes else 0.0
+                pct     = ((closes[-1] - closes[0]) / closes[0] * 100) if closes and closes[0] else 0.0
+                data = {"closes": closes, "volumes": volumes, "price": price, "change_24h": round(pct, 2)}
+
+        if not data or not data.get("closes"):
+            continue  # skip coin — no data at all
+
+        closes  = data["closes"]
+        volumes = data["volumes"]
+        price   = data["price"]
+
+        rsi    = _calc_rsi(closes)
+        ema20  = _calc_ema(closes, 20)
+        spike  = _vol_spike(volumes)
+        change_24h = data.get("change_24h", 0.0)
+        signal, confidence = _meme_signal(closes, rsi, ema20, change_24h, spike)
+
+        # Pull context score if available
+        sym_key = f"{base}/USDT"
+        cached_sig = svc._signal_cache.get(sym_key) or svc._signal_cache.get(f"{base}USDT")
+        ctx_score = 0.0
+        if cached_sig is not None and not cached_sig.empty:
+            raw_ctx = cached_sig.iloc[-1].get("context_score", 0.0)
+            ctx_score = float(raw_ctx) if raw_ctx and not math.isnan(float(raw_ctx)) else 0.0
+
+        news_sentiment = (
+            "bullish" if ctx_score > 0.15
+            else "bearish" if ctx_score < -0.15
+            else "neutral"
+        )
+
+        results.append({
+            "symbol":         sym_key,
+            "base":           base,
+            "emoji":          COIN_EMOJIS.get(base, "🪙"),
+            "signal":         signal,
+            "confidence":     confidence,
+            "price":          price,
+            "change_24h":     data.get("change_24h", 0.0),
+            "rsi":            rsi,
+            "ema20":          ema20,
+            "trend":          "BULLISH" if (ema20 and price > ema20) else "BEARISH",
+            "volume_spike":   spike,
+            "is_hot":         spike >= 2.0,
+            "news_sentiment": news_sentiment,
+            "context_score":  round(ctx_score, 3),
+            "risk_level":     "HIGH",
+            "risk_note":      "Meme coin — extreme volatility. Use small position sizes only.",
+        })
+
+    # Sort: BUY first → highest confidence → alphabetical
+    signal_order = {"BUY": 0, "HOLD": 1, "SELL": 2}
+    results.sort(key=lambda x: (signal_order.get(x["signal"], 1), -x["confidence"]))
+
+    return {
+        "meme_coins":  results,
+        "total":       len(results),
+        "buy_count":   sum(1 for r in results if r["signal"] == "BUY"),
+        "sell_count":  sum(1 for r in results if r["signal"] == "SELL"),
+        "hold_count":  sum(1 for r in results if r["signal"] == "HOLD"),
+        "hot_count":   sum(1 for r in results if r["is_hot"]),
+        "updated_at":  datetime.now().isoformat(),
+    }
+
+
+
+# ── Signal Win Rate Endpoints ─────────────────────────────────────
+
+@router.get("/api/signals/winrate")
+async def get_signal_winrate(symbol: str = Query(None, description="Filter by symbol e.g. BONK/USDT")):
+    """
+    Get signal win rate for one coin or all coins.
+    Win = BUY signal followed by >= 3% price rise in 24h.
+    Results appear after 24h of live signal data.
+    """
+    data = await asyncio.to_thread(get_win_rate, symbol, 100)
+    return data
+
+
+@router.get("/api/signals/leaderboard")
+async def get_signal_leaderboard():
+    """
+    Top 10 coins by signal win rate (needs min 5 scored signals each).
+    Refreshes automatically as new signals are scored every 30 min.
+    """
+    board = await asyncio.to_thread(get_leaderboard, 10)
+    return {"leaderboard": board, "updated_at": datetime.now().isoformat()}
+
+
+# ── Telegram Alert Endpoints ──────────────────────────────────────
+
+@router.get("/api/telegram/status")
+async def telegram_status():
+    """Check if Telegram bot is configured and ready."""
+    import os
+    configured = tg_is_configured()
+    return {
+        "configured":  configured,
+        "enabled":     os.getenv("TELEGRAM_ALERTS_ENABLED", "false").lower() == "true",
+        "token_set":   bool(os.getenv("TELEGRAM_BOT_TOKEN")),
+        "chat_id_set": bool(os.getenv("TELEGRAM_CHAT_ID")),
+        "setup_guide": "Add TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID + TELEGRAM_ALERTS_ENABLED=true to your .env file",
+    }
+
+
+@router.post("/api/telegram/test")
+async def telegram_test_alert():
+    """Send a test alert to verify Telegram bot is working."""
+    if not tg_is_configured():
+        return {
+            "success": False,
+            "message": "Telegram not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to .env",
+        }
+    sent = await asyncio.to_thread(
+        send_signal_alert,
+        "TEST/USDT", "BUY", 0.001234, 0.75,
+        rsi=28.5, change_24h=12.3, volume_spike=3.2,
+        news_sentiment="bullish", reason="Test alert from TradeAI PRO dashboard",
+    )
+    return {
+        "success": sent,
+        "message": "Test alert sent! Check your Telegram." if sent else "Send failed — check bot token and chat ID",
+    }
 
 
 @router.get("/api/symbols")
@@ -861,23 +1158,35 @@ async def websocket_prices(websocket: WebSocket):
     """
     WebSocket endpoint for real-time price and signal updates.
 
-    Fix 1: Sends payload under key "prices" (was "data") to match
-           the frontend handler: if (data.prices) { updateLivePrices(data.prices) }
+    Sends payload under key "prices" to match the frontend handler:
+      if (data.prices) { updateLivePrices(data.prices) }
 
-    Pushes updates every 5 seconds with latest prices and signals
-    for all tracked symbols.
+    Pushes price updates every 5 seconds and a lightweight ping every 20 seconds
+    to keep the connection alive through proxies and Render's load balancer.
     """
     await websocket.accept()
     svc._ws_clients.append(websocket)
     logger.info("WebSocket client connected (%d total)", len(svc._ws_clients))
 
+    last_ping_at = time.time()
+    _PING_INTERVAL = 20  # seconds between server-side pings
+
     try:
         while True:
-            # Fix 1: Use "prices" key to match frontend expectation
+            now_ts = time.time()
+
+            # Server-side ping to keep connection alive through proxies / Render LB.
+            if now_ts - last_ping_at >= _PING_INTERVAL:
+                try:
+                    await websocket.send_json({"type": "ping", "ts": datetime.now().isoformat()})
+                    last_ping_at = now_ts
+                except Exception:
+                    break  # Connection gone — exit loop cleanly
+
             update = {
                 "type": "price_update",
                 "timestamp": datetime.now().isoformat(),
-                "prices": {},   # ← was "data", now "prices"
+                "prices": {},
             }
 
             for symbol in svc._market_data:
@@ -894,7 +1203,6 @@ async def websocket_prices(websocket: WebSocket):
                     "regime": svc._regime_cache.get(symbol, "RANGING"),
                 }
 
-            # Add live trade stats
             engine = svc._get_engine()
             stats = engine.get_stats()
             update["stats"] = {
@@ -1995,7 +2303,24 @@ async def get_context_events():
 
 @router.get("/api/context/market-mood")
 async def get_market_mood_api():
-    """Return composite market mood payload for dashboard context strip."""
+    """Return composite market mood payload for dashboard context strip.
+
+    Returns a neutral cached response immediately during server startup so the
+    frontend never receives a 503 — the real data populates once warmup is done.
+    """
+    # During startup warmup return neutral immediately — avoids 503 on first hit.
+    if not svc._loading_status.get("ready"):
+        return {
+            "crypto_mood": "NEUTRAL",
+            "btc_dominance": None,
+            "btc_dominance_source": "warming_up",
+            "btc_24hr_change": 0.0,
+            "nifty_24hr_change": 0.0,
+            "avg_news_sentiment": 0.0,
+            "active_event_risk": False,
+            "next_event": None,
+        }
+
     try:
         fetcher = build_context_fetcher()
         btc_snapshot = await asyncio.to_thread(fetcher.get_snapshot_sync, "BTCUSDT")
