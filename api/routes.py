@@ -262,7 +262,9 @@ async def get_meme_coin_signals():
         # Fallback to service market_data cache if Binance fetch failed
         if data is None:
             sym_key = f"{base}/USDT"
-            df = svc._market_data.get(sym_key) or svc._market_data.get(f"{base}USDT")
+            df = svc._market_data.get(sym_key)
+            if df is None:
+                df = svc._market_data.get(f"{base}USDT")
             if df is not None and not df.empty and "close" in df.columns:
                 closes  = df["close"].dropna().tolist()
                 volumes = df["volume"].dropna().tolist() if "volume" in df.columns else []
@@ -285,7 +287,9 @@ async def get_meme_coin_signals():
 
         # Pull context score if available
         sym_key = f"{base}/USDT"
-        cached_sig = svc._signal_cache.get(sym_key) or svc._signal_cache.get(f"{base}USDT")
+        cached_sig = svc._signal_cache.get(sym_key)
+        if cached_sig is None:
+            cached_sig = svc._signal_cache.get(f"{base}USDT")
         ctx_score = 0.0
         if cached_sig is not None and not cached_sig.empty:
             raw_ctx = cached_sig.iloc[-1].get("context_score", 0.0)

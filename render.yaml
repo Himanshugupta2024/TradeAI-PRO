@@ -7,11 +7,15 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
+    disk:
+      name: trading-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: DATABASE_URL
-        value: sqlite:///./trading.db
+        value: sqlite:////var/data/trading.db
       - key: HEALTH_FILE
         value: health.json
       - key: CONTEXT_CACHE_FILE
@@ -21,6 +25,14 @@ services:
       - key: DAILY_API_USAGE_FILE
         value: daily_api_usage.json
       - key: CONTEXT_USE_PAID_APIS
-        value: true
+        value: false
+      - key: SCREENER_TASK_ENABLED
+        value: false
+      - key: MORNING_SCAN_TASK_ENABLED
+        value: false
+      - key: SELF_PING_ENABLED
+        value: false
+      - key: NSE_SYMBOL_LIMIT
+        value: 20
       - key: MARKETAUX_API_KEY
         sync: false

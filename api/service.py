@@ -38,6 +38,16 @@ try:
     from agents.alerts.telegram_bot import send_signal_alert as _tg_signal_alert
 except ImportError:
     _tg_signal_alert = None  # type: ignore
+
+# Signal win rate tracker + new Telegram alerts (non-blocking, safe)
+try:
+    from agents.analytics.signal_tracker import log_signal, score_outcomes
+    from agents.notifications.telegram_alerts import send_signal_alert as _tg_new_alert, send_whale_alert
+    _TRACKER_ENABLED = True
+except ImportError:
+    log_signal = score_outcomes = _tg_new_alert = send_whale_alert = None  # type: ignore
+    _TRACKER_ENABLED = False
+
 from agents.market_intelligence.nse_fetcher import (
     fetch_ohlcv,
     fetch_nse_gainers_losers,
@@ -96,12 +106,16 @@ _ws_clients: list[WebSocket] = []
 
 # ── Symbols to track ─────────────────────────────────────
 # Priority symbols loaded first (indices + top stocks), rest loaded progressively
-_PRIORITY_SYMBOLS = list(NSE_SYMBOLS.keys())[:15]   # Fast initial load
-_REMAINING_SYMBOLS = list(NSE_SYMBOLS.keys())[15:50]  # Loaded in background after priority
-TOP_NSE_SYMBOLS = list(NSE_SYMBOLS.keys())[:50]
+_ALL_NSE_SYMBOLS = list(NSE_SYMBOLS.keys())
+NSE_SYMBOL_LIMIT = max(1, int(os.getenv("NSE_SYMBOL_LIMIT", "50")))
+_TRACKED_NSE_SYMBOLS = _ALL_NSE_SYMBOLS[:NSE_SYMBOL_LIMIT]
+_PRIORITY_COUNT = min(15, len(_TRACKED_NSE_SYMBOLS))
+_PRIORITY_SYMBOLS = _TRACKED_NSE_SYMBOLS[:_PRIORITY_COUNT]   # Fast initial load
+_REMAINING_SYMBOLS = _TRACKED_NSE_SYMBOLS[_PRIORITY_COUNT:]  # Loaded in background after priority
+TOP_NSE_SYMBOLS = _TRACKED_NSE_SYMBOLS
 
 # Track loading progress for health endpoint
-_loading_status = {"phase": "starting", "loaded": 0, "total": 50, "ready": False}
+_loading_status = {"phase": "starting", "loaded": 0, "total": len(TOP_NSE_SYMBOLS), "ready": False}
 
 # Previous signal state per symbol — used to detect NEW signals for Telegram alerts
 _prev_signal_cache: dict[str, str] = {}
@@ -121,6 +135,7 @@ _lazy_bootstrap_started = False
 _regime_hysteresis: dict[str, tuple[str, str, int]] = {}
 REGIME_HYSTERESIS_MIN = 3  # Must see new regime N times before switching
 MAX_NSE_CONCURRENCY = 10
+SYMBOL_FETCH_TIMEOUT_SECONDS = float(os.getenv("NSE_SYMBOL_TIMEOUT_SECONDS", "150"))
 
 # ── Phase 3 / 4: delta tracking + opportunity timeline ───────────────────────
 # Snapshot of last intelligence payload for delta computation
@@ -388,14 +403,22 @@ async def _initial_load():
 
 
 async def _fetch_nse_symbol_safe(display_name: str, sem: asyncio.Semaphore) -> None:
-    """Wrapper around _fetch_nse_symbol with a 90-second per-symbol timeout."""
+    """Fetch one symbol with timeout starting only after semaphore acquisition."""
     try:
-        await asyncio.wait_for(
-            _fetch_nse_symbol(display_name, sem),
-            timeout=90.0,
-        )
+        # Important: do not include semaphore queue wait in timeout.
+        # Under startup burst, queue wait can consume most of a 90s budget,
+        # causing false timeouts before a symbol even starts processing.
+        async with sem:
+            await asyncio.wait_for(
+                _fetch_nse_symbol(display_name),
+                timeout=SYMBOL_FETCH_TIMEOUT_SECONDS,
+            )
     except asyncio.TimeoutError:
-        logger.warning("Symbol %s timed out after 90s — skipping", display_name)
+        logger.warning(
+            "Symbol %s timed out after %.0fs — skipping",
+            display_name,
+            SYMBOL_FETCH_TIMEOUT_SECONDS,
+        )
     except Exception as e:
         logger.error("Symbol %s failed: %s", display_name, e)
 
@@ -473,90 +496,89 @@ def _fire_telegram_signal(display_name: str, df: pd.DataFrame) -> None:
         logger.warning("Telegram/journal fire failed for %s: %s", display_name, exc)
 
 
-async def _fetch_nse_symbol(display_name: str, sem: asyncio.Semaphore) -> None:
-    """Fetch, validate, process, and cache a single NSE symbol inside a semaphore gate."""
-    async with sem:
+async def _fetch_nse_symbol(display_name: str) -> None:
+    """Fetch, validate, process, and cache a single NSE symbol."""
+    try:
+        global _last_feed_update
+        df = await asyncio.to_thread(fetch_ohlcv, display_name, "5d", "5m")
+        if df is None or df.empty:
+            logger.warning("No 5m data for %s — skipping", display_name)
+            return
+
+        # ── Data validation (run before indicator calculation) ────────────
+        df, report = await asyncio.to_thread(validate_ohlcv, df, display_name, "5m")
+        _data_quality_cache[display_name] = report.quality_pct
+        if not report.is_safe:
+            logger.warning("Skipping %s: data quality too low (%.1f%%)", display_name, report.quality_pct)
+            return
+
+        df = calculate_indicators(df)
+
+        # ── Real AI confidence from ensemble predictor ────────────────────
+        ai_confidence = await asyncio.to_thread(predict_batch, df)
+
+        htf_df = await asyncio.to_thread(fetch_ohlcv, display_name, "60d", "1d")
+        if htf_df is not None and not htf_df.empty and len(htf_df) >= 20:
+            htf_df = calculate_indicators(htf_df)
+            htf_df = classify_trend(htf_df)
+            df = propagate_trend_to_ltf(df, htf_df)
+        else:
+            htf_df = None
+            df = classify_trend(df)
+
+        # ── MTF score from resampled timeframes ───────────────────────────
+        mtf_data = {"5m": df}
         try:
-            global _last_feed_update
-            df = await asyncio.to_thread(fetch_ohlcv, display_name, "5d", "5m")
-            if df is None or df.empty:
-                logger.warning("No 5m data for %s — skipping", display_name)
-                return
+            _agg = {"open": "first", "high": "max", "low": "min",
+                    "close": "last", "volume": "sum"}
+            df_15m = (df.set_index("timestamp")
+                      .resample("15min").agg(_agg)
+                      .dropna(subset=["close"]).reset_index())
+            if len(df_15m) >= 30:
+                df_15m = calculate_indicators(df_15m)
+                mtf_data["15m"] = df_15m
+        except Exception as e:
+            logger.debug("15m resample failed for %s: %s", display_name, e)
+        if htf_df is not None and not htf_df.empty:
+            mtf_data["1d"] = htf_df
+        mtf_score = calculate_mtf_score(mtf_data)
 
-            # ── Data validation (run before indicator calculation) ────────────
-            df, report = await asyncio.to_thread(validate_ohlcv, df, display_name, "5m")
-            _data_quality_cache[display_name] = report.quality_pct
-            if not report.is_safe:
-                logger.warning("Skipping %s: data quality too low (%.1f%%)", display_name, report.quality_pct)
-                return
+        raw_regime = detect_regime(df)
+        regime = _stable_regime(display_name, raw_regime)
+        _regime_cache[display_name] = regime.value
 
-            df = calculate_indicators(df)
-
-            # ── Real AI confidence from ensemble predictor ────────────────────
-            ai_confidence = await asyncio.to_thread(predict_batch, df)
-
-            htf_df = await asyncio.to_thread(fetch_ohlcv, display_name, "60d", "1d")
-            if htf_df is not None and not htf_df.empty and len(htf_df) >= 20:
-                htf_df = calculate_indicators(htf_df)
-                htf_df = classify_trend(htf_df)
-                df = propagate_trend_to_ltf(df, htf_df)
-            else:
-                htf_df = None
-                df = classify_trend(df)
-
-            # ── MTF score from resampled timeframes ───────────────────────────
-            mtf_data = {"5m": df}
-            try:
-                _agg = {"open": "first", "high": "max", "low": "min",
-                        "close": "last", "volume": "sum"}
-                df_15m = (df.set_index("timestamp")
-                          .resample("15min").agg(_agg)
-                          .dropna(subset=["close"]).reset_index())
-                if len(df_15m) >= 30:
-                    df_15m = calculate_indicators(df_15m)
-                    mtf_data["15m"] = df_15m
-            except Exception as e:
-                logger.debug("15m resample failed for %s: %s", display_name, e)
-            if htf_df is not None and not htf_df.empty:
-                mtf_data["1d"] = htf_df
-            mtf_score = calculate_mtf_score(mtf_data)
-
-            raw_regime = detect_regime(df)
-            regime = _stable_regime(display_name, raw_regime)
-            _regime_cache[display_name] = regime.value
-
-            # ── Sector / Market Correlation: read Nifty 50 trend ──────────────
-            index_symbols = {"NIFTY 50", "BANKNIFTY", "SENSEX", "NIFTY IT", "NIFTY BANK"}
-            if display_name not in index_symbols:
-                market_trend = _regime_cache.get("NIFTY 50")
-                nifty_df = _signal_cache.get("NIFTY 50")
-                if nifty_df is not None and not nifty_df.empty:
-                    nifty_last_trend = str(nifty_df.iloc[-1].get("htf_trend", ""))
-                    if "BULLISH" in nifty_last_trend.upper():
-                        market_trend = "BULLISH"
-                    elif "BEARISH" in nifty_last_trend.upper():
-                        market_trend = "BEARISH"
-                    else:
-                        market_trend = None
+        # ── Sector / Market Correlation: read Nifty 50 trend ──────────────
+        index_symbols = {"NIFTY 50", "BANKNIFTY", "SENSEX", "NIFTY IT", "NIFTY BANK"}
+        if display_name not in index_symbols:
+            market_trend = _regime_cache.get("NIFTY 50")
+            nifty_df = _signal_cache.get("NIFTY 50")
+            if nifty_df is not None and not nifty_df.empty:
+                nifty_last_trend = str(nifty_df.iloc[-1].get("htf_trend", ""))
+                if "BULLISH" in nifty_last_trend.upper():
+                    market_trend = "BULLISH"
+                elif "BEARISH" in nifty_last_trend.upper():
+                    market_trend = "BEARISH"
                 else:
                     market_trend = None
             else:
                 market_trend = None
+        else:
+            market_trend = None
 
-            df = generate_signals(
-                df, ai_confidence=ai_confidence, regime=regime,
-                symbol=display_name, market_trend=market_trend,
-                mtf_score=mtf_score,
-            )
-            _market_data[display_name] = df
-            _signal_cache[display_name] = df
-            _last_feed_update = datetime.now()
+        df = generate_signals(
+            df, ai_confidence=ai_confidence, regime=regime,
+            symbol=display_name, market_trend=market_trend,
+            mtf_score=mtf_score,
+        )
+        _market_data[display_name] = df
+        _signal_cache[display_name] = df
+        _last_feed_update = datetime.now()
 
-            # Fire Telegram alert + journal for new LONG/SHORT signals (non-blocking)
-            await asyncio.to_thread(_fire_telegram_signal, display_name, df)
+        # Fire Telegram alert + journal for new LONG/SHORT signals (non-blocking)
+        await asyncio.to_thread(_fire_telegram_signal, display_name, df)
 
-        except Exception as e:
-            logger.error("Failed to fetch %s: %s", display_name, e)
+    except Exception as e:
+        logger.error("Failed to fetch %s: %s", display_name, e)
 
 
 async def _refresh_market_data():

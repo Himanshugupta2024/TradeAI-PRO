@@ -21,6 +21,13 @@ logger = logging.getLogger(__name__)
 _KEEP_ALIVE_INTERVAL = 600
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 async def _keep_alive_task():
     """Periodically ping our own /api/health to prevent Render free-tier spin-down."""
     port = int(os.environ.get("PORT", 10000))
@@ -43,11 +50,31 @@ def _lifespan_context():
     async def lifespan(app: FastAPI):
         init_db()
         svc.logger.info("Starting server — market data will load in background...")
-        asyncio.create_task(svc._initial_load())
-        asyncio.create_task(svc._background_refresh())
-        asyncio.create_task(start_screener_task())
-        asyncio.create_task(start_morning_scan_task())
-        asyncio.create_task(_keep_alive_task())
+        if _env_flag("INITIAL_LOAD_ENABLED", True):
+            asyncio.create_task(svc._initial_load())
+        else:
+            svc.logger.info("INITIAL_LOAD_ENABLED=false -> skipping initial data warm-up task")
+
+        if _env_flag("BACKGROUND_REFRESH_ENABLED", True):
+            asyncio.create_task(svc._background_refresh())
+        else:
+            svc.logger.info("BACKGROUND_REFRESH_ENABLED=false -> skipping periodic background refresh")
+
+        if _env_flag("SCREENER_TASK_ENABLED", True):
+            asyncio.create_task(start_screener_task())
+        else:
+            svc.logger.info("SCREENER_TASK_ENABLED=false -> skipping stock screener loop")
+
+        if _env_flag("MORNING_SCAN_TASK_ENABLED", True):
+            asyncio.create_task(start_morning_scan_task())
+        else:
+            svc.logger.info("MORNING_SCAN_TASK_ENABLED=false -> skipping morning scan scheduler")
+
+        if _env_flag("SELF_PING_ENABLED", False):
+            asyncio.create_task(_keep_alive_task())
+        else:
+            svc.logger.info("SELF_PING_ENABLED=false -> skipping self-ping keep-alive task")
+
         svc.logger.info("Server ready — accepting connections. Data loading in background.")
         yield
 
