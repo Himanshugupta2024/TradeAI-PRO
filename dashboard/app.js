@@ -395,11 +395,17 @@ function switchTab(tab) {
 
     // Update buttons
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+    const tabBtn = document.querySelector(`[data-tab="${tab}"]`);
+    if (tabBtn) tabBtn.classList.add('active');
 
     // Update content
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    document.getElementById(`${tab}Tab`).classList.add('active');
+    const panel = document.getElementById(`${tab}Tab`);
+    if (!panel) {
+        console.warn(`[switchTab] Missing tab panel #${tab}Tab — check dashboard HTML`);
+        return;
+    }
+    panel.classList.add('active');
 
     // Load tab-specific data
     if (tab === 'portfolio') loadPortfolio();
@@ -448,6 +454,27 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
     return resp;
 }
 
+/** Parse JSON after fetch; avoids SyntaxError on empty 502/503 bodies from cold starts. */
+async function parseJsonResponse(res) {
+    if (!res.ok) {
+        const err = new Error(`HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+    }
+    const text = await res.text();
+    if (!text || !text.trim()) {
+        const err = new Error('Empty response body');
+        throw err;
+    }
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        const err = new Error('Invalid JSON from API');
+        err.cause = e;
+        throw err;
+    }
+}
+
 
 async function loadAllData({ background = false } = {}) {
     if (_isRefreshing) return;
@@ -459,13 +486,13 @@ async function loadAllData({ background = false } = {}) {
     // ── Section-resilient parallel fetch ──────────────────────────────────────
     // Each section fetches independently; failure in one does NOT blank others.
     const [signalsResult, statsResult, dashboardResult, oppsResult, cockpitResult, morningScanResult, cryptoIntelResult] = await Promise.allSettled([
-        fetchWithTimeout(`${API}/api/signals/all`, {}, 28000).then(r => r.json()),
-        fetchWithTimeout(`${API}/api/stats`, {}, 10000).then(r => r.json()),
-        fetchWithTimeout(`${API}/api/nse/dashboard`, {}, 12000).then(r => r.json()),
-        fetchWithTimeout(`${API}/api/screener/opportunities`, {}, 10000).then(r => r.json()).catch(() => null),
-        fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 12000).then(r => r.json()).catch(() => null),
-        fetchWithTimeout(`${API}/api/morning-scan`, {}, 8000).then(r => r.json()).catch(() => null),
-        fetchWithTimeout(`${API}/api/crypto/intelligence`, {}, 10000).then(r => r.json()).catch(() => null),
+        fetchWithTimeout(`${API}/api/signals/all`, {}, 90000).then((r) => parseJsonResponse(r)),
+        fetchWithTimeout(`${API}/api/stats`, {}, 25000).then((r) => parseJsonResponse(r)),
+        fetchWithTimeout(`${API}/api/nse/dashboard`, {}, 30000).then((r) => parseJsonResponse(r)),
+        fetchWithTimeout(`${API}/api/screener/opportunities`, {}, 25000).then((r) => parseJsonResponse(r)).catch(() => null),
+        fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 30000).then((r) => parseJsonResponse(r)).catch(() => null),
+        fetchWithTimeout(`${API}/api/morning-scan`, {}, 20000).then((r) => parseJsonResponse(r)).catch(() => null),
+        fetchWithTimeout(`${API}/api/crypto/intelligence`, {}, 25000).then((r) => parseJsonResponse(r)).catch(() => null),
     ]);
 
     // ── Signals ──────────────────────────────────────────────────────────────
@@ -2185,11 +2212,11 @@ setInterval(updateMarketSessionBanner, 60000);
 async function loadPortfolio() {
     try {
         const [portRes, tradesRes] = await Promise.all([
-            fetch(`${API}/api/portfolio`),
-            fetch(`${API}/api/trades?limit=50`),
+            fetchWithTimeout(`${API}/api/portfolio`, {}, 25000),
+            fetchWithTimeout(`${API}/api/trades?limit=50`, {}, 25000),
         ]);
-        const portfolio = await portRes.json();
-        const trades = await tradesRes.json();
+        const portfolio = await parseJsonResponse(portRes);
+        const trades = await parseJsonResponse(tradesRes);
 
         // Summary
         document.getElementById('portOpenCount').textContent = `${portfolio.total_open} open`;
@@ -2260,11 +2287,11 @@ async function loadPortfolio() {
 async function loadLearningStats() {
     try {
         const [statsRes, outcomesRes] = await Promise.all([
-            fetch(`${API}/api/learning/stats`),
-            fetch(`${API}/api/learning/outcomes?limit=50`)
+            fetchWithTimeout(`${API}/api/learning/stats`, {}, 20000),
+            fetchWithTimeout(`${API}/api/learning/outcomes?limit=50`, {}, 20000),
         ]);
-        const data = await statsRes.json();
-        const outcomesData = await outcomesRes.json();
+        const data = await parseJsonResponse(statsRes);
+        const outcomesData = await parseJsonResponse(outcomesRes);
 
         // Populate KPIs
         const o = data.insights?.overall || {};
@@ -2356,8 +2383,8 @@ async function loadLearningStats() {
 
 async function loadPerformance() {
     try {
-        const res = await fetch(`${API}/api/performance`);
-        const data = await res.json();
+        const res = await fetchWithTimeout(`${API}/api/performance`, {}, 25000);
+        const data = await parseJsonResponse(res);
         const m = data.metrics || {};
 
         // ── KPI cards ──────────────────────────────────
@@ -3067,34 +3094,26 @@ let currentScreenerMode = 'gainers';
 
 async function loadMarket() {
     const loadSectors = async () => {
-        const ac = new AbortController();
-        const timeoutId = setTimeout(() => ac.abort(), 12_000);
         try {
-            const sectorRes = await fetch(`${API}/api/sectors`, { signal: ac.signal });
-            const sectors = await sectorRes.json();
+            const sectorRes = await fetchWithTimeout(`${API}/api/sectors`, {}, 20000);
+            const sectors = await parseJsonResponse(sectorRes);
             renderSectorHeatmap(sectors.sectors || []);
         } catch (err) {
             console.warn('Sector heatmap load error:', err);
             const grid = document.getElementById('sectorGrid');
             if (grid) grid.innerHTML = '<p style="color:var(--text-muted);padding:2rem;text-align:center;">Sector data unavailable</p>';
-        } finally {
-            clearTimeout(timeoutId);
         }
     };
 
     const loadScreenerData = async () => {
-        // Use AbortController to enforce a 10-second timeout so the UI
-        // doesn't hang indefinitely if yfinance is slow.
-        const ac = new AbortController();
-        const timeoutId = setTimeout(() => ac.abort(), 10_000);
         try {
             const [gainersRes, losersRes] = await Promise.all([
-                fetch(`${API}/api/screener/gainers`, { signal: ac.signal }),
-                fetch(`${API}/api/screener/losers`,  { signal: ac.signal }),
+                fetchWithTimeout(`${API}/api/screener/gainers`, {}, 20000),
+                fetchWithTimeout(`${API}/api/screener/losers`, {}, 20000),
             ]);
 
-            const gainers = await gainersRes.json();
-            const losers  = await losersRes.json();
+            const gainers = await parseJsonResponse(gainersRes);
+            const losers = await parseJsonResponse(losersRes);
 
             screenerData.gainers = gainers.data || [];
             screenerData.losers  = losers.data  || [];
@@ -3110,16 +3129,14 @@ async function loadMarket() {
             if (tbody) {
                 tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="color:var(--text-muted)">⚠️ Screener data unavailable — <a href="#" onclick="loadMarket();return false;" style="color:var(--cyan);text-decoration:underline;cursor:pointer;">Retry</a></td></tr>';
             }
-        } finally {
-            clearTimeout(timeoutId);
         }
     };
 
     const loadContextEvents = async () => {
         try {
-            const res = await fetchWithTimeout(`${API}/api/context/events`, {}, 12000);
+            const res = await fetchWithTimeout(`${API}/api/context/events`, {}, 20000);
             if (!res.ok) return;
-            const payload = await res.json();
+            const payload = await parseJsonResponse(res);
             renderContextEventsAccordion(payload.events || []);
         } catch (err) {
             console.warn('Context events load error:', err);
@@ -3271,8 +3288,8 @@ function renderSectorHeatmap(sectors) {
 
 async function loadScorecard() {
     try {
-        const res = await fetch(`${API}/api/analytics/scorecard`);
-        const data = await res.json();
+        const res = await fetchWithTimeout(`${API}/api/analytics/scorecard`, {}, 25000);
+        const data = await parseJsonResponse(res);
         renderScorecard(data);
     } catch (err) {
         console.error('Scorecard load error:', err);
@@ -3430,11 +3447,12 @@ function _drawHourChart(byHour) {
 
 async function loadTradeFlow() {
     const grid = document.getElementById('tradeflowGrid');
+    if (!grid) return;
     // Show a bounded loading state — will be replaced by error or real data
     grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Loading FII/DII flows...</p></div>';
     try {
-        const res = await fetchWithTimeout(`${API}/api/tradeflow`, {}, 15000);
-        const data = await res.json();
+        const res = await fetchWithTimeout(`${API}/api/tradeflow`, {}, 25000);
+        const data = await parseJsonResponse(res);
         renderTradeFlow(data);
     } catch (err) {
         if (err.name === 'AbortError') {
@@ -4004,11 +4022,12 @@ function renderSwingMetaBar(data) {
 
 async function loadSwingScanner() {
     const grid = document.getElementById('swingGrid');
+    if (!grid) return;
     grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Scanning for swing setups...</p></div>';
 
     try {
-        const res = await fetchWithTimeout(`${API}/api/swing-scanner`, {}, 45000);
-        const data = await res.json();
+        const res = await fetchWithTimeout(`${API}/api/swing-scanner`, {}, 60000);
+        const data = await parseJsonResponse(res);
         _swingApiMeta = data;
         _swingData = data.setups || [];
 
@@ -4414,9 +4433,9 @@ async function refreshMoodStrip() {
             await new Promise((r) => setTimeout(r, delays[i]));
         }
         try {
-            const res = await fetchWithTimeout(`${API}/api/context/market-mood`, {}, 12000);
+            const res = await fetchWithTimeout(`${API}/api/context/market-mood`, {}, 20000);
             if (res.ok) {
-                const data = await res.json();
+                const data = await parseJsonResponse(res);
                 updateMoodStripUI(data);
                 break;
             }
