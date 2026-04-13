@@ -413,18 +413,32 @@ function switchTab(tab) {
     if (tab === 'breakouts') loadBreakouts();
 }
 
-// ── Fetch with Timeout + 503 Retry Helper ─────────────
-// Handles Render free-tier cold-start: retries up to 3 times on 503
-// with exponential backoff (4s → 8s → 16s). Other errors throw immediately.
+// ── Fetch with Timeout + 503/Network Retry Helper ──────
+// Handles Render free-tier cold-start: retries up to 3 times on:
+//   • HTTP 503 responses (LB queue full, server starting)
+//   • Thrown network errors e.g. ERR_ABORTED when LB drops the connection
+// Uses exponential backoff (4s → 8s → 16s). Genuine timeouts still throw.
 async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries = 3, _backoffMs = 4000) {
     const ac = new AbortController();
     const tid = setTimeout(() => ac.abort(), timeoutMs);
     let resp;
     try {
         resp = await fetch(url, { ...options, signal: ac.signal });
-    } finally {
         clearTimeout(tid);
+    } catch (err) {
+        clearTimeout(tid);
+        // Our own timeout fired → do not retry, propagate immediately
+        if (ac.signal.aborted) throw err;
+        // Network-level drop (ERR_ABORTED, ERR_CONNECTION_RESET, etc.) → retry
+        if (_retries > 0) {
+            const delay = Math.min(_backoffMs, 20000);
+            console.warn(`[fetch] Network error on ${url} — retrying in ${delay / 1000}s (${_retries} left)...`);
+            await new Promise(r => setTimeout(r, delay));
+            return fetchWithTimeout(url, options, timeoutMs, _retries - 1, _backoffMs * 2);
+        }
+        throw err;
     }
+    // HTTP-level 503 → server is still waking up, retry
     if (resp.status === 503 && _retries > 0) {
         const delay = Math.min(_backoffMs, 20000);
         console.warn(`[fetch] 503 from ${url} — server waking up, retrying in ${delay / 1000}s (${_retries} left)...`);
