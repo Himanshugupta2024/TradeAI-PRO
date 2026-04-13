@@ -14,6 +14,7 @@ let allSignals = [];
 let marketDataCache = {};
 let priceWs = null;
 let wsReconnectTimer = null;
+let _wsReconnectBackoffMs = 4000;
 let currentModalSymbol = null;
 let currentModalInterval = '5m';
 let _modalRefreshTimer = null;
@@ -151,7 +152,30 @@ document.addEventListener('visibilitychange', () => {
 // ── WebSocket for Real-Time Prices ──────────────────────
 
 function connectPriceWebSocket() {
-    if (priceWs && priceWs.readyState <= 1) return;  // Already connected or connecting
+    // Only skip when the socket is actually open — treating CONNECTING as "busy"
+    // prevented new attempts and left tabs stuck when the handshake never completed
+    // (common on cold Render free-tier instances behind a proxy).
+    if (priceWs && priceWs.readyState === WebSocket.OPEN) return;
+
+    if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+    }
+
+    if (priceWs) {
+        try {
+            priceWs.onopen = null;
+            priceWs.onmessage = null;
+            priceWs.onerror = null;
+            priceWs.onclose = null;
+            if (priceWs.readyState === WebSocket.CONNECTING || priceWs.readyState === WebSocket.OPEN) {
+                priceWs.close();
+            }
+        } catch (e) {
+            /* ignore */
+        }
+        priceWs = null;
+    }
 
     const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProto}//${location.host}/ws/prices`;
@@ -161,6 +185,7 @@ function connectPriceWebSocket() {
 
         priceWs.onopen = () => {
             console.log('[WS] Connected to price stream');
+            _wsReconnectBackoffMs = 4000;
             updateWsIndicator(true);
             if (wsReconnectTimer) {
                 clearTimeout(wsReconnectTimer);
@@ -197,9 +222,15 @@ function connectPriceWebSocket() {
         };
 
         priceWs.onclose = () => {
-            console.log('[WS] Disconnected — reconnecting in 5s...');
+            const delay = Math.min(
+                30000,
+                Math.round(_wsReconnectBackoffMs + Math.random() * 1500),
+            );
+            _wsReconnectBackoffMs = Math.min(30000, _wsReconnectBackoffMs * 1.6);
+            console.log(`[WS] Disconnected — reconnecting in ${Math.round(delay / 1000)}s...`);
             updateWsIndicator(false);
-            wsReconnectTimer = setTimeout(connectPriceWebSocket, 5000);
+            priceWs = null;
+            wsReconnectTimer = setTimeout(connectPriceWebSocket, delay);
         };
 
         priceWs.onerror = (err) => {
@@ -208,7 +239,8 @@ function connectPriceWebSocket() {
         };
     } catch (e) {
         console.error('[WS] Failed to connect:', e);
-        wsReconnectTimer = setTimeout(connectPriceWebSocket, 10000);
+        const delay = Math.min(30000, Math.round(_wsReconnectBackoffMs + Math.random() * 2000));
+        wsReconnectTimer = setTimeout(connectPriceWebSocket, delay);
     }
 }
 
@@ -401,7 +433,7 @@ async function loadAllData({ background = false } = {}) {
     // ── Section-resilient parallel fetch ──────────────────────────────────────
     // Each section fetches independently; failure in one does NOT blank others.
     const [signalsResult, statsResult, dashboardResult, oppsResult, cockpitResult, morningScanResult, cryptoIntelResult] = await Promise.allSettled([
-        fetchWithTimeout(`${API}/api/signals/all`, {}, 15000).then(r => r.json()),
+        fetchWithTimeout(`${API}/api/signals/all`, {}, 28000).then(r => r.json()),
         fetchWithTimeout(`${API}/api/stats`, {}, 10000).then(r => r.json()),
         fetchWithTimeout(`${API}/api/nse/dashboard`, {}, 12000).then(r => r.json()),
         fetchWithTimeout(`${API}/api/screener/opportunities`, {}, 10000).then(r => r.json()).catch(() => null),
@@ -4349,13 +4381,25 @@ function initMoodStrip() {
 }
 
 async function refreshMoodStrip() {
-    try {
-        const res = await fetchWithTimeout(`${API}/api/context/market-mood`, {}, 8000);
-        if (!res.ok) return;
-        const data = await res.json();
-        updateMoodStripUI(data);
-    } catch (e) {
-        // silently skip — mood strip is non-critical
+    // Retry on cold Render / LB 502–503 (service waking or briefly unavailable).
+    const delays = [0, 2500, 5000];
+    for (let i = 0; i < delays.length; i++) {
+        if (delays[i] > 0) {
+            await new Promise((r) => setTimeout(r, delays[i]));
+        }
+        try {
+            const res = await fetchWithTimeout(`${API}/api/context/market-mood`, {}, 12000);
+            if (res.ok) {
+                const data = await res.json();
+                updateMoodStripUI(data);
+                break;
+            }
+            if (res.status !== 503 && res.status !== 502 && res.status !== 504) break;
+        } catch (e) {
+            if (i === delays.length - 1) {
+                /* mood strip is non-critical */
+            }
+        }
     }
 
     // Also pull index prices from the signals/stats we already have

@@ -1206,7 +1206,8 @@ async def websocket_prices(websocket: WebSocket):
     logger.info("WebSocket client connected (%d total)", len(svc._ws_clients))
 
     last_ping_at = time.time()
-    _PING_INTERVAL = 20  # seconds between server-side pings
+    # Slightly aggressive ping helps some proxies / Render LB paths that idle-out WS.
+    _PING_INTERVAL = 15  # seconds between server-side pings
 
     try:
         while True:
@@ -1248,7 +1249,9 @@ async def websocket_prices(websocket: WebSocket):
                 "open_trades": len(engine.get_open_trades()),
             }
 
-            update["market_mood"] = svc._compute_market_mood()
+            # Mood computation can be CPU-heavy; keep it off the event loop so HTTP
+            # health checks and other clients stay responsive on small Render instances.
+            update["market_mood"] = await asyncio.to_thread(svc._compute_market_mood)
             update["feed_status"] = svc._get_feed_status()
 
             await websocket.send_json(update)

@@ -43,6 +43,7 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 - Expects explicit clarity on which metrics are live or exchange-sourced versus synthetic or placeholder, especially when discussing real capital.
 - Prefers free or keyless data paths first for news and market context (RSS, public HTTP); treats paid API keys as optional add-ons; for the context layer specifically, paid MarketAux/RapidAPI paths stay off unless `CONTEXT_USE_PAID_APIS` is enabled with keys.
 - For high-volatility crypto (including meme-style names), prefers product framing as market data plus risk education rather than buy recommendations.
+- Ships on Render and expects deployment notes to call out free-tier limits (no persistent disk on `plan: free` web services, idle sleep, and small-RAM/OOM risk during heavy ML stack imports).
 
 ## Learned Workspace Facts
 
@@ -55,4 +56,7 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 - Options/PCR dashboard UI and related FastAPI routes (`/api/pcr`, `/api/broker/status`) plus broker-only option-chain code were removed per user direction; trustworthy OI still needs a broker or NSE-capable feed if that surface returns.
 - Market context for signals is built in `agents/data_ingestion/context_fetcher.py` (`ContextFetcher`): blends 24h and 7d news-style sentiment into `context_score` (tunable via `CONTEXT_NEWS_WEIGHT_24HR` / `CONTEXT_NEWS_WEIGHT_7D`); default NSE path is Google News RSS, crypto uses public endpoints plus RSS buckets; MarketAux and RapidAPI calendar extras only when `CONTEXT_USE_PAID_APIS=true` with keys; sentiment is heuristic, not guaranteed edge.
 - Swing setups are produced by `agents/market_intelligence/swing_scanner.py` (confluence and dedupe; guardrails covered by swing scanner tests).
+- Render Blueprint (`render.yaml`): web service `trading-api` runs `uvicorn server:app` with `healthCheckPath: /api/health`; free-tier web cannot attach persistent disks (ephemeral SQLite in Blueprint unless Postgres is wired); Blueprint sets `OMP_NUM_THREADS` / `OPENBLAS_NUM_THREADS` / `MKL_NUM_THREADS` / `NUMEXPR_NUM_THREADS` to `1`; `requirements.txt` pins `xgboost>=2.0.0,<2.1.0` on Linux to avoid pip pulling `nvidia-nccl-cu12`; `api/app.py` lifespan runs `init_db()` via `await asyncio.to_thread(init_db)`.
+- Dashboard HTML for `/`, `/landing`, and `/crypto` uses `FileResponse` with `_DASH_HTML_HEADERS` in `api/routes.py` (`Cache-Control: no-store, must-revalidate`); `dashboard/crypto.html` bar charts use `measureCanvasLayoutWidth` plus `ResizeObserver` on `#coinDetailChartWrap` so canvas sizing stays correct after layout.
+- The `/ws/prices` handler in `api/routes.py` sends a lightweight server JSON ping about every 20 seconds for proxy/Render LB idle timeouts; optional `SELF_PING_ENABLED` HTTP self-ping in `api/app.py` uses `httpx` (listed in `requirements.txt`).
 
