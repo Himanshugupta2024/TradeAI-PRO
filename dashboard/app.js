@@ -413,13 +413,25 @@ function switchTab(tab) {
     if (tab === 'breakouts') loadBreakouts();
 }
 
-// ── Fetch with Timeout Helper ──────────────────────────
-// Ensures no API call hangs indefinitely. Default: 12 seconds.
-function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+// ── Fetch with Timeout + 503 Retry Helper ─────────────
+// Handles Render free-tier cold-start: retries up to 3 times on 503
+// with exponential backoff (4s → 8s → 16s). Other errors throw immediately.
+async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries = 3, _backoffMs = 4000) {
     const ac = new AbortController();
     const tid = setTimeout(() => ac.abort(), timeoutMs);
-    return fetch(url, { ...options, signal: ac.signal })
-        .finally(() => clearTimeout(tid));
+    let resp;
+    try {
+        resp = await fetch(url, { ...options, signal: ac.signal });
+    } finally {
+        clearTimeout(tid);
+    }
+    if (resp.status === 503 && _retries > 0) {
+        const delay = Math.min(_backoffMs, 20000);
+        console.warn(`[fetch] 503 from ${url} — server waking up, retrying in ${delay / 1000}s (${_retries} left)...`);
+        await new Promise(r => setTimeout(r, delay));
+        return fetchWithTimeout(url, options, timeoutMs, _retries - 1, _backoffMs * 2);
+    }
+    return resp;
 }
 
 
