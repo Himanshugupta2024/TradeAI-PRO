@@ -15,6 +15,25 @@ from config.logger import get_logger
 
 log = get_logger(__name__)
 
+_UNSUPPORTED_SYMBOL_UNTIL: dict[str, float] = {}
+_UNSUPPORTED_SYMBOL_TTL_SECONDS = 3600
+
+
+def _is_symbol_temporarily_unsupported(symbol: str) -> bool:
+    key = (symbol or "").upper()
+    until_ts = _UNSUPPORTED_SYMBOL_UNTIL.get(key)
+    if not until_ts:
+        return False
+    now_ts = time.time()
+    if now_ts >= until_ts:
+        _UNSUPPORTED_SYMBOL_UNTIL.pop(key, None)
+        return False
+    return True
+
+
+def _mark_symbol_unsupported(symbol: str) -> None:
+    _UNSUPPORTED_SYMBOL_UNTIL[(symbol or "").upper()] = time.time() + _UNSUPPORTED_SYMBOL_TTL_SECONDS
+
 
 def _init_exchange() -> ccxt.binance:
     """Create a Binance exchange instance."""
@@ -40,6 +59,10 @@ def fetch_historical(
     Returns:
         DataFrame with columns: timestamp, open, high, low, close, volume
     """
+    if _is_symbol_temporarily_unsupported(symbol):
+        log.debug("Skipping unsupported Binance symbol (cached): %s", symbol)
+        return pd.DataFrame()
+
     exchange = _init_exchange()
 
     since_dt = datetime.now(timezone.utc) - timedelta(days=since_days)
@@ -67,7 +90,12 @@ def fetch_historical(
             time.sleep(wait)
             continue
         except ccxt.ExchangeError as e:
-            log.error("Exchange error: %s", e)
+            msg = str(e).lower()
+            if "does not have market symbol" in msg or "bad symbol" in msg or "symbol" in msg and "not" in msg and "found" in msg:
+                _mark_symbol_unsupported(symbol)
+                log.warning("Unsupported Binance symbol: %s (cached for %ds)", symbol, _UNSUPPORTED_SYMBOL_TTL_SECONDS)
+            else:
+                log.error("Exchange error: %s", e)
             break
 
         if not candles:
@@ -117,6 +145,10 @@ def fetch_gap_fill(
     Returns:
         DataFrame with columns: timestamp, open, high, low, close, volume
     """
+    if _is_symbol_temporarily_unsupported(symbol):
+        log.debug("Skipping gap-fill for unsupported Binance symbol (cached): %s", symbol)
+        return pd.DataFrame()
+
     exchange = _init_exchange()
     since_ms = int(since_dt.timestamp() * 1000)
     until_ms = int((until_dt or datetime.now(timezone.utc)).timestamp() * 1000)
@@ -139,7 +171,12 @@ def fetch_gap_fill(
             time.sleep(2 * retries)
             continue
         except ccxt.ExchangeError as e:
-            log.error("Gap-fill exchange error: %s", e)
+            msg = str(e).lower()
+            if "does not have market symbol" in msg or "bad symbol" in msg or "symbol" in msg and "not" in msg and "found" in msg:
+                _mark_symbol_unsupported(symbol)
+                log.warning("Unsupported Binance symbol in gap-fill: %s (cached for %ds)", symbol, _UNSUPPORTED_SYMBOL_TTL_SECONDS)
+            else:
+                log.error("Gap-fill exchange error: %s", e)
             break
 
         if not candles:
