@@ -12,7 +12,7 @@ from xml.etree import ElementTree as ET
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from config import settings
 from db.connection import SessionLocal
@@ -88,6 +88,16 @@ _NEWS_SOURCE_FAIL_COUNT: dict[str, int] = {}
 _NEWS_SOURCE_LAST_WARN_TS: dict[str, float] = {}
 _BTC_DOM_BACKOFF_UNTIL: float = 0.0
 _BTC_DOM_LAST_WARN_TS: float = 0.0
+
+
+@router.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Serve favicon at site root — browsers request /favicon.ico on the API host."""
+    path = os.path.join(STATIC_DIR, "favicon.ico")
+    if os.path.isfile(path):
+        return FileResponse(path, media_type="image/x-icon")
+    return Response(status_code=204)
+
 
 @router.get("/api/health")
 async def health_check():
