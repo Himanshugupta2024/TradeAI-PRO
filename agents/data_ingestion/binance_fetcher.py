@@ -17,6 +17,10 @@ log = get_logger(__name__)
 
 _UNSUPPORTED_SYMBOL_UNTIL: dict[str, float] = {}
 _UNSUPPORTED_SYMBOL_TTL_SECONDS = 3600
+_SPOT_MARKETS_CACHE_TTL_SECONDS = 1800
+_SPOT_MARKETS_CACHE: set[str] = set()
+_SPOT_MARKETS_CACHE_AT: float = 0.0
+_UNSUPPORTED_SYMBOL_WARNED: set[str] = set()
 
 
 def _is_symbol_temporarily_unsupported(symbol: str) -> bool:
@@ -32,7 +36,38 @@ def _is_symbol_temporarily_unsupported(symbol: str) -> bool:
 
 
 def _mark_symbol_unsupported(symbol: str) -> None:
-    _UNSUPPORTED_SYMBOL_UNTIL[(symbol or "").upper()] = time.time() + _UNSUPPORTED_SYMBOL_TTL_SECONDS
+    key = (symbol or "").upper()
+    _UNSUPPORTED_SYMBOL_UNTIL[key] = time.time() + _UNSUPPORTED_SYMBOL_TTL_SECONDS
+
+
+def _warn_unsupported_once(symbol: str, context: str = "") -> None:
+    key = (symbol or "").upper()
+    if key in _UNSUPPORTED_SYMBOL_WARNED:
+        return
+    _UNSUPPORTED_SYMBOL_WARNED.add(key)
+    suffix = f" ({context})" if context else ""
+    log.warning("Unsupported Binance symbol: %s%s", symbol, suffix)
+
+
+def _get_spot_markets(exchange: ccxt.binance) -> set[str]:
+    global _SPOT_MARKETS_CACHE, _SPOT_MARKETS_CACHE_AT
+    now_ts = time.time()
+    if _SPOT_MARKETS_CACHE and now_ts - _SPOT_MARKETS_CACHE_AT < _SPOT_MARKETS_CACHE_TTL_SECONDS:
+        return _SPOT_MARKETS_CACHE
+    try:
+        markets = exchange.load_markets()
+        _SPOT_MARKETS_CACHE = set(markets.keys()) if isinstance(markets, dict) else set()
+        _SPOT_MARKETS_CACHE_AT = now_ts
+    except Exception as exc:
+        log.debug("Failed to refresh Binance markets cache: %s", exc)
+    return _SPOT_MARKETS_CACHE
+
+
+def _is_supported_spot_symbol(exchange: ccxt.binance, symbol: str) -> bool:
+    markets = _get_spot_markets(exchange)
+    if not markets:
+        return True
+    return symbol in markets
 
 
 def _init_exchange() -> ccxt.binance:
@@ -64,6 +99,10 @@ def fetch_historical(
         return pd.DataFrame()
 
     exchange = _init_exchange()
+    if not _is_supported_spot_symbol(exchange, symbol):
+        _mark_symbol_unsupported(symbol)
+        _warn_unsupported_once(symbol, "not listed on Binance spot")
+        return pd.DataFrame()
 
     since_dt = datetime.now(timezone.utc) - timedelta(days=since_days)
     since_ms = int(since_dt.timestamp() * 1000)
@@ -93,7 +132,7 @@ def fetch_historical(
             msg = str(e).lower()
             if "does not have market symbol" in msg or "bad symbol" in msg or "symbol" in msg and "not" in msg and "found" in msg:
                 _mark_symbol_unsupported(symbol)
-                log.warning("Unsupported Binance symbol: %s (cached for %ds)", symbol, _UNSUPPORTED_SYMBOL_TTL_SECONDS)
+                _warn_unsupported_once(symbol, f"cached for {_UNSUPPORTED_SYMBOL_TTL_SECONDS}s")
             else:
                 log.error("Exchange error: %s", e)
             break
@@ -150,6 +189,10 @@ def fetch_gap_fill(
         return pd.DataFrame()
 
     exchange = _init_exchange()
+    if not _is_supported_spot_symbol(exchange, symbol):
+        _mark_symbol_unsupported(symbol)
+        _warn_unsupported_once(symbol, "gap-fill skipped; not listed on Binance spot")
+        return pd.DataFrame()
     since_ms = int(since_dt.timestamp() * 1000)
     until_ms = int((until_dt or datetime.now(timezone.utc)).timestamp() * 1000)
 
@@ -174,7 +217,7 @@ def fetch_gap_fill(
             msg = str(e).lower()
             if "does not have market symbol" in msg or "bad symbol" in msg or "symbol" in msg and "not" in msg and "found" in msg:
                 _mark_symbol_unsupported(symbol)
-                log.warning("Unsupported Binance symbol in gap-fill: %s (cached for %ds)", symbol, _UNSUPPORTED_SYMBOL_TTL_SECONDS)
+                _warn_unsupported_once(symbol, f"gap-fill cached for {_UNSUPPORTED_SYMBOL_TTL_SECONDS}s")
             else:
                 log.error("Gap-fill exchange error: %s", e)
             break
