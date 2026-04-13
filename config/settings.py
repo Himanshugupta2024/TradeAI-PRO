@@ -16,8 +16,33 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./trading.db")
 # Configurable via env vars (comma-separated) or defaults
 _crypto_env = os.getenv("CRYPTO_SYMBOLS", "")
 CRYPTO_SYMBOLS = [s.strip() for s in _crypto_env.split(",") if s.strip()] if _crypto_env else [
-    "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"
+    # ── Major Coins ────────────────────────────────────────
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT",
+    # ── OG Meme Coins ──────────────────────────────────────
+    "DOGE/USDT", "SHIB/USDT",
+    # ── Solana Meme Coins ───────────────────────────────────
+    "BONK/USDT", "WIF/USDT", "BOME/USDT", "MEW/USDT", "POPCAT/USDT",
+    # ── Ethereum/Base Meme Coins ────────────────────────────
+    "PEPE/USDT", "FLOKI/USDT", "BRETT/USDT", "TURBO/USDT", "NEIRO/USDT",
+    # ── AI-themed Meme Coins ────────────────────────────────
+    "GOAT/USDT", "CHILLGUY/USDT",
+    # ── Farcaster / Base Ecosystem ──────────────────────────
+    "DEGEN/USDT",
+    # ── Viral / Political Meme Coins ────────────────────────
+    "PNUT/USDT", "TRUMP/USDT", "FARTCOIN/USDT", "MOODENG/USDT",
+    # ── Newer Meme Gems ─────────────────────────────────────
+    "SPX/USDT", "GIGA/USDT", "PONKE/USDT",
 ]
+
+# Tags for meme coins — used by API to filter and badge them in the dashboard
+MEME_COIN_SYMBOLS = [
+    "DOGE/USDT", "SHIB/USDT", "BONK/USDT", "WIF/USDT", "BOME/USDT",
+    "MEW/USDT", "POPCAT/USDT", "PEPE/USDT", "FLOKI/USDT", "BRETT/USDT",
+    "TURBO/USDT", "NEIRO/USDT", "GOAT/USDT", "CHILLGUY/USDT", "DEGEN/USDT",
+    "PNUT/USDT", "TRUMP/USDT", "FARTCOIN/USDT", "MOODENG/USDT",
+    "SPX/USDT", "GIGA/USDT", "PONKE/USDT",
+]
+
 
 _nse_env = os.getenv("NSE_SYMBOLS", "")
 NSE_SYMBOLS = [s.strip() for s in _nse_env.split(",") if s.strip()] if _nse_env else [

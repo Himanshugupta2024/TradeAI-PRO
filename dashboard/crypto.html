@@ -329,6 +329,10 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   gap: 1rem;
   margin-bottom: 0.65rem;
 }
+.coin-detail-head > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
 .coin-detail-title {
   font-size: 0.88rem;
   font-weight: 700;
@@ -348,14 +352,42 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   border-radius: 999px;
   letter-spacing: 0.06em;
 }
+.coin-detail-chart-wrap {
+  position: relative;
+  width: 100%;
+  min-height: 272px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(15,23,42,0.55), rgba(15,23,42,0.92));
+  border: 1px solid rgba(148,163,184,0.2);
+}
 .coin-detail-canvas {
   width: 100%;
-  height: 220px;
+  height: 272px;
   display: block;
-  border-radius: 8px;
-  background: linear-gradient(180deg, rgba(30,41,59,0.28), rgba(15,23,42,0.04));
-  border: 1px solid rgba(148,163,184,0.15);
+  vertical-align: top;
+  background: transparent;
+  cursor: crosshair;
 }
+.coin-detail-chart-hud {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  z-index: 2;
+  pointer-events: none;
+  font-family: var(--mono);
+  font-size: 0.61rem;
+  color: var(--text2);
+  background: rgba(2,6,23,0.82);
+  border: 1px solid rgba(99,102,241,0.35);
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+  line-height: 1.4;
+  max-width: min(320px, calc(100% - 12px));
+  box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+}
+.coin-detail-chart-hud:not(.is-on) { display: none; }
+.coin-detail-chart-hud.is-on { display: block; }
 .coin-detail-meta {
   margin-top: 0.6rem;
   font-family: var(--mono);
@@ -938,12 +970,275 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 .why-strip-icon { font-size: 1.1rem; flex-shrink: 0; }
 .why-strip-text { font-size: 0.8rem; color: var(--text2); line-height: 1.55; }
 
+/* ── Meme Coin Section ───────────────────────────── */
+.meme-section {
+  margin-bottom: 1.5rem;
+}
+.meme-section-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+.meme-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.meme-title-row h2 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text2);
+}
+.meme-viral-badge {
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(245,158,11,0.18), rgba(239,68,68,0.12));
+  border: 1px solid rgba(245,158,11,0.4);
+  color: var(--yellow);
+  letter-spacing: 0.04em;
+  animation: pulse 2.2s infinite;
+}
+.meme-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-family: var(--mono);
+}
+.meme-stat-buy  { color: var(--green); }
+.meme-stat-sell { color: var(--red); }
+.meme-stat-hold { color: var(--cyan); }
+.meme-stat-hot  { color: var(--yellow); }
+.meme-stat-sep  { color: var(--text3); }
+
+.meme-filters {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.meme-filter-btn {
+  font-size: 0.63rem;
+  font-weight: 700;
+  color: var(--text3);
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: var(--sans);
+  transition: all 0.15s;
+  letter-spacing: 0.04em;
+}
+.meme-filter-btn:hover { color: var(--text); border-color: rgba(99,102,241,0.4); }
+.meme-filter-btn.active {
+  background: rgba(99,102,241,0.14);
+  border-color: rgba(99,102,241,0.55);
+  color: var(--text);
+}
+.meme-filter-btn.hot-btn.active {
+  background: rgba(245,158,11,0.1);
+  border-color: rgba(245,158,11,0.45);
+  color: var(--yellow);
+}
+
+.meme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+.meme-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  border-left: 3px solid transparent;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.15s, border-color 0.2s;
+  cursor: pointer;
+}
+.meme-card:hover { transform: translateY(-2px); }
+.meme-card.buy-card  { border-left-color: var(--green); }
+.meme-card.sell-card { border-left-color: var(--red); }
+.meme-card.hold-card { border-left-color: var(--cyan); }
+.meme-card.buy-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(16,185,129,0.04), transparent);
+  pointer-events: none;
+}
+.meme-card.hot-glow::after {
+  content: '🔥';
+  position: absolute;
+  top: 0.4rem;
+  right: 0.5rem;
+  font-size: 0.85rem;
+  animation: pulse 1.5s infinite;
+}
+
+.meme-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.meme-coin-id {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.meme-emoji {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+.meme-sym {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.meme-signal-badge {
+  font-size: 0.68rem;
+  font-weight: 900;
+  padding: 4px 10px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.meme-signal-badge.buy  { background: rgba(16,185,129,0.18); color: var(--green); border: 1px solid rgba(16,185,129,0.4); }
+.meme-signal-badge.sell { background: rgba(239,68,68,0.18);  color: var(--red);   border: 1px solid rgba(239,68,68,0.4); }
+.meme-signal-badge.hold { background: rgba(34,211,238,0.12); color: var(--cyan);  border: 1px solid rgba(34,211,238,0.3); }
+@keyframes buyPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
+  50%      { box-shadow: 0 0 0 4px rgba(16,185,129,0); }
+}
+.meme-signal-badge.buy { animation: buyPulse 2s infinite; }
+
+.meme-price {
+  font-family: var(--mono);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.1rem;
+}
+.meme-change {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.meme-change.up   { color: var(--green); }
+.meme-change.down { color: var(--red); }
+
+.meme-metrics {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.meme-metric { display: flex; flex-direction: column; gap: 1px; }
+.meme-metric-lbl { font-size: 0.58rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; }
+.meme-metric-val { font-family: var(--mono); font-size: 0.72rem; font-weight: 600; color: var(--text2); }
+
+/* RSI mini-bar */
+.meme-rsi-wrap {
+  margin-top: 0.45rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.meme-rsi-label { font-size: 0.58rem; color: var(--text3); text-transform: uppercase; min-width: 1.8rem; }
+.meme-rsi-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.meme-rsi-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+.meme-rsi-fill.oversold  { background: var(--green); }
+.meme-rsi-fill.overbought { background: var(--red); }
+.meme-rsi-fill.normal    { background: linear-gradient(90deg, var(--accent), var(--cyan)); }
+.meme-rsi-val { font-family: var(--mono); font-size: 0.68rem; font-weight: 600; min-width: 2rem; text-align: right; }
+
+/* Confidence bar */
+.meme-conf-wrap { margin-top: 0.4rem; display: flex; align-items: center; gap: 0.4rem; }
+.meme-conf-label { font-size: 0.58rem; color: var(--text3); text-transform: uppercase; min-width: 3.2rem; }
+.meme-conf-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.meme-conf-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+}
+.meme-conf-val { font-family: var(--mono); font-size: 0.68rem; color: var(--text2); min-width: 2.2rem; text-align: right; }
+
+/* News sentiment dot */
+.meme-news-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+.meme-news-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.meme-news-dot.bullish { background: var(--green); box-shadow: 0 0 5px rgba(16,185,129,0.6); }
+.meme-news-dot.bearish { background: var(--red);   box-shadow: 0 0 5px rgba(239,68,68,0.6); }
+.meme-news-dot.neutral { background: var(--text3); }
+.meme-news-text { font-size: 0.64rem; color: var(--text3); }
+
+/* Risk warning */
+.meme-risk-warn {
+  margin-top: 0.55rem;
+  border-top: 1px solid rgba(245,158,11,0.18);
+  padding-top: 0.4rem;
+  font-size: 0.6rem;
+  color: rgba(245,158,11,0.75);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* Loading / empty state */
+.meme-loading {
+  text-align: center;
+  padding: 2.5rem;
+  color: var(--text3);
+  font-size: 0.82rem;
+  grid-column: 1 / -1;
+}
+
 /* ── Responsive ──────────────────────────────────── */
 @media (max-width: 600px) {
   .coins-grid { grid-template-columns: 1fr; }
   .market-bar { gap: 1rem; }
   .mover-row { grid-template-columns: 1.5rem 1fr 4rem 3.5rem 3rem; }
   .mover-row .rsi-pill { display: none; }
+  .meme-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 400px) {
+  .meme-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {
   .insight-grid { grid-template-columns: 1fr; }
@@ -1120,6 +1415,37 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
     </div>
   </div>
 
+  <!-- ── 🚀 Meme Coin Tracker ── -->
+  <div class="meme-section" id="memeCoinSection">
+    <div class="meme-section-hd">
+      <div>
+        <div class="meme-title-row">
+          <h2>🐸 Meme Coin Tracker — Live Signals</h2>
+          <span class="meme-viral-badge">⚡ HIGH VOLATILITY</span>
+        </div>
+        <div class="meme-stats-row" id="memeStatsRow" style="margin-top:0.3rem">
+          <span class="meme-stat-buy" id="memeBuyCount">— BUY</span>
+          <span class="meme-stat-sep">·</span>
+          <span class="meme-stat-sell" id="memeSellCount">— SELL</span>
+          <span class="meme-stat-sep">·</span>
+          <span class="meme-stat-hold" id="memeHoldCount">— HOLD</span>
+          <span class="meme-stat-sep">·</span>
+          <span class="meme-stat-hot" id="memeHotCount">— 🔥 HOT</span>
+        </div>
+      </div>
+      <div class="meme-filters" id="memeFilters">
+        <button class="meme-filter-btn active" data-filter="ALL">ALL</button>
+        <button class="meme-filter-btn" data-filter="BUY">✅ BUY</button>
+        <button class="meme-filter-btn" data-filter="SELL">🔴 SELL</button>
+        <button class="meme-filter-btn" data-filter="HOLD">⏸ HOLD</button>
+        <button class="meme-filter-btn hot-btn" data-filter="HOT">🔥 TRENDING</button>
+      </div>
+    </div>
+    <div class="meme-grid" id="memeGrid">
+      <div class="meme-loading">⏳ Fetching meme coin signals...</div>
+    </div>
+  </div>
+
   <!-- ── Hero Coins ── -->
   <div class="section-hd">
     <h2>📊 Tracked Coins — Live</h2>
@@ -1129,7 +1455,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
     <!-- Populated by JS -->
   </div>
 
-  <div class="coin-detail-card" id="coinDetailPanel">
+  <div class="coin-detail-card" id="coinDetailPanel" role="region" aria-labelledby="coinDetailTitle">
     <div class="coin-detail-head">
       <div>
         <div class="coin-detail-title" id="coinDetailTitle">BTC/USDT Chart</div>
@@ -1137,7 +1463,10 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
       </div>
       <span class="coin-detail-tf" id="coinDetailTf">TF 1H</span>
     </div>
-    <canvas id="coinDetailCanvas" class="coin-detail-canvas"></canvas>
+    <div class="coin-detail-chart-wrap" id="coinDetailChartWrap">
+      <canvas id="coinDetailCanvas" class="coin-detail-canvas" role="img" aria-label="OHLC candles and volume from Binance"></canvas>
+      <div class="coin-detail-chart-hud" id="coinDetailChartHud" aria-hidden="true"></div>
+    </div>
     <div class="coin-detail-meta" id="coinDetailMeta">Waiting for live chart data...</div>
   </div>
 
@@ -1187,7 +1516,7 @@ const HERO_COINS = [
 
 // ── State ────────────────────────────────────────────────
 let tickerCache    = {};     // sym → 24h ticker data
-let klineCache     = {};     // sym → recent closes[]
+let klineCache     = {};     // sym → interval → { opens, highs, lows, closes, volumes, times, fetchedAt }
 let notifEnabled   = false;
 let notifPermission = Notification.permission ?? 'default';
 let prevPrices     = {};     // for flash detect
@@ -1212,6 +1541,16 @@ const fmtB = (n) => {
   if (n >= 1e6)  return '$' + (n / 1e6).toFixed(2)  + 'M';
   return '$' + fmt(n);
 };
+/** Base-asset volume (Binance kline field 5) — no currency prefix. */
+function fmtVolBase(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return '—';
+  if (x >= 1e9) return (x / 1e9).toFixed(2) + 'B';
+  if (x >= 1e6) return (x / 1e6).toFixed(2) + 'M';
+  if (x >= 1e3) return (x / 1e3).toFixed(2) + 'K';
+  if (x >= 1) return x.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  return x.toFixed(2);
+}
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
 const escapeHtml = (s) => String(s || '')
   .replace(/&/g, '&amp;')
@@ -1375,17 +1714,115 @@ function generateAISummary(btc, eth, gainers, losers, mood) {
   return lines.join(' ');
 }
 
-// ── Draw Sparkline ───────────────────────────────────────
+/** Layout width of a canvas (CSS px); avoids parent offsetWidth which ignores padding and breaks HiDPI sizing. */
+function measureCanvasLayoutWidth(canvas, fallback = 700) {
+  if (!canvas) return fallback;
+  const r = canvas.getBoundingClientRect();
+  let w = Math.round(r.width);
+  if (w >= 2) return w;
+  w = Math.round(canvas.clientWidth || 0);
+  if (w >= 2) return w;
+  const p = canvas.parentElement;
+  if (p) {
+    w = Math.round(p.clientWidth || 0);
+    if (w >= 2) return w;
+  }
+  return fallback;
+}
+
+function fmtAxisPrice(p) {
+  const x = Number(p);
+  if (!Number.isFinite(x)) return '—';
+  if (Math.abs(x) >= 1000) return x.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  if (Math.abs(x) >= 1) return x.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (Math.abs(x) >= 0.0001) return x.toFixed(6);
+  return x.toExponential(2);
+}
+
+function fmtAxisTime(ts, tf) {
+  const t = Number(ts);
+  if (!Number.isFinite(t)) return '';
+  const d = new Date(t);
+  const day = `${d.getMonth() + 1}/${d.getDate()}`;
+  const hm = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  if (tf === '1d' || tf === '3d' || tf === '1w') return day;
+  return `${day} ${hm}`;
+}
+
+let detailChartLastKd = null;
+let detailChartHoverIx = null;
+let _detailChartLayout = null;
+
+function normalizeKlineKd(kd) {
+  const c = kd?.closes;
+  if (!Array.isArray(c) || !c.length) return null;
+  const n = c.length;
+  const ok = (a) => Array.isArray(a) && a.length === n;
+  let opens = kd.opens;
+  let highs = kd.highs;
+  let lows = kd.lows;
+  let times = kd.times;
+  if (!ok(opens) || !ok(highs) || !ok(lows)) {
+    opens = c.map((ci, i) => (i > 0 ? c[i - 1] : ci));
+    highs = [...c];
+    lows = [...c];
+  }
+  if (!ok(times)) {
+    times = c.map((_, i) => Date.now() - (n - 1 - i) * 3600000);
+  }
+  const volumes = ok(kd.volumes) ? kd.volumes : c.map(() => 0);
+  return { opens, highs, lows, closes: [...c], volumes, times };
+}
+
+function sliceCandles(norm, maxBars) {
+  const n = norm.closes.length;
+  const s = Math.max(0, n - maxBars);
+  return {
+    o: norm.opens.slice(s),
+    h: norm.highs.slice(s),
+    l: norm.lows.slice(s),
+    c: norm.closes.slice(s),
+    v: norm.volumes.slice(s),
+    t: norm.times.slice(s),
+  };
+}
+
+function updateDetailChartHud(slice, ix, tf) {
+  const hud = document.getElementById('coinDetailChartHud');
+  if (!hud) return;
+  if (ix == null || ix < 0 || ix >= slice.c.length) {
+    hud.classList.remove('is-on');
+    hud.innerHTML = '';
+    return;
+  }
+  const o = slice.o[ix];
+  const h = slice.h[ix];
+  const l = slice.l[ix];
+  const c = slice.c[ix];
+  const v = slice.v[ix];
+  const ts = slice.t[ix];
+  const bull = c >= o;
+  hud.innerHTML =
+    `<span style="color:var(--text3)">${escapeHtml(fmtAxisTime(ts, tf))}</span><br>` +
+    `<span style="color:${bull ? 'var(--green)' : 'var(--red)'}">` +
+    `O ${fmtAxisPrice(o)} · H ${fmtAxisPrice(h)} · L ${fmtAxisPrice(l)} · C ${fmtAxisPrice(c)}` +
+    `</span><br>` +
+    `<span style="color:var(--text3)">Vol ${escapeHtml(fmtVolBase(v))} (base)</span>`;
+  hud.classList.add('is-on');
+}
+
+// ── Draw Sparkline (mini bar columns) ────────────────────
 function drawSparkline(canvas, closes, isUp) {
-  if (!canvas || closes.length < 2) return;
+  if (!canvas || closes.length < 1) return;
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  const W = canvas.parentElement.offsetWidth || 200;
+  const W = measureCanvasLayoutWidth(canvas, 200);
   const H = 40;
-  canvas.width  = W * dpr;
-  canvas.height = H * dpr;
-  canvas.style.width  = W + 'px';
+  canvas.width  = Math.max(1, Math.round(W * dpr));
+  canvas.height = Math.max(1, Math.round(H * dpr));
+  canvas.style.width = '';
   canvas.style.height = H + 'px';
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
 
@@ -1393,101 +1830,186 @@ function drawSparkline(canvas, closes, isUp) {
   const mn = Math.min(...pts);
   const mx = Math.max(...pts);
   const rng = mx - mn || 1;
+  const baseY = H - 2;
+  const topPad = 2;
+  const toY = (v) => baseY - ((v - mn) / rng) * (baseY - topPad - 2);
 
-  const toX = i => (i / (pts.length - 1)) * W;
-  const toY = v => H - (v - mn) / rng * (H - 4) - 2;
+  const n = pts.length;
+  const slotW = W / Math.max(n, 1);
+  const barW = Math.max(1, Math.min(slotW * 0.62, 5));
 
-  const color = isUp ? '#10b981' : '#ef4444';
-
-  // Gradient fill
-  const grad = ctx.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, isUp ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)');
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.beginPath();
-  ctx.moveTo(toX(0), toY(pts[0]));
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(toX(i), toY(pts[i]));
-  ctx.lineTo(toX(pts.length - 1), H);
-  ctx.lineTo(0, H);
-  ctx.closePath();
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  // Line
-  ctx.beginPath();
-  ctx.moveTo(toX(0), toY(pts[0]));
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(toX(i), toY(pts[i]));
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-  ctx.stroke();
+  for (let i = 0; i < n; i++) {
+    const upBar = i === 0 ? isUp : pts[i] >= pts[i - 1];
+    ctx.fillStyle = upBar ? 'rgba(16,185,129,0.88)' : 'rgba(239,68,68,0.88)';
+    const cx = i * slotW + slotW / 2;
+    const x = cx - barW / 2;
+    const yTop = toY(pts[i]);
+    ctx.fillRect(x, yTop, barW, Math.max(1, baseY - yTop));
+  }
 }
 
-function drawDetailChart(canvas, closes) {
-  if (!canvas || !Array.isArray(closes) || closes.length < 2) return;
+function drawDetailChart(canvas, kd) {
+  const norm = normalizeKlineKd(kd);
+  if (!canvas || !norm) return;
+
+  detailChartLastKd = kd;
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  const W = canvas.parentElement.offsetWidth || 700;
-  const H = 220;
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-  canvas.style.width = W + 'px';
+  const W = measureCanvasLayoutWidth(canvas, 700);
+  const H = 272;
+  const tf = String(signalTimeframe || '1h');
+
+  canvas.width = Math.max(1, Math.round(W * dpr));
+  canvas.height = Math.max(1, Math.round(H * dpr));
+  canvas.style.width = '';
   canvas.style.height = H + 'px';
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(dpr, dpr);
 
-  const points = closes.slice(-120);
-  const min = Math.min(...points);
-  const max = Math.max(...points);
-  const padX = 12;
-  const padY = 18;
-  const span = Math.max(max - min, 0.000001);
-  const isUp = points[points.length - 1] >= points[0];
-  const stroke = isUp ? '#10b981' : '#ef4444';
+  const slice = sliceCandles(norm, 120);
+  const { o, h, l, c, v, t } = slice;
+  const n = c.length;
+  if (n < 1) return;
 
-  const toX = (i) => padX + (i / Math.max(points.length - 1, 1)) * (W - padX * 2);
-  const toY = (v) => (H - padY) - ((v - min) / span) * (H - padY * 2);
+  const L = 8;
+  const R = 56;
+  const T = 10;
+  const Btm = 20;
+  const VH = 42;
+  const priceBot = H - Btm - VH - 4;
+  const volTop = priceBot + 4;
+  const volBot = H - Btm;
+  const plotW = W - L - R;
 
-  ctx.clearRect(0, 0, W, H);
+  let minP = Math.min(...l);
+  let maxP = Math.max(...h);
+  const rng = maxP - minP || 1e-12;
+  const pad = rng * 0.05;
+  minP -= pad;
+  maxP += pad;
+  const span = maxP - minP;
 
-  // Grid lines for easier chart reading.
-  ctx.strokeStyle = 'rgba(148,163,184,0.16)';
+  const priceY = (p) => T + ((maxP - p) / span) * (priceBot - T);
+  const slotW = plotW / n;
+  const vmax = Math.max(...v, 1e-12);
+  const volBarH = (vi) => Math.max(1, ((vi / vmax) * (volBot - volTop - 2)));
+
+  _detailChartLayout = { W, H, L, R, T, priceBot, volTop, volBot, n, slotW, plotW, Btm };
+
+  ctx.fillStyle = 'rgba(2,6,23,0.25)';
+  ctx.fillRect(0, 0, W, H);
+
+  const ticks = 5;
+  ctx.strokeStyle = 'rgba(148,163,184,0.12)';
   ctx.lineWidth = 1;
-  for (let i = 1; i <= 3; i++) {
-    const gy = (H / 4) * i;
+  for (let j = 0; j <= ticks; j++) {
+    const py = T + (j / ticks) * (priceBot - T);
     ctx.beginPath();
-    ctx.moveTo(0, gy);
-    ctx.lineTo(W, gy);
+    ctx.moveTo(L, py);
+    ctx.lineTo(L + plotW, py);
     ctx.stroke();
   }
 
-  // Area fill under price line.
-  const grad = ctx.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, isUp ? 'rgba(16,185,129,0.22)' : 'rgba(239,68,68,0.22)');
-  grad.addColorStop(1, 'rgba(15,23,42,0)');
-  ctx.beginPath();
-  ctx.moveTo(toX(0), toY(points[0]));
-  for (let i = 1; i < points.length; i++) ctx.lineTo(toX(i), toY(points[i]));
-  ctx.lineTo(toX(points.length - 1), H - 1);
-  ctx.lineTo(toX(0), H - 1);
-  ctx.closePath();
-  ctx.fillStyle = grad;
-  ctx.fill();
+  const tickPrices = Array.from({ length: ticks + 1 }, (_, j) => maxP - (j / ticks) * span);
+  ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(148,163,184,0.85)';
+  for (let j = 0; j <= ticks; j++) {
+    const py = T + (j / ticks) * (priceBot - T);
+    ctx.fillText(fmtAxisPrice(tickPrices[j]), W - R + 4, py + 3);
+  }
 
-  // Price line.
+  ctx.strokeStyle = 'rgba(148,163,184,0.2)';
   ctx.beginPath();
-  ctx.moveTo(toX(0), toY(points[0]));
-  for (let i = 1; i < points.length; i++) ctx.lineTo(toX(i), toY(points[i]));
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = 2;
-  ctx.lineJoin = 'round';
+  ctx.moveTo(L, volTop - 2);
+  ctx.lineTo(L + plotW, volTop - 2);
   ctx.stroke();
 
-  // Last-point marker.
-  const lx = toX(points.length - 1);
-  const ly = toY(points[points.length - 1]);
-  ctx.beginPath();
-  ctx.arc(lx, ly, 3.2, 0, Math.PI * 2);
-  ctx.fillStyle = stroke;
-  ctx.fill();
+  const bodyW = Math.max(1, Math.min(slotW * 0.72, 11));
+  const wickW = Math.max(1, Math.min(2, bodyW * 0.22));
+
+  for (let i = 0; i < n; i++) {
+    const cx = L + (i + 0.5) * slotW;
+    const bull = c[i] >= o[i];
+    const col = bull ? '#22c55e' : '#ef4444';
+    const colDim = bull ? 'rgba(34,197,94,0.45)' : 'rgba(239,68,68,0.45)';
+
+    const yHi = priceY(h[i]);
+    const yLo = priceY(l[i]);
+    const yO = priceY(o[i]);
+    const yC = priceY(c[i]);
+    const top = Math.min(yO, yC);
+    const bot = Math.max(yO, yC);
+    const bodyH = Math.max(1, bot - top);
+
+    ctx.strokeStyle = colDim;
+    ctx.lineWidth = wickW;
+    ctx.beginPath();
+    ctx.moveTo(cx, yHi);
+    ctx.lineTo(cx, yLo);
+    ctx.stroke();
+
+    ctx.fillStyle = bull ? 'rgba(34,197,94,0.92)' : 'rgba(239,68,68,0.92)';
+    ctx.fillRect(cx - bodyW / 2, top, bodyW, bodyH);
+    if (!bull) {
+      ctx.strokeStyle = 'rgba(248,113,113,0.95)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cx - bodyW / 2 + 0.5, top + 0.5, bodyW - 1, bodyH - 1);
+    }
+
+    const vh = volBarH(v[i]);
+    ctx.fillStyle = bull ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)';
+    ctx.fillRect(cx - bodyW / 2, volBot - vh, bodyW, vh);
+  }
+
+  if (n > 0) {
+    const li = n - 1;
+    const lcx = L + (li + 0.5) * slotW;
+    const yO = priceY(o[li]);
+    const yC = priceY(c[li]);
+    const ltop = Math.min(yO, yC);
+    const lbot = Math.max(yO, yC);
+    ctx.strokeStyle = 'rgba(250,204,21,0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(lcx - bodyW / 2 - 1, ltop - 1, bodyW + 2, Math.max(1, lbot - ltop) + 2);
+  }
+
+  ctx.fillStyle = 'rgba(148,163,184,0.55)';
+  ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.textAlign = 'center';
+  const ixLabel = (idx) => {
+    if (idx < 0 || idx >= n) return;
+    ctx.fillText(fmtAxisTime(t[idx], tf), L + (idx + 0.5) * slotW, H - 5);
+  };
+  ixLabel(0);
+  ixLabel(Math.floor((n - 1) / 2));
+  ixLabel(n - 1);
+
+  const hi = detailChartHoverIx;
+  if (hi != null && hi >= 0 && hi < n) {
+    const cx = L + (hi + 0.5) * slotW;
+    ctx.strokeStyle = 'rgba(99,102,241,0.55)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cx, T);
+    ctx.lineTo(cx, volBot);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(99,102,241,0.35)';
+    ctx.beginPath();
+    ctx.moveTo(L, priceY(c[hi]));
+    ctx.lineTo(L + plotW, priceY(c[hi]));
+    ctx.stroke();
+    updateDetailChartHud(slice, hi, tf);
+  } else {
+    updateDetailChartHud(slice, -1, tf);
+  }
+
+  ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(L + 0.5, T + 0.5, plotW - 1, priceBot - T - 1);
+  ctx.textAlign = 'left';
 }
 
 function refreshActiveCoinHighlights() {
@@ -1522,6 +2044,10 @@ async function renderSelectedCoinChart() {
 
   const closes = kd?.closes || [];
   if (closes.length < 2) {
+    detailChartLastKd = null;
+    detailChartHoverIx = null;
+    _detailChartLayout = null;
+    document.getElementById('coinDetailChartHud')?.classList.remove('is-on');
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.clearRect(0, 0, canvas.width || 0, canvas.height || 0);
@@ -1531,7 +2057,7 @@ async function renderSelectedCoinChart() {
     return;
   }
 
-  drawDetailChart(canvas, closes);
+  drawDetailChart(canvas, kd);
 
   const first = closes[0];
   const last = closes[closes.length - 1];
@@ -1559,6 +2085,7 @@ async function selectCoinFromUI(symbol, scroll = true) {
     return;
   }
   selectedCoinSymbol = normalized;
+  detailChartHoverIx = null;
   refreshActiveCoinHighlights();
   await renderSelectedCoinChart();
   if (scroll) {
@@ -1635,10 +2162,16 @@ async function fetchKlines(symbol, interval = signalTimeframe) {
     const res = await fetch(`${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}&limit=80`);
     const data = await res.json();
     if (!Array.isArray(data)) return;
-    const closes  = data.map(c => parseFloat(c[4]));
-    const volumes = data.map(c => parseFloat(c[5]));
+    const times = data.map((c) => Number(c[0]));
+    const opens = data.map((c) => parseFloat(c[1]));
+    const highs = data.map((c) => parseFloat(c[2]));
+    const lows = data.map((c) => parseFloat(c[3]));
+    const closes = data.map((c) => parseFloat(c[4]));
+    const volumes = data.map((c) => parseFloat(c[5]));
     klineCache[symbol] = klineCache[symbol] || {};
-    klineCache[symbol][interval] = { closes, volumes, fetchedAt: Date.now() };
+    klineCache[symbol][interval] = {
+      opens, highs, lows, closes, volumes, times, fetchedAt: Date.now(),
+    };
   } catch { /* ignore */ }
 }
 
@@ -2480,7 +3013,7 @@ async function fetchAll(manual = false) {
     document.getElementById('aiSummary').textContent =
       generateAISummary(btc, eth, gainers, losers, mood);
 
-    // Enriched context: external mood + fear/greed + news sources + cockpit intelligence
+    // Enriched context: external mood + fear/greed + news sources + cockpit intelligence + meme coins
     const [, , , , intelResult] = await Promise.allSettled([
       fetchGlobalStats(),
       fetchFearGreed(),
@@ -2490,6 +3023,9 @@ async function fetchAll(manual = false) {
     ]);
     const intel = intelResult?.status === 'fulfilled' ? intelResult.value : null;
     if (intel) renderCryptoIntelligence(intel);
+
+    // Meme coin tracker — non-blocking, runs alongside everything else
+    fetchMemeCoins();
 
     // Prefer backend calculated model (live market + news + context), fallback to local heuristic.
     const modelPayload = await fetchCalculatedPrediction();
@@ -2531,6 +3067,41 @@ async function fetchAll(manual = false) {
 }
 
 // ── Init ─────────────────────────────────────────────────
+let _detailChartRedrawTimer;
+function scheduleDetailChartRedraw() {
+  clearTimeout(_detailChartRedrawTimer);
+  _detailChartRedrawTimer = setTimeout(() => {
+    void renderSelectedCoinChart();
+  }, 120);
+}
+
+function attachDetailChartHover() {
+  const wrap = document.getElementById('coinDetailChartWrap');
+  if (!wrap || wrap._detailHoverBound) return;
+  wrap._detailHoverBound = true;
+
+  wrap.addEventListener('mousemove', (e) => {
+    const last = _detailChartLayout;
+    const cv = document.getElementById('coinDetailCanvas');
+    if (!last || !cv || !detailChartLastKd) return;
+    const rect = wrap.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (last.W / Math.max(rect.width, 1));
+    let i = Math.floor((mx - last.L) / last.slotW);
+    i = clamp(i, 0, last.n - 1);
+    if (i !== detailChartHoverIx) {
+      detailChartHoverIx = i;
+      drawDetailChart(cv, detailChartLastKd);
+    }
+  });
+  wrap.addEventListener('mouseleave', () => {
+    const cv = document.getElementById('coinDetailCanvas');
+    if (detailChartHoverIx != null) {
+      detailChartHoverIx = null;
+      if (cv && detailChartLastKd) drawDetailChart(cv, detailChartLastKd);
+    }
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const tabs = document.querySelectorAll('#signalTfTabs .tf-btn');
   tabs.forEach((btn) => {
@@ -2538,10 +3109,18 @@ document.addEventListener('DOMContentLoaded', () => {
       const tf = btn.getAttribute('data-tf') || '1h';
       if (tf === signalTimeframe) return;
       signalTimeframe = tf;
+      detailChartHoverIx = null;
       tabs.forEach((b) => b.classList.toggle('active', b === btn));
       fetchAll(true);
     });
   });
+
+  const chartWrap = document.getElementById('coinDetailChartWrap');
+  if (chartWrap && typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => scheduleDetailChartRedraw()).observe(chartWrap);
+  }
+  window.addEventListener('resize', scheduleDetailChartRedraw);
+  attachDetailChartHover();
 
   fetchAll(true);
 });
@@ -2549,6 +3128,178 @@ document.addEventListener('DOMContentLoaded', () => {
 // Resume when tab becomes visible
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) fetchAll(false);
+});
+
+// ── Meme Coin Tracker ────────────────────────────────────
+let _memeAllCoins   = [];   // full server data
+let _memeFilter     = 'ALL'; // current filter
+
+function fmtMemePrice(p) {
+  if (!p || p === 0) return '—';
+  if (p >= 1000) return '$' + Number(p).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  if (p >= 1)    return '$' + Number(p).toFixed(4);
+  return '$' + Number(p).toFixed(6);
+}
+
+async function fetchMemeCoins() {
+  try {
+    const res = await fetch('/api/crypto/meme');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    _memeAllCoins = data.meme_coins || [];
+
+    // Update stats counters
+    const el = (id) => document.getElementById(id);
+    if (el('memeBuyCount'))  el('memeBuyCount').textContent  = `${data.buy_count  || 0} BUY`;
+    if (el('memeSellCount')) el('memeSellCount').textContent = `${data.sell_count || 0} SELL`;
+    if (el('memeHoldCount')) el('memeHoldCount').textContent = `${data.hold_count || 0} HOLD`;
+    if (el('memeHotCount'))  el('memeHotCount').textContent  = `${data.hot_count  || 0} 🔥 HOT`;
+
+    renderMemeGrid();
+  } catch (e) {
+    console.warn('[Meme] /api/crypto/meme unavailable:', e.message);
+    // If backend is not yet warmed up, fall back to Binance direct pricing
+    renderMemeGridFallback();
+  }
+}
+
+function getVisibleMemeCoins() {
+  if (_memeFilter === 'ALL')  return _memeAllCoins;
+  if (_memeFilter === 'HOT')  return _memeAllCoins.filter(c => c.is_hot);
+  return _memeAllCoins.filter(c => c.signal === _memeFilter);
+}
+
+function renderMemeGrid() {
+  const grid = document.getElementById('memeGrid');
+  if (!grid) return;
+
+  const coins = getVisibleMemeCoins();
+  if (!coins.length) {
+    grid.innerHTML = `<div class="meme-loading">No coins match the "${_memeFilter}" filter right now.</div>`;
+    return;
+  }
+
+  grid.innerHTML = coins.map(c => {
+    const sigLc   = (c.signal || 'HOLD').toLowerCase();
+    const isUp    = (c.change_24h || 0) >= 0;
+    const changeTxt = `${isUp ? '+' : ''}${Number(c.change_24h || 0).toFixed(2)}%`;
+    const rsi     = c.rsi != null ? Number(c.rsi).toFixed(1) : null;
+    const rsiCls  = !rsi ? 'normal' : rsi < 35 ? 'oversold' : rsi > 65 ? 'overbought' : 'normal';
+    const rsiPct  = rsi ? Math.min(100, Number(rsi)) : 50;
+    const conf    = Number(c.confidence || 0);
+    const confPct = Math.round(conf * 100);
+    const newsCls = c.news_sentiment || 'neutral';
+    const newsTxt = newsCls === 'bullish' ? 'News: Bullish' : newsCls === 'bearish' ? 'News: Bearish ⚠️' : 'News: Neutral';
+    const volTxt  = c.volume_spike >= 2.0 ? `${c.volume_spike}x vol 🔥` : `${(c.volume_spike || 1).toFixed(1)}x vol`;
+    const hotClass = c.is_hot ? 'hot-glow' : '';
+
+    return `
+      <div class="meme-card ${sigLc}-card ${hotClass}" onclick="selectCoinFromUI('${escapeHtml(c.base)}')">
+        <div class="meme-card-top">
+          <div class="meme-coin-id">
+            <span class="meme-emoji">${escapeHtml(c.emoji || '🪙')}</span>
+            <span class="meme-sym">${escapeHtml(c.base)}</span>
+          </div>
+          <span class="meme-signal-badge ${sigLc}">${escapeHtml(c.signal)}</span>
+        </div>
+
+        <div class="meme-price">${fmtMemePrice(c.price)}</div>
+        <div class="meme-change ${isUp ? 'up' : 'down'}">${changeTxt} (24h)</div>
+
+        ${rsi ? `
+        <div class="meme-rsi-wrap">
+          <span class="meme-rsi-label">RSI</span>
+          <div class="meme-rsi-track"><div class="meme-rsi-fill ${rsiCls}" style="width:${rsiPct}%"></div></div>
+          <span class="meme-rsi-val" style="color:${rsiCls === 'oversold' ? 'var(--green)' : rsiCls === 'overbought' ? 'var(--red)' : 'var(--text2)'}">${rsi}</span>
+        </div>` : ''}
+
+        <div class="meme-conf-wrap">
+          <span class="meme-conf-label">Confidence</span>
+          <div class="meme-conf-track"><div class="meme-conf-fill" style="width:${confPct}%"></div></div>
+          <span class="meme-conf-val">${confPct}%</span>
+        </div>
+
+        <div class="meme-news-row">
+          <div class="meme-news-dot ${newsCls}"></div>
+          <span class="meme-news-text">${newsTxt}</span>
+          <span class="meme-news-text" style="margin-left:auto">${volTxt}</span>
+        </div>
+
+        <div class="meme-risk-warn">⚠️ High Risk — small position sizes only</div>
+      </div>`;
+  }).join('');
+}
+
+// Fallback: pull prices from existing tickerCache for any meme coins found
+function renderMemeGridFallback() {
+  const MEME_BASES = [
+    'DOGE','SHIB','BONK','WIF','BOME','MEW','POPCAT',
+    'PEPE','FLOKI','BRETT','TURBO','NEIRO','GOAT','CHILLGUY',
+    'DEGEN','PNUT','TRUMP','FARTCOIN','MOODENG','SPX','GIGA','PONKE'
+  ];
+  const EMOJIS = {
+    DOGE:'🐶',SHIB:'🐱',BONK:'🐶',WIF:'🐶',PEPE:'🐸',FLOKI:'🐕',
+    PNUT:'🐿️',BOME:'📚',MEW:'🐱',POPCAT:'😸',BRETT:'🧢',TURBO:'🤖',
+    NEIRO:'🐶',GOAT:'🐐',CHILLGUY:'😎',DEGEN:'🎰',
+    TRUMP:'🎩',FARTCOIN:'💨',MOODENG:'🦛',SPX:'📈',GIGA:'💪',PONKE:'🐒',
+  };
+
+  const grid = document.getElementById('memeGrid');
+  if (!grid) return;
+
+  const found = MEME_BASES
+    .map(b => ({ b, t: tickerCache[b + 'USDT'] }))
+    .filter(x => x.t);
+
+  if (!found.length) {
+    grid.innerHTML = '<div class="meme-loading">⏳ Waiting for live feed — signals load from backend after warm-up...</div>';
+    return;
+  }
+
+  grid.innerHTML = found.map(({ b, t }) => {
+    const price  = parseFloat(t.lastPrice || 0);
+    const chg    = parseFloat(t.priceChangePercent || 0);
+    const isUp   = chg >= 0;
+    const closes = klineCache?.[b + 'USDT']?.['1h']?.closes || [];
+    const rsi    = closes.length > 14 ? calcRSI(closes) : null;
+    const vspike = closes.length > 5 ? (() => {
+      const vols = klineCache?.[b + 'USDT']?.['1h']?.volumes || [];
+      return volSpike(vols);
+    })() : 1;
+    const sig = rsi ? computeSignal(closes, rsi) : 'HOLD';
+    const sigLc = sig.toLowerCase();
+
+    return `
+      <div class="meme-card ${sigLc}-card ${vspike >= 2 ? 'hot-glow' : ''}" onclick="selectCoinFromUI('${escapeHtml(b)}')">
+        <div class="meme-card-top">
+          <div class="meme-coin-id">
+            <span class="meme-emoji">${escapeHtml(EMOJIS[b] || '🪙')}</span>
+            <span class="meme-sym">${escapeHtml(b)}</span>
+          </div>
+          <span class="meme-signal-badge ${sigLc}">${sig}</span>
+        </div>
+        <div class="meme-price">${fmtMemePrice(price)}</div>
+        <div class="meme-change ${isUp ? 'up' : 'down'}">${isUp ? '+' : ''}${chg.toFixed(2)}% (24h)</div>
+        ${rsi ? `<div class="meme-rsi-wrap">
+          <span class="meme-rsi-label">RSI</span>
+          <div class="meme-rsi-track"><div class="meme-rsi-fill ${rsi < 35 ? 'oversold' : rsi > 65 ? 'overbought' : 'normal'}" style="width:${Math.min(100, rsi)}%"></div></div>
+          <span class="meme-rsi-val">${rsi.toFixed(1)}</span>
+        </div>` : ''}
+        <div class="meme-risk-warn">⚠️ High Risk — small position sizes only</div>
+      </div>`;
+  }).join('');
+}
+
+// ── Filter Tab Wiring ────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('memeFilters')?.addEventListener('click', e => {
+    const btn = e.target.closest('.meme-filter-btn');
+    if (!btn) return;
+    const filter = btn.getAttribute('data-filter') || 'ALL';
+    _memeFilter = filter;
+    document.querySelectorAll('.meme-filter-btn').forEach(b => b.classList.toggle('active', b === btn));
+    renderMemeGrid();
+  });
 });
 </script>
 </body>

@@ -19,6 +19,8 @@ awesome-codex-skills/
 .ruff_cache/
 *.log
 *.tmp
+.tmp_xgb/
+.tmp_xgb2/
 *.bak
 trading.db
 trading.db-wal

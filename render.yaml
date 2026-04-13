@@ -1,3 +1,6 @@
+# Free-tier web services cannot attach persistent disks (disks require a paid instance).
+# SQLite here is ephemeral: data resets on redeploy/restart. For durable DB, add
+# Render Postgres and set DATABASE_URL from the database connection string.
 services:
   - type: web
     name: trading-api
@@ -7,15 +10,20 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
-    disk:
-      name: trading-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
+      # Small Render instances: avoid BLAS oversubscription during numpy/scipy import.
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: NUMEXPR_NUM_THREADS
+        value: "1"
       - key: DATABASE_URL
-        value: sqlite:////var/data/trading.db
+        value: sqlite:///trading.db
       - key: HEALTH_FILE
         value: health.json
       - key: CONTEXT_CACHE_FILE

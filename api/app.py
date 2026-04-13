@@ -48,7 +48,7 @@ def _lifespan_context():
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        init_db()
+        await asyncio.to_thread(init_db)
         svc.logger.info("Starting server — market data will load in background...")
         if _env_flag("INITIAL_LOAD_ENABLED", True):
             asyncio.create_task(svc._initial_load())

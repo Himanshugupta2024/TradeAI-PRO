@@ -41,7 +41,8 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 
 - Prefers trading-bot and platform explanations in Hinglish (Roman script, professional tone) when the conversation is in that style.
 - Expects explicit clarity on which metrics are live or exchange-sourced versus synthetic or placeholder, especially when discussing real capital.
-- Prefers free or keyless data paths first for news and market context (RSS, public HTTP); treats paid API keys as optional add-ons.
+- Prefers free or keyless data paths first for news and market context (RSS, public HTTP); treats paid API keys as optional add-ons; for the context layer specifically, paid MarketAux/RapidAPI paths stay off unless `CONTEXT_USE_PAID_APIS` is enabled with keys.
+- For high-volatility crypto (including meme-style names), prefers product framing as market data plus risk education rather than buy recommendations.
 
 ## Learned Workspace Facts
 
@@ -51,7 +52,7 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 - Default automated test runs skip live-API integration tests: `pytest -m "not integration"`.
 - Trading flow vocabulary uses `LONG`/`SHORT`/`SKIP`/`HOLD` aligned across signal generation, runners, backtester, and paper execution (avoid relying only on legacy `BUY`/`SELL`).
 - GitHub Actions CI runs Python tests and a `tradvix-app` job (install, lint, build).
-- Full options-chain open interest and similar derivatives figures need a broker or NSE-capable feed; dynamic ATM or strike logic alone does not make OI trustworthy.
-- Market context for signals is built in `agents/data_ingestion/context_fetcher.py` (`ContextFetcher`): blends 24h and 7d news-style sentiment into `context_score`; NSE may use MarketAux when configured or keyless RSS-style fallbacks; crypto uses free endpoints plus RSS; sentiment is heuristic, not guaranteed edge.
+- Options/PCR dashboard UI and related FastAPI routes (`/api/pcr`, `/api/broker/status`) plus broker-only option-chain code were removed per user direction; trustworthy OI still needs a broker or NSE-capable feed if that surface returns.
+- Market context for signals is built in `agents/data_ingestion/context_fetcher.py` (`ContextFetcher`): blends 24h and 7d news-style sentiment into `context_score` (tunable via `CONTEXT_NEWS_WEIGHT_24HR` / `CONTEXT_NEWS_WEIGHT_7D`); default NSE path is Google News RSS, crypto uses public endpoints plus RSS buckets; MarketAux and RapidAPI calendar extras only when `CONTEXT_USE_PAID_APIS=true` with keys; sentiment is heuristic, not guaranteed edge.
 - Swing setups are produced by `agents/market_intelligence/swing_scanner.py` (confluence and dedupe; guardrails covered by swing scanner tests).
 

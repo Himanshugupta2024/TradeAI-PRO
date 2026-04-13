@@ -266,3 +266,55 @@ class RuntimeState(Base):
     state_key = Column(String(120), primary_key=True)
     state_json = Column(Text, nullable=False)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+# ── Signal Log (Win Rate Tracker) ────────────────────────────────
+# Logs every BUY/SELL/HOLD signal emitted. A background job fills
+# price_24h_later + outcome after 24h to compute per-coin win rates.
+
+class SignalLog(Base):
+    __tablename__ = "signal_log"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    symbol          = Column(String(30), nullable=False, index=True)
+    signal          = Column(String(10), nullable=False)            # BUY / SELL / HOLD
+    confidence      = Column(Float, nullable=False, default=0.0)
+    price_at_signal = Column(Float, nullable=False)
+    rsi_at_signal   = Column(Float, nullable=True)
+    context_score   = Column(Float, nullable=True)
+    emitted_at      = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    # Filled by background scorer 24h later
+    price_24h_later = Column(Float, nullable=True)
+    outcome         = Column(String(10), nullable=True)   # WIN / LOSS / NEUTRAL
+    outcome_pct     = Column(Float, nullable=True)        # % move after signal
+    scored_at       = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_signal_log_symbol_ts", "symbol", "emitted_at"),
+        Index("idx_signal_log_outcome",   "symbol", "outcome"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<SignalLog {self.signal} {self.symbol} "
+            f"@ {self.price_at_signal} outcome={self.outcome}>"
+        )
+
+
+# ── Telegram Alert Log ────────────────────────────────────────────
+# Prevents duplicate alerts from being sent for the same signal event.
+
+class TelegramAlertLog(Base):
+    __tablename__ = "telegram_alert_log"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    symbol      = Column(String(30), nullable=False, index=True)
+    signal      = Column(String(10), nullable=False)
+    sent_at     = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    message     = Column(Text, nullable=True)
+    delivered   = Column(Integer, nullable=False, default=1)   # 1=ok, 0=failed
+
+    __table_args__ = (
+        Index("idx_tg_alert_symbol_ts", "symbol", "sent_at"),
+    )

@@ -24,8 +24,9 @@ httpx>=0.27.0
 python-telegram-bot>=20.0
 
 # ML / AI — Tier 3 Ensemble Stack
-# XGBoost (tabular predictor — no Python version restriction)
-xgboost>=2.0.0
+# XGBoost: cap below 2.1 on Linux so pip does not pull nvidia-nccl-cu12 (large GPU
+# stack; can slow/OOM or hang startup on small Render free instances).
+xgboost>=2.0.0,<2.1.0
 # scikit-learn (GradientBoosting fallback + label utilities)
 scikit-learn>=1.4.0
 # PyTorch LSTM — requires Python <=3.12 (install in a separate venv)
