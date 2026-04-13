@@ -353,7 +353,7 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
         # yFinance rate-limit hits on Render's shared IP.
         time.sleep(random.uniform(0.3, 1.5))
 
-        logger.info(f"Fetching yFinance: {display_name} ({ticker}) period={period} interval={interval}")
+        logger.debug("Fetching yFinance: %s (%s) period=%s interval=%s", display_name, ticker, period, interval)
 
         # Delta fetch from latest cached candle when available.
         if latest_cached_ts:
@@ -404,7 +404,12 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
             merged_df = df
 
         _cache[cache_key] = {"df": merged_df, "fetched_at": time.time()}
-        logger.info(f"Fetched {len(df)} new candles for {display_name} (cached total={len(merged_df)})")
+        logger.debug(
+            "Fetched %d new candles for %s (cached total=%d)",
+            len(df),
+            display_name,
+            len(merged_df),
+        )
         return merged_df.copy()
 
     except Exception as e:

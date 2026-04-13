@@ -563,7 +563,8 @@ def calculate_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
         log.warning("Heikin-Ashi feature calculation failed: %s", e)
 
     total_new = len(result.columns) - len(df.columns)
-    log.info("Advanced features: +%d columns added (total: %d)", total_new, len(result.columns))
+    # Per-symbol churn: use DEBUG so hosted logs stay readable (set LOG_LEVEL=DEBUG when tuning).
+    log.debug("Advanced features: +%d columns added (total: %d)", total_new, len(result.columns))
 
     return result
 
