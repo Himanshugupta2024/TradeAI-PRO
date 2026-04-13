@@ -37,10 +37,40 @@ from agents.market_intelligence.nse_fetcher import (
 from agents.stock_screener import opportunity_stocks
 from agents.data_ingestion.context_fetcher import build_context_fetcher
 from agents.analytics.trade_journal import get_journal
-from agents.analytics.signal_tracker import get_win_rate, get_leaderboard, score_outcomes, log_signal
-from agents.notifications.telegram_alerts import (
-    send_signal_alert, send_whale_alert, is_configured as tg_is_configured,
-)
+try:
+    from agents.analytics.signal_tracker import get_win_rate, get_leaderboard, score_outcomes, log_signal
+except Exception:
+    def get_win_rate(symbol: str | None = None, last_n: int = 100):
+        return {
+            "symbol": symbol or "ALL",
+            "total_signals": 0,
+            "win_rate_pct": None,
+            "avg_outcome_pct": None,
+            "message": "Signal tracker module not available in this deployment",
+        }
+
+    def get_leaderboard(limit: int = 10):
+        return []
+
+    def score_outcomes(*args, **kwargs):
+        return 0
+
+    def log_signal(*args, **kwargs):
+        return None
+
+try:
+    from agents.notifications.telegram_alerts import (
+        send_signal_alert, send_whale_alert, is_configured as tg_is_configured,
+    )
+except Exception:
+    def send_signal_alert(*args, **kwargs):
+        return False
+
+    def send_whale_alert(*args, **kwargs):
+        return False
+
+    def tg_is_configured():
+        return False
 
 from api import service as svc
 from api.paths import STATIC_DIR
@@ -48,6 +78,9 @@ from api.paths import STATIC_DIR
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Dashboard HTML is edited often during dev; avoid stale cached documents masking UI changes.
+_DASH_HTML_HEADERS = {"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"}
 
 _CRYPTO_PREDICTION_HISTORY: deque[dict] = deque(maxlen=60)
 _NEWS_SOURCE_BACKOFF_UNTIL: dict[str, float] = {}
@@ -1702,7 +1735,7 @@ async def serve_dashboard():
     """Serve the main dashboard page."""
     index = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index):
-        return FileResponse(index)
+        return FileResponse(index, headers=_DASH_HTML_HEADERS)
     return {"message": "Dashboard not found. Place files in /dashboard/"}
 
 
@@ -1711,8 +1744,8 @@ async def serve_landing():
     """Serve the marketing landing page."""
     landing = os.path.join(STATIC_DIR, "landing.html")
     if os.path.exists(landing):
-        return FileResponse(landing)
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+        return FileResponse(landing, headers=_DASH_HTML_HEADERS)
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=_DASH_HTML_HEADERS)
 
 
 @router.get("/crypto")
@@ -1721,8 +1754,8 @@ async def serve_crypto():
     """Serve the live crypto dashboard page."""
     crypto = os.path.join(STATIC_DIR, "crypto.html")
     if os.path.exists(crypto):
-        return FileResponse(crypto)
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+        return FileResponse(crypto, headers=_DASH_HTML_HEADERS)
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=_DASH_HTML_HEADERS)
 
 
 @router.get("/api/crypto/news")
