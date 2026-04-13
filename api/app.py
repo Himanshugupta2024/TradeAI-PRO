@@ -32,7 +32,7 @@ async def _keep_alive_task():
     """Periodically ping our own /api/health to prevent Render free-tier spin-down."""
     port = int(os.environ.get("PORT", 10000))
     url = f"http://localhost:{port}/api/health"
-    await asyncio.sleep(60)  # Wait for startup to settle before first ping
+    await asyncio.sleep(30)  # Wait for startup to settle before first ping
     while True:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
