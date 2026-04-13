@@ -107,7 +107,7 @@ _ws_clients: list[WebSocket] = []
 # ── Symbols to track ─────────────────────────────────────
 # Priority symbols loaded first (indices + top stocks), rest loaded progressively
 _ALL_NSE_SYMBOLS = list(NSE_SYMBOLS.keys())
-NSE_SYMBOL_LIMIT = max(1, int(os.getenv("NSE_SYMBOL_LIMIT", "50")))
+NSE_SYMBOL_LIMIT = max(1, int(os.getenv("NSE_SYMBOL_LIMIT", "20")))
 _TRACKED_NSE_SYMBOLS = _ALL_NSE_SYMBOLS[:NSE_SYMBOL_LIMIT]
 _PRIORITY_COUNT = min(15, len(_TRACKED_NSE_SYMBOLS))
 _PRIORITY_SYMBOLS = _TRACKED_NSE_SYMBOLS[:_PRIORITY_COUNT]   # Fast initial load

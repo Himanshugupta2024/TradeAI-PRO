@@ -60,12 +60,12 @@ def _lifespan_context():
         else:
             svc.logger.info("BACKGROUND_REFRESH_ENABLED=false -> skipping periodic background refresh")
 
-        if _env_flag("SCREENER_TASK_ENABLED", True):
+        if _env_flag("SCREENER_TASK_ENABLED", False):
             asyncio.create_task(start_screener_task())
         else:
             svc.logger.info("SCREENER_TASK_ENABLED=false -> skipping stock screener loop")
 
-        if _env_flag("MORNING_SCAN_TASK_ENABLED", True):
+        if _env_flag("MORNING_SCAN_TASK_ENABLED", False):
             asyncio.create_task(start_morning_scan_task())
         else:
             svc.logger.info("MORNING_SCAN_TASK_ENABLED=false -> skipping morning scan scheduler")

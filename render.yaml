@@ -23,7 +23,7 @@ services:
       - key: NUMEXPR_NUM_THREADS
         value: "1"
       - key: DATABASE_URL
-        value: sqlite:///trading.db
+        value: sqlite:////tmp/trading.db
       - key: HEALTH_FILE
         value: health.json
       - key: CONTEXT_CACHE_FILE
