@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 160" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#030712" />
+    </linearGradient>
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#6366F1" stop-opacity="0.6" />
+    </linearGradient>
+    <linearGradient id="cyanGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#0284C7" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+    <linearGradient id="trendGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6366F1" />
+      <stop offset="50%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#10B981" />
+    </linearGradient>
+    <linearGradient id="badgeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="100%" stop-color="#10B981" />
+    </linearGradient>
+  </defs>
+
+  <!-- Left Icon Mark (Scaled down to 128x128 inside 160h) -->
+  <g transform="translate(16, 16) scale(0.25)">
+    <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bgGrad)" stroke="url(#borderGrad)" stroke-width="12" />
+    <!-- Candlestick 1 -->
+    <line x1="168" y1="210" x2="168" y2="390" stroke="#0284C7" stroke-width="8" stroke-linecap="round" opacity="0.6" />
+    <rect x="144" y="240" width="48" height="120" rx="10" fill="url(#cyanGrad)" />
+    <!-- Candlestick 2 -->
+    <line x1="256" y1="140" x2="256" y2="380" stroke="#38BDF8" stroke-width="8" stroke-linecap="round" opacity="0.7" />
+    <rect x="232" y="180" width="48" height="160" rx="10" fill="url(#trendGrad)" />
+    <!-- Crossbar -->
+    <path d="M124 168 C 124 156, 134 146, 148 146 L 310 146 C 324 146, 332 154, 338 162 L 382 216 C 390 226, 386 236, 372 236 L 148 236 C 134 236, 124 226, 124 214 Z" fill="url(#trendGrad)" />
+    <!-- Arrow -->
+    <path d="M290 146 L 376 146 C 390 146, 398 156, 394 170 L 366 266 C 362 278, 348 282, 340 272 L 312 238 L 260 298 C 252 306, 240 306, 232 298 L 210 274 C 202 266, 202 254, 210 246 L 290 156 Z" fill="url(#trendGrad)" />
+    <!-- Node -->
+    <circle cx="380" cy="146" r="24" fill="#10B981" />
+    <circle cx="380" cy="146" r="12" fill="#FFFFFF" />
+  </g>
+
+  <!-- Typography -->
+  <text x="170" y="100" font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="58" font-weight="800" fill="#F8FAFC" letter-spacing="-1">
+    Trade<tspan fill="#38BDF8">AI</tspan>
+  </text>
+
+  <!-- PRO Badge Pill -->
+  <rect x="424" y="60" width="86" height="42" rx="8" fill="url(#badgeGrad)" />
+  <text x="467" y="90" font-family="'Inter', -apple-system, sans-serif" font-size="22" font-weight="800" fill="#FFFFFF" text-anchor="middle" letter-spacing="1.5">
+    PRO
+  </text>
+</svg>

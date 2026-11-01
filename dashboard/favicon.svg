@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="50%" stop-color="#0B0F19" />
+      <stop offset="100%" stop-color="#030712" />
+    </linearGradient>
+
+    <!-- Border Glow Gradient -->
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.8" />
+      <stop offset="50%" stop-color="#6366F1" stop-opacity="0.5" />
+      <stop offset="100%" stop-color="#10B981" stop-opacity="0.7" />
+    </linearGradient>
+
+    <!-- Candlestick Cyan Gradient -->
+    <linearGradient id="cyanGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#0284C7" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+
+    <!-- Ascending Trend Violet-to-Emerald Gradient -->
+    <linearGradient id="trendGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6366F1" />
+      <stop offset="50%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#10B981" />
+    </linearGradient>
+
+    <!-- Glow Filter -->
+    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="14" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="22" result="blur" />
+      <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 2 -0.1" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Squircle Base with Glow Border -->
+  <rect x="20" y="20" width="472" height="472" rx="112" fill="url(#bgGrad)" stroke="url(#borderGrad)" stroke-width="8" />
+
+  <!-- Ambient Internal Glow -->
+  <circle cx="340" cy="180" r="140" fill="#38BDF8" opacity="0.12" filter="url(#softGlow)" />
+  <circle cx="180" cy="340" r="120" fill="#6366F1" opacity="0.10" filter="url(#softGlow)" />
+
+  <!-- Core Mark: Ascending Candlestick + Growth Vector + 'T' Monogram -->
+  <g filter="url(#neonGlow)">
+    <!-- Candlestick 1: Base Momentum (Left) -->
+    <!-- Wick -->
+    <line x1="168" y1="210" x2="168" y2="390" stroke="#0284C7" stroke-width="6" stroke-linecap="round" opacity="0.6" />
+    <!-- Body -->
+    <rect x="144" y="240" width="48" height="120" rx="10" fill="url(#cyanGrad)" />
+
+    <!-- Candlestick 2: Breakout Impulse (Center) -->
+    <!-- Wick -->
+    <line x1="256" y1="140" x2="256" y2="380" stroke="#38BDF8" stroke-width="6" stroke-linecap="round" opacity="0.7" />
+    <!-- Body -->
+    <rect x="232" y="180" width="48" height="160" rx="10" fill="url(#trendGrad)" />
+
+    <!-- Trend Arrow & 'T' Top Canopy: Dynamic Upward Surge (Right & Crossbar) -->
+    <!-- Crossbar of T -->
+    <path d="M124 168 C 124 156, 134 146, 148 146 L 310 146 C 324 146, 332 154, 338 162 L 382 216 C 390 226, 386 236, 372 236 L 148 236 C 134 236, 124 226, 124 214 Z" fill="url(#trendGrad)" opacity="0.95" />
+
+    <!-- Ascending Surge Chevron (Upper Right) -->
+    <path d="M290 146 L 376 146 C 390 146, 398 156, 394 170 L 366 266 C 362 278, 348 282, 340 272 L 312 238 L 260 298 C 252 306, 240 306, 232 298 L 210 274 C 202 266, 202 254, 210 246 L 290 156 Z" fill="url(#trendGrad)" />
+
+    <!-- Top Apex Diamond / AI Predictor Node -->
+    <circle cx="380" cy="146" r="22" fill="#10B981" />
+    <circle cx="380" cy="146" r="34" stroke="#34D399" stroke-width="4" fill="none" opacity="0.6" />
+    <circle cx="380" cy="146" r="10" fill="#FFFFFF" />
+  </g>
+</svg>
