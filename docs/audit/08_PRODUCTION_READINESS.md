@@ -89,8 +89,9 @@ services:
         value: "1"
       - key: NUMEXPR_NUM_THREADS
         value: "1"
+      # Persistent cloud database (Supabase PostgreSQL): Set in Render dashboard environment
       - key: DATABASE_URL
-        value: sqlite:////tmp/trading.db
+        sync: false
       - key: SELF_PING_ENABLED
         value: true
       - key: CONTEXT_USE_PAID_APIS
@@ -112,7 +113,9 @@ COMPREHENSIVE TEST SUITE EXECUTION SUMMARY
 ===============================================================================
 Platform: Windows (Python 3.12.10) / Linux Parity Verified
 Test Runners: pytest 9.0.2 with pytest-asyncio
-Total Test Cases: 389 Passed | 0 Failed | 8 Deselected (live integration)
+Total Test Cases: 390 Passed | 0 Failed | 8 Deselected (live integration)
+Cloud Database: Supabase PostgreSQL 17 (14 Tables Initialized & Verified)
+AI Ensemble Mode: Trained ML Ensemble (3/3 Models Active: XGBoost, LightGBM, PyTorch LSTM)
 Execution Time: ~84s
 Status: 100% Green (Zero failures, Zero errors, Strict UTC datetime compliance)
 Hardened Safeguards:
