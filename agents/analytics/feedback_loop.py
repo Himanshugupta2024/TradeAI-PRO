@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -44,11 +45,21 @@ log = logging.getLogger(__name__)
 _IST = timezone(timedelta(hours=5, minutes=30))
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-_DB_PATH = Path("trading.db")
+try:
+    from db.connection import get_sqlite_path
+    _DB_PATH = Path(get_sqlite_path())
+except Exception:
+    _DB_PATH = Path("trading.db")
 _WEIGHTS_PATH = Path("config/learned_weights.json")
 
 # ── Feedback trigger: analyse after every N closed trades ─────────────────────
 ANALYSE_EVERY_N_TRADES = 50
+
+# ── Learning stability knobs ───────────────────────────────────────────────────
+RECENCY_HALF_LIFE_TRADES = 120
+WEIGHT_PRIOR_STRENGTH = 12.0
+WEIGHT_MIN_SAMPLE_TRADES = 5
+WEIGHT_MAX_STEP_PER_UPDATE = 0.20
 
 # ── Default signal weights (match signal_generator.py component labels) ───────
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -222,6 +233,8 @@ class FeedbackAnalyser:
       regime_stats       : {regime → {win_rate, trades, wins, avg_pnl}}
       rsi_zone_stats     : {zone → {win_rate, trades}}
       volume_stats       : {"above" → ..., "below" → ...}
+            confidence_band_stats : confidence buckets (60-70 / 70-80 / 80-90 / 90+)
+            confidence_calibration: monotonicity + spread diagnostics
       overall            : {total_trades, win_rate, avg_pnl, model_accuracy}
       best_signal_type   : str
       worst_signal_type  : str
@@ -250,6 +263,7 @@ class FeedbackAnalyser:
                 return _empty_insights()
 
             trades = [dict(r) for r in rows]
+            _attach_recency_weights(trades, half_life=RECENCY_HALF_LIFE_TRADES)
 
             # ── 1. Signal type win rates ──────────────────────────────────────
             signal_stats = _group_win_rate(trades, "signal_type")
@@ -268,16 +282,28 @@ class FeedbackAnalyser:
                 "below_avg": _stats_block(vol_below),
             }
 
+            # ── 4b. Confidence calibration ───────────────────────────────────
+            conf_band_stats = _confidence_band_analysis(trades)
+            conf_calibration = _confidence_calibration_summary(conf_band_stats)
+
             # ── 5. Overall ────────────────────────────────────────────────────
             wins = [t for t in trades if t["result"] == "WIN"]
             total = len(trades)
-            overall_win_rate = round(len(wins) / total * 100, 1) if total else 0
-            avg_pnl = round(sum(t["pnl_pct"] for t in trades) / total, 2) if total else 0
+            total_weight = sum(float(t.get("_w", 1.0)) for t in trades)
+            weighted_wins = sum(float(t.get("_w", 1.0)) for t in trades if t["result"] == "WIN")
+            weighted_pnl_sum = sum(float(t.get("pnl_pct", 0.0)) * float(t.get("_w", 1.0)) for t in trades)
+
+            overall_win_rate = round(_safe_div(weighted_wins, total_weight) * 100, 1)
+            overall_win_rate_unweighted = round(len(wins) / total * 100, 1) if total else 0
+            avg_pnl = round(_safe_div(weighted_pnl_sum, total_weight), 2)
+            avg_pnl_unweighted = round(sum(float(t.get("pnl_pct", 0.0)) for t in trades) / total, 2) if total else 0
 
             # Model accuracy: % trades where confidence > 50 that WON (higher conf = better accuracy)
             high_conf = [t for t in trades if (t.get("confidence") or 0) >= 50]
-            hc_wins   = [t for t in high_conf if t["result"] == "WIN"]
-            model_accuracy = round(len(hc_wins) / len(high_conf) * 100, 1) if high_conf else 0
+            high_conf_weight = sum(float(t.get("_w", 1.0)) for t in high_conf)
+            hc_wins_weight = sum(float(t.get("_w", 1.0)) for t in high_conf if t["result"] == "WIN")
+            model_accuracy = round(_safe_div(hc_wins_weight, high_conf_weight) * 100, 1)
+            reliability_score = round(min(1.0, _safe_div(total_weight, 120.0)) * 100, 1)
 
             # ── 6. Pick best / worst ──────────────────────────────────────────
             def _best(stats: dict) -> str:
@@ -303,11 +329,17 @@ class FeedbackAnalyser:
                 "regime_stats":       regime_stats,
                 "rsi_zone_stats":     rsi_zone_stats,
                 "volume_stats":       volume_stats,
+                "confidence_band_stats": conf_band_stats,
+                "confidence_calibration": conf_calibration,
                 "overall": {
                     "total_trades":    total,
+                    "effective_trades": round(total_weight, 2),
                     "win_rate":        overall_win_rate,
+                    "win_rate_unweighted": overall_win_rate_unweighted,
                     "avg_pnl_pct":     avg_pnl,
+                    "avg_pnl_pct_unweighted": avg_pnl_unweighted,
                     "model_accuracy":  model_accuracy,
+                    "reliability_score": reliability_score,
                 },
                 "best_signal_type":  best_signal,
                 "worst_signal_type": worst_signal,
@@ -336,12 +368,11 @@ class WeightAdapter:
     Reads insights from FeedbackAnalyser and updates signal component weights
     in config/learned_weights.json.
 
-    Weight adjustment logic (simple but auditable):
-      - Each signal type gets weight = sigmoid(win_rate / 50 - 1) * 2
-        → win_rate 50% → weight 1.0 (neutral)
-        → win_rate 70% → weight ~1.46 (boost)
-        → win_rate 30% → weight ~0.54 (reduce)
-      - Weights are clipped to [0.3, 2.5] to avoid extremes.
+        Weight adjustment logic:
+            - Uses recency-aware win rates from FeedbackAnalyser.
+            - Applies Bayesian shrinkage toward 50% win rate for low sample sizes.
+            - Uses adaptive blend rate + max step cap to avoid unstable jumps.
+            - Weights are clipped to [0.3, 2.5] to avoid extremes.
     """
 
     def update_weights(self, insights: dict) -> dict:
@@ -349,43 +380,58 @@ class WeightAdapter:
         Update learned_weights.json based on insights.
         Returns the new weights dict.
         """
-        import math
-
         stats = insights.get("signal_type_stats", {})
-        new_weights = dict(DEFAULT_WEIGHTS)
+        existing = self._load()
+        new_weights = {
+            k: float(existing.get(k, v))
+            for k, v in DEFAULT_WEIGHTS.items()
+        }
 
         for sig_type, data in stats.items():
             if sig_type not in new_weights:
                 continue
-            wr = data.get("win_rate", 50.0)
-            nt = data.get("trades", 0)
-            if nt < 5:
+            wr = float(data.get("win_rate", 50.0))
+            nt = int(data.get("trades", 0))
+            if nt < WEIGHT_MIN_SAMPLE_TRADES:
                 # Too few samples — don't adjust
                 continue
 
+            weighted_nt = float(data.get("weighted_trades", nt))
+            sample_strength = max(0.0, min(250.0, weighted_nt))
+
+            # Bayesian shrinkage to neutral 50% so low-sample stats don't overreact.
+            shrunk_wr = _safe_div(
+                (wr * sample_strength) + (50.0 * WEIGHT_PRIOR_STRENGTH),
+                sample_strength + WEIGHT_PRIOR_STRENGTH,
+            )
+
             # Sigmoid-like adjustment centred at 50% win rate
-            # x = (win_rate - 50) / 20  →  ranges from -2.5 to +2.5
-            x = (wr - 50.0) / 20.0
-            weight = 1.0 / (1.0 + math.exp(-x))   # standard sigmoid 0..1
-            weight = 0.3 + weight * (2.5 - 0.3)    # scale to 0.3..2.5
-            weight = round(weight, 3)
+            x = (shrunk_wr - 50.0) / 18.0
+            target = 1.0 / (1.0 + math.exp(-x))
+            target = 0.3 + target * (2.5 - 0.3)
 
-            old = new_weights[sig_type]
-            # Smooth: don't jump too fast (70% old + 30% new per cycle)
-            new_weights[sig_type] = round(old * 0.7 + weight * 0.3, 3)
+            old = float(new_weights[sig_type])
 
-        # Load existing weights to smooth against them
-        existing = self._load()
-        for k in existing:
-            if k in new_weights:
-                new_weights[k] = round(existing[k] * 0.6 + new_weights[k] * 0.4, 3)
+            # Larger sample size allows slightly faster adaptation.
+            alpha = min(0.35, 0.12 + min(1.0, sample_strength / 180.0) * 0.23)
+            proposed = old * (1.0 - alpha) + target * alpha
+
+            # Hard cap per update to avoid sudden behavior drift.
+            hi = old + WEIGHT_MAX_STEP_PER_UPDATE
+            lo = old - WEIGHT_MAX_STEP_PER_UPDATE
+            proposed = min(hi, max(lo, proposed))
+
+            new_weights[sig_type] = round(min(2.5, max(0.3, proposed)), 3)
 
         new_weights["_updated_at"] = datetime.now(tz=_IST).isoformat()
         new_weights["_total_trades"] = insights.get("overall", {}).get("total_trades", 0)
+        new_weights["_effective_trades"] = insights.get("overall", {}).get("effective_trades", 0)
         new_weights["_win_rate"] = insights.get("overall", {}).get("win_rate", 0)
         new_weights["_model_accuracy"] = insights.get("overall", {}).get("model_accuracy", 0)
+        new_weights["_reliability_score"] = insights.get("overall", {}).get("reliability_score", 0)
         new_weights["_best_signal"] = insights.get("best_signal_type", "")
         new_weights["_worst_signal"] = insights.get("worst_signal_type", "")
+        new_weights["_learning_version"] = 2
 
         try:
             _WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -420,10 +466,22 @@ def get_learning_stats() -> dict:
     insights = analyser.run()
     adapter  = WeightAdapter()
     weights  = adapter._load()
+    total_trades = int(insights.get("overall", {}).get("total_trades", 0) or 0)
+    if total_trades <= 0:
+        to_next_recalibration = ANALYSE_EVERY_N_TRADES
+    else:
+        to_next_recalibration = (ANALYSE_EVERY_N_TRADES - (total_trades % ANALYSE_EVERY_N_TRADES)) % ANALYSE_EVERY_N_TRADES
+
+    health = {
+        "analyse_every_n_trades": ANALYSE_EVERY_N_TRADES,
+        "trades_until_recalibration": to_next_recalibration,
+        "state": _learning_state_label(total_trades),
+    }
 
     return {
         "insights":  insights,
         "weights":   weights,
+        "health":    health,
         "db_path":   str(_DB_PATH.resolve()),
     }
 
@@ -468,7 +526,7 @@ def _normalise_signal_type(raw: str) -> str:
 
 
 def _group_win_rate(trades: list[dict], key: str) -> dict:
-    """Group trades by a categorical key and compute win rate + avg pnl."""
+    """Group trades by a categorical key and compute weighted + raw stats."""
     groups: dict[str, list] = {}
     for t in trades:
         val = str(t.get(key) or "UNKNOWN").upper()
@@ -477,17 +535,23 @@ def _group_win_rate(trades: list[dict], key: str) -> dict:
     result = {}
     for val, group in groups.items():
         wins = [t for t in group if t["result"] == "WIN"]
+        total_weight = sum(float(t.get("_w", 1.0)) for t in group)
+        weighted_wins = sum(float(t.get("_w", 1.0)) for t in wins)
+        weighted_pnl = sum(float(t.get("pnl_pct", 0.0)) * float(t.get("_w", 1.0)) for t in group)
         result[val] = {
             "trades":   len(group),
             "wins":     len(wins),
-            "win_rate": round(len(wins) / len(group) * 100, 1) if group else 0,
-            "avg_pnl":  round(sum(t["pnl_pct"] for t in group) / len(group), 2) if group else 0,
+            "weighted_trades": round(total_weight, 2),
+            "win_rate": round(_safe_div(weighted_wins, total_weight) * 100, 1),
+            "win_rate_unweighted": round(len(wins) / len(group) * 100, 1) if group else 0,
+            "avg_pnl":  round(_safe_div(weighted_pnl, total_weight), 2),
+            "avg_pnl_unweighted": round(sum(float(t.get("pnl_pct", 0.0)) for t in group) / len(group), 2) if group else 0,
         }
     return result
 
 
 def _rsi_zone_analysis(trades: list[dict]) -> dict:
-    """Bucket trades by RSI zone and return win rates."""
+    """Bucket trades by RSI zone and return weighted + raw win rates."""
     zones = {
         "oversold (<30)":    [],
         "mild_bull (30-50)": [],
@@ -508,24 +572,35 @@ def _rsi_zone_analysis(trades: list[dict]) -> dict:
         else:
             zones["overbought (>70)"].append(t)
 
-    return {
-        zone: {
-            "trades":   len(g),
-            "win_rate": round(sum(1 for t in g if t["result"] == "WIN") / len(g) * 100, 1) if g else 0,
+    out = {}
+    for zone, g in zones.items():
+        total_weight = sum(float(t.get("_w", 1.0)) for t in g)
+        weighted_wins = sum(float(t.get("_w", 1.0)) for t in g if t["result"] == "WIN")
+        raw_win_rate = round(sum(1 for t in g if t["result"] == "WIN") / len(g) * 100, 1) if g else 0
+        out[zone] = {
+            "trades": len(g),
+            "weighted_trades": round(total_weight, 2),
+            "win_rate": round(_safe_div(weighted_wins, total_weight) * 100, 1),
+            "win_rate_unweighted": raw_win_rate,
         }
-        for zone, g in zones.items()
-    }
+    return out
 
 
 def _stats_block(group: list[dict]) -> dict:
     if not group:
-        return {"trades": 0, "win_rate": 0, "avg_pnl": 0}
+        return {"trades": 0, "weighted_trades": 0, "win_rate": 0, "avg_pnl": 0}
     wins = [t for t in group if t["result"] == "WIN"]
+    total_weight = sum(float(t.get("_w", 1.0)) for t in group)
+    weighted_wins = sum(float(t.get("_w", 1.0)) for t in wins)
+    weighted_pnl = sum(float(t.get("pnl_pct", 0.0)) * float(t.get("_w", 1.0)) for t in group)
     return {
         "trades":   len(group),
         "wins":     len(wins),
-        "win_rate": round(len(wins) / len(group) * 100, 1),
-        "avg_pnl":  round(sum(t["pnl_pct"] for t in group) / len(group), 2),
+        "weighted_trades": round(total_weight, 2),
+        "win_rate": round(_safe_div(weighted_wins, total_weight) * 100, 1),
+        "win_rate_unweighted": round(len(wins) / len(group) * 100, 1),
+        "avg_pnl":  round(_safe_div(weighted_pnl, total_weight), 2),
+        "avg_pnl_unweighted": round(sum(float(t.get("pnl_pct", 0.0)) for t in group) / len(group), 2),
     }
 
 
@@ -535,10 +610,107 @@ def _empty_insights() -> dict:
         "regime_stats":       {},
         "rsi_zone_stats":     {},
         "volume_stats":       {"above_avg": {"trades": 0}, "below_avg": {"trades": 0}},
-        "overall":            {"total_trades": 0, "win_rate": 0, "avg_pnl_pct": 0, "model_accuracy": 0},
+        "confidence_band_stats": {},
+        "confidence_calibration": {
+            "is_monotonic": False,
+            "high_minus_low": 0,
+            "status": "NO_DATA",
+        },
+        "overall":            {
+            "total_trades": 0,
+            "effective_trades": 0,
+            "win_rate": 0,
+            "win_rate_unweighted": 0,
+            "avg_pnl_pct": 0,
+            "avg_pnl_pct_unweighted": 0,
+            "model_accuracy": 0,
+            "reliability_score": 0,
+        },
         "best_signal_type":   "—",
         "worst_signal_type":  "—",
         "best_regime":        "—",
         "optimal_rsi_zone":   "—",
         "insights_at":        datetime.now(tz=_IST).isoformat(),
+    }
+
+
+def _attach_recency_weights(trades: list[dict], half_life: int = RECENCY_HALF_LIFE_TRADES) -> None:
+    """Attach recency weights in-place (newest trade gets highest weight)."""
+    hl = max(1, int(half_life))
+    for idx, t in enumerate(trades):
+        t["_w"] = float(0.5 ** (idx / hl))
+
+
+def _safe_div(num: float, den: float) -> float:
+    if den <= 0:
+        return 0.0
+    return float(num) / float(den)
+
+
+def _learning_state_label(total_trades: int) -> str:
+    if total_trades >= 200:
+        return "MATURE"
+    if total_trades >= 80:
+        return "WARMING_UP"
+    if total_trades >= 20:
+        return "EARLY"
+    return "COLD_START"
+
+
+def _confidence_band_analysis(trades: list[dict]) -> dict:
+    """Return weighted and unweighted win stats for confidence buckets."""
+    bands = {
+        "60-70": (60.0, 70.0),
+        "70-80": (70.0, 80.0),
+        "80-90": (80.0, 90.0),
+        "90+": (90.0, None),
+    }
+    out: dict[str, dict] = {}
+    for label, (lo, hi) in bands.items():
+        if hi is None:
+            group = [t for t in trades if float(t.get("confidence", 0.0) or 0.0) >= lo]
+        else:
+            group = [
+                t for t in trades
+                if lo <= float(t.get("confidence", 0.0) or 0.0) < hi
+            ]
+        wins = [t for t in group if t.get("result") == "WIN"]
+        total_weight = sum(float(t.get("_w", 1.0)) for t in group)
+        weighted_wins = sum(float(t.get("_w", 1.0)) for t in wins)
+        out[label] = {
+            "trades": len(group),
+            "weighted_trades": round(total_weight, 2),
+            "win_rate": round(_safe_div(weighted_wins, total_weight) * 100, 1),
+            "win_rate_unweighted": round(_safe_div(len(wins), len(group)) * 100, 1),
+        }
+    return out
+
+
+def _confidence_calibration_summary(bands: dict) -> dict:
+    """Check whether higher confidence bands show higher realized win rates."""
+    order = ["60-70", "70-80", "80-90", "90+"]
+    series = [
+        float((bands.get(k) or {}).get("win_rate", 0.0) or 0.0)
+        for k in order
+        if int((bands.get(k) or {}).get("trades", 0) or 0) > 0
+    ]
+    if len(series) < 2:
+        return {
+            "is_monotonic": False,
+            "high_minus_low": 0,
+            "status": "NO_DATA",
+        }
+
+    monotonic = all(series[i] >= series[i - 1] for i in range(1, len(series)))
+    spread = round(series[-1] - series[0], 1)
+    if monotonic and spread >= 5.0:
+        status = "CALIBRATED"
+    elif spread >= 0:
+        status = "WEAK_CALIBRATION"
+    else:
+        status = "MISALIGNED"
+    return {
+        "is_monotonic": monotonic,
+        "high_minus_low": spread,
+        "status": status,
     }

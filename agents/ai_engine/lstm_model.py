@@ -70,6 +70,19 @@ if TORCH_AVAILABLE:
             logits = self.fc(last_hidden)
             return logits
 
+        def get_embeddings(self, x):
+            """
+            Args:
+                x: Tensor of shape (batch, seq_len, input_size)
+            Returns:
+                last_hidden: Tensor of shape (batch, hidden_size)
+            """
+            self.eval()
+            with torch.no_grad():
+                lstm_out, _ = self.lstm(x)
+                last_hidden = lstm_out[:, -1, :]
+                return last_hidden
+
         def predict(self, x):
             """
             Inference: returns direction and confidence.
@@ -91,11 +104,3 @@ if TORCH_AVAILABLE:
                     "prob_down": round(probs[0, 1].item() * 100, 1),
                 }
 
-else:
-    # Stub class when PyTorch is not available
-    class TradingLSTM:
-        def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "PyTorch is not available on Python 3.14+. "
-                "Install Python 3.12 and run: pip install torch"
-            )

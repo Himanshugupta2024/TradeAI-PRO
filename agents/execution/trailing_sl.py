@@ -140,6 +140,18 @@ class TrailingStopManager:
         self._states.pop(trade_id, None)
         self._save_state()
 
+    def tighten_to(self, trade_id: int, sl_level: float):
+        """Force-tighten current trailing SL (never loosens)."""
+        state = self._states.get(trade_id)
+        if not state:
+            return
+        prev = state.current_sl
+        if sl_level > state.current_sl:
+            state.current_sl = sl_level
+        self._save_state()
+        if state.current_sl != prev:
+            log.debug("🔧 Trade #%d trailing SL force-tightened → %.2f", trade_id, state.current_sl)
+
     def _save_state(self):
         """Persist trailing SL state to DB runtime state."""
         try:

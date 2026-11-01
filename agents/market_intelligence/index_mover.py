@@ -141,10 +141,10 @@ def calculate_index_movers(
             index_actual_change = index_level - index_prev
         else:
             index_level = 24500 if index_name == "NIFTY 50" else 52000
-            index_actual_change = 0
+            index_actual_change = None
     except Exception:
         index_level = 24500 if index_name == "NIFTY 50" else 52000
-        index_actual_change = 0
+        index_actual_change = None
 
     movers = []
     total_weight = sum(weights.values())
@@ -212,8 +212,8 @@ def calculate_index_movers(
     result = {
         "index": index_name,
         "index_level": round(index_level, 2),
-        "index_change_pts": round(index_actual_change, 1) if index_actual_change else round(net_points, 1),
-        "index_pct": round((index_actual_change / max(index_level - index_actual_change, 1)) * 100, 2) if index_actual_change else round(net_points / max(index_level, 1) * 100, 2),
+        "index_change_pts": round(index_actual_change, 1) if index_actual_change is not None else round(net_points, 1),
+        "index_pct": round((index_actual_change / max(index_level - index_actual_change, 1)) * 100, 2) if index_actual_change is not None else round(net_points / max(index_level, 1) * 100, 2),
         "movers": movers[:30],  # Top 30 by impact
         "top_gainers": gainers[:5],
         "top_draggers": draggers[:5],

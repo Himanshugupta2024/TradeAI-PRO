@@ -98,6 +98,7 @@ def send_signal_alert(
     rsi: float = 0,
     regime: str = "",
     mtf_score: float = None,
+    edge_score: float = None,
 ) -> bool:
     """Send a formatted trading signal alert."""
     emoji = "🟢" if direction in ("LONG", "BUY") else "🔴"
@@ -126,6 +127,10 @@ def send_signal_alert(
     if mtf_score is not None:
         mtf_emoji = "📈" if mtf_score > 0 else "📉" if mtf_score < 0 else "➡️"
         text += f"{mtf_emoji} MTF Score: <b>{mtf_score:+.0f}</b>\n"
+
+    if edge_score is not None:
+        edge_emoji = "🟢" if edge_score > 50 else "🟡" if edge_score > 0 else "🔴"
+        text += f"{edge_emoji} EdgeScore: <b>{edge_score:+.0f}</b>\n"
 
     if trend:
         text += f"📈 Trend: <b>{trend}</b>"
@@ -310,6 +315,61 @@ def send_websocket_alert(status: str, reconnect_count: int = 0) -> bool:
     return _send_message(text)
 
 
+def send_forex_signal_alert(setup: dict) -> bool:
+    """
+    Send a forex swing signal alert in the standard format (F8 spec).
+
+    Args:
+        setup: ForexSetup.to_dict() payload
+
+    Returns:
+        True if message sent successfully, False otherwise.
+    """
+    symbol      = setup.get("symbol", "—")
+    direction   = setup.get("direction", "—")
+    session     = setup.get("session_name", "—")
+    sess_active = setup.get("session_active", False)
+    entry       = setup.get("entry", 0)
+    sl          = setup.get("sl", 0)
+    tp1         = setup.get("tp1", 0)
+    tp2         = setup.get("tp2", 0)
+    sl_pips     = setup.get("sl_pips", 0)
+    rr          = setup.get("rr_ratio", 0)
+    strength    = setup.get("strength_score", 0)
+    pattern     = setup.get("pattern", "—").replace("_", " ").title()
+    daily_trend = setup.get("daily_trend", "—")
+    hold_min    = setup.get("hold_hours_min", 0)
+    hold_max    = setup.get("hold_hours_max", 0)
+
+    dir_arrow   = "↑" if direction == "LONG" else "↓"
+    sess_dot    = "🟢" if sess_active else "🔴"
+    hold_days   = f"{hold_min // 24}–{hold_max // 24} days" if hold_min >= 24 else f"{hold_min}–{hold_max}h"
+    trend_icon  = "✅" if daily_trend == "BULLISH" else "❌"
+
+    tp1_pips = round(abs(tp1 - entry) / setup.get("sl_pips", 1) * sl_pips, 0) if sl_pips else 0
+    tp2_pips = round(abs(tp2 - entry) / setup.get("sl_pips", 1) * sl_pips, 0) if sl_pips else 0
+
+    text = (
+        f"💱 <b>FOREX SIGNAL — {symbol}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Direction  : <b>{direction} {dir_arrow}</b>\n"
+        f"Session    : {sess_dot} {session} {'ACTIVE' if sess_active else 'CLOSED'}\n"
+        f"Entry      : <b>{entry}</b>\n"
+        f"Stop Loss  : <b>{sl}</b> ({sl_pips:.0f} pips)\n"
+        f"Target 1   : <b>{tp1}</b> ({tp1_pips:.0f} pips)\n"
+        f"Target 2   : <b>{tp2}</b> ({tp2_pips:.0f} pips)\n"
+        f"R:R Ratio  : 1:{rr}\n"
+        f"Strength   : {strength}/100\n"
+        f"Pattern    : {pattern}\n"
+        f"Hold       : {hold_days}\n"
+        f"Trend      : Daily {daily_trend} {trend_icon}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ Paper trade only. Not financial advice.\n"
+        f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+    )
+    return _send_message(text)
+
+
 def send_consecutive_loss_alert(count: int, paused: bool = True) -> bool:
     """Alert when consecutive loss limit is approached or hit."""
     if paused:
@@ -330,3 +390,100 @@ def send_consecutive_loss_alert(count: int, paused: bool = True) -> bool:
             f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
         )
     return _send_message(text)
+
+
+def send_swing_shortlist_alert(
+    shortlist: list[dict],
+    scan_meta: dict | None = None,
+    max_setups: int = 7,
+) -> bool:
+    """
+    Send SwingSpectrum morning shortlist as a formatted Telegram message.
+
+    Args:
+        shortlist: List of ranked setup dicts from nightly_swing_scan output.
+        scan_meta: Optional dict with scan_date, symbols_scanned, grade_summary, news_enriched.
+        max_setups: Max number of setups to include (Telegram has 4096 char limit).
+
+    Returns:
+        True if sent successfully.
+    """
+    if not shortlist:
+        return _send_message(
+            "📋 <b>SwingSpectrum Morning Shortlist</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ Aaj koi qualifying setup nahi mila.\n"
+            "Possible: market choppy, or all setups failed R:R / regime gate.\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+        )
+
+    meta = scan_meta or {}
+    scan_date = meta.get("scan_date", datetime.now().strftime("%Y-%m-%d"))
+    scanned = meta.get("symbols_scanned", "?")
+    grade_summary = meta.get("grade_summary", {})
+    news_on = "✅" if meta.get("news_enriched") else "❌"
+
+    # Header
+    lines = [
+        f"📋 <b>SwingSpectrum Morning Shortlist</b>",
+        f"📅 {scan_date}  |  {scanned} symbols scanned",
+        f"Grades: A:{grade_summary.get('A', 0)}  B:{grade_summary.get('B', 0)}  C:{grade_summary.get('C', 0)}  |  News: {news_on}",
+        "━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    shown = shortlist[:max_setups]
+    for i, s in enumerate(shown, 1):
+        grade = s.get("grade", "C")
+        direction = s.get("direction", "")
+        symbol = s.get("symbol", "")
+        pattern = s.get("pattern", "")
+        entry = s.get("entry") or s.get("entry_zone", 0)
+        sl = s.get("sl") or s.get("stop_loss", 0)
+        t1 = s.get("t1") or s.get("target_1", 0)
+        rr = s.get("rr") or s.get("risk_reward", 0)
+        score = s.get("composite_score", 0)
+        ns = float(s.get("news_score", 0) or 0)
+
+        grade_icon = {"A": "🟢", "B": "🟡", "C": "⚪"}.get(grade, "⚪")
+        dir_icon = "▲" if direction == "LONG" else "▼"
+        news_tag = ""
+        if ns > 0.1:
+            news_tag = " 📰+"
+        elif ns < -0.1:
+            news_tag = " 📰−"
+
+        lines.append(
+            f"\n{i}. {grade_icon}<b>{grade}</b> {dir_icon} <b>{symbol}</b>{news_tag}"
+        )
+        lines.append(f"   {pattern}")
+        lines.append(
+            f"   Entry: <code>₹{float(entry):,.2f}</code>  "
+            f"SL: <code>₹{float(sl):,.2f}</code>  "
+            f"T1: <code>₹{float(t1):,.2f}</code>"
+        )
+        lines.append(
+            f"   R:R <b>{float(rr):.1f}x</b>  |  Score <b>{float(score):.0f}</b>/100"
+        )
+
+        # Entry note (truncated)
+        note = s.get("entry_note", "")
+        if note:
+            lines.append(f"   💡 {note[:80]}")
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━")
+
+    if len(shortlist) > max_setups:
+        lines.append(f"... +{len(shortlist) - max_setups} more setups in full report")
+
+    lines.append("⚠️ Paper only. Not financial advice. Always use SL.")
+    lines.append(f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}")
+
+    text = "\n".join(lines)
+
+    # Telegram limit: 4096 chars. Truncate gracefully if needed.
+    if len(text) > 4000:
+        text = text[:3950] + "\n\n... (truncated — see full report on dashboard)"
+
+    return _send_message(text)
+

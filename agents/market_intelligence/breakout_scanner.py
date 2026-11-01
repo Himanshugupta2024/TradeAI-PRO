@@ -249,6 +249,15 @@ def scan_all_symbols(
         dict with categorized breakout data.
     """
     all_breakouts = []
+    if not symbol_data:
+        return {
+            "all": [], "bullish_10d": [], "bearish_10d": [],
+            "bullish_50d": [], "bearish_50d": [],
+            "week_52_high": [], "week_52_low": [],
+            "total_breakouts": 0, "grade_a_count": 0, "grade_b_count": 0,
+            "real_data": False,
+            "timestamp": datetime.now().isoformat(),
+        }
 
     for symbol, df in symbol_data.items():
         bos = scan_breakouts(df, symbol)
@@ -278,6 +287,6 @@ def scan_all_symbols(
         "total_breakouts": len(all_breakouts),
         "grade_a_count": len([b for b in all_breakouts if b["grade"] == "A"]),
         "grade_b_count": len([b for b in all_breakouts if b["grade"] == "B"]),
-        "real_data": True,
+        "real_data": len(all_breakouts) > 0,
         "timestamp": datetime.now().isoformat(),
     }

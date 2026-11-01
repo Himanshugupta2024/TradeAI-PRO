@@ -38,3 +38,25 @@ models/
 # Runtime / API caches (generated; do not commit)
 context_cache.json
 news_cache.json
+
+cot_cache.json
+edge_scores_cache.json
+risk_cache.json
+seasonal_cache.json
+daily_api_usage.json
+trade_outcomes.db
+annual*.txt
+
+# Graphify & agent tools
+graphify-out/
+agents/graphify-out/
+.graphify_python
+.agent/
+.kiro/
+backtest_results/
+
+# Feedback loop & runtime data
+config/learned_weights.json
+data/*.json
+data/swing_history/
+data/intraday_scorecard.csv

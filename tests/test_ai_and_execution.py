@@ -15,6 +15,7 @@ import tempfile
 from agents.ai_engine.fallback_predictor import predict_direction, predict_batch
 from agents.ai_engine.trainer import prepare_sequences, FEATURE_COLS
 from agents.execution.paper_trading import PaperTradingEngine, PaperTrade
+from config import settings
 
 
 # ── Helpers ──────────────────────────────────────────────
@@ -192,4 +193,44 @@ class TestPaperTrading:
         closed = engine.update_prices({"BTC/USDT": {"high": 65500, "low": 62500, "close": 63000}})
         assert len(closed) == 1
         assert closed[0].pnl > 0
+        os.unlink(path)
+
+    def test_partial_take_profit_books_and_trails_remainder(self, monkeypatch):
+        monkeypatch.setattr(settings, "PARTIAL_TP_ENABLED", True)
+        monkeypatch.setattr(settings, "PARTIAL_TP_CLOSE_FRACTION", 0.5)
+        monkeypatch.setattr(settings, "PARTIAL_TP_TRIGGER_FRACTION", 0.5)
+        monkeypatch.setattr(settings, "PARTIAL_TP_BREAKEVEN_ON_TRIGGER", True)
+        monkeypatch.setattr(settings, "REGIME_TARGET_SCALING_ENABLED", False)
+
+        engine, path = self._engine()
+        trade = engine.execute("BTC/USDT", "LONG", 100.0, 95.0, 110.0)
+        assert trade is not None
+
+        # Hits partial target (105) but not final target (110)
+        closed = engine.update_prices({"BTC/USDT": {"high": 105.2, "low": 99.2, "close": 104.0}})
+        assert closed == []
+        assert trade.partial_taken is True
+        assert trade.quantity == pytest.approx(trade.initial_quantity * 0.5)
+        assert engine.capital > engine.initial_capital
+
+        # Runner is protected at breakeven; this candle should close remaining half.
+        closed2 = engine.update_prices({"BTC/USDT": {"high": 104.0, "low": 99.0, "close": 100.0}})
+        assert len(closed2) == 1
+        assert closed2[0].status in ("CLOSED_SL", "CLOSED_TRAIL")
+        assert closed2[0].total_pnl > 0
+        os.unlink(path)
+
+    def test_regime_target_scaling_adjusts_target(self, monkeypatch):
+        monkeypatch.setattr(settings, "REGIME_TARGET_SCALING_ENABLED", True)
+        monkeypatch.setattr(settings, "REGIME_TARGET_STRONG_TREND_MULT", 1.5)
+        monkeypatch.setattr(settings, "REGIME_TARGET_RANGE_MULT", 0.7)
+
+        engine, path = self._engine()
+        t1 = engine.execute("BTC/USDT", "LONG", 100.0, 95.0, 110.0, regime="RANGING")
+        assert t1 is not None
+        assert t1.target == pytest.approx(107.0)
+
+        t2 = engine.execute("ETH/USDT", "LONG", 100.0, 95.0, 110.0, regime="TRENDING")
+        assert t2 is not None
+        assert t2.target == pytest.approx(115.0)
         os.unlink(path)

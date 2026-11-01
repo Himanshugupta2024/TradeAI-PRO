@@ -8,7 +8,7 @@ Provides a unified interface for the signal pipeline.
 
 import asyncio
 from collections import defaultdict, deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -222,7 +222,7 @@ class DataManager:
         if last_ts is None:
             return float("inf")
         # Normalize both sides to naive UTC for a safe comparison
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         ts = last_ts
         if hasattr(ts, "tzinfo") and ts.tzinfo is not None:
             ts = ts.replace(tzinfo=None)  # stored as naive UTC; strip tz if any

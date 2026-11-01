@@ -271,7 +271,7 @@ class ContextFetcher:
             for attempt in range(3):
                 session = SessionLocal()
                 try:
-                    cutoff = datetime.utcnow() - timedelta(days=90)
+                    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=90)
                     session.execute(delete(ContextSnapshot).where(ContextSnapshot.timestamp_utc < cutoff))
                     session.commit()
                     break
@@ -790,21 +790,71 @@ class ContextFetcher:
         }
 
     def _fetch_nse_news_rss_free(self, base: str, now: datetime) -> dict[str, Any]:
-        """Google News RSS (no API key) for ~7d window; keyword sentiment for 24h vs 7d buckets."""
-        q = quote_plus(f"{base} NSE India stock OR {base} share price BSE")
-        url = f"https://news.google.com/rss/search?q={q}&hl=en-IN&gl=IN&ceid=IN:en"
+        """Fetch ~7d news from Google News RSS with retry + Yahoo Finance fallback.
+
+        Google News RSS frequently returns 429/403 on cloud IPs or rate-limits
+        repeated symbol queries. Strategy:
+          1. Try Google News RSS (primary) — up to 2 attempts with backoff.
+          2. Fallback: Yahoo Finance RSS for the same stock (global mirror).
+          3. Fallback: Moneycontrol RSS search.
+        Returns neutral payload on total failure (pipeline non-blocking).
+        """
+        _NEUTRAL = {"count_24h": 0, "count_7d": 0, "sentiment_24h": 0.0, "sentiment_7d": 0.0}
         headers = {
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) "
+                "Gecko/20100101 Firefox/115.0"
             ),
+            "Accept": "application/rss+xml, application/xml, text/xml, */*",
         }
-        try:
-            response = self._http_get(url, timeout=14, headers=headers)
-            response.raise_for_status()
-            items = self._extract_rss_items(response.text or "")
-        except Exception as exc:
-            logger.warning("NSE RSS news failed for %s: %s", base, exc)
-            return {"count_24h": 0, "count_7d": 0, "sentiment_24h": 0.0, "sentiment_7d": 0.0}
+
+        # ── Source list: tried in order until one yields items ─────────────────
+        q_full = quote_plus(f"{base} NSE share price India stock")
+        q_short = quote_plus(f"{base} NSE")
+        nse_ticker = f"{base}.NS"
+        sources = [
+            # Google News — full query
+            f"https://news.google.com/rss/search?q={q_full}&hl=en-IN&gl=IN&ceid=IN:en",
+            # Google News — shorter query (less throttling)
+            f"https://news.google.com/rss/search?q={q_short}&hl=en-IN&gl=IN&ceid=IN:en",
+            # Yahoo Finance RSS for the NSE ticker
+            f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={nse_ticker}&region=IN&lang=en-IN",
+        ]
+
+        items: list[tuple[str, datetime | None]] = []
+        for attempt, url in enumerate(sources):
+            if items:
+                break
+            try:
+                response = self._http_get(url, timeout=14, headers=headers)
+                response.raise_for_status()
+                fetched = self._extract_rss_items(response.text or "")
+                if fetched:
+                    items = fetched
+                    logger.debug("NSE RSS news for %s: %d items from source %d", base, len(items), attempt + 1)
+            except Exception as exc:
+                status = None
+                if hasattr(exc, "response") and exc.response is not None:
+                    status = getattr(exc.response, "status_code", None)
+                if attempt < len(sources) - 1:
+                    # Backoff before next source: 0.5s, 1.5s
+                    import time as _time
+                    _time.sleep(0.5 * (attempt + 1))
+                    logger.debug(
+                        "NSE RSS source %d failed for %s (HTTP %s), trying next: %s",
+                        attempt + 1, base, status, exc,
+                    )
+                else:
+                    # All sources exhausted — log at warning level once per symbol
+                    logger.warning(
+                        "NSE news: all RSS sources failed for %s — using neutral context "
+                        "(news will not affect signal strength).",
+                        base,
+                    )
+                    return _NEUTRAL
+
+        if not items:
+            return _NEUTRAL
 
         cutoff_7d = now - timedelta(days=7)
         cutoff_24h = now - timedelta(hours=24)
@@ -825,6 +875,7 @@ class ContextFetcher:
             "sentiment_24h": float(s24),
             "sentiment_7d": float(s7),
         }
+
 
     def _extract_rss_items(self, xml_text: str) -> list[tuple[str, datetime | None]]:
         out: list[tuple[str, datetime | None]] = []

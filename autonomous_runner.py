@@ -49,6 +49,14 @@ from agents.alerts.telegram_bot import (
 )
 from db.runtime_state import set_runtime_state
 
+try:
+    from agents.market_intelligence.forex_scanner import scan_all_forex
+    from agents.alerts.telegram_bot import send_forex_signal_alert
+    _FOREX_RUNNER_AVAILABLE = True
+except Exception as _forex_err:
+    _FOREX_RUNNER_AVAILABLE = False
+    log_placeholder = None  # log not yet set at import time; handled below
+
 log = get_logger("autonomous")
 
 _executor = ThreadPoolExecutor(max_workers=6)
@@ -194,19 +202,56 @@ async def run_symbol(symbol: str, engine: PaperTradingEngine) -> dict | None:
     ai_confidence = predict_batch(df)
     df["ai_confidence"] = ai_confidence
 
-    # Signal generation with regime awareness
-    df = generate_signals(df, ai_confidence=ai_confidence, regime=regime)
+    # Fetch EdgeScore from macro intelligence layer
+    edge_breakdown = None
+    asset_class = None
+    try:
+        from agents.macro.edge_score_engine import EdgeScoreEngine
+        
+        # Determine asset class
+        if symbol in settings.CRYPTO_SYMBOLS:
+            asset_class = "crypto"
+        elif symbol in settings.NSE_SYMBOLS:
+            if symbol in ["NIFTY", "BANKNIFTY", "FINNIFTY"]:
+                asset_class = "index"
+            else:
+                asset_class = "nse"
+        else:
+            # Assume forex if not crypto or NSE
+            asset_class = "forex"
+        
+        edge_engine = EdgeScoreEngine()
+        edge_breakdown = edge_engine.get_edge_score(symbol, asset_class)
+        
+        log.info(
+            "EdgeScore for %s: %.1f (macro: %.1f, cot: %.1f, sentiment: %.1f, risk: %.1f)",
+            symbol, edge_breakdown.edge_score, edge_breakdown.macro_score,
+            edge_breakdown.cot_score, edge_breakdown.sentiment_score, edge_breakdown.risk_score
+        )
+    except Exception as e:
+        log.warning("Failed to fetch EdgeScore for %s: %s", symbol, e)
+
+    # Signal generation with regime awareness and EdgeScore
+    df = generate_signals(
+        df,
+        ai_confidence=ai_confidence,
+        regime=regime,
+        edge_score=edge_breakdown,
+        asset_class=asset_class,
+        symbol=symbol,
+    )
 
     last = df.iloc[-1]
     signal = last.get("signal", "HOLD")
     confidence = last.get("confidence", 0)
+    edge_score = last.get("edge_score", 0.0)
 
     # Get current ATR for trailing SL
     atr = float(last.get(f"ATR_{settings.ATR_PERIOD}", 0))
 
     log.info(
-        "Signal: %s | Conf: %.0f%% | Close: %.2f | RSI: %.1f | Trend: %s | Regime: %s",
-        signal, confidence, last["close"],
+        "Signal: %s | Conf: %.0f%% | EdgeScore: %.1f | Close: %.2f | RSI: %.1f | Trend: %s | Regime: %s",
+        signal, confidence, edge_score, last["close"],
         last.get("RSI_14", 0), last.get("htf_trend", "N/A"), regime.value,
     )
 
@@ -224,11 +269,12 @@ async def run_symbol(symbol: str, engine: PaperTradingEngine) -> dict | None:
                 symbol=symbol, direction=signal, entry=entry,
                 stop_loss=sl, target=tp, confidence=confidence,
                 trend=trend, rsi=rsi, regime=regime.value,
+                edge_score=edge_score,
             )
             return {
                 "symbol": symbol, "signal": signal, "entry": entry,
                 "stop_loss": sl, "target": tp, "confidence": confidence,
-                "regime": regime.value,
+                "regime": regime.value, "edge_score": edge_score,
             }
 
     # Check open trades against latest prices (with trailing SL)
@@ -289,6 +335,64 @@ def _should_send_daily_report() -> bool:
     now_ist = datetime.now(tz=IST)
     close_hour, close_min = map(int, settings.NSE_MARKET_CLOSE_IST.split(":"))
     return now_ist.hour == close_hour and now_ist.minute == close_min
+
+
+async def run_forex_loop() -> None:
+    """
+    Background task: scan all forex pairs every FOREX_SCAN_INTERVAL_MINUTES minutes.
+
+    Runs parallel to the NSE/Crypto polling loop — does not interfere with it.
+    Results are cached to forex_signals_cache.json.
+    Sends Telegram alert for setups above FOREX_ALERT_STRENGTH_THRESHOLD.
+    """
+    import json as _json
+
+    if not _FOREX_RUNNER_AVAILABLE:
+        log.warning("[FOREX] Forex scanner not available — forex loop disabled")
+        return
+
+    # Deduplication: (symbol, direction) → last_alerted timestamp
+    _last_alerted: dict[tuple[str, str], datetime] = {}
+    cooldown_hours = settings.TELEGRAM_ALERT_COOLDOWN_HOURS
+    cache_file = "forex_signals_cache.json"
+
+    log.info("[FOREX] Forex loop started (interval=%dm)", settings.FOREX_SCAN_INTERVAL_MINUTES)
+
+    while True:
+        try:
+            setups = scan_all_forex()
+            log.info("[FOREX] Scan complete: %d setups", len(setups))
+
+            # Persist cache
+            try:
+                payload = {
+                    "setups": [s.to_dict() for s in setups],
+                    "scanned_at": datetime.now().isoformat(),
+                }
+                with open(cache_file, "w") as _f:
+                    _json.dump(payload, _f, indent=2)
+            except OSError as cache_err:
+                log.warning("[FOREX] Could not write cache file: %s", cache_err)
+
+            # Send Telegram alerts for high-strength setups
+            now = datetime.now()
+            for setup in setups:
+                if setup.strength_score < settings.FOREX_ALERT_STRENGTH_THRESHOLD:
+                    continue
+                key = (setup.symbol, setup.direction)
+                last = _last_alerted.get(key)
+                if last and (now - last).total_seconds() < cooldown_hours * 3600:
+                    continue
+                try:
+                    send_forex_signal_alert(setup.to_dict())
+                    _last_alerted[key] = now
+                except Exception as alert_err:
+                    log.warning("[FOREX] Alert failed for %s: %s", setup.symbol, alert_err)
+
+        except Exception as e:
+            log.warning("[FOREX] Forex loop error: %s", e)
+
+        await asyncio.sleep(settings.FOREX_SCAN_INTERVAL_MINUTES * 60)
 
 
 async def main_async(args):
@@ -392,6 +496,10 @@ async def main_async(args):
         ws_task = None
         log.info("Using polling mode for all symbols")
 
+    # Start forex background loop (parallel, non-blocking)
+    forex_task = asyncio.create_task(run_forex_loop())
+    log.info("[FOREX] Forex background loop scheduled (interval=%dm)", settings.FOREX_SCAN_INTERVAL_MINUTES)
+
     cycle = 0
     daily_report_sent_today = False
 
@@ -471,6 +579,7 @@ async def main_async(args):
         await ws_client.stop()
     if ws_task:
         ws_task.cancel()
+    forex_task.cancel()
 
     # Final summary
     send_daily_summary(engine.get_stats())

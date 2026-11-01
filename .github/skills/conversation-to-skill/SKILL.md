@@ -21,6 +21,11 @@ Produce a complete skill bundle that includes SKILL.md and companion references:
 - user has repeated a process across messages and wants reuse
 - user wants a checklist or step-by-step workflow packaged as a skill
 
+## When NOT to Use
+- user asks for a simple, one-off scratch script or temporary bug fix
+- user wants general repository documentation or high-level architecture notes
+- the workflow has no repeatable steps, parameters, or quality gates
+
 ## Inputs To Collect
 - desired outcome the skill should produce
 - scope: workspace skill or personal skill

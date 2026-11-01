@@ -121,7 +121,8 @@ FEATURE_COLS_XGB_ADVANCED = [
 ]
 
 # Combined feature list (45 features)
-FEATURE_COLS_XGB = FEATURE_COLS_XGB_BASE + FEATURE_COLS_XGB_ADVANCED
+FEATURE_COLS_LSTM_EMBED = [f"lstm_h_{i}" for i in range(128)]
+FEATURE_COLS_XGB = FEATURE_COLS_XGB_BASE + FEATURE_COLS_XGB_ADVANCED + FEATURE_COLS_LSTM_EMBED
 
 
 def extract_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -248,7 +249,38 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     feat["dow_sin"]  = df.get("dow_sin",  pd.Series(0.0, index=df.index))
 
     # Fill any remaining NaN with 0
-    feat = feat.fillna(0)
+    feat = feat.fillna(0.0)
+
+    # ── LSTM Embeddings ──────────────────────────────────────────────────
+    # Try to load LSTM model and generate 128 embedding features
+    lstm_df = pd.DataFrame(0.0, index=feat.index, columns=FEATURE_COLS_LSTM_EMBED)
+
+    try:
+        import torch
+        from agents.ai_engine.lstm_model import TradingLSTM
+        from agents.ai_engine.trainer import prepare_sequences, FEATURE_COLS
+
+        if os.path.exists("models/best_model.pt"):
+            available_cols = [c for c in FEATURE_COLS if c in df.columns]
+            model = TradingLSTM(input_size=len(available_cols))
+            model.load_state_dict(torch.load("models/best_model.pt", map_location="cpu", weights_only=True))
+            model.eval()
+            # Use use_outcome_labels=False so we don't need label_generator during inference
+            X_seq, _, _ = prepare_sequences(df, seq_length=60, use_outcome_labels=False)
+            if len(X_seq) > 0:
+                with torch.no_grad():
+                    embeddings = model.get_embeddings(torch.FloatTensor(X_seq)).numpy()
+
+                # embeddings has shape (len(df) - 60, 128)
+                # Pad the first 60 rows with zeros
+                pad = np.zeros((len(df) - len(embeddings), 128))
+                full_embeddings = np.vstack([pad, embeddings])
+
+                lstm_df[FEATURE_COLS_LSTM_EMBED] = full_embeddings
+    except Exception as e:
+        log.debug("Could not generate LSTM embeddings for XGBoost: %s", e)
+
+    feat = pd.concat([feat, lstm_df], axis=1)
 
     return feat[FEATURE_COLS_XGB]
 

@@ -73,6 +73,16 @@ class PaperTrade:
     exit_time: str = ""
     pnl: float = 0.0
     pnl_pct: float = 0.0
+    total_pnl: float = 0.0
+    initial_quantity: float = 0.0
+    original_target: float = 0.0
+    target_multiplier: float = 1.0
+    partial_target: float = 0.0
+    partial_taken: bool = False
+    partial_exit_price: float = 0.0
+    partial_exit_time: str = ""
+    partial_closed_qty: float = 0.0
+    realized_pnl: float = 0.0
     # ── Self-Learning metadata (captured at entry, stored with trade) ──────
     signal_type: str = "COMBINED"   # RSI_BOUNCE / MACD_CROSS / BREAKOUT / EMA_CROSS / DIVERGENCE
     regime: str = "UNKNOWN"         # TRENDING / RANGING / HIGH_VOLATILITY
@@ -113,6 +123,7 @@ class PaperTradingEngine:
         self._last_trade_date: str = _today_ist()  # Track day for loss counter reset
         self._circuit_breaker_active = False
         self._circuit_breaker_reason = ""
+        self.last_rejection_reason: str = ""
 
         # Trailing SL manager
         self.trailing_manager = TrailingStopManager()
@@ -142,6 +153,8 @@ class PaperTradingEngine:
         rsi_at_entry: float = 0.0,
         volume_above_avg: bool = False,
         confidence: float = 0.0,
+        min_rr: float | None = None,
+        allow_duplicate_symbol: bool = False,
     ) -> PaperTrade | None:
         """
         Execute a paper trade if risk rules allow it.
@@ -153,6 +166,8 @@ class PaperTradingEngine:
         Returns:
             PaperTrade if executed, None if blocked by risk rules.
         """
+        self.last_rejection_reason = ""
+
         # Daily reset: clear consecutive losses at start of new day (IST)
         today = _today_ist()
         if self._last_trade_date and self._last_trade_date != today:
@@ -164,30 +179,68 @@ class PaperTradingEngine:
 
         # Risk check: consecutive losses
         if self._consecutive_losses >= settings.MAX_CONSECUTIVE_LOSSES:
+            self.last_rejection_reason = (
+                f"Max consecutive losses reached ({self._consecutive_losses}/{settings.MAX_CONSECUTIVE_LOSSES}) - trading paused for today"
+            )
             log.warning("BLOCKED: %d consecutive losses — pausing", self._consecutive_losses)
             return None
 
         # Risk check: circuit breaker drawdown gate (latched until reset)
         self._update_circuit_breaker_state()
         if self._circuit_breaker_active:
+            self.last_rejection_reason = (
+                f"Circuit breaker active ({self._circuit_breaker_reason or 'risk breach'})"
+            )
             log.warning("BLOCKED: Circuit breaker active (%s)", self._circuit_breaker_reason or "risk breach")
             return None
 
-        # Risk check: daily loss limit
+        # Risk check: daily loss limit (only block on losses, not profitable days)
         today = _today_ist()
         daily = self._daily_pnl.get(today, 0.0)
-        if abs(daily) / max(self.capital, 1) >= settings.DAILY_LOSS_LIMIT_PCT / 100:
+        if daily < 0 and abs(daily) / max(self.capital, 1) >= settings.DAILY_LOSS_LIMIT_PCT / 100:
+            self.last_rejection_reason = (
+                f"Daily loss limit hit ({daily:.2f} PnL, max {settings.DAILY_LOSS_LIMIT_PCT}%)"
+            )
             log.warning("BLOCKED: Daily loss limit hit (%.2f)", daily)
+            return None
+
+        # Risk check: max open positions
+        max_open = int(getattr(settings, "PAPER_TRADING_MAX_OPEN", 5))
+        if len(self.open_trades) >= max_open:
+            self.last_rejection_reason = (
+                f"Maximum open positions limit ({len(self.open_trades)}/{max_open}) reached"
+            )
+            log.warning("BLOCKED: %s", self.last_rejection_reason)
+            return None
+
+        # Risk check: duplicate open trade on the same symbol
+        norm_sym = self._normalize_symbol(symbol)
+        if not allow_duplicate_symbol and any(self._normalize_symbol(t.symbol) == norm_sym for t in self.open_trades):
+            self.last_rejection_reason = f"An open position already exists for {symbol}"
+            log.warning("BLOCKED: %s", self.last_rejection_reason)
             return None
 
         # Risk check: cooldown timer
         if symbol in self._cooldowns and self._cooldowns[symbol] > 0:
+            self.last_rejection_reason = (
+                f"{symbol} on cooldown ({self._cooldowns[symbol]} candles remaining)"
+            )
             log.warning("BLOCKED: %s on cooldown (%d candles remaining)",
                         symbol, self._cooldowns[symbol])
             return None
 
-        # Risk check: minimum RR
+        # Normalize and validate direction
         if direction in ("LONG", "BUY"):
+            direction = "LONG"
+        elif direction in ("SHORT", "SELL"):
+            direction = "SHORT"
+        else:
+            self.last_rejection_reason = f"Invalid direction '{direction}' for {symbol}"
+            log.warning("BLOCKED: Invalid direction '%s' for %s", direction, symbol)
+            return None
+
+        # Risk check: minimum RR (validated on incoming raw target)
+        if direction == "LONG":
             risk = entry - sl
             reward = tp - entry
         else:
@@ -195,13 +248,31 @@ class PaperTradingEngine:
             reward = entry - tp
 
         if risk <= 0:
+            self.last_rejection_reason = f"Invalid SL (risk={risk:.2f} must be positive)"
             log.warning("BLOCKED: Invalid SL (risk=%.2f)", risk)
             return None
 
         rr = reward / risk
-        if rr < settings.MIN_RISK_REWARD:
-            log.warning("BLOCKED: RR %.1f below minimum %.1f", rr, settings.MIN_RISK_REWARD)
+        if min_rr is not None and min_rr > 0:
+            required_rr = float(min_rr)
+        elif "SWING" in str(signal_type or "").upper():
+            required_rr = float(getattr(settings, "SWING_MIN_RISK_REWARD", 1.5))
+        elif any(k in str(signal_type or "").upper() for k in ("INTRADAY", "ORB", "VWAP", "GAP", "CPR", "SUPERTREND")):
+            required_rr = float(getattr(settings, "INTRADAY_MIN_RISK_REWARD", 1.5))
+        else:
+            required_rr = float(getattr(settings, "MIN_RISK_REWARD", 2.0))
+
+        if rr < required_rr:
+            self.last_rejection_reason = (
+                f"RR {rr:.2f} below minimum required {required_rr:.1f} for {signal_type}"
+            )
+            log.warning("BLOCKED: RR %.2f below minimum %.1f", rr, required_rr)
             return None
+
+        # Regime-aware target scaling for better exit fit across market states.
+        target_multiplier = self._target_multiplier_for_regime(regime=regime, direction=direction)
+        adjusted_tp = self._scale_target(entry=entry, target=tp, direction=direction, multiplier=target_multiplier)
+        partial_target = self._partial_target(entry=entry, target=adjusted_tp, direction=direction)
 
         # Calculate position size
         qty = calculate_position_size(
@@ -217,6 +288,9 @@ class PaperTradingEngine:
         # Risk check: portfolio heat (projected risk after this trade)
         projected_heat = self._projected_portfolio_heat_pct(entry, sl, qty)
         if projected_heat > settings.MAX_PORTFOLIO_HEAT_PCT:
+            self.last_rejection_reason = (
+                f"Portfolio heat {projected_heat * 100:.2f}% exceeds max {settings.MAX_PORTFOLIO_HEAT_PCT * 100:.2f}%"
+            )
             log.warning(
                 "BLOCKED: Portfolio heat %.2f%% exceeds max %.2f%%",
                 projected_heat * 100,
@@ -232,8 +306,12 @@ class PaperTradingEngine:
             direction=direction,
             entry_price=entry,
             stop_loss=sl,
-            target=tp,
+            target=adjusted_tp,
             quantity=qty,
+            initial_quantity=qty,
+            original_target=tp,
+            target_multiplier=target_multiplier,
+            partial_target=partial_target,
             entry_time=_now_ist_isoformat(),
             signal_type=signal_type,
             regime=regime,
@@ -258,8 +336,8 @@ class PaperTradingEngine:
         self._save()
 
         log.info(
-            "✅ #%d %s %s @ %.2f | SL: %.2f | TP: %.2f | RR: %.1f | Qty: %.4f",
-            trade.id, direction, symbol, entry, sl, tp, rr, qty,
+            "✅ #%d %s %s @ %.2f | SL: %.2f | TP: %.2f (x%.2f) | RR: %.1f | Qty: %.4f",
+            trade.id, direction, symbol, entry, sl, adjusted_tp, target_multiplier, rr, qty,
         )
         return trade
 
@@ -304,10 +382,13 @@ class PaperTradingEngine:
                     exit_reason = "CLOSED_TRAIL" if atr > 0 else "CLOSED_SL"
                     self._close_trade(trade, trade.stop_loss, exit_reason)
                     closed.append(trade)
-                # Check TP
-                elif high >= trade.target:
-                    self._close_trade(trade, trade.target, "CLOSED_TP")
-                    closed.append(trade)
+                else:
+                    # Optional scale-out: book partial at mid-target and trail remainder.
+                    self._maybe_take_partial_profit(trade, high=high, low=low, atr=atr)
+                    # Check TP
+                    if high >= trade.target:
+                        self._close_trade(trade, trade.target, "CLOSED_TP")
+                        closed.append(trade)
 
             elif trade.direction in ("SHORT", "SELL"):
                 # Short: SL is above
@@ -315,9 +396,11 @@ class PaperTradingEngine:
                     exit_reason = "CLOSED_TRAIL" if atr > 0 else "CLOSED_SL"
                     self._close_trade(trade, trade.stop_loss, exit_reason)
                     closed.append(trade)
-                elif low <= trade.target:
-                    self._close_trade(trade, trade.target, "CLOSED_TP")
-                    closed.append(trade)
+                else:
+                    self._maybe_take_partial_profit(trade, high=high, low=low, atr=atr)
+                    if low <= trade.target:
+                        self._close_trade(trade, trade.target, "CLOSED_TP")
+                        closed.append(trade)
 
         if closed:
             self._save()
@@ -357,7 +440,7 @@ class PaperTradingEngine:
             curve = [{"timestamp": "", "equity": equity}]
             for t in self.trades:
                 if t.status != "OPEN":
-                    equity += t.pnl * t.quantity
+                    equity += self._trade_total_pnl(t)
                     curve.append({"timestamp": t.exit_time, "equity": round(equity, 2)})
             return curve
         return self.equity_history
@@ -371,11 +454,12 @@ class PaperTradingEngine:
                 "total_pnl": 0, "win_rate": 0, "consecutive_losses": 0,
                 "sharpe_ratio": 0, "max_drawdown": 0, "max_drawdown_pct": 0,
                 "profit_factor": 0, "avg_win": 0, "avg_loss": 0,
+                "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
             }
 
-        wins = [t for t in closed if t.pnl > 0]
-        losses = [t for t in closed if t.pnl <= 0]
-        pnls = [t.pnl * t.quantity for t in closed]
+        pnls = [self._trade_total_pnl(t) for t in closed]
+        wins = [t for t in closed if self._trade_total_pnl(t) > 1e-6]
+        losses = [t for t in closed if self._trade_total_pnl(t) < -1e-6]
         pnl_pcts = [t.pnl_pct for t in closed]
 
         # Equity curve for drawdown
@@ -392,7 +476,7 @@ class PaperTradingEngine:
 
         # Profit factor
         gross_profit = sum(p for p in pnls if p > 0) or 0
-        gross_loss = abs(sum(p for p in pnls if p <= 0)) or 1
+        gross_loss = abs(sum(p for p in pnls if p < 0)) or 1
         profit_factor = gross_profit / gross_loss
 
         # Sharpe ratio (annualized)
@@ -412,8 +496,8 @@ class PaperTradingEngine:
             "capital": round(self.capital, 2),
             "total_pnl": round(sum(pnls), 2),
             "avg_pnl": round(sum(pnls) / len(pnls), 2),
-            "avg_win": round(np.mean([t.pnl for t in wins]), 2) if wins else 0,
-            "avg_loss": round(np.mean([t.pnl for t in losses]), 2) if losses else 0,
+            "avg_win": round(np.mean([self._trade_total_pnl(t) for t in wins]), 2) if wins else 0,
+            "avg_loss": round(np.mean([self._trade_total_pnl(t) for t in losses]), 2) if losses else 0,
             "best_trade": round(max(pnls), 2),
             "worst_trade": round(min(pnls), 2),
             "consecutive_losses": self._consecutive_losses,
@@ -422,6 +506,7 @@ class PaperTradingEngine:
             "max_drawdown": round(max_dd, 2),
             "max_drawdown_pct": round(max_dd_pct, 1),
             "profit_factor": round(profit_factor, 2),
+            "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
         }
 
     def get_portfolio_heat_pct(self) -> float:
@@ -466,6 +551,48 @@ class PaperTradingEngine:
         self._save()
         return self.get_risk_state()
 
+    def _target_multiplier_for_regime(self, regime: str, direction: str) -> float:
+        """Return regime-aware target scaling multiplier."""
+        if not getattr(settings, "REGIME_TARGET_SCALING_ENABLED", True):
+            return 1.0
+        rv = str(regime or "UNKNOWN").upper()
+        direction = str(direction or "").upper()
+
+        if rv in ("STRONG_TREND_UP", "STRONG_TREND_DOWN"):
+            aligned = (rv.endswith("UP") and direction == "LONG") or (rv.endswith("DOWN") and direction == "SHORT")
+            if aligned:
+                return float(getattr(settings, "REGIME_TARGET_STRONG_TREND_MULT", 1.5))
+            return float(getattr(settings, "REGIME_TARGET_WEAK_TREND_MULT", 0.7))
+
+        if rv in ("TRENDING",):
+            return float(getattr(settings, "REGIME_TARGET_STRONG_TREND_MULT", 1.5))
+        if rv in ("WEAK_TREND",):
+            return float(getattr(settings, "REGIME_TARGET_WEAK_TREND_MULT", 0.7))
+        if rv in ("RANGING", "RANGE", "CHOP", "CHOPPY"):
+            return float(getattr(settings, "REGIME_TARGET_RANGE_MULT", 0.7))
+        if rv in ("HIGH_VOLATILITY", "HIGH_VOL", "VOLATILE"):
+            return float(getattr(settings, "REGIME_TARGET_HIGH_VOL_MULT", 0.7))
+        return 1.0
+
+    @staticmethod
+    def _scale_target(entry: float, target: float, direction: str, multiplier: float) -> float:
+        """Scale target distance from entry by multiplier while preserving side."""
+        m = max(0.1, float(multiplier))
+        if direction in ("LONG", "BUY"):
+            dist = max(0.0, float(target) - float(entry))
+            return float(entry) + dist * m
+        dist = max(0.0, float(entry) - float(target))
+        return float(entry) - dist * m
+
+    @staticmethod
+    def _partial_target(entry: float, target: float, direction: str) -> float:
+        """Compute partial-take-profit trigger between entry and final target."""
+        frac = float(getattr(settings, "PARTIAL_TP_TRIGGER_FRACTION", 0.5))
+        frac = min(0.9, max(0.1, frac))
+        if direction in ("LONG", "BUY"):
+            return float(entry) + (float(target) - float(entry)) * frac
+        return float(entry) - (float(entry) - float(target)) * frac
+
     # ── Internal ─────────────────────────────────────────
 
     @staticmethod
@@ -506,6 +633,79 @@ class PaperTradingEngine:
         new_risk = abs(entry - stop_loss) * max(qty, 0.0)
         return max((existing_risk + new_risk) / self.capital, 0.0)
 
+    @staticmethod
+    def _trade_total_pnl(trade: PaperTrade) -> float:
+        total = float(getattr(trade, "total_pnl", 0.0) or 0.0)
+        if abs(total) > 1e-12:
+            return total
+        return float(getattr(trade, "pnl", 0.0) or 0.0) * float(getattr(trade, "quantity", 0.0) or 0.0)
+
+    def _maybe_take_partial_profit(self, trade: PaperTrade, *, high: float, low: float, atr: float) -> None:
+        """Take partial profit once and keep remainder running with tighter protection."""
+        if not getattr(settings, "PARTIAL_TP_ENABLED", True):
+            return
+        if trade.partial_taken or trade.status != "OPEN":
+            return
+        if trade.quantity <= 0:
+            return
+
+        trigger = float(trade.partial_target or 0.0)
+        if trigger <= 0:
+            return
+
+        if trade.direction in ("LONG", "BUY"):
+            hit = high >= trigger
+            pnl_per_unit = trigger - trade.entry_price
+        else:
+            hit = low <= trigger
+            pnl_per_unit = trade.entry_price - trigger
+        if not hit:
+            return
+
+        frac = float(getattr(settings, "PARTIAL_TP_CLOSE_FRACTION", 0.5))
+        frac = min(0.9, max(0.1, frac))
+        close_qty = max(0.0, trade.quantity * frac)
+        if close_qty <= 0:
+            return
+
+        realized = pnl_per_unit * close_qty
+        trade.partial_taken = True
+        trade.partial_exit_price = trigger
+        trade.partial_exit_time = _now_ist_isoformat()
+        trade.partial_closed_qty = close_qty
+        trade.realized_pnl += realized
+        trade.total_pnl = trade.realized_pnl
+        trade.quantity = max(0.0, trade.quantity - close_qty)
+
+        # Capital/equity updates for realized partial leg.
+        self.capital += realized
+        today = _today_ist()
+        self._daily_pnl[today] = self._daily_pnl.get(today, 0.0) + realized
+        self.equity_history.append({
+            "timestamp": trade.partial_exit_time,
+            "equity": round(self.capital, 2),
+        })
+
+        # Move stop to breakeven for the runner and tighten trailing state.
+        if getattr(settings, "PARTIAL_TP_BREAKEVEN_ON_TRIGGER", True):
+            if trade.direction in ("LONG", "BUY"):
+                trade.stop_loss = max(trade.stop_loss, trade.entry_price)
+            else:
+                trade.stop_loss = min(trade.stop_loss, trade.entry_price)
+            try:
+                self.trailing_manager.tighten_to(trade.id, trade.stop_loss)
+            except Exception:
+                pass
+
+        log.info(
+            "📌 #%d partial booked @ %.2f | qty=%.4f | realized=%+.2f | remaining=%.4f",
+            trade.id,
+            trigger,
+            close_qty,
+            realized,
+            trade.quantity,
+        )
+
     def _update_circuit_breaker_state(self) -> None:
         if self.initial_capital <= 0:
             return
@@ -523,14 +723,20 @@ class PaperTradingEngine:
         trade.status = status
 
         if trade.direction in ("LONG", "BUY"):
-            trade.pnl = exit_price - trade.entry_price
+            leg_pnl_per_unit = exit_price - trade.entry_price
         else:
-            trade.pnl = trade.entry_price - exit_price
+            leg_pnl_per_unit = trade.entry_price - exit_price
 
-        trade.pnl_pct = round((trade.pnl / trade.entry_price) * 100, 3)
+        remaining_qty = max(float(trade.quantity), 0.0)
+        remaining_leg_pnl = leg_pnl_per_unit * remaining_qty
+        trade.total_pnl = float(getattr(trade, "realized_pnl", 0.0) or 0.0) + remaining_leg_pnl
+
+        initial_qty = max(float(getattr(trade, "initial_quantity", 0.0) or 0.0), 1e-9)
+        trade.pnl = trade.total_pnl / initial_qty
+        trade.pnl_pct = round((trade.total_pnl / (trade.entry_price * initial_qty)) * 100, 3)
 
         # PnL weighted by quantity
-        weighted_pnl = trade.pnl * trade.quantity
+        weighted_pnl = remaining_leg_pnl
         self.capital += weighted_pnl
         self.open_trades.remove(trade)
 
@@ -550,18 +756,21 @@ class PaperTradingEngine:
             "equity": round(self.capital, 2),
         })
 
-        # Track consecutive losses
-        if trade.pnl <= 0:
+        # Track consecutive losses (strict loss: pnl < -1e-6; breakeven doesn't count as loss)
+        if trade.total_pnl < -1e-6:
             self._consecutive_losses += 1
-        else:
+        elif trade.total_pnl > 1e-6:
             self._consecutive_losses = 0
 
-        if trade.pnl > 0:
-            log.info("🎯 #%d %s @ %.2f | PnL: %+.2f (%+.2f%%) | Qty: %.4f",
-                     trade.id, status, exit_price, trade.pnl, trade.pnl_pct, trade.quantity)
+        if trade.total_pnl > 1e-6:
+            log.info("🎯 #%d %s @ %.2f | Total PnL: %+.2f (%+.2f%%) | Qty: %.4f",
+                     trade.id, status, exit_price, trade.total_pnl, trade.pnl_pct, initial_qty)
+        elif trade.total_pnl < -1e-6:
+            log.warning("❌ #%d %s @ %.2f | Total PnL: %+.2f (%+.2f%%) | Qty: %.4f",
+                        trade.id, status, exit_price, trade.total_pnl, trade.pnl_pct, initial_qty)
         else:
-            log.warning("❌ #%d %s @ %.2f | PnL: %+.2f (%+.2f%%) | Qty: %.4f",
-                        trade.id, status, exit_price, trade.pnl, trade.pnl_pct, trade.quantity)
+            log.info("⚪ #%d %s @ %.2f | Breakeven PnL: +0.00 (+0.00%%) | Qty: %.4f",
+                     trade.id, status, exit_price, initial_qty)
 
         # ── Self-learning: log outcome to SQLite ──────────────────────────
         try:
@@ -614,6 +823,27 @@ class PaperTradingEngine:
             # Handle older trade format without quantity
             if "quantity" not in td:
                 td["quantity"] = 1.0
+            if "initial_quantity" not in td:
+                td["initial_quantity"] = td.get("quantity", 1.0)
+            if "original_target" not in td:
+                td["original_target"] = td.get("target", 0.0)
+            if "target_multiplier" not in td:
+                td["target_multiplier"] = 1.0
+            if "partial_target" not in td:
+                try:
+                    td["partial_target"] = self._partial_target(
+                        float(td.get("entry_price", 0.0)),
+                        float(td.get("target", 0.0)),
+                        str(td.get("direction", "LONG")),
+                    )
+                except Exception:
+                    td["partial_target"] = 0.0
+            td.setdefault("partial_taken", False)
+            td.setdefault("partial_exit_price", 0.0)
+            td.setdefault("partial_exit_time", "")
+            td.setdefault("partial_closed_qty", 0.0)
+            td.setdefault("realized_pnl", 0.0)
+            td.setdefault("total_pnl", 0.0)
             trade = PaperTrade(**td)
             self.trades.append(trade)
             if trade.status == "OPEN":

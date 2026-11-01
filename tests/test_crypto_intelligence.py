@@ -271,7 +271,7 @@ class TestCryptoIntelligenceSchema(unittest.TestCase):
             "stop_loss": 63000.0,
             "target": 69000.0,
             "conflict": {"has_conflict": False},
-            "timestamp": pd.Timestamp.utcnow(),
+            "timestamp": pd.Timestamp.now("UTC"),
         }])
         orig = self.svc._signal_cache.copy()
         orig_market = self.svc._market_data.copy()
@@ -292,14 +292,14 @@ class TestCryptoIntelligenceSchema(unittest.TestCase):
         s = payload["top_setups"][0]
         for field in ("symbol", "signal", "quality_score", "confidence",
                       "composite_rank", "confluence_score", "theme",
-                      "futures_context", "first_seen"):
+                      "futures_context", "first_seen", "tier"):
             self.assertIn(field, s, f"Missing setup field: {field}")
 
     def test_scoring_version(self):
         """ranking_meta must include the correct scoring version."""
         with patch("urllib.request.urlopen", side_effect=OSError("offline")):
             payload = self.svc._compute_crypto_intelligence()
-        self.assertEqual(payload["ranking_meta"]["scoring_version"], "crypto_phase6_v1")
+        self.assertEqual(payload["ranking_meta"]["scoring_version"], "crypto_phase6_v2")
 
 
 # ── 5. Composite ranking uses futures modifier ────────────────────────────────

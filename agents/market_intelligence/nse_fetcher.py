@@ -78,7 +78,7 @@ NSE_SYMBOLS = {
     "MARUTI":      "MARUTI.NS",
     "TITAN":       "TITAN.NS",
     "WIPRO":       "WIPRO.NS",
-    "TATAMOTORS":  "TATAMOTORDVR.NS",  # Tata Motors DVR
+    "TATAMOTORS":  "TATAMOTORS.NS",   # Tata Motors (main listing)
     "SWIGGY":      "SWIGGY.NS",        # Swiggy — food delivery
     "SUNPHARMA":   "SUNPHARMA.NS",
     "ULTRACEMCO":  "ULTRACEMCO.NS",
@@ -171,6 +171,7 @@ NSE_SYMBOLS = {
     "WELSPUNIND":  "WELSPUNIND.NS",    # Textiles mid-cap
     "RAILVIKAS":   "RVNL.NS",          # Rail Vikas Nigam — PSU infra
     "IRFC":        "IRFC.NS",          # Indian Railway Finance
+    # SWIGGY already mapped above (line 82) — no duplicate entry here
     "MAZDOCK":     "MAZDOCK.NS",       # Mazagon Dock — defence
     "COCHINSHIP":  "COCHINSHIP.NS",    # Cochin Shipyard — defence/PSU
     "NATIONALUM":  "NATIONALUM.NS",    # National Aluminium
@@ -298,9 +299,10 @@ def _normalise_df(df: pd.DataFrame) -> pd.DataFrame:
     # Drop rows with unparseable timestamps before timezone normalization.
     df = df.dropna(subset=["timestamp"]).reset_index(drop=True)
 
-    # Strip timezone
+    # Strip timezone (Convert to IST first so naive times align with market hours)
     if df["timestamp"].dt.tz is not None:
-        df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+        from zoneinfo import ZoneInfo
+        df["timestamp"] = df["timestamp"].dt.tz_convert(ZoneInfo("Asia/Kolkata")).dt.tz_localize(None)
 
     df = df.dropna(subset=["close"]).reset_index(drop=True)
     return df
@@ -343,10 +345,37 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
     now = datetime.now()
 
     interval_sec = _INTERVAL_SECONDS.get(interval, 300)
-    if latest_cached_ts and (now - latest_cached_ts).total_seconds() <= interval_sec * 2:
-        if not cached_df.empty:
-            _cache[cache_key] = {"df": cached_df, "fetched_at": time.time()}
-            return cached_df.copy()
+    if latest_cached_ts and not cached_df.empty:
+        # For daily/weekly bars: check if the cached bar is from TODAY (IST calendar date).
+        # The old `age <= interval_sec * 2` was too loose — after a weekend it would
+        # serve Sunday's bar on Monday/Tuesday without fetching today's close.
+        if interval in ("1d", "1wk", "1mo", "3mo"):
+            from zoneinfo import ZoneInfo
+            _IST = ZoneInfo("Asia/Kolkata")
+            today_ist = datetime.now(_IST).date()
+            cached_date = latest_cached_ts.date() if hasattr(latest_cached_ts, "date") else None
+            # NSE closes at 15:30 IST. Only serve cache if:
+            #   a) cached bar is from today (intraday update already done), OR
+            #   b) current IST time is before market open (09:15) AND cached bar is from yesterday
+            now_ist = datetime.now(_IST)
+            pre_market = now_ist.hour < 9 or (now_ist.hour == 9 and now_ist.minute < 15)
+            from datetime import timedelta as _td
+            yesterday_ist = (now_ist - _td(days=1)).date()
+            cache_ok = cached_date == today_ist or (pre_market and cached_date == yesterday_ist)
+            if cache_ok:
+                _cache[cache_key] = {"df": cached_df, "fetched_at": time.time()}
+                logger.debug("Daily cache valid for %s (bar date=%s)", display_name, cached_date)
+                return cached_df.copy()
+            else:
+                logger.debug(
+                    "Daily cache STALE for %s — cached=%s, today=%s — forcing yFinance fetch",
+                    display_name, cached_date, today_ist,
+                )
+        else:
+            # For intraday intervals: original time-window check
+            if (now - latest_cached_ts).total_seconds() <= interval_sec * 2:
+                _cache[cache_key] = {"df": cached_df, "fetched_at": time.time()}
+                return cached_df.copy()
 
     try:
         # Small random jitter (0.3–1.5s) to spread concurrent fetches and reduce
@@ -356,6 +385,8 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
         logger.debug("Fetching yFinance: %s (%s) period=%s interval=%s", display_name, ticker, period, interval)
 
         # Delta fetch from latest cached candle when available.
+        # NOTE: yFinance `end` is EXCLUSIVE — pass tomorrow so today's
+        # completed bar is always included in the response.
         if latest_cached_ts:
             start = latest_cached_ts - timedelta(seconds=interval_sec)
             raw = _fetch_history_with_timeout(
@@ -363,7 +394,7 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
                 period=None,
                 interval=interval,
                 start=start,
-                end=now,
+                end=now + timedelta(days=1),
             )
         else:
             raw = _fetch_history_with_timeout(
@@ -454,6 +485,43 @@ CRYPTO_SEARCH_SYMBOLS = {
 }
 
 
+def _nse_search_rank(display_name: str, ticker: str, q: str) -> tuple[int, int]:
+    """
+    Sort key for NSE matches: lower is better; tie-break shorter display names first.
+    Prefers exact ticker / prefix matches over mid-string hits (e.g. IND → INDIGO before HINDALCO).
+    """
+    d = display_name.upper()
+    t = ticker.upper()
+    qu = q.upper()
+    base = t[:-3] if t.endswith(".NS") else t
+
+    if d == qu:
+        return (0, len(d))
+    if base == qu:
+        return (1, len(d))
+    if d.startswith(qu):
+        return (2, len(d))
+    if base.startswith(qu):
+        return (3, len(d))
+    if qu in d:
+        return (4, len(d))
+    if qu in t:
+        return (5, len(d))
+    return (99, len(d))
+
+
+def _crypto_search_rank(display_name: str, q: str) -> tuple[int, int]:
+    qu = q.upper().replace("/", "").replace("-", "")
+    compact = display_name.upper().replace("/", "").replace("-", "")
+    if compact == qu:
+        return (0, len(display_name))
+    if compact.startswith(qu):
+        return (2, len(display_name))
+    if qu in compact:
+        return (4, len(display_name))
+    return (99, len(display_name))
+
+
 def search_symbols(query: str) -> list[dict]:
     """
     Search NSE_SYMBOLS + CRYPTO_SEARCH_SYMBOLS by display name/ticker.
@@ -472,17 +540,23 @@ def search_symbols(query: str) -> list[dict]:
                 break
         return results
 
-    # Search NSE stocks first
+    nse_rows: list[dict] = []
     for display_name, ticker in NSE_SYMBOLS.items():
         if q in display_name.upper() or q in ticker.upper():
-            results.append({"symbol": display_name, "ticker": ticker, "type": "NSE"})
+            nse_rows.append({"symbol": display_name, "ticker": ticker, "type": "NSE"})
+    nse_rows.sort(
+        key=lambda r: _nse_search_rank(r["symbol"], r["ticker"], q),
+    )
+    results.extend(nse_rows)
 
-    # Search crypto symbols
+    crypto_rows: list[dict] = []
     for display_name, ticker in CRYPTO_SEARCH_SYMBOLS.items():
         sym_upper = display_name.upper().replace("/", "")
         q_clean = q.replace("/", "").replace("-", "")
         if q_clean in sym_upper or q_clean in ticker.upper().replace("/", ""):
-            results.append({"symbol": display_name, "ticker": ticker, "type": "CRYPTO"})
+            crypto_rows.append({"symbol": display_name, "ticker": ticker, "type": "CRYPTO"})
+    crypto_rows.sort(key=lambda r: _crypto_search_rank(r["symbol"], q))
+    results.extend(crypto_rows)
 
     return results[:50]
 
@@ -685,7 +759,7 @@ def fetch_sector_performance() -> list[dict]:
         "IT":       ["TCS.NS", "INFY.NS", "WIPRO.NS"],
         "Finance":  ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS"],
         "FMCG":     ["HINDUNILVR.NS", "ITC.NS"],
-        "Auto":     ["MARUTI.NS", "TATAMOTORS.NS"],
+        "Auto":     ["MARUTI.NS", "TATAMOTORS.NS"],  # uses correct TATAMOTORS.NS now
         "Pharma":   ["SUNPHARMA.NS"],
         "Energy":   ["RELIANCE.NS"],
         "Telecom":  ["BHARTIARTL.NS"],

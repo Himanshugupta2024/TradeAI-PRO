@@ -302,6 +302,121 @@ class SignalLog(Base):
         )
 
 
+# ── Swing Scanner Persistence ─────────────────────────────────────
+# Stores each full-universe SwingSpectrum scan snapshot so the UI, stats,
+# and outcome tracker survive process restarts. Paired with SwingSetupOutcome
+# which rows emitted setups and fills SL/T1/T2 hit results at EOD.
+
+class SwingScan(Base):
+    __tablename__ = "swing_scans"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scan_date = Column(Date, nullable=False, index=True)
+    scan_time = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    # How the scan was triggered: "manual" / "startup" / "periodic" / "cron".
+    trigger = Column(String(20), nullable=False, default="manual")
+
+    symbols_scanned = Column(Integer, nullable=False, default=0)
+    total_setups = Column(Integer, nullable=False, default=0)
+    grade_a_count = Column(Integer, nullable=False, default=0)
+    grade_b_count = Column(Integer, nullable=False, default=0)
+    grade_c_count = Column(Integer, nullable=False, default=0)
+
+    # Full JSON payload (list[SwingSetup asdict]) for rehydrating the dashboard.
+    # Stored as TEXT so SQLite and Postgres both work without JSON column type.
+    payload_json = Column(Text, nullable=False, default="[]")
+    # Market context dict used by the regime gate at scan time (optional).
+    market_context_json = Column(Text, nullable=True)
+
+    outcomes = relationship(
+        "SwingSetupOutcome",
+        back_populates="scan",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("idx_swing_scans_date_time", "scan_date", "scan_time"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<SwingScan {self.scan_date} setups={self.total_setups} "
+            f"A={self.grade_a_count} B={self.grade_b_count} C={self.grade_c_count}>"
+        )
+
+
+class SwingSetupOutcome(Base):
+    """Per-setup outcome row — filled lazily by the EOD outcome checker.
+
+    status values:
+      OPEN      — setup still within timeframe window, no level hit
+      T1_HIT    — target_1 touched/exceeded (partial win)
+      T2_HIT    — target_2 touched/exceeded (full win)
+      SL_HIT    — stop_loss breached (loss)
+      EXPIRED   — timeframe window elapsed without T1 or SL (neutral)
+    """
+    __tablename__ = "swing_setup_outcomes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scan_id = Column(Integer, ForeignKey("swing_scans.id"), nullable=False, index=True)
+
+    symbol = Column(String(30), nullable=False, index=True)
+    pattern = Column(String(80), nullable=False)
+    direction = Column(String(10), nullable=False)   # LONG / SHORT
+    grade = Column(String(2), nullable=False, default="C")
+    strength = Column(Integer, nullable=False, default=0)
+
+    entry_zone = Column(Float, nullable=False)
+    stop_loss = Column(Float, nullable=False)
+    target_1 = Column(Float, nullable=False)
+    target_2 = Column(Float, nullable=False)
+    risk_reward = Column(Float, nullable=False, default=0.0)
+    timeframe = Column(String(20), nullable=True)      # e.g. "3-7 days"
+
+    emitted_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    # Outcome tracking — filled by EOD checker.
+    status = Column(String(20), nullable=False, default="OPEN", index=True)
+    hit_level = Column(String(20), nullable=True)        # t1 / t2 / sl / expired / missed_entry
+    hit_price = Column(Float, nullable=True)
+    hit_at = Column(DateTime, nullable=True)
+    bars_to_hit = Column(Integer, nullable=True)
+    pnl_pct = Column(Float, nullable=True)               # signed % vs entry
+
+    scan = relationship("SwingScan", back_populates="outcomes")
+
+    __table_args__ = (
+        Index("idx_swing_outcome_status", "status", "symbol"),
+        Index("idx_swing_outcome_grade", "grade", "status"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<SwingSetupOutcome {self.symbol} {self.direction} grade={self.grade} "
+            f"status={self.status}>"
+        )
+
+
+# ── Intraday scanner persistence (B-lite, paper-only) ─────────────
+
+class IntradayScan(Base):
+    """One manual or API-triggered intraday scan snapshot."""
+
+    __tablename__ = "intraday_scans"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scan_time = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    trigger = Column(String(24), nullable=False, default="manual")
+    symbols_scanned = Column(Integer, nullable=False, default=0)
+    signal_count = Column(Integer, nullable=False, default=0)
+    payload_json = Column(Text, nullable=False, default="[]")
+
+    __table_args__ = (Index("idx_intraday_scans_time", "scan_time"),)
+
+    def __repr__(self):
+        return f"<IntradayScan id={self.id} signals={self.signal_count}>"
+
+
 # ── Telegram Alert Log ────────────────────────────────────────────
 # Prevents duplicate alerts from being sent for the same signal event.
 

@@ -24,6 +24,7 @@
             }
         })();
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="/static/styles.css">
     <style>
         /* ═══ NEW 3-ZONE LAYOUT ═══ */
@@ -262,10 +263,36 @@
             margin-top: 0.5rem;
         }
         .modal-backtest-section::before {
-            content: 'Backtest (5-day cache)';
+            content: 'Backtest (5d-1mo)';
             display: block; color: var(--text-muted, #9ca3af);
             font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
             margin-bottom: 0.5rem;
+        }
+        .bt-window-row {
+            display: flex;
+            gap: 0.4rem;
+            margin-bottom: 0.55rem;
+        }
+        .bt-window-btn {
+            border: 1px solid var(--border-color, #374151);
+            background: rgba(15, 23, 42, 0.45);
+            color: var(--text-secondary, #d1d5db);
+            font-size: 0.68rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            border-radius: 999px;
+            padding: 0.2rem 0.55rem;
+            cursor: pointer;
+            transition: all 0.18s ease;
+        }
+        .bt-window-btn:hover {
+            border-color: rgba(59, 130, 246, 0.55);
+            color: #e2e8f0;
+        }
+        .bt-window-btn.active {
+            background: rgba(37, 99, 235, 0.26);
+            border-color: rgba(96, 165, 250, 0.75);
+            color: #dbeafe;
         }
         .backtest-grid {
             display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem;
@@ -294,6 +321,54 @@
             display: grid;
             grid-template-columns: 1.1fr 1.4fr;
             gap: 0.75rem;
+        }
+        .nse-pred-grid {
+            display: grid;
+            grid-template-columns: 1.1fr 1fr 1.2fr;
+            gap: 0.75rem;
+            margin-top: 0.55rem;
+        }
+        .nse-pred-cell {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 8px;
+            padding: 0.6rem;
+        }
+        .nse-chart-card {
+            background: var(--card-bg, #1e1e2e);
+            border: 1px solid var(--border-color, #374151);
+            border-radius: 10px;
+            padding: 0.9rem;
+        }
+        .nse-tab-kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.85rem;
+            margin-bottom: 1rem;
+        }
+        .nse-tab-row-2 {
+            display: grid;
+            grid-template-columns: 1.15fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .nse-tab-row-3 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .nse-tab-news-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.6rem;
+        }
+        @media (max-width: 1100px) {
+            .nse-pred-grid { grid-template-columns: 1fr; }
+            .nse-tab-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+            .nse-tab-row-2 { grid-template-columns: 1fr; }
+            .nse-tab-row-3 { grid-template-columns: 1fr; }
+            .nse-tab-news-grid { grid-template-columns: 1fr; }
         }
         .intel-card {
             background: var(--card-bg, #1e1e2e);
@@ -737,6 +812,45 @@
         .p5-shortcuts-box dd { margin: 0; color: var(--text-primary, #f0f0f5); }
         .p5-shortcuts-close { margin-top: 1rem; width: 100%; padding: 0.4rem; border-radius: 6px; cursor: pointer;
             background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--text-primary, #f0f0f5); font-weight: 600; }
+
+        /* ── Edge Engine: Asset Class Badges ── */
+        .asset-class-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .asset-class-forex {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--green);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        .asset-class-crypto {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+        .asset-class-nse {
+            background: rgba(59, 130, 246, 0.15);
+            color: #3b82f6;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+        .asset-class-index {
+            background: rgba(168, 85, 247, 0.15);
+            color: #a855f7;
+            border: 1px solid rgba(168, 85, 247, 0.3);
+        }
+
+        /* ── Edge Engine: Empty Row Styling ── */
+        .empty-row {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
     </style>
 </head>
 
@@ -841,8 +955,17 @@
             <button class="sidebar-item tab-btn" data-tab="learning" id="tabLearning">
                 <span class="sidebar-icon">🧠</span> Learning
             </button>
+            <button class="sidebar-item tab-btn" data-tab="nseprediction" id="tabNsePrediction" style="display:none;">
+                <span class="sidebar-icon">📰</span> NSE Prediction
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="forex" id="tabForex">
+                <span class="sidebar-icon">💱</span> Forex
+            </button>
             <button class="sidebar-item tab-btn" data-tab="swing" id="tabSwing">
                 <span class="sidebar-icon">🔄</span> Swing
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="intraday" id="tabIntraday">
+                <span class="sidebar-icon">⏱</span> Intraday
             </button>
             <button class="sidebar-item tab-btn" data-tab="indexmover" id="tabIndexMover">
                 <span class="sidebar-icon">🏗️</span> Index Mover
@@ -851,12 +974,24 @@
                 <span class="sidebar-icon">🚀</span> Breakouts
             </button>
         </div>
+        <div class="sidebar-group">
+            <div class="sidebar-group-label">Edge Engine</div>
+            <button class="sidebar-item tab-btn" data-tab="edge-top-setups" id="tabEdgeTopSetups">
+                <span class="sidebar-icon">⭐</span> Top Setups
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="edge-macro-heatmap" id="tabEdgeMacroHeatmap">
+                <span class="sidebar-icon">🗺️</span> Macro Heatmap
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="edge-risk-gauge" id="tabEdgeRiskGauge">
+                <span class="sidebar-icon">🌡️</span> Risk Gauge
+            </button>
+        </div>
         <div class="sidebar-spacer"></div>
         <div class="sidebar-bottom">
             <a class="sidebar-bottom-item" href="/crypto" id="tabCryptoBottom">
                 <span>₿</span> Crypto
             </a>
-            <a class="sidebar-bottom-item" href="/landing" id="trialBadge">
+            <a class="sidebar-bottom-item" href="/landing" id="trialBadge" style="display:none;">
                 <span>🎉</span> Free Trial
             </a>
         </div>
@@ -881,12 +1016,26 @@
                     <span class="stat-value" id="statWinRate">0%</span>
                     <span class="stat-label">Win Rate</span>
                 </div>
-                <div class="stat-chip">
+                <div class="stat-chip" id="chipTrades" style="cursor:pointer;" onclick="switchTab('portfolio')" title="Click to view open positions in Portfolio">
                     <span class="stat-value" id="statTrades">0</span>
-                    <span class="stat-label">Trades</span>
+                    <span class="stat-label">Trades (View ➔)</span>
                 </div>
             </div>
             <div id="statsHint" style="margin:0.4rem 0 0.65rem;color:var(--text-muted);font-size:0.75rem;display:none;"></div>
+            <!-- Active Open Trades Quick-Card (shown on Overview when trades > 0) -->
+            <div id="overviewActiveTradesCard" style="display:none;margin:0.5rem 0 0.9rem;padding:0.75rem 0.9rem;border-radius:10px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.25);">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;">
+                    <div style="display:flex;align-items:center;gap:0.45rem;">
+                        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#10b981;"></span>
+                        <span style="font-size:0.8rem;font-weight:700;letter-spacing:0.02em;">Active Paper Positions</span>
+                        <span id="overviewOpenCountBadge" class="badge-buy" style="font-size:0.68rem;padding:1px 5px;">2 Open</span>
+                    </div>
+                    <button class="refresh-btn" onclick="switchTab('portfolio')" type="button" style="font-size:0.72rem;padding:2px 8px;cursor:pointer;">View Full Portfolio ➔</button>
+                </div>
+                <div id="overviewOpenTradesList" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:0.6rem;">
+                    <!-- Injected by app.js -->
+                </div>
+            </div>
             <div class="update-bar">
                 <span class="update-label">Last updated:</span>
                 <span class="update-time" id="lastUpdated">—</span>
@@ -1114,6 +1263,56 @@
                 </div>
             </div>
             <div class="intel-card" style="margin-top:0.75rem;">
+                <div class="intel-title" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>📰 Indian Market News + Prediction</span>
+                    <span style="font-size:0.7rem;color:var(--text-muted);font-weight:normal;">Auto refresh 1m</span>
+                </div>
+                <div class="nse-pred-grid">
+                    <div class="nse-pred-cell">
+                        <div style="display:flex;justify-content:space-between;gap:0.6rem;align-items:center;">
+                            <span style="font-size:0.72rem;color:var(--text-muted);">Prediction</span>
+                            <span id="nsePredDirection" style="font-size:0.8rem;font-weight:700;color:var(--cyan);">NEUTRAL</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;gap:0.6rem;margin-top:0.25rem;">
+                            <span style="font-size:0.72rem;color:var(--text-muted);">Confidence</span>
+                            <span id="nsePredConfidence" style="font-size:0.74rem;">0%</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;gap:0.6rem;margin-top:0.2rem;">
+                            <span style="font-size:0.72rem;color:var(--text-muted);">Horizon</span>
+                            <span id="nsePredHorizon" style="font-size:0.74rem;">1-3 trading days</span>
+                        </div>
+                        <div style="margin-top:0.45rem;padding-top:0.45rem;border-top:1px solid rgba(255,255,255,0.08);">
+                            <div style="display:flex;justify-content:space-between;gap:0.6rem;align-items:center;">
+                                <span style="font-size:0.72rem;color:var(--text-muted);">Hit Rate</span>
+                                <span id="nseAccHitRate" style="font-size:0.74rem;font-weight:700;">—</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;gap:0.6rem;margin-top:0.15rem;">
+                                <span style="font-size:0.7rem;color:var(--text-muted);">Resolved</span>
+                                <span id="nseAccResolved" style="font-size:0.72rem;">0</span>
+                            </div>
+                            <canvas id="nseAccuracyTrendCanvas" height="52" style="width:100%;margin-top:0.35rem;"></canvas>
+                        </div>
+                        <ul id="nsePredReasons" style="margin:0.5rem 0 0;padding-left:1rem;font-size:0.71rem;color:var(--text-secondary);"></ul>
+                    </div>
+                    <div class="nse-pred-cell">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
+                            <span style="font-size:0.72rem;color:var(--text-muted);">Top BUY</span>
+                            <span id="nsePredBuyCount" style="font-size:0.75rem;color:var(--green);font-weight:700;">0</span>
+                        </div>
+                        <div id="nseTopBuyList"></div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin:0.5rem 0 0.35rem;">
+                            <span style="font-size:0.72rem;color:var(--text-muted);">Top SELL</span>
+                            <span id="nsePredSellCount" style="font-size:0.75rem;color:var(--red);font-weight:700;">0</span>
+                        </div>
+                        <div id="nseTopSellList"></div>
+                    </div>
+                    <div class="nse-pred-cell">
+                        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.3rem;">Latest Headlines</div>
+                        <div id="nseNewsList" style="max-height:190px;overflow:auto;padding-right:0.2rem;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="intel-card" style="margin-top:0.75rem;">
                 <div class="intel-title" style="display:flex;justify-content:space-between;">
                     <span>⚡ Top 5 Opportunities (NSE Screener)</span>
                     <span style="font-size:0.7rem;color:var(--text-muted);font-weight:normal;">Refreshes 5m</span>
@@ -1215,6 +1414,38 @@
                     <span class="portfolio-stat" id="portUnrealized">₹0.00 unrealized</span>
                 </div>
             </div>
+
+            <div class="perf-kpi-row" style="margin:0.9rem 0 1rem 0;">
+                <div class="perf-kpi-card">
+                    <span class="pkv" id="portSharpeVal">0.00</span>
+                    <span class="pkl">Sharpe</span>
+                </div>
+                <div class="perf-kpi-card">
+                    <span class="pkv" id="portSortinoVal">0.00</span>
+                    <span class="pkl">Sortino</span>
+                </div>
+                <div class="perf-kpi-card">
+                    <span class="pkv" id="portProfitFactorVal">0.00</span>
+                    <span class="pkl">Profit Factor</span>
+                </div>
+            </div>
+
+            <div class="chart-card" style="padding:0.8rem 0.9rem;margin-bottom:0.9rem;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+                    <div style="font-size:0.74rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Live Drawdown</div>
+                    <div style="display:flex;gap:0.8rem;flex-wrap:wrap;font-size:0.72rem;">
+                        <span>Current: <b id="portCurrentDrawdownVal">0.0%</b></span>
+                        <span>Max: <b id="portMaxDrawdownVal">0.0%</b></span>
+                        <span>Duration: <b id="portDrawdownDurationVal">0d</b></span>
+                    </div>
+                </div>
+                <div style="height:7px;background:rgba(255,255,255,0.08);border-radius:999px;margin-top:0.6rem;overflow:hidden;">
+                    <div id="portDrawdownBar" style="height:100%;width:0%;background:var(--green);transition:width .35s ease;"></div>
+                </div>
+            </div>
+
+            <div id="portConcentrationWarn" style="display:none;margin-bottom:0.8rem;padding:0.65rem 0.75rem;border-radius:8px;border:1px solid rgba(245,158,11,0.35);background:rgba(245,158,11,0.09);color:#f59e0b;font-size:0.74rem;"></div>
+
             <div class="positions-table-wrap">
                 <table class="positions-table" id="positionsTable">
                     <thead>
@@ -1224,15 +1455,40 @@
                             <th>Entry</th>
                             <th>Current</th>
                             <th>P&L</th>
+                            <th>R-Multiple</th>
+                            <th>Heat %</th>
+                            <th>Time in Trade</th>
+                            <th>SL Dist %</th>
                             <th>Status</th>
                         </tr>
                     </thead>
                     <tbody id="positionsBody">
                         <tr>
-                            <td colspan="6" class="empty-row">No open positions</td>
+                            <td colspan="10" class="empty-row">No open positions</td>
                         </tr>
                     </tbody>
                 </table>
+            </div>
+
+            <div class="chart-card" style="margin-top:1rem;">
+                <div class="perf-card-header" style="margin-bottom:0.75rem;">
+                    <h3 class="chart-title">PnL Attribution (Today)</h3>
+                    <span class="auto-refresh-label" id="portAttribTotal">₹0</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.9rem;">
+                    <div>
+                        <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">By Signal Type</div>
+                        <div id="portAttribSignalBars" class="perf-symbol-bars">
+                            <div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No attribution data</p></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">By Regime</div>
+                        <div id="portAttribRegimeBars" class="perf-symbol-bars">
+                            <div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No attribution data</p></div>
+                        </div>
+                    </div>
+                </div>
             </div>
             <h2 class="section-title" style="margin-top:2rem">Trade History</h2>
             <div class="positions-table-wrap">
@@ -1365,6 +1621,9 @@
                     <h3 class="chart-title">Trade History</h3>
                     <span class="perf-trade-count" id="perfTradeCount"></span>
                 </div>
+                <div id="perfTradeLegend" style="font-size:0.68rem;color:var(--text-muted);margin:-0.35rem 0 0.65rem 0;">
+                    Legend: Qty shows <strong>initial → remaining</strong> when partial TP is used. Status shows a <strong>Scale-out</strong> note for partial bookings.
+                </div>
                 <div class="perf-table-wrap">
                     <table class="perf-table">
                         <thead>
@@ -1375,7 +1634,7 @@
                                 <th>Entry</th>
                                 <th>Exit</th>
                                 <th>Qty</th>
-                                <th>P&amp;L / unit</th>
+                                <th>P&amp;L (total)</th>
                                 <th>P&amp;L%</th>
                                 <th>Status</th>
                                 <th>Closed</th>
@@ -1395,6 +1654,32 @@
             <div class="perf-card-header" style="margin-bottom: 1.5rem">
                 <h2 class="section-title">Self-Learning AI Insights</h2>
                 <span class="auto-refresh-label" id="learningUpdated">Updating every 50 trades</span>
+            </div>
+
+            <div class="chart-card" style="margin-bottom: 1.2rem;">
+                <div class="perf-card-header" style="margin-bottom: 0.8rem;">
+                    <h3 class="chart-title">Learning Health</h3>
+                    <span id="lsHealthStatusBadge" style="font-size:0.68rem;padding:2px 8px;border-radius:999px;border:1px solid var(--border-color,#374151);color:var(--text-muted);">Cold Start</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0.75rem;">
+                    <div style="padding:0.6rem;border:1px solid var(--border-color,#374151);border-radius:8px;background:rgba(255,255,255,0.02);">
+                        <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Data Readiness</div>
+                        <div id="lsHealthDataStatus" style="font-size:0.83rem;font-weight:700;color:var(--text-primary);margin-top:0.22rem;">Waiting for closed trades</div>
+                    </div>
+                    <div style="padding:0.6rem;border:1px solid var(--border-color,#374151);border-radius:8px;background:rgba(255,255,255,0.02);">
+                        <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Next Auto Recalibration</div>
+                        <div id="lsHealthNextUpdate" style="font-size:0.83rem;font-weight:700;color:var(--text-primary);margin-top:0.22rem;">50 trades remaining</div>
+                    </div>
+                    <div style="padding:0.6rem;border:1px solid var(--border-color,#374151);border-radius:8px;background:rgba(255,255,255,0.02);">
+                        <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Last Insights Snapshot</div>
+                        <div id="lsHealthLastInsight" style="font-size:0.8rem;font-weight:600;color:var(--text-primary);margin-top:0.22rem;">-</div>
+                    </div>
+                    <div style="padding:0.6rem;border:1px solid var(--border-color,#374151);border-radius:8px;background:rgba(255,255,255,0.02);">
+                        <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Last Weight Update</div>
+                        <div id="lsHealthLastWeightUpdate" style="font-size:0.8rem;font-weight:600;color:var(--text-primary);margin-top:0.22rem;">-</div>
+                    </div>
+                </div>
+                <div id="lsHealthHint" style="font-size:0.72rem;color:var(--text-muted);margin-top:0.75rem;">Learning gets more stable after enough closed trades across different regimes.</div>
             </div>
 
             <!-- KPIs -->
@@ -1438,6 +1723,17 @@
                         <div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No weight data</p></div>
                     </div>
                 </div>
+            </div>
+
+            <div class="chart-card" style="margin-bottom: 1.5rem;">
+                <div class="perf-card-header" style="margin-bottom: 0.7rem;">
+                    <h3 class="chart-title">Confidence Calibration</h3>
+                    <span id="lsCalibStatusBadge" style="font-size:0.68rem;padding:2px 8px;border-radius:999px;border:1px solid var(--border-color,#374151);color:var(--text-muted);">No Data</span>
+                </div>
+                <div id="lsConfidenceBands" class="perf-symbol-bars">
+                    <div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No calibration data</p></div>
+                </div>
+                <div id="lsCalibHint" style="font-size:0.72rem;color:var(--text-muted);margin-top:0.6rem;">Higher confidence bands should show higher realized win rate.</div>
             </div>
 
             <!-- Recent Learning Outcomes Table -->
@@ -1533,16 +1829,158 @@
             </div>
         </section>
 
+        <!-- ════════ NSE PREDICTION TAB ════════ -->
+        <section class="tab-content" id="nsepredictionTab">
+            <div style="margin-bottom:1.2rem;display:flex;justify-content:space-between;align-items:flex-end;gap:0.8rem;flex-wrap:wrap;">
+                <div>
+                    <h2 class="section-title">📰 NSE Market Prediction</h2>
+                    <p style="font-size:0.78rem;color:var(--text-muted);margin-top:0.25rem;">Indian market news sentiment + live signal breadth + NIFTY/BANKNIFTY context</p>
+                </div>
+                <button class="toggle-btn" onclick="loadNsePredictionTab()" style="font-size:0.72rem;padding:0.25rem 0.75rem;">↺ Refresh</button>
+            </div>
+
+            <div class="nse-tab-kpi-grid">
+                <div class="kpi-card"><span class="kpi-val" id="nseTabDirection">NEUTRAL</span><span class="kpi-lbl">Bias</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="nseTabConfidence">0%</span><span class="kpi-lbl">Confidence</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="nseTabHitRate">—</span><span class="kpi-lbl">Hit Rate</span></div>
+                <div class="kpi-card"><span class="kpi-val" id="nseTabResolved">0</span><span class="kpi-lbl">Resolved Calls</span></div>
+            </div>
+
+            <div class="nse-tab-row-2">
+                <div class="nse-chart-card">
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">Prediction Score Trend</div>
+                    <canvas id="nseScoreChart" height="140" style="width:100%;"></canvas>
+                </div>
+                <div class="nse-chart-card">
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">Signal Breadth (BUY/SELL/HOLD)</div>
+                    <canvas id="nseBreadthChart" height="140" style="width:100%;"></canvas>
+                </div>
+            </div>
+
+            <div class="nse-tab-row-3">
+                <div class="nse-chart-card">
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">Accuracy Trend</div>
+                    <canvas id="nseAccuracyChart" height="120" style="width:100%;"></canvas>
+                    <ul id="nseTabReasons" style="margin:0.55rem 0 0;padding-left:1rem;font-size:0.73rem;color:var(--text-secondary);"></ul>
+                </div>
+                <div class="nse-chart-card">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+                        <div>
+                            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.25rem;">Top BUY</div>
+                            <div id="nseTabTopBuy"></div>
+                        </div>
+                        <div>
+                            <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.25rem;">Top SELL</div>
+                            <div id="nseTabTopSell"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="nse-chart-card">
+                <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">Latest Indian Market Headlines</div>
+                <div id="nseTabNews" class="nse-tab-news-grid"></div>
+            </div>
+        </section>
+
+        <!-- ════════ FOREX TAB ════════ -->
+        <section class="tab-content" id="forexTab">
+            <div style="margin-bottom:1.5rem;">
+                <h2 class="section-title">💱 Forex Trading — Swing Setups</h2>
+                <p style="font-size:0.78rem;color:var(--text-muted);margin-top:0.25rem;">
+                    Powered by Twelve Data (free plan) · Paper trade only · Not financial advice
+                </p>
+            </div>
+
+            <!-- Section A: Session Clock -->
+            <div id="forexSessionClock" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:1.5rem;">
+                <!-- Populated by renderForexSessions() -->
+                <div class="kpi-card"><span class="kpi-lbl">Loading sessions…</span></div>
+            </div>
+
+            <!-- Section B: INR Pair Strip -->
+            <div id="forexInrStrip" style="background:var(--bg-raised);border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.5rem;overflow-x:auto;">
+                <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.5rem;letter-spacing:0.05em;text-transform:uppercase;">INR Pairs (NSE Currency)</div>
+                <div id="forexInrRow" style="display:flex;gap:1.5rem;min-width:max-content;">
+                    <!-- Populated by renderInrStrip() -->
+                    <span style="color:var(--text-muted);font-size:0.82rem;">Loading…</span>
+                </div>
+            </div>
+
+            <!-- Section C: Signal Cards -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;">
+                <div style="font-size:0.82rem;color:var(--text-muted);" id="forexScanMeta">Scanning…</div>
+                <button class="toggle-btn" onclick="loadForexData()" style="font-size:0.72rem;padding:0.25rem 0.75rem;">↺ Refresh</button>
+            </div>
+            <div id="forexSignalGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:1rem;">
+                <div class="loading-state"><div class="loader"></div><p>Scanning forex pairs…</p></div>
+            </div>
+        </section>
+
         <!-- ════════ SWING SCANNER TAB ════════ -->
         <section class="tab-content" id="swingTab">
-            <div class="swing-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;">
+            <div class="swing-header" style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:0.75rem;">
                 <div>
                     <h2 class="section-title">🔄 SwingSpectrum Scanner</h2>
                     <p style="color:var(--text-muted);font-size:0.78rem;margin-top:0.25rem;">Multi-day setups from <strong>daily</strong> candles (yFinance — can be delayed vs exchange). Not intraday live LTP.</p>
                 </div>
-                <div class="live-pill" title="End-of-day bars, refreshed with server cache"><span class="status-dot" style="background:#6366f1;"></span> DAILY</div>
+                <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;">
+                    <button type="button" class="toggle-btn" id="swingScanNowBtn" onclick="runSwingScanNow()" title="Recompute full universe scan on server">Run scan now</button>
+                    <button type="button" class="toggle-btn" id="swingStatsRefreshBtn" onclick="loadSwingOutcomeStats()" title="SQLite outcome stats">Stats</button>
+                    <div class="live-pill" title="End-of-day bars, refreshed with server cache"><span class="status-dot" style="background:#6366f1;"></span> DAILY</div>
+                </div>
             </div>
+            <div id="swingOutcomeStatsPanel" style="display:none;font-size:0.74rem;color:var(--text-muted);margin:-0.25rem 0 1rem;padding:0.65rem 0.75rem;background:rgba(34,197,94,0.06);border-radius:8px;border:1px solid var(--border-color,#374151);line-height:1.5;"></div>
             <div id="swingMetaBar" style="font-size:0.72rem;color:var(--text-muted);margin:-0.5rem 0 1rem;line-height:1.45;padding:0.5rem 0.65rem;background:rgba(99,102,241,0.08);border-radius:6px;border:1px solid var(--border-color,#374151);"></div>
+
+            <!-- 📊 Paper Trading Scorecard Banner -->
+            <div id="paperScorecardBanner" style="display:none;margin-bottom:1.25rem;padding:0.85rem 1rem;border-radius:10px;border:1px solid rgba(99,102,241,0.25);background:linear-gradient(135deg,rgba(30,30,46,0.7) 0%,rgba(20,20,35,0.5) 100%);">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+                    <div style="display:flex;align-items:center;gap:0.6rem;">
+                        <span style="font-size:1rem;">📝</span>
+                        <span style="font-size:0.78rem;font-weight:700;color:var(--text-primary,#e2e8f0);text-transform:uppercase;letter-spacing:0.05em;">Paper Trading</span>
+                        <span id="paperUnlockBadge" style="font-size:0.62rem;padding:2px 8px;border-radius:999px;font-weight:700;letter-spacing:0.03em;border:1px solid rgba(156,163,175,0.4);color:#9ca3af;">Loading...</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:1.25rem;flex-wrap:wrap;">
+                        <span style="font-size:0.72rem;color:var(--text-muted);">Trades: <strong id="paperTotalTrades" style="color:var(--text-primary,#e2e8f0);">—</strong></span>
+                        <span style="font-size:0.72rem;color:var(--text-muted);">Open: <strong id="paperOpenTrades" style="color:#818cf8;">—</strong></span>
+                        <span style="font-size:0.72rem;color:var(--text-muted);">Win Rate: <strong id="paperWinRate" style="color:#22d3ee;">—</strong></span>
+                        <button type="button" onclick="paperResolveEOD()" style="font-size:0.66rem;padding:0.2rem 0.6rem;border-radius:6px;border:1px solid rgba(99,102,241,0.4);background:rgba(99,102,241,0.12);color:#a5b4fc;cursor:pointer;">EOD Resolve</button>
+                    </div>
+                    <div id="paperUnlockMsg" style="width:100%;font-size:0.68rem;color:var(--text-muted);margin-top:0.25rem;"></div>
+                </div>
+            </div>
+
+            <div class="swing-view-toggle" style="margin-bottom:1.5rem;display:flex;gap:0.5rem;background:rgba(255,255,255,0.05);padding:6px;border-radius:8px;width:fit-content;">
+                <button id="viewToggleShortlist" class="toggle-btn active" onclick="setSwingViewMode('shortlist')">🌅 Morning Shortlist</button>
+                <button id="viewToggleAll" class="toggle-btn" onclick="setSwingViewMode('all')" style="background:transparent;border-color:transparent;color:var(--text-muted);">🔍 All Scan Results</button>
+            </div>
+
+            <!-- 🌅 MORNING SHORTLIST -->
+            <div id="morningShortlistPanel" style="display:none;margin-bottom:2rem;background:linear-gradient(145deg, rgba(30,30,46,0.6) 0%, rgba(20,20,30,0.4) 100%);border:1px solid rgba(99,102,241,0.2);border-radius:12px;padding:1.25rem;box-shadow:0 8px 32px rgba(0,0,0,0.15);">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
+                    <h3 style="font-size:1.1rem;margin:0;color:var(--text-main);display:flex;align-items:center;gap:0.5rem;font-weight:600;">
+                        <span style="font-size:1.3rem;">🌅</span> Morning Shortlist
+                    </h3>
+                    <div style="display:flex;align-items:center;gap:0.75rem;">
+                        <span id="shortlistTimestamp" style="font-size:0.75rem;color:var(--text-muted);background:rgba(255,255,255,0.05);padding:0.25rem 0.6rem;border-radius:12px;border:1px solid rgba(255,255,255,0.05);"></span>
+                        <button class="toggle-btn" onclick="loadMorningShortlist()" style="font-size:0.7rem;padding:0.25rem 0.6rem;">↺ Reload</button>
+                    </div>
+                </div>
+                <div id="shortlistGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:1rem;">
+                    <!-- Shortlist cards go here -->
+                </div>
+            </div>
+
+            <div class="swing-search-row" style="position:relative;display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-bottom:1rem;">
+                <label for="swingSymbolSearch" style="font-size:0.76rem;color:var(--text-muted);white-space:nowrap;">Look up symbol</label>
+                <input id="swingSymbolSearch" class="screener-search" type="text" placeholder="e.g. RELIANCE, TCS" maxlength="24" autocomplete="off" style="min-width:140px;max-width:200px;" />
+                <button type="button" class="toggle-btn" id="swingSymbolSearchBtn" onclick="lookupSwingSymbol()">Search</button>
+                <button type="button" class="toggle-btn" id="swingSymbolClearBtn" onclick="clearSwingSymbolSearch()" style="display:none;">Full scan</button>
+                <div id="swingSearchSuggest" style="display:none;position:absolute;left:0;top:100%;margin-top:2px;min-width:220px;max-width:320px;max-height:200px;overflow-y:auto;background:var(--card-bg,#1e1e2e);border:1px solid var(--border-color,#374151);border-radius:8px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,0.35);"></div>
+            </div>
+            <p style="font-size:0.68rem;color:var(--text-muted);margin:-0.35rem 0 0.65rem;">Tip: share a direct link <code style="font-size:0.65rem;">?tab=swing&amp;sym=RELIANCE</code> — lookup works for any NSE symbol yFinance lists (not only the pre-tracked list).</p>
+            <div id="swingRecentChips" style="display:none;flex-wrap:wrap;gap:0.35rem;align-items:center;margin-bottom:0.85rem;"></div>
             <div class="swing-stats-row" id="swingStatsRow" style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem;">
                 <div class="kpi-card"><span class="kpi-val" id="swingTotal">—</span><span class="kpi-lbl">Setups Found</span></div>
                 <div class="kpi-card"><span class="kpi-val" id="swingLong" style="color:var(--green)">—</span><span class="kpi-lbl">Long Setups</span></div>
@@ -1557,10 +1995,76 @@
                 <button class="toggle-btn active" id="swFilterU1000" onclick="filterSwing('u1000')">Under ₹1000</button>
             </div>
 
+            <!-- 📌 Pinned / Bookmarked Symbols Panel -->
+            <div id="swingPinnedPanel" style="display:none;margin-bottom:1.5rem;background:linear-gradient(135deg,rgba(245,158,11,0.06) 0%,rgba(30,30,46,0.4) 100%);border:1px solid rgba(245,158,11,0.25);border-radius:12px;padding:1rem 1.1rem;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;">
+                    <div style="display:flex;align-items:center;gap:0.5rem;">
+                        <span style="font-size:1rem;">📌</span>
+                        <span style="font-size:0.82rem;font-weight:700;color:#f59e0b;text-transform:uppercase;letter-spacing:0.06em;">Pinned Symbols</span>
+                        <span id="swingPinnedCount" style="font-size:0.68rem;color:var(--text-muted);background:rgba(255,255,255,0.07);padding:2px 7px;border-radius:8px;"></span>
+                    </div>
+                    <button type="button" onclick="clearAllSwingBookmarks()" style="font-size:0.66rem;color:var(--text-muted);background:none;border:1px solid var(--border-color,#374151);border-radius:6px;padding:2px 8px;cursor:pointer;opacity:0.7;" title="Remove all pins">Clear all</button>
+                </div>
+                <div id="swingPinnedGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:0.85rem;"></div>
+            </div>
+
             <div class="swing-grid" id="swingGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:1rem;">
                 <div class="loading-state"><div class="loader"></div><p>Scanning for swing setups...</p></div>
             </div>
         </section>
+
+        <!-- ════════ INTRADAY (paper, 5m delayed) ════════ -->
+        <section class="tab-content" id="intradayTab">
+            <!-- Header -->
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:0.85rem;flex-wrap:wrap;gap:0.75rem;">
+                <div>
+                    <h2 class="section-title">⏱ Intraday Scanner <span style="font-size:0.65rem;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);padding:2px 7px;border-radius:4px;font-weight:700;vertical-align:middle;">PAPER ONLY</span></h2>
+                    <p style="color:var(--text-muted);font-size:0.76rem;margin-top:0.2rem;">ORB · VWAP · Gap-Go · Momentum · <strong style="color:#818cf8;">CPR</strong> · <strong style="color:#22d3ee;">Supertrend</strong> — 5m delayed yFinance, ATR-sized risk, auto square-off 3:15 PM IST</p>
+                </div>
+                <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                    <button type="button" class="toggle-btn" id="intradayLatestBtn" onclick="loadIntradayLatest()" style="font-size:0.72rem;padding:0.3rem 0.7rem;">↻ Latest</button>
+                    <button type="button" class="toggle-btn" id="intradayScanBtn" onclick="runIntradayScan()" style="background:rgba(99,102,241,0.2);border-color:rgba(99,102,241,0.5);color:#a5b4fc;">▶ Run Scan</button>
+                </div>
+            </div>
+
+            <!-- KPI Strip -->
+            <div id="intradayKpiStrip" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:1rem;">
+                <div class="kpi-card" style="padding:0.6rem 0.75rem;">
+                    <span class="kpi-val" id="idKpiTotal" style="font-size:1.3rem;">—</span>
+                    <span class="kpi-lbl">Signals</span>
+                </div>
+                <div class="kpi-card" style="padding:0.6rem 0.75rem;">
+                    <span class="kpi-val" id="idKpiLong" style="font-size:1.3rem;color:var(--green);">—</span>
+                    <span class="kpi-lbl">LONG</span>
+                </div>
+                <div class="kpi-card" style="padding:0.6rem 0.75rem;">
+                    <span class="kpi-val" id="idKpiShort" style="font-size:1.3rem;color:var(--red);">—</span>
+                    <span class="kpi-lbl">SHORT</span>
+                </div>
+                <div class="kpi-card" style="padding:0.6rem 0.75rem;">
+                    <span class="kpi-val" id="idKpiScore" style="font-size:1.3rem;color:#818cf8;">—</span>
+                    <span class="kpi-lbl">Avg Score</span>
+                </div>
+            </div>
+
+            <!-- Strategy Filter Chips -->
+            <div id="intradayStratFilter" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.85rem;">
+                <button type="button" class="toggle-btn active" data-strat="all" onclick="filterIntradayStrat('all')" style="font-size:0.7rem;padding:0.22rem 0.65rem;">All</button>
+                <button type="button" class="toggle-btn" data-strat="ORB" onclick="filterIntradayStrat('ORB')" style="font-size:0.7rem;padding:0.22rem 0.65rem;">ORB</button>
+                <button type="button" class="toggle-btn" data-strat="VWAP" onclick="filterIntradayStrat('VWAP')" style="font-size:0.7rem;padding:0.22rem 0.65rem;">VWAP</button>
+                <button type="button" class="toggle-btn" data-strat="GAP_GO" onclick="filterIntradayStrat('GAP_GO')" style="font-size:0.7rem;padding:0.22rem 0.65rem;">Gap-Go</button>
+                <button type="button" class="toggle-btn" data-strat="MOMENTUM" onclick="filterIntradayStrat('MOMENTUM')" style="font-size:0.7rem;padding:0.22rem 0.65rem;">Momentum</button>
+                <button type="button" class="toggle-btn" data-strat="CPR" onclick="filterIntradayStrat('CPR')" style="font-size:0.7rem;padding:0.22rem 0.65rem;background:rgba(129,140,248,0.15);border-color:rgba(129,140,248,0.4);color:#818cf8;">CPR 🆕</button>
+                <button type="button" class="toggle-btn" data-strat="SUPERTREND" onclick="filterIntradayStrat('SUPERTREND')" style="font-size:0.7rem;padding:0.22rem 0.65rem;background:rgba(34,211,238,0.12);border-color:rgba(34,211,238,0.4);color:#22d3ee;">Supertrend 🆕</button>
+                <span style="margin-left:auto;font-size:0.68rem;color:var(--text-muted);align-self:center;">LONG only: <input type="checkbox" id="idFilterLong" onchange="filterIntradayStrat()" style="vertical-align:middle;margin-left:3px;"></span>
+            </div>
+
+            <div id="intradayMeta" style="font-size:0.7rem;color:var(--text-muted);margin-bottom:0.75rem;padding:0.3rem 0.6rem;background:rgba(255,255,255,0.03);border-radius:6px;"></div>
+            <div id="intradayGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:1rem;">
+                <div class="loading-state"><p>Click <strong>↻ Latest</strong> to load last saved scan, or <strong>▶ Run Scan</strong> to fetch fresh 5m signals.</p></div>
+            </div>
+        </section>
+
 
         <!-- ════════ INDEX MOVER TAB ════════ -->
         <section class="tab-content" id="indexmoverTab">
@@ -1667,7 +2171,92 @@
             </div>
         </section>
 
-    </main>
+        <!-- ════════ EDGE ENGINE: TOP SETUPS TAB ════════ -->
+        <section class="tab-content" id="edge-top-setupsTab">
+            <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;">
+                <div>
+                    <h2 class="section-title">⭐ Edge Engine — Top Setups</h2>
+                    <p class="section-subtitle">Best macro-aligned trading opportunities ranked by EdgeScore</p>
+                </div>
+                <button class="refresh-btn" onclick="refreshEdgeTopSetups()">↻ Refresh</button>
+            </div>
+
+            <!-- Asset Class Filter -->
+            <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+                <button class="cockpit-filter-btn active" data-asset-class="all" onclick="filterEdgeSetupsByAsset('all')">All</button>
+                <button class="cockpit-filter-btn" data-asset-class="forex" onclick="filterEdgeSetupsByAsset('forex')">Forex</button>
+                <button class="cockpit-filter-btn" data-asset-class="crypto" onclick="filterEdgeSetupsByAsset('crypto')">Crypto</button>
+                <button class="cockpit-filter-btn" data-asset-class="nse" onclick="filterEdgeSetupsByAsset('nse')">NSE</button>
+                <button class="cockpit-filter-btn" data-asset-class="index" onclick="filterEdgeSetupsByAsset('index')">Index</button>
+            </div>
+
+            <!-- Top Setups Table -->
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Symbol</th>
+                            <th>EdgeScore</th>
+                            <th>Macro</th>
+                            <th>COT</th>
+                            <th>Sentiment</th>
+                            <th>Risk</th>
+                            <th>Seasonal</th>
+                            <th>Carry</th>
+                        </tr>
+                    </thead>
+                    <tbody id="edgeTopSetupsBody">
+                        <tr><td colspan="9" class="empty-row">Loading top setups...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ════════ EDGE ENGINE: MACRO HEATMAP TAB ════════ -->
+        <section class="tab-content" id="edge-macro-heatmapTab">
+            <div class="section-header" style="margin-bottom:1.5rem;">
+                <h2 class="section-title">🗺️ Edge Engine — Macro Heatmap</h2>
+                <p class="section-subtitle">Macro intelligence scores across all asset classes</p>
+            </div>
+
+            <!-- Heatmap Grid -->
+            <div id="edgeMacroHeatmapGrid" style="margin-top:1.5rem;">
+                <p style="color:var(--text-muted);font-size:0.9rem;">Loading heatmap...</p>
+            </div>
+        </section>
+
+        <!-- ════════ EDGE ENGINE: RISK GAUGE TAB ════════ -->
+        <section class="tab-content" id="edge-risk-gaugeTab">
+            <div class="section-header" style="margin-bottom:1.5rem;">
+                <h2 class="section-title">🌡️ Edge Engine — Risk Gauge</h2>
+                <p class="section-subtitle">Current market risk regime and component indicators</p>
+            </div>
+
+            <!-- Risk Gauge Display -->
+            <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:1.5rem;margin-top:1.5rem;">
+                <!-- Gauge Meter -->
+                <div class="intel-card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2rem;">
+                    <div id="riskGaugeMeter" style="width:200px;height:200px;position:relative;">
+                        <canvas id="riskGaugeCanvas" width="200" height="200"></canvas>
+                    </div>
+                    <div id="riskRegimeLabel" style="margin-top:1rem;font-size:1.2rem;font-weight:800;text-align:center;">
+                        LOADING...
+                    </div>
+                    <div id="riskScoreValue" style="margin-top:0.5rem;font-family:var(--font-mono);font-size:1.5rem;font-weight:700;">
+                        --
+                    </div>
+                </div>
+
+                <!-- Component Breakdown -->
+                <div class="intel-card">
+                    <div class="intel-title">Risk Indicators</div>
+                    <div id="riskComponentsBreakdown">
+                        <p style="color:var(--text-muted);font-size:0.85rem;">Loading indicators...</p>
+                    </div>
+                </div>
+            </div>
+        </section>
 
     <!-- ── Symbol Detail Modal ────────────── -->
     <div class="modal-backdrop" id="modalBackdrop">
@@ -1734,9 +2323,41 @@
                 <span class="more-menu-icon">🏆</span>
                 <span>Performance</span>
             </button>
+                        <button class="more-menu-item" data-tab="scorecard">
+                <span class="more-menu-icon">📋</span>
+                <span>Scorecard</span>
+            </button>
+            <button class="more-menu-item" data-tab="learning">
+                <span class="more-menu-icon">🧠</span>
+                <span>Learning</span>
+            </button>
+            <button class="more-menu-item" data-tab="edge-top-setups">
+                <span class="more-menu-icon">⭐</span>
+                <span>Edge Top Setups</span>
+            </button>
+            <button class="more-menu-item" data-tab="edge-macro-heatmap">
+                <span class="more-menu-icon">🗺️</span>
+                <span>Macro Heatmap</span>
+            </button>
+            <button class="more-menu-item" data-tab="edge-risk-gauge">
+                <span class="more-menu-icon">🌡️</span>
+                <span>Risk Gauge</span>
+            </button>
+            <button class="more-menu-item" data-tab="nseprediction">
+                <span class="more-menu-icon">📰</span>
+                <span>NSE Prediction</span>
+            </button>
+            <button class="more-menu-item" data-tab="forex">
+                <span class="more-menu-icon">💱</span>
+                <span>Forex</span>
+            </button>
             <button class="more-menu-item" data-tab="swing">
                 <span class="more-menu-icon">🔄</span>
                 <span>Swing Scanner</span>
+            </button>
+            <button class="more-menu-item" data-tab="intraday">
+                <span class="more-menu-icon">⏱</span>
+                <span>Intraday</span>
             </button>
             <button class="more-menu-item" data-tab="indexmover">
                 <span class="more-menu-icon">🏗️</span>

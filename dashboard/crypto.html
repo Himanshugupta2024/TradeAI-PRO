@@ -2964,12 +2964,25 @@ function renderCryptoIntelligence(data) {
   if (moodEl) moodEl.innerHTML = `<span class="mood-badge ${moodCls}">${moodLbl} (${Number(grd.mood_score || 50).toFixed(0)})</span>`;
 
   renderWhyStrip(grd.why_market_hint);
-  renderCockpitSetups(data.top_setups || [], 'bestRightNow', false);
-  renderCockpitSetups(data.avoid_list || [], 'avoidForNow', true);
+  const topSetups = data.top_setups || [];
+  const avoidSetups = data.avoid_list || [];
+  const hasActionable = topSetups.length > 0;
+  const fallbackToBlocked = !hasActionable && avoidSetups.length > 0;
+
+  // Keep Best Right Now populated with high-QS blocked candidates when no actionable setups exist.
+  if (fallbackToBlocked) {
+    renderCockpitSetups(avoidSetups, 'bestRightNow', true);
+  } else {
+    renderCockpitSetups(topSetups, 'bestRightNow', false);
+  }
+  renderCockpitSetups(avoidSetups, 'avoidForNow', true);
 
   const meta = data.ranking_meta || {};
   const metaEl = document.getElementById('bestRightNowMeta');
-  if (metaEl) metaEl.textContent = `${meta.actionable || 0} setups · ${meta.total_tracked || 0} tracked`;
+  if (metaEl) {
+    const base = `${meta.actionable || 0} setups · ${meta.total_tracked || 0} tracked`;
+    metaEl.textContent = fallbackToBlocked ? `${base} · showing blocked high-QS` : base;
+  }
 
   renderFuturesPanel(data.futures_context || {});
   renderThemePanel(data.theme_leadership || []);

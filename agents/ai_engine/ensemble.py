@@ -185,7 +185,11 @@ def _guardrailed_normalize_weights(
 
 
 def _db_path() -> Path:
-    return Path("trading.db")
+    try:
+        from db.connection import get_sqlite_path
+        return Path(get_sqlite_path())
+    except Exception:
+        return Path("trading.db")
 
 
 def _ensure_model_performance_table() -> None:
@@ -382,7 +386,7 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "") -> dict:
     sentiment_result = {}
     sentiment_adj = 0.0
     is_crypto = _is_crypto_symbol(symbol)
-    if is_crypto or not symbol:
+    if is_crypto and symbol and not offline:
         try:
             from agents.ai_engine.crypto_sentiment import (
                 get_fear_greed_index, sentiment_to_confidence_adjustment
@@ -504,7 +508,7 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "") -> dict:
     }
 
 
-def predict_batch_ensemble(df: pd.DataFrame, symbol: str = "") -> pd.Series:
+def predict_batch_ensemble(df: pd.DataFrame, symbol: str = "", offline: bool = False) -> pd.Series:
     """
     Generate ensemble confidence scores for all rows in df.
 
@@ -580,7 +584,7 @@ def predict_batch_ensemble(df: pd.DataFrame, symbol: str = "") -> pd.Series:
 
     # ── Sentiment flat-shift ───────────────────────────────────────────────
     is_crypto = _is_crypto_symbol(symbol)
-    if is_crypto or not symbol:
+    if is_crypto and symbol and not offline:
         try:
             from agents.ai_engine.crypto_sentiment import (
                 get_fear_greed_index, sentiment_to_confidence_adjustment

@@ -46,7 +46,7 @@ def log_signal(
                 price_at_signal=price,
                 rsi_at_signal=rsi,
                 context_score=context_score,
-                emitted_at=datetime.utcnow(),
+                emitted_at=datetime.now(timezone.utc).replace(tzinfo=None),
             ))
             db.commit()
     except Exception as e:
@@ -61,7 +61,7 @@ def score_outcomes(current_prices: dict[str, float]) -> int:
 
     Call this from the background refresh loop (e.g. every 30 min).
     """
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
     scored = 0
     try:
         with SessionLocal() as db:
@@ -82,11 +82,12 @@ def score_outcomes(current_prices: dict[str, float]) -> int:
 
                 pct_move = ((price_now - row.price_at_signal) / row.price_at_signal) * 100
 
-                if row.signal == "BUY":
+                sig = row.signal.upper() if row.signal else ""
+                if sig in ("BUY", "LONG"):
                     outcome = "WIN" if pct_move >= _WIN_THRESHOLD_PCT else (
                         "LOSS" if pct_move <= _LOSS_THRESHOLD_PCT else "NEUTRAL"
                     )
-                elif row.signal == "SELL":
+                elif sig in ("SELL", "SHORT"):
                     outcome = "WIN" if pct_move <= _LOSS_THRESHOLD_PCT else (
                         "LOSS" if pct_move >= _WIN_THRESHOLD_PCT else "NEUTRAL"
                     )
@@ -96,7 +97,7 @@ def score_outcomes(current_prices: dict[str, float]) -> int:
                 row.price_24h_later = price_now
                 row.outcome         = outcome
                 row.outcome_pct     = round(pct_move, 3)
-                row.scored_at       = datetime.utcnow()
+                row.scored_at       = datetime.now(timezone.utc).replace(tzinfo=None)
                 scored += 1
 
             if scored:

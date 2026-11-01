@@ -43,6 +43,10 @@ let _lastAlertFired = {};         // symbol → last fired timestamp (prevent sp
 let _morningScanData = null;      // cached morning scan
 let _smartRefreshInterval = REFRESH_INTERVAL_MS;  // adapts based on market session
 
+function _escHtml(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // ── Init ────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -57,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAllData({ background: false });
     connectPriceWebSocket();
     startBackgroundRefresh();
+    loadPortfolio();
     const refreshBtn = document.getElementById('manualRefreshBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', triggerManualRefresh);
@@ -414,9 +419,14 @@ function switchTab(tab) {
     if (tab === 'tradeflow') loadTradeFlow();
     if (tab === 'scorecard') loadScorecard();
     if (tab === 'swing') loadSwingScanner();
+    if (tab === 'intraday') loadIntradayLatest();
     if (tab === 'indexmover') loadIndexMover();
     if (tab === 'learning') loadLearningStats();
     if (tab === 'breakouts') loadBreakouts();
+    if (tab === 'forex') loadForexData();
+    if (tab === 'edge-top-setups') loadEdgeTopSetups();
+    if (tab === 'edge-macro-heatmap') loadEdgeMacroHeatmap();
+    if (tab === 'edge-risk-gauge') loadEdgeRiskGauge();
 }
 
 // ── Fetch with Timeout + 503/Network Retry Helper ──────
@@ -485,7 +495,7 @@ async function loadAllData({ background = false } = {}) {
 
     // ── Section-resilient parallel fetch ──────────────────────────────────────
     // Each section fetches independently; failure in one does NOT blank others.
-    const [signalsResult, statsResult, dashboardResult, oppsResult, cockpitResult, morningScanResult, cryptoIntelResult] = await Promise.allSettled([
+    const [signalsResult, statsResult, dashboardResult, oppsResult, cockpitResult, morningScanResult, cryptoIntelResult, openTradesResult] = await Promise.allSettled([
         fetchWithTimeout(`${API}/api/signals/all`, {}, 90000).then((r) => parseJsonResponse(r)),
         fetchWithTimeout(`${API}/api/stats`, {}, 25000).then((r) => parseJsonResponse(r)),
         fetchWithTimeout(`${API}/api/nse/dashboard`, {}, 30000).then((r) => parseJsonResponse(r)),
@@ -493,6 +503,7 @@ async function loadAllData({ background = false } = {}) {
         fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 30000).then((r) => parseJsonResponse(r)).catch(() => null),
         fetchWithTimeout(`${API}/api/morning-scan`, {}, 20000).then((r) => parseJsonResponse(r)).catch(() => null),
         fetchWithTimeout(`${API}/api/crypto/intelligence`, {}, 25000).then((r) => parseJsonResponse(r)).catch(() => null),
+        fetchWithTimeout(`${API}/api/paper/open`, {}, 15000).then((r) => parseJsonResponse(r)).catch(() => null),
     ]);
 
     // ── Signals ──────────────────────────────────────────────────────────────
@@ -537,6 +548,11 @@ async function loadAllData({ background = false } = {}) {
         updateStatsStrip(_lastStatsData);
     } else if (_lastStatsData) {
         updateStatsStrip(_lastStatsData); // use cached snapshot
+    }
+
+    // ── Open Paper Positions on Overview ─────────────────────────────────────
+    if (openTradesResult && openTradesResult.status === 'fulfilled' && openTradesResult.value) {
+        renderOverviewActiveTrades(openTradesResult.value.open_trades || []);
     }
 
     // ── Dashboard (mood, AI summary, movers) ─────────────────────────────────
@@ -1621,7 +1637,116 @@ function handleLoadError() {
 }
 
 
+// ── Manual Paper Trade Execution ─────────────────────────
+async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, strategy, btnEl, extraMeta = {}) {
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = `<span class="spin">⏳</span> Executing...`;
+    }
+    try {
+        const res = await fetchWithTimeout(`${API}/api/paper/trade`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol: String(symbol || '').trim(),
+                direction: String(direction || 'LONG').trim().toUpperCase(),
+                entry: Number(entry || 0),
+                stop_loss: Number(stopLoss || 0),
+                target: Number(target || 0),
+                atr: Number(atr || 0),
+                strategy: strategy || 'MANUAL',
+                confidence: Number(extraMeta.confidence || 0),
+                regime: String(extraMeta.regime || 'TRENDING'),
+                rsi: Number(extraMeta.rsi || 0),
+                volume_above_avg: Boolean(extraMeta.volume_above_avg),
+            }),
+        }, 10000);
+        let data = {};
+        try {
+            data = await res.json();
+        } catch (_) {
+            data = {};
+        }
+        if (!res.ok || data.error) {
+            const reason = data.error || (data.detail ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)) : `HTTP ${res.status}`);
+            showToast(`⚠️ Trade blocked: ${reason}`, 'warn');
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.innerHTML = `⚠️ Blocked`;
+                setTimeout(() => { btnEl.innerHTML = `⚡ Paper Trade`; }, 3000);
+            }
+            return;
+        }
+        showToast(`✅ Paper Trade Placed: ${direction} ${symbol} @ ₹${Number(entry).toFixed(1)}`, 'success');
+        if (btnEl) {
+            btnEl.style.background = 'rgba(16,185,129,0.25)';
+            btnEl.style.borderColor = 'var(--green)';
+            btnEl.innerHTML = `✓ Active Trade #${data.trade ? data.trade.id : ''}`;
+        }
+        if (data.stats) {
+            updateStatsStrip(data.stats);
+        }
+        if (typeof loadPaperScorecard === 'function') {
+            loadPaperScorecard();
+        }
+    } catch (err) {
+        console.error('takePaperTrade error:', err);
+        showToast(`❌ Failed to place trade: ${err.message}`, 'error');
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.innerHTML = `⚡ Paper Trade`;
+        }
+    }
+}
+
 // ── Stats Strip ─────────────────────────────────────────
+
+function renderOverviewActiveTrades(openTrades) {
+    const card = document.getElementById('overviewActiveTradesCard');
+    const badge = document.getElementById('overviewOpenCountBadge');
+    const list = document.getElementById('overviewOpenTradesList');
+    if (!card || !list) return;
+
+    if (!Array.isArray(openTrades) || openTrades.length === 0) {
+        card.style.display = 'none';
+        return;
+    }
+
+    card.style.display = 'block';
+    if (badge) badge.textContent = `${openTrades.length} Open`;
+
+    list.innerHTML = openTrades.map(t => {
+        const isLong = t.direction === 'LONG' || t.direction === 'BUY';
+        const sideColor = isLong ? '#10b981' : '#ef4444';
+        const sideBg = isLong ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)';
+        const sideBorder = isLong ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)';
+        const entry = Number(t.entry_price || 0).toFixed(2);
+        const sl = Number(t.stop_loss || 0).toFixed(2);
+        const tp = Number(t.target || 0).toFixed(2);
+        const qty = Number(t.quantity || 1).toFixed(1);
+
+        return `
+            <div style="padding:0.6rem 0.75rem;border-radius:8px;background:var(--bg-card);border:1px solid ${sideBorder};display:flex;flex-direction:column;gap:0.35rem;">
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div style="display:flex;align-items:center;gap:0.4rem;">
+                        <span style="font-size:0.7rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${sideBg};color:${sideColor};border:1px solid ${sideBorder};">${t.direction}</span>
+                        <b style="font-size:0.85rem;">${t.symbol}</b>
+                    </div>
+                    <button class="refresh-btn" onclick="closePaperTrade(${t.id}, ${t.entry_price})" style="font-size:0.68rem;padding:2px 7px;background:rgba(239,68,68,0.15);border:1px solid var(--red);color:var(--red);cursor:pointer;border-radius:4px;">Exit</button>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(3, 1fr);font-size:0.72rem;color:var(--text-muted);font-family:var(--font-mono, monospace);margin-top:0.2rem;">
+                    <div>Entry: <b style="color:var(--text-primary)">₹${entry}</b></div>
+                    <div>SL: <b style="color:var(--red)">₹${sl}</b></div>
+                    <div>Target: <b style="color:var(--green)">₹${tp}</b></div>
+                </div>
+                <div style="font-size:0.68rem;color:var(--text-muted);display:flex;justify-content:space-between;margin-top:0.15rem;">
+                    <span>Qty: ${qty}</span>
+                    <span>Status: <b style="color:#10b981;">RUNNING</b></span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
 
 function updateStatsStrip(stats) {
     const fmt = (v) => `₹${(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
@@ -1630,20 +1755,75 @@ function updateStatsStrip(stats) {
     const pnl = stats.total_pnl || 0;
     pnlEl.textContent = `${pnl >= 0 ? '+' : ''}${fmt(pnl)}`;
     pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-    const trades = Number(stats.total_trades || 0);
-    document.getElementById('statWinRate').textContent = trades > 0 ? `${(stats.win_rate || 0).toFixed(1)}%` : '—';
-    document.getElementById('statTrades').textContent = trades;
+    const closedTrades = Number(stats.total_trades || 0);
+    const openTrades = Number(stats.open_trades || 0);
+    document.getElementById('statWinRate').textContent = closedTrades > 0 ? `${(stats.win_rate || 0).toFixed(1)}%` : '—';
+    document.getElementById('statTrades').textContent = openTrades > 0 ? `${closedTrades} (${openTrades} open)` : closedTrades;
 
     const hint = document.getElementById('statsHint');
     if (hint) {
-        if (trades === 0) {
+        if (closedTrades === 0 && openTrades === 0) {
             hint.style.display = 'block';
-            hint.textContent = 'No trades yet — paper trading is active. Start with high-confidence setups to build performance stats.';
+            hint.textContent = 'No trades yet — click "⚡ Paper Trade" on any signal card below to start simulated execution.';
+        } else if (openTrades > 0 && closedTrades === 0) {
+            hint.style.display = 'block';
+            hint.textContent = `${openTrades} paper trade(s) actively running in real-time. P&L and win rate will finalize on exit.`;
         } else {
             hint.style.display = 'none';
         }
     }
 }
+
+// ── Paper Trading Scorecard Banner & EOD Resolve ─────────
+async function loadPaperScorecard() {
+    const banner = document.getElementById('paperScorecardBanner');
+    if (!banner) return;
+    try {
+        const res = await fetchWithTimeout(`${API}/api/paper/scorecard`, {}, 8000);
+        if (!res.ok) return;
+        const data = await res.json();
+        banner.style.display = 'block';
+        const badge = document.getElementById('paperUnlockBadge');
+        if (badge) {
+            const level = (data.unlock_level || 'grey').toLowerCase();
+            badge.textContent = level === 'green' ? 'VALIDATED' : level === 'orange' ? 'IN PROGRESS' : level === 'red' ? 'LOW WR' : 'BUILDING';
+            const colorMap = { green: 'var(--green, #10b981)', orange: '#f59e0b', red: 'var(--red, #ef4444)', grey: '#9ca3af' };
+            badge.style.color = colorMap[level] || '#9ca3af';
+            badge.style.borderColor = badge.style.color;
+        }
+        const totalEl = document.getElementById('paperTotalTrades');
+        if (totalEl) totalEl.textContent = data.total_trades ?? 0;
+        const openEl = document.getElementById('paperOpenTrades');
+        if (openEl) openEl.textContent = data.open_trades ?? 0;
+        const wrEl = document.getElementById('paperWinRate');
+        if (wrEl) wrEl.textContent = data.win_rate_pct != null ? `${Number(data.win_rate_pct).toFixed(1)}%` : '—';
+        const msgEl = document.getElementById('paperUnlockMsg');
+        if (msgEl) msgEl.textContent = data.unlock_message || '';
+    } catch (e) {
+        console.debug('loadPaperScorecard failed:', e);
+    }
+}
+
+async function paperResolveEOD() {
+    showToast('⏳ Resolving paper trades against EOD prices...', 'info');
+    try {
+        const res = await fetchWithTimeout(`${API}/api/paper/resolve`, { method: 'POST' }, 15000);
+        let data = {};
+        try { data = await res.json(); } catch (_) { data = {}; }
+        if (!res.ok) {
+            showToast(`❌ Resolve failed: ${data.detail || data.error || 'Server error'}`, 'error');
+            return;
+        }
+        showToast(`✅ EOD Resolve: ${data.resolved ?? 0} resolved, ${data.open_remaining ?? 0} open`, 'success');
+        loadPaperScorecard();
+    } catch (e) {
+        showToast(`❌ Resolve failed: ${e.message}`, 'error');
+    }
+}
+
+window.loadPaperScorecard = loadPaperScorecard;
+window.paperResolveEOD = paperResolveEOD;
+
 
 
 function _getIstDate() {
@@ -1981,6 +2161,13 @@ function renderSignals(signals) {
         const driftWarn = driftDetected ? `⚠ Drift ${driftZ.toFixed(1)}σ${driftFeature ? ` (${driftFeature})` : ''}` : '';
 
         const isPinned = _watchlist.has(sig.symbol);
+        const isActionable = ['LONG', 'BUY', 'SHORT', 'SELL'].includes(String(sig.signal || '').toUpperCase()) && !isSkip;
+        const tradeDir = ['LONG', 'BUY'].includes(String(sig.signal || '').toUpperCase()) ? 'LONG' : 'SHORT';
+        const tradeActionHtml = isActionable
+            ? `<div style="margin-top:0.6rem;padding-top:0.45rem;border-top:1px solid rgba(255,255,255,0.06);display:flex;justify-content:flex-end;">
+                <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(sig.symbol)}', '${tradeDir}', ${Number(sig.entry || sig.close || 0)}, ${Number(sig.stop_loss || 0)}, ${Number(sig.target || 0)}, ${Number(sig.atr || 0)}, '${_escHtml(sig.strategy || 'SIGNAL')}', this, { confidence: ${Number(sig.confidence || 0)}, regime: '${_escHtml(sig.regime || 'TRENDING')}', rsi: ${Number(sig.rsi || 0)} })" style="font-size:0.75rem;padding:0.35rem 0.75rem;cursor:pointer;border-radius:5px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;display:flex;align-items:center;gap:4px;">⚡ Paper Trade</button>
+              </div>`
+            : '';
         card.innerHTML = `
             <div class="card-top">
                 <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;flex:1">
@@ -2062,6 +2249,7 @@ function renderSignals(signals) {
                 ${driftWarn ? `<div style="margin-top:0.28rem;font-size:0.65rem;color:var(--orange)">${driftWarn}</div>` : ''}
                 ${contextWarning ? `<div style="margin-top:0.28rem;font-size:0.65rem;color:var(--yellow)">${contextWarning}</div>` : ''}
             </div>
+            ${tradeActionHtml}
         `;
 
         grid.appendChild(card);
@@ -2219,68 +2407,166 @@ async function loadPortfolio() {
         const trades = await parseJsonResponse(tradesRes);
 
         // Summary
-        document.getElementById('portOpenCount').textContent = `${portfolio.total_open} open`;
+        const openCountEl = document.getElementById('portOpenCount');
+        if (openCountEl) openCountEl.textContent = `${portfolio.total_open || 0} open`;
         const ur = portfolio.total_unrealized_pnl || 0;
         const urEl = document.getElementById('portUnrealized');
-        urEl.textContent = `₹${ur.toFixed(2)} unrealized`;
-        urEl.style.color = ur >= 0 ? 'var(--green)' : 'var(--red)';
+        if (urEl) {
+            urEl.textContent = `₹${ur.toFixed(2)} unrealized`;
+            urEl.style.color = ur >= 0 ? 'var(--green)' : 'var(--red)';
+        }
 
-        // Open positions table
+        // Risk KPIs
+        const rm = portfolio.risk_metrics || {};
+        const dd = portfolio.drawdown || {};
+        const sharpeEl = document.getElementById('portSharpeVal');
+        if (sharpeEl) sharpeEl.textContent = Number(rm.sharpe_ratio || 0).toFixed(2);
+        const sortinoEl = document.getElementById('portSortinoVal');
+        if (sortinoEl) sortinoEl.textContent = rm.sortino_ratio != null ? Number(rm.sortino_ratio).toFixed(2) : '—';
+        const pfEl = document.getElementById('portProfitFactorVal');
+        if (pfEl) pfEl.textContent = rm.profit_factor != null ? Number(rm.profit_factor).toFixed(2) : '—';
+
+        // Drawdown
+        const curDd = Number(dd.current_drawdown_pct || 0);
+        const maxDd = Number(dd.max_drawdown_pct || 0);
+        const curDdEl = document.getElementById('portCurrentDrawdownVal');
+        if (curDdEl) curDdEl.textContent = `${curDd.toFixed(1)}%`;
+        const maxDdEl = document.getElementById('portMaxDrawdownVal');
+        if (maxDdEl) maxDdEl.textContent = `${maxDd.toFixed(1)}%`;
+        const ddDurEl = document.getElementById('portDrawdownDurationVal');
+        if (ddDurEl) ddDurEl.textContent = dd.duration_label || '0d';
+        const ddBar = document.getElementById('portDrawdownBar');
+        if (ddBar) {
+            ddBar.style.width = `${Math.min(100, curDd)}%`;
+            ddBar.style.background = curDd > 10 ? 'var(--red)' : curDd > 5 ? '#f59e0b' : 'var(--green)';
+        }
+
+        // Concentration warning
+        const warnEl = document.getElementById('portConcentrationWarn');
+        if (warnEl) {
+            const warns = portfolio.concentration_warnings || [];
+            if (warns.length > 0) {
+                warnEl.style.display = 'block';
+                warnEl.innerHTML = `⚠️ <b>Sector Concentration:</b> ${warns.join(' | ')}`;
+            } else {
+                warnEl.style.display = 'none';
+            }
+        }
+
+        // Open positions table (All 10 columns accurately aligned)
         const tbody = document.getElementById('positionsBody');
-        if (portfolio.open_positions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="empty-row">No open positions</td></tr>';
-        } else {
-            tbody.innerHTML = portfolio.open_positions.map(p => {
-                const pnlClass = (p.unrealized_pnl || 0) >= 0 ? 'pnl-positive' : 'pnl-negative';
-                const sideClass = p.direction === 'BUY' ? 'badge-buy' : 'badge-sell';
-                return `
-                    <tr>
-                        <td>${p.symbol}</td>
-                        <td class="${sideClass}">${p.direction}</td>
-                        <td>₹${p.entry_price.toFixed(2)}</td>
-                        <td>₹${(p.current_price || p.entry_price).toFixed(2)}</td>
-                        <td class="${pnlClass}">₹${(p.unrealized_pnl || 0).toFixed(2)}</td>
-                        <td><span class="regime-badge regime-ranging">OPEN</span></td>
-                    </tr>
-                `;
-            }).join('');
+        const openPos = portfolio.open_positions || [];
+        if (tbody) {
+            if (openPos.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="empty-row">No open positions</td></tr>';
+            } else {
+                tbody.innerHTML = openPos.map(p => {
+                    const pnl = Number(p.unrealized_pnl || 0);
+                    const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+                    const isLong = p.direction === 'BUY' || p.direction === 'LONG';
+                    const sideClass = isLong ? 'badge-buy' : 'badge-sell';
+                    const sideText = isLong ? 'LONG' : 'SHORT';
+                    const currentPx = Number(p.current_price || p.entry_price || 0);
+                    const rMult = Number(p.r_multiple || 0);
+                    const rClass = rMult >= 0 ? 'pnl-positive' : 'pnl-negative';
+                    const heat = Number(p.heat_contribution_pct || 0);
+                    const timeInTrade = p.time_in_trade_human || '—';
+                    const slDist = Number(p.sl_distance_pct || 0);
+
+                    return `
+                        <tr>
+                            <td><b>${p.symbol}</b></td>
+                            <td><span class="${sideClass}">${sideText}</span></td>
+                            <td>₹${Number(p.entry_price || 0).toFixed(2)}</td>
+                            <td>₹${currentPx.toFixed(2)}</td>
+                            <td class="${pnlClass}"><b>₹${pnl.toFixed(2)}</b></td>
+                            <td class="${rClass}">${rMult.toFixed(2)}R</td>
+                            <td>${heat.toFixed(1)}%</td>
+                            <td>${timeInTrade}</td>
+                            <td>${slDist.toFixed(1)}%</td>
+                            <td>
+                                <button class="btn-exit-trade" onclick="closePaperTrade(${p.id}, ${currentPx})" style="padding:2px 8px;font-size:0.7rem;background:rgba(239,68,68,0.15);border:1px solid var(--red);color:var(--red);border-radius:4px;cursor:pointer;">Exit</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
         }
 
         // Trade history table
         const hBody = document.getElementById('historyBody');
-        const closedTrades = trades.trades.filter(t => t.status !== 'OPEN');
-        if (closedTrades.length === 0) {
-            hBody.innerHTML = '<tr><td colspan="7" class="empty-row">No trade history</td></tr>';
-        } else {
-            hBody.innerHTML = closedTrades.slice(0, 20).map(t => {
-                const pnlClass = t.pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
-                const sideClass = t.direction === 'BUY' ? 'badge-buy' : 'badge-sell';
-                const time = new Date(t.timestamp).toLocaleString('en-IN', {
-                    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
-                });
-                const reason = {
-                    'TARGET': '🎯 Target',
-                    'STOP_LOSS': '🛑 SL',
-                    'TRAILING_STOP': '📐 Trail',
-                }[t.exit_reason] || t.exit_reason || '—';
-                return `
-                    <tr>
-                        <td style="font-family: var(--font-body)">${time}</td>
-                        <td>${t.symbol}</td>
-                        <td class="${sideClass}">${t.direction}</td>
-                        <td>₹${t.entry_price.toFixed(2)}</td>
-                        <td>₹${t.exit_price.toFixed(2)}</td>
-                        <td class="${pnlClass}">₹${t.pnl.toFixed(2)} (${t.pnl_pct}%)</td>
-                        <td style="font-family: var(--font-body)">${reason}</td>
-                    </tr>
-                `;
-            }).join('');
+        const rawTrades = trades.trades || [];
+        const closedTrades = rawTrades.filter(t => t.status !== 'OPEN');
+        if (hBody) {
+            if (closedTrades.length === 0) {
+                hBody.innerHTML = '<tr><td colspan="7" class="empty-row">No trade history</td></tr>';
+            } else {
+                hBody.innerHTML = closedTrades.slice(0, 25).map(t => {
+                    const pnlVal = Number(t.total_pnl != null ? t.total_pnl : (t.pnl || 0));
+                    const pnlClass = pnlVal >= 0 ? 'pnl-positive' : 'pnl-negative';
+                    const isLong = t.direction === 'BUY' || t.direction === 'LONG';
+                    const sideClass = isLong ? 'badge-buy' : 'badge-sell';
+                    const sideText = isLong ? 'LONG' : 'SHORT';
+                    const timeRaw = t.exit_time || t.entry_time || t.timestamp;
+                    const time = timeRaw ? new Date(timeRaw).toLocaleString('en-IN', {
+                        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+                    }) : '—';
+                    const rawReason = t.exit_reason || t.status || '';
+                    const reason = {
+                        'CLOSED_TP': '🎯 Target',
+                        'TARGET': '🎯 Target',
+                        'CLOSED_SL': '🛑 Stop Loss',
+                        'STOP_LOSS': '🛑 Stop Loss',
+                        'CLOSED_TRAIL': '📐 Trailing SL',
+                        'TRAILING_STOP': '📐 Trailing SL',
+                        'CLOSED_MANUAL': '✋ Manual',
+                    }[rawReason] || rawReason || '—';
+                    const pnlPct = Number(t.pnl_pct || 0);
+
+                    return `
+                        <tr>
+                            <td style="font-family: var(--font-body)">${time}</td>
+                            <td><b>${t.symbol}</b></td>
+                            <td><span class="${sideClass}">${sideText}</span></td>
+                            <td>₹${Number(t.entry_price || 0).toFixed(2)}</td>
+                            <td>₹${Number(t.exit_price || 0).toFixed(2)}</td>
+                            <td class="${pnlClass}">₹${pnlVal.toFixed(2)} (${pnlPct.toFixed(2)}%)</td>
+                            <td style="font-family: var(--font-body)">${reason}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
         }
     } catch (err) {
         console.error('Portfolio load error:', err);
     }
 }
 
+// ── Manual Paper Trade Exit ───────────────────────────────
+async function closePaperTrade(tradeId, currentPrice) {
+    if (!confirm(`Are you sure you want to close Trade #${tradeId}?`)) return;
+    try {
+        const res = await fetchWithTimeout(`${API}/api/paper/close/${tradeId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ exit_price: Number(currentPrice || 0) }),
+        }, 10000);
+        const data = await parseJsonResponse(res);
+        if (data.status === 'closed') {
+            const pnl = data.trade?.total_pnl ?? data.trade?.pnl ?? 0;
+            showToast(`✅ Closed trade #${tradeId} @ ₹${Number(data.trade?.exit_price || currentPrice).toFixed(1)} (PnL: ₹${Number(pnl).toFixed(2)})`, 'success');
+            if (typeof loadPortfolio === 'function') loadPortfolio();
+            if (typeof loadPerformance === 'function') loadPerformance();
+            if (data.stats && typeof updateStatsStrip === 'function') updateStatsStrip(data.stats);
+        } else {
+            showToast(`⚠️ Could not close trade: ${data.error || 'Unknown error'}`, 'warn');
+        }
+    } catch (err) {
+        console.error('closePaperTrade error:', err);
+        showToast(`❌ Failed to close trade: ${err.message}`, 'error');
+    }
+}
+window.closePaperTrade = closePaperTrade;
 
 // ── Learning Tab ────────────────────────────────────────
 
@@ -2476,6 +2762,91 @@ function _renderExitReasons(reasons) {
     }).join('');
 }
 
+// ── Morning Shortlist & View Toggle ──────────────────────
+function setSwingViewMode(mode) {
+    const btnShortlist = document.getElementById('viewToggleShortlist');
+    const btnAll = document.getElementById('viewToggleAll');
+    const panel = document.getElementById('morningShortlistPanel');
+
+    if (mode === 'shortlist') {
+        if (btnShortlist) { btnShortlist.classList.add('active'); btnShortlist.style.background = ''; btnShortlist.style.color = ''; }
+        if (btnAll) { btnAll.classList.remove('active'); btnAll.style.background = 'transparent'; btnAll.style.color = 'var(--text-muted)'; }
+        if (panel) panel.style.display = 'block';
+    } else {
+        if (btnAll) { btnAll.classList.add('active'); btnAll.style.background = ''; btnAll.style.color = ''; }
+        if (btnShortlist) { btnShortlist.classList.remove('active'); btnShortlist.style.background = 'transparent'; btnShortlist.style.color = 'var(--text-muted)'; }
+        if (panel) panel.style.display = 'none';
+    }
+}
+
+async function loadMorningShortlist() {
+    const grid = document.getElementById('shortlistGrid');
+    const tsEl = document.getElementById('shortlistTimestamp');
+    if (!grid) return;
+    grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Loading morning shortlist...</p></div>';
+
+    try {
+        const res = await fetchWithTimeout(`${API}/api/swing/shortlist`, {}, 15000);
+        let data = {};
+        try { data = await res.json(); } catch (_) { data = {}; }
+        const setups = data.setups || [];
+        if (tsEl) {
+            tsEl.textContent = data.generated_at ? `Scan: ${new Date(data.generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : (data.scan_date || '');
+        }
+        if (!setups.length) {
+            grid.innerHTML = `<div class="loading-state" style="padding:1.5rem;"><p style="font-size:0.85rem;color:var(--text-muted);">${data.message || 'No shortlist setups available yet.'}</p></div>`;
+            return;
+        }
+        renderMorningShortlist(setups);
+    } catch (err) {
+        console.error('loadMorningShortlist error:', err);
+        grid.innerHTML = '<div class="loading-state"><p style="color:var(--red);">Failed to load morning shortlist</p></div>';
+    }
+}
+
+function renderMorningShortlist(setups) {
+    const grid = document.getElementById('shortlistGrid');
+    if (!grid) return;
+    grid.innerHTML = setups.map(s => {
+        const dirClass = s.direction === 'LONG' ? 'buy' : 'sell';
+        const dirColor = s.direction === 'LONG' ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
+        const gradeColor = s.grade === 'A' ? '#10b981' : s.grade === 'B' ? '#6366f1' : '#f59e0b';
+        const t1 = s.target_1 || s.target || '—';
+        const t2 = s.target_2 || '—';
+        return `
+        <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
+                <div>
+                    <div style="display:flex;align-items:center;gap:0.5rem;">
+                        <span style="font-weight:800;font-size:1.05rem;color:var(--text-primary);">${s.symbol}</span>
+                        <span class="signal-badge ${dirClass}" style="font-size:0.65rem;padding:2px 6px;">${s.direction}</span>
+                        <span style="font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
+                    </div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${s.pattern || 'Swing Setup'}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:0.62rem;color:var(--text-muted);">Strength</div>
+                    <div style="font-weight:800;font-size:1.1rem;color:${gradeColor};font-family:var(--font-mono);">${s.strength || s.score || 0}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.4rem;text-align:center;margin:0.5rem 0;background:rgba(0,0,0,0.15);padding:0.4rem;border-radius:6px;">
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">Entry</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;">₹${s.entry_zone || s.entry || 0}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">SL</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--red);">₹${s.stop_loss || 0}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">T1</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t1}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">T2</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t2}</div></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.6rem;">
+                <span style="font-size:0.68rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
+                <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(s.symbol)}', '${s.direction}', ${Number(s.entry_zone || s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, 'SWING', this)" style="font-size:0.7rem;padding:0.25rem 0.6rem;cursor:pointer;border-radius:4px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;">⚡ Paper Trade</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+window.setSwingViewMode = setSwingViewMode;
+window.loadMorningShortlist = loadMorningShortlist;
+
+
 function _renderMonthlyPnl(months) {
     const el = document.getElementById('perfMonthlyGrid');
     if (!el) return;
@@ -2497,6 +2868,91 @@ function _renderMonthlyPnl(months) {
     }).join('');
 }
 
+// ── Morning Shortlist & View Toggle ──────────────────────
+function setSwingViewMode(mode) {
+    const btnShortlist = document.getElementById('viewToggleShortlist');
+    const btnAll = document.getElementById('viewToggleAll');
+    const panel = document.getElementById('morningShortlistPanel');
+
+    if (mode === 'shortlist') {
+        if (btnShortlist) { btnShortlist.classList.add('active'); btnShortlist.style.background = ''; btnShortlist.style.color = ''; }
+        if (btnAll) { btnAll.classList.remove('active'); btnAll.style.background = 'transparent'; btnAll.style.color = 'var(--text-muted)'; }
+        if (panel) panel.style.display = 'block';
+    } else {
+        if (btnAll) { btnAll.classList.add('active'); btnAll.style.background = ''; btnAll.style.color = ''; }
+        if (btnShortlist) { btnShortlist.classList.remove('active'); btnShortlist.style.background = 'transparent'; btnShortlist.style.color = 'var(--text-muted)'; }
+        if (panel) panel.style.display = 'none';
+    }
+}
+
+async function loadMorningShortlist() {
+    const grid = document.getElementById('shortlistGrid');
+    const tsEl = document.getElementById('shortlistTimestamp');
+    if (!grid) return;
+    grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Loading morning shortlist...</p></div>';
+
+    try {
+        const res = await fetchWithTimeout(`${API}/api/swing/shortlist`, {}, 15000);
+        let data = {};
+        try { data = await res.json(); } catch (_) { data = {}; }
+        const setups = data.setups || [];
+        if (tsEl) {
+            tsEl.textContent = data.generated_at ? `Scan: ${new Date(data.generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : (data.scan_date || '');
+        }
+        if (!setups.length) {
+            grid.innerHTML = `<div class="loading-state" style="padding:1.5rem;"><p style="font-size:0.85rem;color:var(--text-muted);">${data.message || 'No shortlist setups available yet.'}</p></div>`;
+            return;
+        }
+        renderMorningShortlist(setups);
+    } catch (err) {
+        console.error('loadMorningShortlist error:', err);
+        grid.innerHTML = '<div class="loading-state"><p style="color:var(--red);">Failed to load morning shortlist</p></div>';
+    }
+}
+
+function renderMorningShortlist(setups) {
+    const grid = document.getElementById('shortlistGrid');
+    if (!grid) return;
+    grid.innerHTML = setups.map(s => {
+        const dirClass = s.direction === 'LONG' ? 'buy' : 'sell';
+        const dirColor = s.direction === 'LONG' ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
+        const gradeColor = s.grade === 'A' ? '#10b981' : s.grade === 'B' ? '#6366f1' : '#f59e0b';
+        const t1 = s.target_1 || s.target || '—';
+        const t2 = s.target_2 || '—';
+        return `
+        <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
+                <div>
+                    <div style="display:flex;align-items:center;gap:0.5rem;">
+                        <span style="font-weight:800;font-size:1.05rem;color:var(--text-primary);">${s.symbol}</span>
+                        <span class="signal-badge ${dirClass}" style="font-size:0.65rem;padding:2px 6px;">${s.direction}</span>
+                        <span style="font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
+                    </div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${s.pattern || 'Swing Setup'}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:0.62rem;color:var(--text-muted);">Strength</div>
+                    <div style="font-weight:800;font-size:1.1rem;color:${gradeColor};font-family:var(--font-mono);">${s.strength || s.score || 0}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.4rem;text-align:center;margin:0.5rem 0;background:rgba(0,0,0,0.15);padding:0.4rem;border-radius:6px;">
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">Entry</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;">₹${s.entry_zone || s.entry || 0}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">SL</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--red);">₹${s.stop_loss || 0}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">T1</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t1}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">T2</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t2}</div></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.6rem;">
+                <span style="font-size:0.68rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
+                <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(s.symbol)}', '${s.direction}', ${Number(s.entry_zone || s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, 'SWING', this)" style="font-size:0.7rem;padding:0.25rem 0.6rem;cursor:pointer;border-radius:4px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;">⚡ Paper Trade</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+window.setSwingViewMode = setSwingViewMode;
+window.loadMorningShortlist = loadMorningShortlist;
+
+
 function _renderSymbolBreakdown(symbols) {
     const el = document.getElementById('perfSymbolBars');
     if (!el) return;
@@ -2516,6 +2972,91 @@ function _renderSymbolBreakdown(symbols) {
         </div>`;
     }).join('');
 }
+
+// ── Morning Shortlist & View Toggle ──────────────────────
+function setSwingViewMode(mode) {
+    const btnShortlist = document.getElementById('viewToggleShortlist');
+    const btnAll = document.getElementById('viewToggleAll');
+    const panel = document.getElementById('morningShortlistPanel');
+
+    if (mode === 'shortlist') {
+        if (btnShortlist) { btnShortlist.classList.add('active'); btnShortlist.style.background = ''; btnShortlist.style.color = ''; }
+        if (btnAll) { btnAll.classList.remove('active'); btnAll.style.background = 'transparent'; btnAll.style.color = 'var(--text-muted)'; }
+        if (panel) panel.style.display = 'block';
+    } else {
+        if (btnAll) { btnAll.classList.add('active'); btnAll.style.background = ''; btnAll.style.color = ''; }
+        if (btnShortlist) { btnShortlist.classList.remove('active'); btnShortlist.style.background = 'transparent'; btnShortlist.style.color = 'var(--text-muted)'; }
+        if (panel) panel.style.display = 'none';
+    }
+}
+
+async function loadMorningShortlist() {
+    const grid = document.getElementById('shortlistGrid');
+    const tsEl = document.getElementById('shortlistTimestamp');
+    if (!grid) return;
+    grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Loading morning shortlist...</p></div>';
+
+    try {
+        const res = await fetchWithTimeout(`${API}/api/swing/shortlist`, {}, 15000);
+        let data = {};
+        try { data = await res.json(); } catch (_) { data = {}; }
+        const setups = data.setups || [];
+        if (tsEl) {
+            tsEl.textContent = data.generated_at ? `Scan: ${new Date(data.generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : (data.scan_date || '');
+        }
+        if (!setups.length) {
+            grid.innerHTML = `<div class="loading-state" style="padding:1.5rem;"><p style="font-size:0.85rem;color:var(--text-muted);">${data.message || 'No shortlist setups available yet.'}</p></div>`;
+            return;
+        }
+        renderMorningShortlist(setups);
+    } catch (err) {
+        console.error('loadMorningShortlist error:', err);
+        grid.innerHTML = '<div class="loading-state"><p style="color:var(--red);">Failed to load morning shortlist</p></div>';
+    }
+}
+
+function renderMorningShortlist(setups) {
+    const grid = document.getElementById('shortlistGrid');
+    if (!grid) return;
+    grid.innerHTML = setups.map(s => {
+        const dirClass = s.direction === 'LONG' ? 'buy' : 'sell';
+        const dirColor = s.direction === 'LONG' ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
+        const gradeColor = s.grade === 'A' ? '#10b981' : s.grade === 'B' ? '#6366f1' : '#f59e0b';
+        const t1 = s.target_1 || s.target || '—';
+        const t2 = s.target_2 || '—';
+        return `
+        <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
+                <div>
+                    <div style="display:flex;align-items:center;gap:0.5rem;">
+                        <span style="font-weight:800;font-size:1.05rem;color:var(--text-primary);">${s.symbol}</span>
+                        <span class="signal-badge ${dirClass}" style="font-size:0.65rem;padding:2px 6px;">${s.direction}</span>
+                        <span style="font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
+                    </div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${s.pattern || 'Swing Setup'}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:0.62rem;color:var(--text-muted);">Strength</div>
+                    <div style="font-weight:800;font-size:1.1rem;color:${gradeColor};font-family:var(--font-mono);">${s.strength || s.score || 0}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.4rem;text-align:center;margin:0.5rem 0;background:rgba(0,0,0,0.15);padding:0.4rem;border-radius:6px;">
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">Entry</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;">₹${s.entry_zone || s.entry || 0}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">SL</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--red);">₹${s.stop_loss || 0}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">T1</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t1}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">T2</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t2}</div></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.6rem;">
+                <span style="font-size:0.68rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
+                <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(s.symbol)}', '${s.direction}', ${Number(s.entry_zone || s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, 'SWING', this)" style="font-size:0.7rem;padding:0.25rem 0.6rem;cursor:pointer;border-radius:4px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;">⚡ Paper Trade</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+window.setSwingViewMode = setSwingViewMode;
+window.loadMorningShortlist = loadMorningShortlist;
+
 
 function _renderTradeHistory(trades) {
     const tbody = document.getElementById('perfTradesBody');
@@ -4021,6 +4562,8 @@ function renderSwingMetaBar(data) {
 }
 
 async function loadSwingScanner() {
+    if (typeof loadPaperScorecard === 'function') loadPaperScorecard();
+    if (typeof loadMorningShortlist === 'function') loadMorningShortlist();
     const grid = document.getElementById('swingGrid');
     if (!grid) return;
     grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Scanning for swing setups...</p></div>';
@@ -4186,6 +4729,91 @@ function renderSwingSetups(setups) {
         </div>`;
     }).join('');
 }
+
+// ── Morning Shortlist & View Toggle ──────────────────────
+function setSwingViewMode(mode) {
+    const btnShortlist = document.getElementById('viewToggleShortlist');
+    const btnAll = document.getElementById('viewToggleAll');
+    const panel = document.getElementById('morningShortlistPanel');
+
+    if (mode === 'shortlist') {
+        if (btnShortlist) { btnShortlist.classList.add('active'); btnShortlist.style.background = ''; btnShortlist.style.color = ''; }
+        if (btnAll) { btnAll.classList.remove('active'); btnAll.style.background = 'transparent'; btnAll.style.color = 'var(--text-muted)'; }
+        if (panel) panel.style.display = 'block';
+    } else {
+        if (btnAll) { btnAll.classList.add('active'); btnAll.style.background = ''; btnAll.style.color = ''; }
+        if (btnShortlist) { btnShortlist.classList.remove('active'); btnShortlist.style.background = 'transparent'; btnShortlist.style.color = 'var(--text-muted)'; }
+        if (panel) panel.style.display = 'none';
+    }
+}
+
+async function loadMorningShortlist() {
+    const grid = document.getElementById('shortlistGrid');
+    const tsEl = document.getElementById('shortlistTimestamp');
+    if (!grid) return;
+    grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Loading morning shortlist...</p></div>';
+
+    try {
+        const res = await fetchWithTimeout(`${API}/api/swing/shortlist`, {}, 15000);
+        let data = {};
+        try { data = await res.json(); } catch (_) { data = {}; }
+        const setups = data.setups || [];
+        if (tsEl) {
+            tsEl.textContent = data.generated_at ? `Scan: ${new Date(data.generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : (data.scan_date || '');
+        }
+        if (!setups.length) {
+            grid.innerHTML = `<div class="loading-state" style="padding:1.5rem;"><p style="font-size:0.85rem;color:var(--text-muted);">${data.message || 'No shortlist setups available yet.'}</p></div>`;
+            return;
+        }
+        renderMorningShortlist(setups);
+    } catch (err) {
+        console.error('loadMorningShortlist error:', err);
+        grid.innerHTML = '<div class="loading-state"><p style="color:var(--red);">Failed to load morning shortlist</p></div>';
+    }
+}
+
+function renderMorningShortlist(setups) {
+    const grid = document.getElementById('shortlistGrid');
+    if (!grid) return;
+    grid.innerHTML = setups.map(s => {
+        const dirClass = s.direction === 'LONG' ? 'buy' : 'sell';
+        const dirColor = s.direction === 'LONG' ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
+        const gradeColor = s.grade === 'A' ? '#10b981' : s.grade === 'B' ? '#6366f1' : '#f59e0b';
+        const t1 = s.target_1 || s.target || '—';
+        const t2 = s.target_2 || '—';
+        return `
+        <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
+                <div>
+                    <div style="display:flex;align-items:center;gap:0.5rem;">
+                        <span style="font-weight:800;font-size:1.05rem;color:var(--text-primary);">${s.symbol}</span>
+                        <span class="signal-badge ${dirClass}" style="font-size:0.65rem;padding:2px 6px;">${s.direction}</span>
+                        <span style="font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
+                    </div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${s.pattern || 'Swing Setup'}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:0.62rem;color:var(--text-muted);">Strength</div>
+                    <div style="font-weight:800;font-size:1.1rem;color:${gradeColor};font-family:var(--font-mono);">${s.strength || s.score || 0}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.4rem;text-align:center;margin:0.5rem 0;background:rgba(0,0,0,0.15);padding:0.4rem;border-radius:6px;">
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">Entry</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;">₹${s.entry_zone || s.entry || 0}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">SL</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--red);">₹${s.stop_loss || 0}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">T1</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t1}</div></div>
+                <div><div style="font-size:0.6rem;color:var(--text-muted);">T2</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t2}</div></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.6rem;">
+                <span style="font-size:0.68rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
+                <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(s.symbol)}', '${s.direction}', ${Number(s.entry_zone || s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, 'SWING', this)" style="font-size:0.7rem;padding:0.25rem 0.6rem;cursor:pointer;border-radius:4px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;">⚡ Paper Trade</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+window.setSwingViewMode = setSwingViewMode;
+window.loadMorningShortlist = loadMorningShortlist;
+
 
 
 // ══════════════════════════════════════════════════════════
@@ -4389,6 +5017,226 @@ function renderBreakoutsTable(breakouts) {
         </tr>`;
     }).join('');
 }
+
+
+// ── Intraday Strategy Engine Tab ────────────────────────
+const _ID_STRAT_COLORS = {
+    ORB: { bg: "rgba(59,130,246,0.15)", color: "#60a5fa", border: "rgba(59,130,246,0.4)" },
+    GAP_GO: { bg: "rgba(16,185,129,0.15)", color: "#34d399", border: "rgba(16,185,129,0.4)" },
+    VWAP_REV: { bg: "rgba(245,158,11,0.15)", color: "#fbbf24", border: "rgba(245,158,11,0.4)" },
+    MOMENTUM: { bg: "rgba(168,85,247,0.15)", color: "#c084fc", border: "rgba(168,85,247,0.4)" },
+    RANGE_BREAK: { bg: "rgba(236,72,153,0.15)", color: "#f472b6", border: "rgba(236,72,153,0.4)" },
+    CPR: { bg: "rgba(14,165,233,0.15)", color: "#38bdf8", border: "rgba(14,165,233,0.4)" },
+    SUPERTREND: { bg: "rgba(34,197,94,0.15)", color: "#4ade80", border: "rgba(34,197,94,0.4)" },
+};
+
+let _intradayAllSigs = [];
+
+function _updateIntradayKpis(sigs) {
+    const total = sigs.length;
+    const longCount = sigs.filter(s => s.direction === "LONG").length;
+    const shortCount = sigs.filter(s => s.direction === "SHORT").length;
+    const scores = sigs.map(s => Number(s.score || 0)).filter(n => !isNaN(n) && n > 0);
+    const avgScore = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : "—";
+
+    const tEl = document.getElementById("idKpiTotal");
+    const lEl = document.getElementById("idKpiLong");
+    const sEl = document.getElementById("idKpiShort");
+    const aEl = document.getElementById("idKpiAvgScore");
+    if (tEl) tEl.textContent = total;
+    if (lEl) lEl.textContent = longCount;
+    if (sEl) sEl.textContent = shortCount;
+    if (aEl) aEl.textContent = avgScore;
+}
+
+function filterIntradayStrat(strat) {
+    document.querySelectorAll("#intradayStratFilter [data-strat]").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.strat === strat);
+    });
+    const longOnly = !!document.getElementById("idFilterLong")?.checked;
+    let filtered = _intradayAllSigs;
+    if (strat && strat !== "all") {
+        filtered = filtered.filter(s => s.strategy === strat);
+    }
+    if (longOnly) {
+        filtered = filtered.filter(s => s.direction === "LONG");
+    }
+    _renderIntradayCards(filtered);
+}
+
+function resetIntradayFilters() {
+    document.querySelectorAll("#intradayStratFilter [data-strat]").forEach(b => b.classList.remove("active"));
+    const allBtn = document.querySelector("#intradayStratFilter [data-strat=\"all\"]");
+    if (allBtn) allBtn.classList.add("active");
+    const cb = document.getElementById("idFilterLong");
+    if (cb) cb.checked = false;
+    _renderIntradayCards(_intradayAllSigs || []);
+}
+
+function renderIntradayGrid(sigs) {
+    _intradayAllSigs = sigs || [];
+    _updateIntradayKpis(_intradayAllSigs);
+    const activeChip = document.querySelector("#intradayStratFilter [data-strat].active");
+    const strat = activeChip ? activeChip.dataset.strat || "all" : "all";
+    filterIntradayStrat(strat);
+}
+
+function _renderIntradayCards(sigs) {
+    const grid = document.getElementById("intradayGrid");
+    if (!grid) return;
+
+    if (!sigs || !sigs.length) {
+        const total = (_intradayAllSigs || []).length;
+        if (total > 0) {
+            grid.innerHTML = `<div class="loading-state"><p style="color:var(--text-muted);font-size:0.85rem;">No signals match current filter. ${total} signal(s) available in latest scan.</p><p style="margin-top:0.5rem;"><button type="button" onclick="resetIntradayFilters()" class="btn btn-secondary" style="font-size:0.75rem;padding:0.3rem 0.65rem;">Show All strategies</button></p></div>`;
+        } else {
+            grid.innerHTML = '<div class="loading-state"><p style="color:var(--text-muted);font-size:0.85rem;">No intraday signals in latest snapshot. Run a fresh scan during market hours (9:15-15:15 IST) or check again after a few minutes.</p><p style="margin-top:0.5rem;"><button type="button" onclick="runIntradayScan()" class="btn btn-secondary" style="font-size:0.75rem;padding:0.3rem 0.65rem;">Run fresh scan</button></p></div>';
+        }
+        return;
+    }
+
+    grid.innerHTML = sigs.map(s => {
+        const dirColor = s.direction === "LONG" ? "var(--green)" : "var(--red)";
+        const dirBg = s.direction === "LONG" ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)";
+        const dirBorder = s.direction === "LONG" ? "rgba(16,185,129,0.4)" : "rgba(239,68,68,0.4)";
+        const stc = _ID_STRAT_COLORS[s.strategy] || _ID_STRAT_COLORS["MOMENTUM"];
+        const score = Number(s.score || 0);
+        const scorePct = Math.min(100, score);
+        const scoreColor = score >= 80 ? "#10b981" : score >= 65 ? "#818cf8" : "#f59e0b";
+        const rr = Number(s.risk_reward || 0);
+        const rrTxt = Number.isFinite(rr) && rr > 0 ? rr.toFixed(2) + "x" : "—";
+        const qtyTxt = s.qty != null ? Number(s.qty).toLocaleString("en-IN") : "—";
+        const atrTxt = s.atr != null ? "₹" + Number(s.atr).toFixed(2) : "—";
+        const entryFmt = s.entry != null ? "₹" + Number(s.entry).toFixed(2) : "—";
+        const slFmt = s.stop_loss != null ? "₹" + Number(s.stop_loss).toFixed(2) : "—";
+        const tgtFmt = s.target != null ? "₹" + Number(s.target).toFixed(2) : "—";
+        const riskNote = s.risk_reason && s.risk_reason !== "OK"
+            ? `<div style="font-size:0.67rem;color:#f59e0b;margin-top:0.35rem;padding:3px 6px;background:rgba(245,158,11,0.08);border-radius:4px;">⚠️ ${_escHtml(s.risk_reason)}</div>`
+            : "";
+        const rvolBadge = s.rvol != null
+            ? `<span style="font-size:0.65rem;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.35);" title="Relative Volume vs 20-Day Profile">RVOL ${Number(s.rvol).toFixed(1)}x</span>`
+            : "";
+
+        return `
+            <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};transition:transform 0.15s,box-shadow 0.15s;cursor:default;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+                            <strong style="font-size:1.05rem;color:var(--text-primary);">${_escHtml(s.symbol)}</strong>
+                            <span style="font-size:0.68rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${dirColor};border:1px solid ${dirBorder};">${_escHtml(s.direction)}</span>
+                            <span style="font-size:0.65rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${stc.bg};color:${stc.color};border:1px solid ${stc.border};">${_escHtml(s.strategy)}</span>
+                            ${rvolBadge}
+                        </div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:0.6rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Score</div>
+                        <div style="font-size:1.1rem;font-weight:800;color:${scoreColor};font-family:var(--font-mono);">${score.toFixed(1)}</div>
+                    </div>
+                </div>
+                <div style="height:3px;background:rgba(255,255,255,0.06);border-radius:2px;margin-bottom:0.7rem;">
+                    <div style="height:100%;width:${scorePct}%;background:${scoreColor};border-radius:2px;"></div>
+                </div>
+                <p style="font-size:0.7rem;color:var(--text-muted);margin:0 0 0.65rem;line-height:1.45;">${_escHtml(s.rationale || "")}</p>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;margin-bottom:0.5rem;">
+                    <div style="text-align:center;padding:0.35rem;background:rgba(255,255,255,0.03);border-radius:6px;">
+                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Entry</div>
+                        <div style="font-weight:700;font-family:var(--font-mono);font-size:0.85rem;color:var(--text-primary);">${entryFmt}</div>
+                    </div>
+                    <div style="text-align:center;padding:0.35rem;background:rgba(239,68,68,0.06);border-radius:6px;">
+                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">SL</div>
+                        <div style="font-weight:700;font-family:var(--font-mono);font-size:0.85rem;color:var(--red);">${slFmt}</div>
+                    </div>
+                    <div style="text-align:center;padding:0.35rem;background:rgba(16,185,129,0.06);border-radius:6px;">
+                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Target</div>
+                        <div style="font-weight:700;font-family:var(--font-mono);font-size:0.85rem;color:var(--green);">${tgtFmt}</div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:1rem;font-size:0.7rem;color:var(--text-muted);flex-wrap:wrap;">
+                    <span>R:R <strong style="color:var(--text-primary);">${rrTxt}</strong></span>
+                    <span>Qty <strong style="color:var(--text-primary);">${qtyTxt}</strong></span>
+                    <span>ATR <strong style="color:var(--text-primary);">${atrTxt}</strong></span>
+                </div>
+                ${riskNote}
+                <div style="margin-top:0.65rem;padding-top:0.5rem;border-top:1px solid rgba(255,255,255,0.06);display:flex;justify-content:flex-end;">
+                    <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(s.symbol)}', '${_escHtml(s.direction)}', ${Number(s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target || 0)}, ${Number(s.atr || 0)}, '${_escHtml(s.strategy || "INTRADAY")}', this)" style="font-size:0.75rem;padding:0.35rem 0.75rem;display:flex;align-items:center;gap:4px;cursor:pointer;border-radius:5px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;">⚡ Paper Trade</button>
+                </div>
+            </div>`;
+    }).join("");
+}
+
+async function loadIntradayLatest() {
+    const meta = document.getElementById("intradayMeta");
+    const grid = document.getElementById("intradayGrid");
+    try {
+        const res = await fetchWithTimeout(`${API}/api/intraday/latest`, {}, 35000);
+        const row = await parseJsonResponse(res);
+        const sigs = row.signals || [];
+        if (meta) {
+            let niftyTxt = "";
+            if (row.nifty_market_context && row.nifty_market_context.trend) {
+                const nc = row.nifty_market_context;
+                const trendEmoji = nc.trend === "BULLISH" ? "🟢" : (nc.trend === "BEARISH" ? "🔴" : "⚪");
+                const trendColor = nc.trend === "BULLISH" ? "var(--green)" : (nc.trend === "BEARISH" ? "var(--red)" : "var(--text-muted)");
+                const ltpTxt = nc.ltp ? ` ₹${Number(nc.ltp).toFixed(1)}` : "";
+                const chgTxt = nc.change_pct != null ? ` (${nc.change_pct >= 0 ? "+" : ""}${nc.change_pct.toFixed(2)}%)` : "";
+                niftyTxt = `<span style="margin-right:0.75rem;padding-right:0.75rem;border-right:1px solid rgba(255,255,255,0.1);"><strong style="color:var(--text-primary);">NIFTY 50:</strong> <span style="color:${trendColor};font-weight:700;">${trendEmoji} ${nc.trend}</span>${ltpTxt}${chgTxt}</span>`;
+            }
+            meta.innerHTML = row.scan_time
+                ? `${niftyTxt}Last saved scan: <strong>${row.scan_time}</strong> · <strong>${sigs.length}</strong> signal(s) · 0-delay hybrid quotes`
+                : `${niftyTxt}No saved scan yet · click <strong>Run Scan</strong> to fetch live intraday signals.`;
+        }
+        renderIntradayGrid(sigs);
+    } catch (e) {
+        console.warn("loadIntradayLatest error:", e);
+        if (meta) meta.textContent = "Could not load intraday snapshot.";
+        if (grid) grid.innerHTML = '<p style="color:var(--red);padding:1rem;">Failed to load intraday data</p>';
+    }
+}
+
+async function runIntradayScan() {
+    const btn = document.getElementById("intradayScanBtn");
+    const grid = document.getElementById("intradayGrid");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spin">⏳</span> Scanning...';
+    }
+    if (grid) {
+        grid.innerHTML = '<div class="loading-state" style="padding:2rem;"><div class="loader" style="margin:0 auto 1rem;"></div><p style="color:var(--text-muted);">Running 0-delay hybrid intraday scan across watchlist... please wait (~20-40s)</p></div>';
+    }
+    try {
+        const res = await fetchWithTimeout(`${API}/api/intraday/scan`, { method: "POST" }, 300000);
+        const data = await parseJsonResponse(res);
+        renderIntradayGrid(data.signals || []);
+        const meta = document.getElementById("intradayMeta");
+        if (meta) {
+            let niftyTxt = "";
+            if (data.nifty_market_context && data.nifty_market_context.trend) {
+                const nc = data.nifty_market_context;
+                const trendEmoji = nc.trend === "BULLISH" ? "🟢" : (nc.trend === "BEARISH" ? "🔴" : "⚪");
+                const trendColor = nc.trend === "BULLISH" ? "var(--green)" : (nc.trend === "BEARISH" ? "var(--red)" : "var(--text-muted)");
+                const ltpTxt = nc.ltp ? ` ₹${Number(nc.ltp).toFixed(1)}` : "";
+                const chgTxt = nc.change_pct != null ? ` (${nc.change_pct >= 0 ? "+" : ""}${nc.change_pct.toFixed(2)}%)` : "";
+                niftyTxt = `<span style="margin-right:0.75rem;padding-right:0.75rem;border-right:1px solid rgba(255,255,255,0.1);"><strong style="color:var(--text-primary);">NIFTY 50:</strong> <span style="color:${trendColor};font-weight:700;">${trendEmoji} ${nc.trend}</span>${ltpTxt}${chgTxt}</span>`;
+            }
+            meta.innerHTML = `${niftyTxt}Saved scan #${data.scan_id || ""} at <strong>${data.scan_time || ""}</strong> · <strong>${(data.signals || []).length}</strong> signal(s) · 0-delay hybrid`;
+        }
+    } catch (e) {
+        console.error("runIntradayScan error:", e);
+        if (grid) grid.innerHTML = '<p style="color:var(--red);padding:1rem;">Intraday scan failed (timeout or server error).</p>';
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = "⚡ Run Scan";
+        }
+    }
+}
+
+// Window globals for HTML onclick handlers
+window.filterIntradayStrat = filterIntradayStrat;
+window.resetIntradayFilters = resetIntradayFilters;
+window.loadIntradayLatest = loadIntradayLatest;
+window.runIntradayScan = runIntradayScan;
+window.takePaperTrade = takePaperTrade;
 
 // Make filterBreakouts available globally for onclick
 window.filterBreakouts = filterBreakouts;

@@ -45,3 +45,14 @@ def get_session():
         yield session
     finally:
         session.close()
+
+
+def get_sqlite_path() -> str:
+    """
+    Return the local filesystem path for SQLite connections.
+    Extracts the path from settings.DATABASE_URL (e.g. sqlite:////tmp/trading.db or sqlite:///trading.db).
+    """
+    url = DATABASE_URL or "sqlite:///trading.db"
+    if url.startswith("sqlite:///"):
+        return url.replace("sqlite:///", "")
+    return "trading.db"

@@ -18,10 +18,16 @@ import os
 import ssl
 import time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Any
 
+from config import settings
 from utils.atomic_io import atomic_write_json
 
+try:
+    import yfinance as yf
+except Exception:  # pragma: no cover - optional dependency runtime path
+    yf = None
 logger = logging.getLogger(__name__)
 
 # ── FII/DII History persistence ─────────────────────────────────────────────
@@ -29,6 +35,50 @@ _TRADEFLOW_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "t
 _tradeflow_cache: dict = {}
 _tradeflow_fetched_at: float = 0.0
 _TRADEFLOW_CACHE_TTL = 300  # 5 minutes — NSE updates data once per day
+_usdinr_cache: dict[str, Any] = {"fetched_at": 0.0, "change_pct": None}
+_USDINR_CACHE_TTL = 900
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.replace(",", "").strip()
+        return float(value)
+    except Exception:
+        return None
+
+
+def _parse_trade_date(date_str: str) -> datetime:
+    try:
+        return datetime.strptime(date_str, "%d-%b-%Y")
+    except Exception:
+        return datetime.min
+
+
+def _history_entry(
+    date: str,
+    fii_net: float,
+    dii_net: float,
+    sentiment: str,
+    fii_magnitude: str,
+    dii_context: str,
+    true_intent: str,
+    true_intent_score: float,
+    fo_fii_net: float | None,
+) -> dict:
+    return {
+        "date": date,
+        "fii_net": round(fii_net, 2),
+        "dii_net": round(dii_net, 2),
+        "sentiment": sentiment,
+        "fii_magnitude": fii_magnitude,
+        "dii_context": dii_context,
+        "true_intent": true_intent,
+        "true_intent_score": round(true_intent_score, 1),
+        "fo_fii_net": round(fo_fii_net, 2) if fo_fii_net is not None else None,
+    }
 
 
 def _load_tf_history() -> list:
@@ -50,14 +100,237 @@ def _save_tf_history(history: list) -> None:
         pass
 
 
-def _upsert_tf_history(history: list, date: str, fii_net: float, dii_net: float) -> list:
-    for entry in history:
-        if entry.get("date") == date:
-            entry["fii_net"] = round(fii_net, 2)
-            entry["dii_net"] = round(dii_net, 2)
+def _upsert_tf_history(history: list, entry: dict) -> list:
+    date = str(entry.get("date", ""))
+    for existing in history:
+        if existing.get("date") == date:
+            existing.update(entry)
             return history
-    history.append({"date": date, "fii_net": round(fii_net, 2), "dii_net": round(dii_net, 2)})
+    history.append(entry)
+    history.sort(key=lambda x: _parse_trade_date(str(x.get("date", ""))))
     return history[-90:]  # keep last 90 trading days
+
+
+def _classify_fii_magnitude(fii_net: float) -> str:
+    strong = float(getattr(settings, "TRADEFLOW_FII_STRONG_THRESHOLD_CR", 3000.0))
+    noise = float(getattr(settings, "TRADEFLOW_FII_NOISE_THRESHOLD_CR", 500.0))
+
+    if fii_net >= strong:
+        return "FII_STRONG_BUY"
+    if fii_net >= noise:
+        return "FII_MODERATE_BUY"
+    if fii_net > 0:
+        return "FII_WEAK_BUY"
+
+    if fii_net <= -strong:
+        return "FII_STRONG_SELL"
+    if fii_net <= -noise:
+        return "FII_MODERATE_SELL"
+    if fii_net < 0:
+        return "FII_WEAK_SELL"
+
+    return "FII_FLAT"
+
+
+def _build_fii_5d_trend(history: list[dict]) -> dict:
+    lookback = max(2, int(getattr(settings, "TRADEFLOW_FIVE_DAY_LOOKBACK", 5)))
+    ordered = sorted(history, key=lambda x: _parse_trade_date(str(x.get("date", ""))))
+    recent = ordered[-lookback:]
+    fii_vals = [float(x.get("fii_net", 0.0) or 0.0) for x in recent]
+    positive_days = sum(1 for x in fii_vals if x > 0)
+    negative_days = sum(1 for x in fii_vals if x < 0)
+    avg = sum(fii_vals) / len(fii_vals) if fii_vals else 0.0
+
+    if positive_days >= 3 and avg > 0:
+        trend = "CONSISTENT_BUYING"
+    elif negative_days >= 3 and avg < 0:
+        trend = "CONSISTENT_SELLING"
+    else:
+        trend = "MIXED"
+
+    return {
+        "lookback_days": lookback,
+        "positive_days": positive_days,
+        "negative_days": negative_days,
+        "avg_net_cr": round(avg, 2),
+        "trend": trend,
+        "consistent": trend in ("CONSISTENT_BUYING", "CONSISTENT_SELLING"),
+    }
+
+
+def _build_dii_context(fii_net: float, dii_net: float) -> str:
+    if dii_net > 0 and fii_net < 0:
+        return "DII_ABSORBING_FII_OUTFLOW"
+    if dii_net > 0 and fii_net > 0:
+        return "DUAL_INSTITUTIONAL_ACCUMULATION"
+    if dii_net < 0 and fii_net > 0:
+        return "DII_PROFIT_BOOKING_WHILE_FII_BUYS"
+    if dii_net < 0 and fii_net < 0:
+        return "DUAL_DISTRIBUTION"
+    return "MIXED_INSTITUTIONAL_FLOW"
+
+
+def _fetch_usdinr_change_pct() -> float | None:
+    now_ts = time.time()
+    if (now_ts - float(_usdinr_cache.get("fetched_at", 0.0) or 0.0)) < _USDINR_CACHE_TTL:
+        return _safe_float(_usdinr_cache.get("change_pct"))
+
+    if yf is None:
+        return None
+
+    try:
+        df = yf.download("INR=X", period="5d", interval="1d", progress=False, auto_adjust=False, threads=False)
+        if df is None or df.empty:
+            return None
+        if hasattr(df.columns, "nlevels") and df.columns.nlevels > 1:
+            df.columns = df.columns.get_level_values(0)
+        close = df["Close"].dropna()
+        if len(close) < 2:
+            return None
+        prev_close = float(close.iloc[-2])
+        last_close = float(close.iloc[-1])
+        if prev_close <= 0:
+            return None
+        change_pct = ((last_close - prev_close) / prev_close) * 100.0
+        _usdinr_cache["change_pct"] = float(change_pct)
+        _usdinr_cache["fetched_at"] = now_ts
+        return float(change_pct)
+    except Exception:
+        return None
+
+
+def _build_fii_exit_context(fii_net: float, usdinr_change_pct: float | None) -> str:
+    if fii_net >= 0:
+        return "FII_NOT_EXITING"
+    if usdinr_change_pct is None:
+        return "FII_EXIT_UNCLASSIFIED"
+
+    threshold = float(getattr(settings, "TRADEFLOW_USDINR_EXIT_THRESHOLD_PCT", 0.5))
+    if usdinr_change_pct >= threshold:
+        return "FII_CURRENCY_EXIT"
+    return "FII_EQUITY_EXIT"
+
+
+def _extract_fii_like_net(payload: Any) -> float | None:
+    if isinstance(payload, list):
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            cat = str(item.get("category", "") or "").upper()
+            if "FII" in cat or "FPI" in cat:
+                for key in ("netValue", "net", "netvalue", "net_value", "fii_net", "fpi_net"):
+                    if key in item:
+                        net_val = _safe_float(item.get(key))
+                        if net_val is not None:
+                            return net_val
+
+    if isinstance(payload, dict):
+        for key in ("fii_net", "fpi_net", "net_fii", "net_fpi"):
+            if key in payload:
+                net_val = _safe_float(payload.get(key))
+                if net_val is not None:
+                    return net_val
+
+        for nested_key in ("data", "rows", "records", "result"):
+            if nested_key in payload:
+                nested_net = _extract_fii_like_net(payload.get(nested_key))
+                if nested_net is not None:
+                    return nested_net
+
+        for key, value in payload.items():
+            if isinstance(value, (dict, list)) and ("fii" in str(key).lower() or "fpi" in str(key).lower()):
+                nested_net = _extract_fii_like_net(value)
+                if nested_net is not None:
+                    return nested_net
+
+    return None
+
+
+def _fetch_fo_flow(ctx: ssl.SSLContext) -> dict:
+    endpoint = str(getattr(settings, "TRADEFLOW_FO_ENDPOINT", "") or "").strip()
+    if not endpoint:
+        return {
+            "available": False,
+            "source": "UNAVAILABLE",
+            "reason": "TRADEFLOW_FO_ENDPOINT not configured",
+            "fii_net_cr": None,
+        }
+
+    if endpoint.startswith("http://") or endpoint.startswith("https://"):
+        url = endpoint
+    else:
+        normalized = endpoint if endpoint.startswith("/") else f"/{endpoint}"
+        url = f"https://www.nseindia.com{normalized}"
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.nseindia.com/market-data/fii-dii-activity",
+            "Origin": "https://www.nseindia.com",
+            "Connection": "keep-alive",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=12, context=ctx) as resp:
+            payload = json.loads(resp.read())
+    except Exception as exc:
+        return {
+            "available": False,
+            "source": "UNAVAILABLE",
+            "reason": f"F&O fetch failed: {exc}",
+            "fii_net_cr": None,
+        }
+
+    fo_fii_net = _extract_fii_like_net(payload)
+    if fo_fii_net is None:
+        return {
+            "available": False,
+            "source": "UNAVAILABLE",
+            "reason": "Could not parse FII F&O net from payload",
+            "fii_net_cr": None,
+        }
+
+    return {
+        "available": True,
+        "source": "NSE",
+        "reason": "ok",
+        "fii_net_cr": round(float(fo_fii_net), 2),
+    }
+
+
+def _build_true_intent(fii_cash_net: float, fii_fo_net: float | None) -> tuple[str, float]:
+    if fii_fo_net is None:
+        return "UNAVAILABLE", 0.0
+
+    if fii_cash_net >= 0 and fii_fo_net >= 0:
+        return "GENUINE_ACCUMULATION", 85.0
+    if fii_cash_net < 0 and fii_fo_net >= 0:
+        return "HEDGED_HOLD", 25.0
+    if fii_cash_net >= 0 and fii_fo_net < 0:
+        return "DISTRIBUTION_DISGUISED_AS_BUYING", -45.0
+    return "RISK_OFF_UNWIND", -85.0
+
+
+def _resolve_sentiment(fii_net: float, dii_net: float, fii_magnitude: str) -> str:
+    if fii_net > 0 and dii_net > 0:
+        return "BOTH_BUYING"
+    if fii_net < 0 and dii_net < 0:
+        return "BOTH_SELLING"
+    if abs(fii_net) >= abs(dii_net):
+        if fii_magnitude != "FII_FLAT":
+            return fii_magnitude
+        return "FII_DOMINANT_BUY" if fii_net >= 0 else "FII_DOMINANT_SELL"
+    if dii_net > 0:
+        return "DII_DOMINANT_BUY"
+    return "DII_DOMINANT_SELL"
 
 
 def fetch_fii_dii_flow() -> dict:
@@ -118,20 +391,18 @@ def fetch_fii_dii_flow() -> dict:
         dii_net  = float(dii_item["netValue"])
         retail_net = round(-(fii_net + dii_net), 2)
         combined_net = round(fii_net + dii_net, 2)
+        fii_magnitude = _classify_fii_magnitude(fii_net)
 
-        # Determine market sentiment label
-        if fii_net > 0 and dii_net > 0:
-            sentiment = "BOTH_BUYING"
-        elif fii_net < 0 and dii_net < 0:
-            sentiment = "BOTH_SELLING"
-        elif dii_net > 0 and abs(dii_net) >= abs(fii_net):
-            sentiment = "DII_DOMINANT_BUY"
-        elif fii_net > 0 and abs(fii_net) > abs(dii_net):
-            sentiment = "FII_DOMINANT_BUY"
-        elif abs(fii_net) >= abs(dii_net):
-            sentiment = "FII_DOMINANT_SELL"
-        else:
-            sentiment = "DII_DOMINANT_SELL"
+        # Optional F&O intent layer (endpoint is configurable; gracefully unavailable by default)
+        fo_flow = _fetch_fo_flow(ctx)
+        fo_fii_net = _safe_float(fo_flow.get("fii_net_cr"))
+        true_intent, true_intent_score = _build_true_intent(fii_net, fo_fii_net)
+
+        dii_context = _build_dii_context(fii_net, dii_net)
+        usdinr_change_pct = _fetch_usdinr_change_pct()
+        fii_exit_context = _build_fii_exit_context(fii_net, usdinr_change_pct)
+
+        sentiment = _resolve_sentiment(fii_net, dii_net, fii_magnitude)
 
         flows = [
             {
@@ -165,18 +436,43 @@ def fetch_fii_dii_flow() -> dict:
 
         # Update rolling history
         history = _load_tf_history()
-        history = _upsert_tf_history(history, trade_date, fii_net, dii_net)
+        hist_row = _history_entry(
+            date=trade_date,
+            fii_net=fii_net,
+            dii_net=dii_net,
+            sentiment=sentiment,
+            fii_magnitude=fii_magnitude,
+            dii_context=dii_context,
+            true_intent=true_intent,
+            true_intent_score=true_intent_score,
+            fo_fii_net=fo_fii_net,
+        )
+        history = _upsert_tf_history(history, hist_row)
         _save_tf_history(history)
+        fii_5d_trend = _build_fii_5d_trend(history)
+
+        fetched_iso = datetime.now(timezone.utc).isoformat()
 
         result = {
             "flows": flows,
             "date": trade_date,
             "sentiment": sentiment,
+            "fii_magnitude": fii_magnitude,
+            "fii_5d_trend": fii_5d_trend,
+            "dii_context": dii_context,
+            "fo_flow": fo_flow,
+            "true_intent": true_intent,
+            "true_intent_score": round(true_intent_score, 1),
+            "fii_exit_context": fii_exit_context,
+            "usdinr_change_pct": round(usdinr_change_pct, 3) if usdinr_change_pct is not None else None,
             "combined_net": combined_net,
             "history": history[-30:],
             "source": "NSE",
             "real_data": True,
             "stale": False,
+            "age_minutes": 0.0,
+            "age_hours": 0.0,
+            "fetched_at": fetched_iso,
         }
 
         _tradeflow_cache = result
@@ -191,6 +487,9 @@ def fetch_fii_dii_flow() -> dict:
     if _tradeflow_cache:
         stale = dict(_tradeflow_cache)
         stale["stale"] = True
+        age_minutes = max(0.0, (time.time() - _tradeflow_fetched_at) / 60.0)
+        stale["age_minutes"] = round(age_minutes, 1)
+        stale["age_hours"] = round(age_minutes / 60.0, 2)
         return stale
 
     # Last-resort unavailable payload (no fabricated flows).
@@ -203,6 +502,9 @@ def fetch_fii_dii_flow() -> dict:
         "source": "OFFLINE",
         "real_data": False,
         "stale": True,
+        "age_minutes": None,
+        "age_hours": None,
+        "fetched_at": None,
     }
 
 

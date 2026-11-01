@@ -10,6 +10,7 @@ Generates LONG/SHORT/SKIP/HOLD signals based on multi-factor technical confluenc
   - Signal quality scoring (0-100, 7 components)
   - LONG/SHORT emitted only when quality grade A or B
   - SKIP emitted when conditions met but quality too low
+  - Edge Engine macro intelligence layer (optional confidence modifier)
 
 Calculates ATR-based Stop Loss and Targets with minimum 1:2 Risk:Reward.
 """
@@ -23,8 +24,118 @@ from config.logger import get_logger
 from db.models import TrendDirection
 from agents.feature_engine.regime_detector import MarketRegime
 from agents.data_ingestion.context_fetcher import build_context_fetcher
+from agents.macro.edge_score_engine import EdgeScoreEngine, EdgeScoreBreakdown
 
 log = get_logger(__name__)
+
+# Initialize EdgeScoreEngine at module level (singleton pattern)
+_edge_engine = None
+_tradeflow_signal_cache: dict = {"fetched_at": 0.0, "ctx": None}
+_TRADEFLOW_SIGNAL_CACHE_TTL = 300
+
+def _get_edge_engine() -> EdgeScoreEngine:
+    """Lazy-load EdgeScoreEngine singleton"""
+    global _edge_engine
+    if _edge_engine is None:
+        _edge_engine = EdgeScoreEngine()
+    return _edge_engine
+
+
+def _get_tradeflow_signal_context() -> dict:
+    default_ctx = {
+        "sentiment": "UNAVAILABLE",
+        "buy_multiplier": 1.0,
+        "sell_multiplier": 1.0,
+        "applied": False,
+        "true_intent": "UNAVAILABLE",
+        "true_intent_score": 0.0,
+        "dii_context": "UNAVAILABLE",
+        "source_stale": True,
+    }
+
+    if not getattr(settings, "TRADEFLOW_SIGNAL_INFLUENCE_ENABLED", True):
+        return default_ctx
+
+    now_ts = float(pd.Timestamp.utcnow().timestamp())
+    cached = _tradeflow_signal_cache.get("ctx")
+    cached_at = float(_tradeflow_signal_cache.get("fetched_at", 0.0) or 0.0)
+    if cached and (now_ts - cached_at) < _TRADEFLOW_SIGNAL_CACHE_TTL:
+        return cached
+
+    try:
+        from agents.market_intelligence.market_data import fetch_fii_dii_flow
+
+        tf = fetch_fii_dii_flow()
+    except Exception as exc:
+        log.debug("Tradeflow scoring context unavailable: %s", exc)
+        _tradeflow_signal_cache["ctx"] = default_ctx
+        _tradeflow_signal_cache["fetched_at"] = now_ts
+        return default_ctx
+
+    sentiment = str(tf.get("sentiment", "UNAVAILABLE") or "UNAVAILABLE").upper()
+    stale = bool(tf.get("stale", True))
+    stale_hours = float(tf.get("age_hours", 0.0) or 0.0)
+    disable_hours = float(getattr(settings, "TRADEFLOW_SIGNAL_STALE_DISABLE_HOURS", 24))
+    ignore_stale = bool(getattr(settings, "TRADEFLOW_SIGNAL_IGNORE_STALE", True))
+
+    if stale and ignore_stale and stale_hours >= disable_hours:
+        ctx = {
+            **default_ctx,
+            "sentiment": sentiment,
+            "true_intent": str(tf.get("true_intent", "UNAVAILABLE") or "UNAVAILABLE"),
+            "true_intent_score": float(tf.get("true_intent_score", 0.0) or 0.0),
+            "dii_context": str(tf.get("dii_context", "UNAVAILABLE") or "UNAVAILABLE"),
+            "source_stale": True,
+        }
+        _tradeflow_signal_cache["ctx"] = ctx
+        _tradeflow_signal_cache["fetched_at"] = now_ts
+        return ctx
+
+    bullish = {
+        "BOTH_BUYING",
+        "FII_STRONG_BUY",
+        "FII_MODERATE_BUY",
+        "FII_WEAK_BUY",
+        "FII_DOMINANT_BUY",
+    }
+    bearish = {
+        "BOTH_SELLING",
+        "FII_STRONG_SELL",
+        "FII_MODERATE_SELL",
+        "FII_WEAK_SELL",
+        "FII_DOMINANT_SELL",
+    }
+
+    bias_mult = float(getattr(settings, "TRADEFLOW_SIGNAL_BIAS_MULTIPLIER", 1.15))
+    counter_mult = float(getattr(settings, "TRADEFLOW_SIGNAL_COUNTER_MULTIPLIER", 0.85))
+
+    buy_multiplier = 1.0
+    sell_multiplier = 1.0
+    applied = False
+
+    if sentiment in bullish:
+        buy_multiplier = bias_mult
+        sell_multiplier = counter_mult
+        applied = True
+    elif sentiment in bearish:
+        buy_multiplier = counter_mult
+        sell_multiplier = bias_mult
+        applied = True
+
+    ctx = {
+        "sentiment": sentiment,
+        "buy_multiplier": float(buy_multiplier),
+        "sell_multiplier": float(sell_multiplier),
+        "applied": applied,
+        "true_intent": str(tf.get("true_intent", "UNAVAILABLE") or "UNAVAILABLE"),
+        "true_intent_score": float(tf.get("true_intent_score", 0.0) or 0.0),
+        "dii_context": str(tf.get("dii_context", "UNAVAILABLE") or "UNAVAILABLE"),
+        "source_stale": stale,
+    }
+
+    _tradeflow_signal_cache["ctx"] = ctx
+    _tradeflow_signal_cache["fetched_at"] = now_ts
+    return ctx
 
 
 def _compute_feature_drift(
@@ -249,6 +360,9 @@ def generate_signals(
     mtf_score: float = None,
     symbol: str = "",
     market_trend: str = None,  # "BULLISH" | "BEARISH" | None (from Nifty/BankNifty)
+    edge_score: EdgeScoreBreakdown = None,  # Optional EdgeScore from macro intelligence layer
+    asset_class: str = None,  # "forex" | "crypto" | "nse" | "index" (for EdgeScore routing)
+    offline: bool = False,
 ) -> pd.DataFrame:
     """
     Apply the signal generation rules to an enriched DataFrame.
@@ -265,6 +379,8 @@ def generate_signals(
         - regime: Market regime for adaptive thresholds
         - mtf_score: Multi-timeframe score (-100 to +100)
         - symbol: Used for session quality scoring
+        - edge_score: EdgeScoreBreakdown from macro intelligence layer
+        - asset_class: Asset classification for EdgeScore routing
 
     Added columns:
         - signal:            "LONG" | "SHORT" | "SKIP" | "HOLD"
@@ -277,6 +393,13 @@ def generate_signals(
         - quality_score:     Signal quality score (0-100)
         - quality_grade:     "A" | "B" | "C" | "D"
         - quality_breakdown: JSON string with per-component scores
+        - edge_score:        EdgeScore from macro intelligence layer (-100 to +100)
+        - edge_macro:        Macro component score
+        - edge_cot:          COT component score
+        - edge_sentiment:    Sentiment component score
+        - edge_risk:         Risk component score
+        - edge_seasonal:     Seasonal bonus
+        - edge_carry:        Carry bonus
 
     Signal semantics:
         LONG  — all conditions met + quality grade A or B
@@ -291,6 +414,31 @@ def generate_signals(
         return df
 
     result = df.copy()
+
+    # ── Edge Engine Integration ──────────────────────────────────────────────
+    # Fetch EdgeScore from macro intelligence layer if not provided
+    edge_breakdown = edge_score
+    if edge_breakdown is None and symbol and asset_class:
+        try:
+            edge_engine = _get_edge_engine()
+            edge_breakdown = edge_engine.get_edge_score(symbol, asset_class)
+            log.info(
+                f"EdgeScore for {symbol}: {edge_breakdown.edge_score:.1f} "
+                f"(macro: {edge_breakdown.macro_score:.1f}, cot: {edge_breakdown.cot_score:.1f}, "
+                f"sentiment: {edge_breakdown.sentiment_score:.1f}, risk: {edge_breakdown.risk_score:.1f})"
+            )
+        except Exception as e:
+            log.warning(f"Failed to fetch EdgeScore for {symbol}: {e}")
+            edge_breakdown = None
+
+    # Store EdgeScore components in result DataFrame (will be added to all rows later)
+    _edge_score_value = edge_breakdown.edge_score if edge_breakdown else 0.0
+    _edge_macro = edge_breakdown.macro_score if edge_breakdown else 0.0
+    _edge_cot = edge_breakdown.cot_score if edge_breakdown else 0.0
+    _edge_sentiment = edge_breakdown.sentiment_score if edge_breakdown else 0.0
+    _edge_risk = edge_breakdown.risk_score if edge_breakdown else 0.0
+    _edge_seasonal = edge_breakdown.seasonal_bonus if edge_breakdown else 0.0
+    _edge_carry = edge_breakdown.carry_bonus if edge_breakdown else 0.0
 
     # ── Self-Learning Weights ────────────────────────
     try:
@@ -326,7 +474,7 @@ def generate_signals(
         except Exception as _ens_err:
             log.debug("Ensemble confidence unavailable (%s) — using composite fallback", _ens_err)
 
-        # ── Fallback 4: simple composite (RSI + MACD + EMA + HTF) ──────────
+        # ── Fallback 4: directional composite (RSI + MACD + EMA + HTF) ───
         if not ensemble_ok:
             rsi_col   = result["RSI_14"].fillna(50)
             macd_col  = result["MACD_hist"].fillna(0)
@@ -334,33 +482,28 @@ def generate_signals(
             ema20_col = result["EMA_20"].fillna(close_col)
             ema50_col = result["EMA_50"].fillna(close_col)
 
-            # RSI distance from 50 → 0–50 pts
-            rsi_score = ((rsi_col - 50).abs() / 50.0 * 50).clip(0, 50)
+            # Directional alignment: centered at 50 (>50 bull, <50 bear)
+            ema_align_bull = (close_col > ema20_col) & (ema20_col > ema50_col)
+            ema_align_bear = (close_col < ema20_col) & (ema20_col < ema50_col)
 
-            # MACD histogram strength → 0–25 pts
-            macd_abs  = macd_col.abs()
-            macd_max  = macd_abs.rolling(50, min_periods=5).max().replace(0, np.nan).fillna(1)
-            macd_score = (macd_abs / macd_max * 25).clip(0, 25)
+            bull_pts = (
+                ((rsi_col - 50).clip(lower=0) / 50.0 * 18.0)
+                + ((macd_col > 0).astype(float) * 12.0)
+                + (ema_align_bull.astype(float) * 10.0)
+            )
+            bear_pts = (
+                ((50 - rsi_col).clip(lower=0) / 50.0 * 18.0)
+                + ((macd_col < 0).astype(float) * 12.0)
+                + (ema_align_bear.astype(float) * 10.0)
+            )
 
-            # EMA alignment → 0–15 pts
-            ema_align_bull  = (close_col > ema20_col) & (ema20_col > ema50_col)
-            ema_align_bear  = (close_col < ema20_col) & (ema20_col < ema50_col)
-            ema_partial_bull = (close_col > ema20_col) & ~ema_align_bull
-            ema_partial_bear = (close_col < ema20_col) & ~ema_align_bear
-            ema_score = pd.Series(0.0, index=result.index)
-            ema_score[ema_align_bull | ema_align_bear] = 15.0
-            ema_score[ema_partial_bull | ema_partial_bear] += 7.0
-            ema_score = ema_score.clip(0, 15)
-
-            # HTF trend → 0–10 pts
-            htf_score = pd.Series(0.0, index=result.index)
             if "htf_trend" in result.columns:
-                htf_bull = result["htf_trend"] == TrendDirection.BULLISH.value
-                htf_bear = result["htf_trend"] == TrendDirection.BEARISH.value
-                htf_score[htf_bull | htf_bear] = 10.0
+                htf_bull_pts = (result["htf_trend"] == TrendDirection.BULLISH.value).astype(float) * 10.0
+                htf_bear_pts = (result["htf_trend"] == TrendDirection.BEARISH.value).astype(float) * 10.0
+                bull_pts += htf_bull_pts
+                bear_pts += htf_bear_pts
 
-            baseline  = pd.Series(15.0, index=result.index)
-            composite = (baseline + rsi_score + macd_score + ema_score + htf_score).clip(0, 100)
+            composite = (50.0 + (bull_pts - bear_pts)).clip(10.0, 90.0)
             result["ai_confidence"] = composite.round(1)
 
     # ── Regime-adaptive parameters ────────────────────────────────────────────
@@ -433,7 +576,8 @@ def generate_signals(
     ai_pass = result["ai_confidence"] >= conf_threshold
     # Only award bonus when confidence is genuinely above baseline (>30).
     # Raw composite baseline is ~15 pts, so subtract 30 to avoid free points.
-    ai_soft_bonus = ((result["ai_confidence"] - 30).clip(0, 70) / 70.0 * 8).clip(0, 8)  # 0-8 pts, only when conf > 30
+    # Direction-aware AI confidence scaling: >50=bullish (+0 to +8 pts), <50=bearish (-0 to -8 pts)
+    ai_directional_delta = ((result["ai_confidence"] - 50.0).clip(-45.0, 45.0) / 45.0 * 8.0)
 
     # MACD momentum confirmation
     macd_bull = result["MACD_hist"] > 0
@@ -608,8 +752,8 @@ def generate_signals(
         + stoch_buy.astype(float) * 5
         # Hidden bullish divergence (max 8) — ACTIVE (trend continuation)
         + (hidden_bullish.astype(float) * 8 * w_div)
-        # AI confidence — soft bonus (0-8 pts, only when conf > 30)
-        + ai_soft_bonus
+        # AI confidence — direction-aware soft calibration (+8 for bull, -8 for bear)
+        + ai_directional_delta
         # VWAP confirmation (max 2) — minor active bonus (price > VWAP)
         + vwap_bull.astype(float) * 2
 
@@ -658,8 +802,8 @@ def generate_signals(
         + stoch_sell.astype(float) * 5
         # Hidden bearish divergence (max 8) — ACTIVE (trend continuation)
         + (hidden_bearish.astype(float) * 8 * w_div)
-        # AI confidence — soft bonus (0-8 pts, only when conf > 30)
-        + ai_soft_bonus
+        # AI confidence — direction-aware soft calibration (+8 for bear, -8 for bull)
+        - ai_directional_delta
         # VWAP confirmation (max 2) — minor active bonus (price < VWAP)
         + vwap_bear.astype(float) * 2
 
@@ -682,6 +826,22 @@ def generate_signals(
         + (~change_ok).astype(float) * (-3)
     )
 
+    # ── Tradeflow sentiment multiplier (optional, A/B-testable) ────────────
+    tradeflow_ctx = {} if (offline or not symbol) else _get_tradeflow_signal_context()
+    buy_mult = float(tradeflow_ctx.get("buy_multiplier", 1.0) or 1.0)
+    sell_mult = float(tradeflow_ctx.get("sell_multiplier", 1.0) or 1.0)
+    buy_score = buy_score * buy_mult
+    sell_score = sell_score * sell_mult
+
+    result["tradeflow_sentiment"] = tradeflow_ctx.get("sentiment", "UNAVAILABLE")
+    result["tradeflow_applied"] = bool(tradeflow_ctx.get("applied", False))
+    result["tradeflow_multiplier_buy"] = round(buy_mult, 4)
+    result["tradeflow_multiplier_sell"] = round(sell_mult, 4)
+    result["tradeflow_true_intent"] = tradeflow_ctx.get("true_intent", "UNAVAILABLE")
+    result["tradeflow_true_intent_score"] = float(tradeflow_ctx.get("true_intent_score", 0.0) or 0.0)
+    result["tradeflow_dii_context"] = tradeflow_ctx.get("dii_context", "UNAVAILABLE")
+    result["tradeflow_source_stale"] = bool(tradeflow_ctx.get("source_stale", True))
+
     # ── Regime-adaptive scoring threshold ────────────────────────────────────
     signal_threshold = settings.SIGNAL_SCORE_THRESHOLDS.get(
         regime_key, settings.SIGNAL_SCORE_DEFAULT
@@ -692,9 +852,91 @@ def generate_signals(
     buy_condition = buy_score >= signal_threshold
     sell_condition = sell_score >= signal_threshold
 
+    # ── Accuracy gates: confluence + trend + volume + MTF alignment ─────────
+    div_buy = hidden_bullish | bullish_divergence
+    div_sell = hidden_bearish | bearish_divergence
+
+    confluence_buy_votes = (
+        rsi_buy.astype(int)
+        + ema_align_buy.astype(int)
+        + macd_turning_bull.astype(int)
+        + volume_ok.astype(int)
+        + div_buy.astype(int)
+    )
+    confluence_sell_votes = (
+        rsi_sell.astype(int)
+        + ema_align_sell.astype(int)
+        + macd_turning_bear.astype(int)
+        + volume_ok.astype(int)
+        + div_sell.astype(int)
+    )
+
+    confluence_min_votes = max(1, int(getattr(settings, "SIGNAL_CONFLUENCE_MIN_VOTES", 3)))
+    confluence_buy_ok = confluence_buy_votes >= confluence_min_votes
+    confluence_sell_ok = confluence_sell_votes >= confluence_min_votes
+
+    ema200_long_ok = pd.Series(True, index=result.index)
+    ema200_short_ok = pd.Series(True, index=result.index)
+    if (
+        getattr(settings, "SIGNAL_EMA200_HARD_FILTER_ENABLED", True)
+        and "EMA_200" in result.columns
+        and result["EMA_200"].notna().any()
+    ):
+        ema200_long_ok = result["close"] >= result["EMA_200"]
+        ema200_short_ok = result["close"] <= result["EMA_200"]
+
+    volume_gate_buy_ok = volume_ok.copy()
+    volume_gate_sell_ok = volume_ok.copy()
+    if not getattr(settings, "SIGNAL_REQUIRE_VOLUME_GATE", True):
+        volume_gate_buy_ok = pd.Series(True, index=result.index)
+        volume_gate_sell_ok = pd.Series(True, index=result.index)
+
+    mtf_buy_votes = htf_bull.astype(int) + ema_align_buy.astype(int) + macd_bull.astype(int)
+    mtf_sell_votes = htf_bear.astype(int) + ema_align_sell.astype(int) + macd_bear.astype(int)
+    if "VWAP" in result.columns and result["VWAP"].notna().any():
+        mtf_buy_votes = mtf_buy_votes + vwap_bull.astype(int)
+        mtf_sell_votes = mtf_sell_votes + vwap_bear.astype(int)
+    mtf_signal_min_votes = max(1, int(getattr(settings, "MTF_SIGNAL_MIN_VOTES", 2)))
+    mtf_signal_gate_buy_ok = mtf_buy_votes >= mtf_signal_min_votes
+    mtf_signal_gate_sell_ok = mtf_sell_votes >= mtf_signal_min_votes
+
+    if getattr(settings, "SIGNAL_CONFLUENCE_GATE_ENABLED", True):
+        buy_condition = buy_condition & confluence_buy_ok
+        sell_condition = sell_condition & confluence_sell_ok
+
+    buy_condition = buy_condition & ema200_long_ok & volume_gate_buy_ok
+    sell_condition = sell_condition & ema200_short_ok & volume_gate_sell_ok
+
+    if getattr(settings, "MTF_SIGNAL_GATE_ENABLED", True):
+        buy_condition = buy_condition & mtf_signal_gate_buy_ok
+        sell_condition = sell_condition & mtf_signal_gate_sell_ok
+
     # Store scores for debugging and dashboard display
     result["signal_score_buy"] = buy_score.round(1)
     result["signal_score_sell"] = sell_score.round(1)
+    result["confluence_votes_buy"] = confluence_buy_votes
+    result["confluence_votes_sell"] = confluence_sell_votes
+    result["confluence_gate_ok"] = (confluence_buy_ok | confluence_sell_ok)
+    result["ema200_gate_ok"] = np.where(
+        buy_condition,
+        ema200_long_ok,
+        np.where(sell_condition, ema200_short_ok, ema200_long_ok | ema200_short_ok),
+    )
+    result["volume_gate_ok"] = np.where(
+        buy_condition,
+        volume_gate_buy_ok,
+        np.where(sell_condition, volume_gate_sell_ok, volume_gate_buy_ok | volume_gate_sell_ok),
+    )
+
+    timeframe_alignment_score = np.where(
+        buy_condition,
+        mtf_buy_votes,
+        np.where(sell_condition, mtf_sell_votes, np.maximum(mtf_buy_votes, mtf_sell_votes)),
+    )
+    result["timeframe_alignment_score"] = pd.Series(timeframe_alignment_score, index=result.index).clip(0, 3).astype(int)
+    result["auto_exec_eligible_mtf"] = result["timeframe_alignment_score"] >= mtf_signal_min_votes
+    high_conv_votes = max(mtf_signal_min_votes, int(getattr(settings, "MTF_HIGH_CONVICTION_VOTES", 3)))
+    result["high_conviction_mtf"] = result["timeframe_alignment_score"] >= high_conv_votes
 
     # ── Assign raw directional signals (pre-quality-filter) ──────────────────
     result["_raw_signal"] = "HOLD"
@@ -704,11 +946,15 @@ def generate_signals(
     # ── Quality scoring for every LONG/SHORT candidate ────────────────────────
     try:
         from agents.signal_engine.quality_scorer import score_signals_vectorised, MIN_CONFIDENCE_FOR_SIGNAL
-        # Pass ai_confidence so the scorer can apply the hard confidence gate
-        ai_conf_series = result["ai_confidence"] if "ai_confidence" in result.columns else None
+        # Directional AI confidence: >50 is bullish, <50 is bearish
+        # For SHORT candidates, convert to directional strength (100 - conf)
+        directional_conf_series = result["ai_confidence"].copy()
+        raw_short_mask = result["_raw_signal"] == "SHORT"
+        directional_conf_series[raw_short_mask] = (100.0 - directional_conf_series[raw_short_mask]).clip(0, 100)
+
         quality_df = score_signals_vectorised(
             result, result["_raw_signal"], regime, symbol,
-            confidences=ai_conf_series,
+            confidences=directional_conf_series,
         )
         result["quality_score"]        = quality_df["quality_score"]
         result["quality_grade"]        = quality_df["quality_grade"]
@@ -726,7 +972,11 @@ def generate_signals(
     # ── Conflict Guardrails (post-score, pre-final-signal) ───────────────────
     from agents.signal_engine.quality_scorer import detect_signal_conflicts
 
-    result["confidence"] = result["ai_confidence"].clip(0, 100).round(1)
+    # Store directional confidence (0-100) aligned with signal direction
+    directional_conf_series = result["ai_confidence"].copy()
+    raw_short_mask = result["_raw_signal"] == "SHORT"
+    directional_conf_series[raw_short_mask] = (100.0 - directional_conf_series[raw_short_mask]).clip(0, 100)
+    result["confidence"] = directional_conf_series.clip(0, 100).round(1)
 
     conflict_payloads = []
     conflict_severity = []
@@ -893,6 +1143,48 @@ def generate_signals(
     # Apply all boosts (cap at 100)
     result["confidence"] = (result["confidence"] + conf_boost).clip(0, 100).round(1)
 
+    # ── Edge Engine Confidence Modifier ───────────────────────────────────────
+    # Apply EdgeScore-based confidence adjustment AFTER all other boosts
+    # Strong bullish edge (+70) on LONG: +15% confidence
+    # Strong bearish edge (-70) on SHORT: +15% confidence
+    # Conflicting edge: -20% confidence
+    edge_conf_modifier = pd.Series(1.0, index=result.index)  # Default: no change (1.0x)
+    edge_adjusted = pd.Series(False, index=result.index)
+
+    if edge_breakdown and "_raw_direction" in result.columns:
+        edge_val = _edge_score_value
+        
+        # Strong bullish edge (≥70) on LONG signals
+        strong_bullish_edge = (edge_val >= 70) & (result["_raw_direction"] == "LONG")
+        edge_conf_modifier = edge_conf_modifier.where(~strong_bullish_edge, 1.15)
+        edge_adjusted = edge_adjusted | strong_bullish_edge
+        
+        # Strong bearish edge (≤-70) on SHORT signals
+        strong_bearish_edge = (edge_val <= -70) & (result["_raw_direction"] == "SHORT")
+        edge_conf_modifier = edge_conf_modifier.where(~strong_bearish_edge, 1.15)
+        edge_adjusted = edge_adjusted | strong_bearish_edge
+        
+        # Conflicting edge: bullish edge on SHORT or bearish edge on LONG
+        conflicting_long = (edge_val <= -30) & (result["_raw_direction"] == "LONG")
+        conflicting_short = (edge_val >= 30) & (result["_raw_direction"] == "SHORT")
+        conflicting_edge = conflicting_long | conflicting_short
+        edge_conf_modifier = edge_conf_modifier.where(~conflicting_edge, 0.80)
+        edge_adjusted = edge_adjusted | conflicting_edge
+        
+        # Apply modifier
+        result["confidence"] = (result["confidence"] * edge_conf_modifier).clip(0, 100).round(1)
+        
+        # Log EdgeScore adjustments
+        if edge_adjusted.any():
+            log.info(
+                f"EdgeScore confidence adjustments for {symbol}: "
+                f"{strong_bullish_edge.sum()} bullish boosts, "
+                f"{strong_bearish_edge.sum()} bearish boosts, "
+                f"{conflicting_edge.sum()} conflict penalties"
+            )
+
+    result["edge_adjusted"] = edge_adjusted
+
     # (E) Candle quality + MTF alignment vote-stack — penalize indecision / weak stack
     candle_pen = _candle_quality_confidence_penalty(result)
     result["candle_quality_penalty"] = candle_pen.round(1)
@@ -915,12 +1207,20 @@ def generate_signals(
     # Floor: LONG/SHORT signals always show at least 25% on dashboard
     long_or_short = result["signal"].isin(["LONG", "SHORT"])
     result.loc[long_or_short & (result["confidence"] < 25), "confidence"] = 25.0
+    result["tradeflow_multiplier"] = np.where(
+        result["signal"] == "LONG",
+        round(buy_mult, 4),
+        np.where(result["signal"] == "SHORT", round(sell_mult, 4), 1.0),
+    )
 
     # ── Context Layer modifier (Step 7 in lifecycle) ───────────────────────
     # Applied after AI confidence and quality gates, before returning signals.
     try:
-        context_fetcher = build_context_fetcher()
-        context_snapshot = context_fetcher.get_snapshot_sync(symbol)
+        if offline or not symbol:
+            context_snapshot = None
+        else:
+            context_fetcher = build_context_fetcher()
+            context_snapshot = context_fetcher.get_snapshot_sync(symbol)
     except Exception as ctx_exc:
         log.warning("Context fetch failed for %s: %s", symbol, ctx_exc)
         context_snapshot = None
@@ -1022,6 +1322,15 @@ def generate_signals(
             drift_feature or "none",
             f", Gate={gate_reason}" if gate_reason else "",
         )
+
+    # ── Add EdgeScore columns to result DataFrame ─────────────────────────────
+    result["edge_score"] = _edge_score_value
+    result["edge_macro"] = _edge_macro
+    result["edge_cot"] = _edge_cot
+    result["edge_sentiment"] = _edge_sentiment
+    result["edge_risk"] = _edge_risk
+    result["edge_seasonal"] = _edge_seasonal
+    result["edge_carry"] = _edge_carry
 
     return result
 

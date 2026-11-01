@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from config import settings
 from db.connection import init_db
 
 from api.paths import STATIC_DIR
@@ -49,16 +50,37 @@ def _lifespan_context():
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await asyncio.to_thread(init_db)
+
+        # Hydrate the in-memory swing cache from the latest persisted scan so
+        # the dashboard shows yesterday's shortlist immediately. Non-fatal.
+        try:
+            await svc._hydrate_swing_cache_from_db()
+        except Exception as exc:
+            svc.logger.warning("Swing cache hydration raised on startup: %s", exc)
+
         svc.logger.info("Starting server — market data will load in background...")
         if _env_flag("INITIAL_LOAD_ENABLED", True):
             asyncio.create_task(svc._initial_load())
         else:
             svc.logger.info("INITIAL_LOAD_ENABLED=false -> skipping initial data warm-up task")
 
-        if _env_flag("BACKGROUND_REFRESH_ENABLED", True):
+        background_refresh_enabled = _env_flag("BACKGROUND_REFRESH_ENABLED", True)
+        if background_refresh_enabled:
             asyncio.create_task(svc._background_refresh())
         else:
             svc.logger.info("BACKGROUND_REFRESH_ENABLED=false -> skipping periodic background refresh")
+
+        outcome_task_enabled = _env_flag("SWING_OUTCOME_TASK_ENABLED", True) and bool(
+            getattr(settings, "SWING_OUTCOME_EVAL_ENABLED", True)
+        )
+        if background_refresh_enabled and outcome_task_enabled:
+            asyncio.create_task(svc._swing_outcome_background())
+        else:
+            svc.logger.info(
+                "Swing outcome task disabled (background=%s, outcome_enabled=%s)",
+                background_refresh_enabled,
+                outcome_task_enabled,
+            )
 
         if _env_flag("SCREENER_TASK_ENABLED", False):
             asyncio.create_task(start_screener_task())
@@ -69,6 +91,11 @@ def _lifespan_context():
             asyncio.create_task(start_morning_scan_task())
         else:
             svc.logger.info("MORNING_SCAN_TASK_ENABLED=false -> skipping morning scan scheduler")
+
+        if _env_flag("NIGHTLY_SCAN_ENABLED", True):
+            asyncio.create_task(svc._nightly_swing_scan_background())
+        else:
+            svc.logger.info("NIGHTLY_SCAN_ENABLED=false -> skipping nightly SwingSpectrum scan")
 
         if _env_flag("SELF_PING_ENABLED", False):
             asyncio.create_task(_keep_alive_task())
@@ -82,6 +109,7 @@ def _lifespan_context():
 
 
 def create_app() -> FastAPI:
+    settings.validate_runtime_config()
     lifespan = _lifespan_context()
     app = FastAPI(title="AI Trading System — Live", version="4.1.0", lifespan=lifespan)
     app.add_middleware(

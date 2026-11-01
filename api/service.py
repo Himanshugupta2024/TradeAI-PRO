@@ -1,39 +1,42 @@
 """Shared state, background tasks, and domain helpers for the trading API."""
-import sys
-import os
-import logging
+
 import asyncio
 import json
+import logging
+import os
+import sys
+import time
 
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT_DIR)
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
-from fastapi import WebSocket
 import numpy as np
 import pandas as pd
+from fastapi import WebSocket
 
-from config import settings
-from agents.feature_engine.indicators import calculate_indicators
-from agents.feature_engine.trend import classify_trend, propagate_trend_to_ltf
-from agents.feature_engine.regime_detector import detect_regime, MarketRegime
-from agents.signal_engine.signal_generator import generate_signals
 from agents.ai_engine.ensemble import get_dynamic_weight_state
-from agents.backtester.engine import Backtester
 from agents.ai_engine.fallback_predictor import predict_batch
-from agents.feature_engine.mtf_scorer import calculate_mtf_score
+from agents.backtester.engine import Backtester
 from agents.execution.paper_trading import PaperTradingEngine
-from agents.market_intelligence.market_data import fetch_fii_dii_flow
-from agents.market_intelligence.swing_scanner import (
-    scan_all_symbols as swing_scan_all,
+from agents.feature_engine.indicators import calculate_indicators
+from agents.feature_engine.mtf_scorer import calculate_mtf_score
+from agents.feature_engine.regime_detector import MarketRegime, detect_regime
+from agents.feature_engine.trend import classify_trend, propagate_trend_to_ltf
+from agents.market_intelligence.breakout_scanner import (
+    scan_all_symbols as breakout_scan_all,
 )
 from agents.market_intelligence.index_mover import (
     calculate_index_movers,
 )
-from agents.market_intelligence.breakout_scanner import (
-    scan_all_symbols as breakout_scan_all,
+from agents.market_intelligence.market_data import fetch_fii_dii_flow
+from agents.market_intelligence.swing_scanner import (
+    scan_all_symbols as swing_scan_all,
 )
+from agents.signal_engine.signal_generator import generate_signals
+from config import settings
+
 try:
     from agents.alerts.telegram_bot import send_signal_alert as _tg_signal_alert
 except ImportError:
@@ -42,29 +45,46 @@ except ImportError:
 # Signal win rate tracker + new Telegram alerts (non-blocking, safe)
 try:
     from agents.analytics.signal_tracker import log_signal, score_outcomes
-    from agents.notifications.telegram_alerts import send_signal_alert as _tg_new_alert, send_whale_alert
+    from agents.notifications.telegram_alerts import send_signal_alert as _tg_new_alert
+    from agents.notifications.telegram_alerts import send_whale_alert
+
     _TRACKER_ENABLED = True
 except ImportError:
     log_signal = score_outcomes = _tg_new_alert = send_whale_alert = None  # type: ignore
     _TRACKER_ENABLED = False
 
+# Swing scan persistence (SQLite via SQLAlchemy). Import defensively so a DB
+# failure never prevents the service from booting — all call sites wrap these
+# in try/except and degrade gracefully when the store is unavailable.
+try:
+    from db import swing_store as _swing_store
+
+    _SWING_STORE_ENABLED = True
+except Exception as _swing_store_exc:  # pragma: no cover — import-time safety net
+    _swing_store = None  # type: ignore[assignment]
+    _SWING_STORE_ENABLED = False
+    logging.getLogger(__name__).warning(
+        "db.swing_store unavailable — swing persistence disabled: %s",
+        _swing_store_exc,
+    )
+
+from agents.analytics.trade_journal import get_journal
+from agents.data_ingestion.context_fetcher import build_context_fetcher
+from agents.data_ingestion.validator import validate as validate_ohlcv
 from agents.market_intelligence.nse_fetcher import (
-    fetch_ohlcv,
+    NSE_SYMBOLS,
+    fetch_arbitrary_symbol,
     fetch_nse_gainers_losers,
+    fetch_ohlcv,
     fetch_sector_performance,
     search_symbols,
-    fetch_arbitrary_symbol,
     validate_nse_symbol,
-    NSE_SYMBOLS,
 )
 from agents.stock_screener import (
-    start_screener_task,
-    start_morning_scan_task,
     opportunity_stocks,
+    start_morning_scan_task,
+    start_screener_task,
 )
-from agents.data_ingestion.validator import validate as validate_ohlcv
-from agents.data_ingestion.context_fetcher import build_context_fetcher
-from agents.analytics.trade_journal import get_journal
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -91,12 +111,19 @@ _swing_cache: dict = {
 # Prevents concurrent refresh cycles from producing inconsistent partial snapshots
 _refresh_lock: asyncio.Lock | None = None
 
+# Guard: track the last calendar date on which swing scan results were persisted
+# to DB. Periodic refreshes (every 60s) must not create a new SwingScan row on
+# every cycle — one save per day is enough. Manual / nightly triggers always
+# bypass this guard via trigger="manual" or trigger="nightly_*".
+_last_swing_persist_date: date | None = None
+
 
 def _get_refresh_lock() -> asyncio.Lock:
     global _refresh_lock
     if _refresh_lock is None:
         _refresh_lock = asyncio.Lock()
     return _refresh_lock
+
 
 # Paper trading engine (loads real trade data from paper_trades.json)
 _engine: PaperTradingEngine | None = None
@@ -110,12 +137,19 @@ _ALL_NSE_SYMBOLS = list(NSE_SYMBOLS.keys())
 NSE_SYMBOL_LIMIT = max(1, int(os.getenv("NSE_SYMBOL_LIMIT", "20")))
 _TRACKED_NSE_SYMBOLS = _ALL_NSE_SYMBOLS[:NSE_SYMBOL_LIMIT]
 _PRIORITY_COUNT = min(15, len(_TRACKED_NSE_SYMBOLS))
-_PRIORITY_SYMBOLS = _TRACKED_NSE_SYMBOLS[:_PRIORITY_COUNT]   # Fast initial load
-_REMAINING_SYMBOLS = _TRACKED_NSE_SYMBOLS[_PRIORITY_COUNT:]  # Loaded in background after priority
+_PRIORITY_SYMBOLS = _TRACKED_NSE_SYMBOLS[:_PRIORITY_COUNT]  # Fast initial load
+_REMAINING_SYMBOLS = _TRACKED_NSE_SYMBOLS[
+    _PRIORITY_COUNT:
+]  # Loaded in background after priority
 TOP_NSE_SYMBOLS = _TRACKED_NSE_SYMBOLS
 
 # Track loading progress for health endpoint
-_loading_status = {"phase": "starting", "loaded": 0, "total": len(TOP_NSE_SYMBOLS), "ready": False}
+_loading_status = {
+    "phase": "starting",
+    "loaded": 0,
+    "total": len(TOP_NSE_SYMBOLS),
+    "ready": False,
+}
 
 # Previous signal state per symbol — used to detect NEW signals for Telegram alerts
 _prev_signal_cache: dict[str, str] = {}
@@ -125,22 +159,43 @@ _data_quality_cache: dict[str, float] = {}
 
 # Feed heartbeat status for dashboard/API consumers.
 _last_feed_update: datetime = datetime.min
+# Throttle SwingSpectrum SQLite outcome evaluation (yFinance budget).
+_last_swing_outcome_eval_monotonic: float = 0.0
 
 # Precomputed snapshots for fast dashboard responses
 _movers_cache: dict[str, object] = {"gainers": [], "losers": [], "updated_at": None}
-_market_mood_cache: dict[str, object] = {"score": 50, "mood": "NEUTRAL", "updated_at": None}
+_market_mood_cache: dict[str, object] = {
+    "score": 50,
+    "mood": "NEUTRAL",
+    "updated_at": None,
+}
 _lazy_bootstrap_started = False
 
 # Regime hysteresis: (confirmed_regime, tentative_regime, consecutive_count)
 _regime_hysteresis: dict[str, tuple[str, str, int]] = {}
 REGIME_HYSTERESIS_MIN = 3  # Must see new regime N times before switching
 MAX_NSE_CONCURRENCY = 10
-SYMBOL_FETCH_TIMEOUT_SECONDS = float(os.getenv("NSE_SYMBOL_TIMEOUT_SECONDS", "150"))
+SYMBOL_FETCH_TIMEOUT_SECONDS = float(
+    getattr(settings, "NSE_SYMBOL_TIMEOUT_SECONDS", 150.0)
+)
+REFRESH_INTERVAL_SECONDS = max(
+    10, int(getattr(settings, "REFRESH_INTERVAL_SEC", 60) or 60)
+)
+REFRESH_CYCLE_TIMEOUT_SECONDS = max(
+    30, int(getattr(settings, "REFRESH_CYCLE_TIMEOUT_SEC", 120) or 120)
+)
+BACKGROUND_READY_WAIT_SECONDS = max(
+    30, int(getattr(settings, "BACKGROUND_READY_WAIT_SEC", 180) or 180)
+)
+SWING_OUTCOME_TASK_INTERVAL_SECONDS = max(
+    30,
+    int(getattr(settings, "SWING_OUTCOME_TASK_CHECK_SEC", 60) or 60),
+)
 
 # ── Phase 3 / 4: delta tracking + opportunity timeline ───────────────────────
 # Snapshot of last intelligence payload for delta computation
 _last_intelligence_snapshot: dict = {
-    "signals": {},        # symbol → {signal, confidence, quality_score}
+    "signals": {},  # symbol → {signal, confidence, quality_score}
     "mood_score": None,
     "captured_at": None,
 }
@@ -165,6 +220,14 @@ def _build_swing_market_context() -> dict[str, object]:
     ix = getattr(settings, "SWING_INDEX_SYMBOL", "NIFTY 50") or "NIFTY 50"
     regime = str(_regime_cache.get(ix) or "").upper() or "UNKNOWN"
     trend = "NEUTRAL"
+    choppy_threshold = float(
+        getattr(settings, "SWING_CHOPPY_ATR_RATIO_THRESHOLD", 0.7) or 0.7
+    )
+    atr_ratio: float | None = None
+    atr_today: float | None = None
+    atr_20d_avg: float | None = None
+    atr_source = "none"
+
     df = _signal_cache.get(ix)
     if df is None:
         df = _market_data.get(ix)
@@ -177,15 +240,182 @@ def _build_swing_market_context() -> dict[str, object]:
                 trend = "BEARISH"
         except Exception:
             pass
+
+    # Detect low-volatility/choppy benchmark sessions via ATR compression.
+    atr_df = _daily_data_cache.get(ix)
+    if atr_df is not None and not atr_df.empty:
+        atr_source = "daily_cache"
+    else:
+        atr_df = df
+        atr_source = "signal_cache"
+
+    if atr_df is not None and not atr_df.empty and "ATR_14" in atr_df.columns:
+        try:
+            atr_series = pd.to_numeric(atr_df["ATR_14"], errors="coerce").dropna()
+            if len(atr_series) >= 5:
+                atr_today = float(atr_series.iloc[-1])
+                atr_20d_avg = float(atr_series.tail(min(20, len(atr_series))).mean())
+                if atr_20d_avg > 0:
+                    atr_ratio = atr_today / atr_20d_avg
+                    if atr_ratio < choppy_threshold:
+                        trend = "CHOPPY"
+        except Exception:
+            pass
+
     return {
         "index_symbol": ix,
         "index_regime": regime,
         "index_trend": trend,
+        "index_atr_ratio": round(atr_ratio, 4) if atr_ratio is not None else None,
+        "index_atr_today": round(atr_today, 4) if atr_today is not None else None,
+        "index_atr_20d_avg": round(atr_20d_avg, 4) if atr_20d_avg is not None else None,
+        "index_choppy_atr_threshold": choppy_threshold,
+        "index_atr_source": atr_source,
     }
 
 
-async def _recompute_swing_cache(timeout_sec: float = 120.0) -> bool:
-    """Compute swing setups from current daily cache and store the latest snapshot."""
+async def _persist_swing_scan(
+    setups: list[dict],
+    market_context: dict | None,
+    *,
+    symbols_scanned: int,
+    trigger: str,
+) -> int | None:
+    """Save a scan snapshot to SQLite without blocking the event loop.
+
+    Always returns the scan_id on success, or None on any failure. Errors are
+    logged at WARNING level but never propagated — persistence is best-effort
+    and must never take down the live refresh loop.
+
+    Once-per-day guard: periodic refreshes (trigger="periodic") will only
+    write a new SwingScan row once per calendar day. Manual and nightly
+    triggers always persist immediately, regardless of the guard.
+    """
+    global _last_swing_persist_date
+
+    if not _SWING_STORE_ENABLED or _swing_store is None:
+        return None
+
+    today = date.today()
+    _periodic_triggers = {"periodic"}  # triggers subject to the once-per-day gate
+
+    if trigger in _periodic_triggers and _last_swing_persist_date == today:
+        logger.debug(
+            "Swing persist skipped — already saved today (%s) for trigger=%s.",
+            today,
+            trigger,
+        )
+        return None
+
+    try:
+        scan_id = await asyncio.to_thread(
+            _swing_store.save_scan,
+            setups,
+            market_context,
+            symbols_scanned=symbols_scanned,
+            trigger=trigger,
+        )
+        if scan_id is not None:
+            _last_swing_persist_date = today
+            logger.info(
+                "Swing scan persisted: scan_id=%s setups=%d trigger=%s date=%s",
+                scan_id,
+                len(setups or []),
+                trigger,
+                today,
+            )
+        return scan_id
+    except Exception as exc:
+        logger.warning("Swing scan persistence failed (non-fatal): %s", exc)
+        return None
+
+
+async def _hydrate_swing_cache_from_db() -> bool:
+    """On startup, seed _swing_cache from the best available source.
+    Checks both nightly JSON and DB, picks whichever has more setups.
+    Returns True if hydration placed setups into the cache, False otherwise.
+    """
+    global _swing_cache
+
+    best_source = None
+    best_setups = []
+    best_meta = {}
+
+    # Source 1: Nightly scan JSON (usually has the full 500-stock scan)
+    try:
+        import json as _json
+
+        json_path = os.path.join(
+            os.path.dirname(__file__), "..", "data", "swing_shortlist_latest.json"
+        )
+        json_path = os.path.abspath(json_path)
+        if os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                raw = _json.load(f)
+            shortlist = raw.get("shortlist") or raw.get("raw_setups") or []
+            if len(shortlist) > len(best_setups):
+                best_source = "json"
+                best_setups = shortlist
+                best_meta = {
+                    "total_found": raw.get("setups_found", len(shortlist)),
+                    "symbols_scanned": raw.get("symbols_scanned", 0),
+                    "updated_at": raw.get("scan_timestamp"),
+                }
+    except Exception as exc:
+        logger.warning("Swing hydration JSON read failed: %s", exc)
+
+    # Source 2: DB persisted scan
+    if _SWING_STORE_ENABLED and _swing_store is not None:
+        try:
+            latest = await asyncio.to_thread(_swing_store.load_latest_scan)
+            if latest:
+                db_setups = latest.get("setups") or []
+                if len(db_setups) > len(best_setups):
+                    best_source = "db"
+                    best_setups = db_setups
+                    best_meta = {
+                        "total_found": int(
+                            latest.get("total_setups") or len(db_setups)
+                        ),
+                        "symbols_scanned": int(latest.get("symbols_scanned") or 0),
+                        "updated_at": latest.get("scan_time"),
+                        "market_context": latest.get("market_context"),
+                    }
+        except Exception as exc:
+            logger.warning("Swing hydration DB read failed: %s", exc)
+
+    if not best_setups:
+        logger.info("Swing cache hydration: no prior scan found — starting cold.")
+        return False
+
+    max_setups = max(1, int(getattr(settings, "SWING_MAX_SETUPS_RETURN", 100) or 100))
+    _swing_cache["setups"] = best_setups[:max_setups]
+    _swing_cache["total_found"] = best_meta.get("total_found", len(best_setups))
+    _swing_cache["symbols_scanned"] = best_meta.get("symbols_scanned", 0)
+    _swing_cache["real_data"] = True
+    _swing_cache["updated_at"] = best_meta.get("updated_at")
+    _swing_cache["market_context"] = best_meta.get("market_context")
+    _swing_cache[f"hydrated_from_{best_source}"] = True
+    logger.info(
+        "Swing cache hydrated from %s: %d setups (scanned=%s).",
+        best_source.upper(),
+        len(_swing_cache["setups"]),
+        _swing_cache["symbols_scanned"],
+    )
+    return True
+
+
+async def _recompute_swing_cache(
+    timeout_sec: float = 120.0, trigger: str = "periodic"
+) -> bool:
+    """Compute swing setups from current daily cache and store the latest snapshot.
+
+    Args:
+        timeout_sec: Hard ceiling on the pattern-scan worker (seconds).
+        trigger: Audit label persisted with the scan — "manual" / "periodic" /
+            "startup" / "cron" / any short string. Controls only the DB row,
+            not behavior.
+    """
     global _swing_cache
     if not _daily_data_cache:
         logger.debug("Swing cache recompute skipped — daily data cache is empty.")
@@ -228,7 +458,24 @@ async def _recompute_swing_cache(timeout_sec: float = 120.0) -> bool:
                 setup["current_price"] = None
                 setup["price_vs_entry_pct"] = None
 
-        max_setups = max(1, int(getattr(settings, "SWING_MAX_SETUPS_RETURN", 100) or 100))
+        max_setups = max(
+            1, int(getattr(settings, "SWING_MAX_SETUPS_RETURN", 100) or 100)
+        )
+
+        # Guard: don't overwrite nightly scan (many setups) with periodic (few)
+        existing_count = len(_swing_cache.get("setups") or [])
+        is_nightly = (
+            _swing_cache.get("hydrated_from_json")
+            or _swing_cache.get("last_scan_source") == "nightly_auto"
+        )
+        if is_nightly and len(raw_setups) < existing_count and trigger == "periodic":
+            logger.info(
+                "Swing periodic recompute has %d setups vs %d from nightly — keeping nightly data.",
+                len(raw_setups),
+                existing_count,
+            )
+            return True
+
         _swing_cache["setups"] = raw_setups[:max_setups]
         _swing_cache["total_found"] = len(raw_setups)
         _swing_cache["symbols_scanned"] = len(_daily_data_cache)
@@ -246,11 +493,29 @@ async def _recompute_swing_cache(timeout_sec: float = 120.0) -> bool:
                 "Swing scan found 0 setups — possible causes: "
                 "regime gate blocking LONGs (trend=%s), strict R:R gate (%.1f), "
                 "or insufficient pattern conditions met.",
-                ctx.get("index_trend"), getattr(settings, "SWING_MIN_RISK_REWARD", 1.8),
+                ctx.get("index_trend"),
+                getattr(settings, "SWING_MIN_RISK_REWARD", 1.8),
             )
+
+        # Persist snapshot (best-effort, never raises). We persist the FULL
+        # raw_setups list (not the UI-truncated one) so the outcome tracker
+        # and stats endpoint have the complete picture.
+        try:
+            await _persist_swing_scan(
+                raw_setups,
+                ctx,
+                symbols_scanned=len(_daily_data_cache),
+                trigger=trigger,
+            )
+        except Exception as exc:
+            logger.warning("Swing persist call raised (non-fatal): %s", exc)
+
         return True
     except asyncio.TimeoutError:
-        logger.warning("Swing scan timed out after %.0fs — marking real_data=True with empty setups.", timeout_sec)
+        logger.warning(
+            "Swing scan timed out after %.0fs — marking real_data=True with empty setups.",
+            timeout_sec,
+        )
         # Even on timeout, mark as real so UI stops showing "warming up"
         _swing_cache["real_data"] = True
         _swing_cache["symbols_scanned"] = len(_daily_data_cache)
@@ -326,53 +591,71 @@ def _get_engine() -> PaperTradingEngine:
 
 async def _initial_load():
     """Non-blocking progressive data load — runs as a background task after server starts.
-    
+
     Phase 1: Load priority symbols (15) — fast, gets dashboard functional
     Phase 2: Load remaining symbols (35) in batches of 10
     Phase 3: Load daily data for swing/breakout scanners
     """
     global _loading_status
     try:
-        _loading_status = {"phase": "priority", "loaded": 0, "total": len(_PRIORITY_SYMBOLS), "ready": False}
+        _loading_status = {
+            "phase": "priority",
+            "loaded": 0,
+            "total": len(_PRIORITY_SYMBOLS),
+            "ready": False,
+        }
         logger.info("Phase 1: Loading %d priority symbols...", len(_PRIORITY_SYMBOLS))
-        
+
         sem = asyncio.Semaphore(MAX_NSE_CONCURRENCY)
         # Phase 1: Priority symbols
         tasks = [_fetch_nse_symbol_safe(name, sem) for name in _PRIORITY_SYMBOLS]
         await asyncio.gather(*tasks)
         _loading_status["loaded"] = len(_market_data)
         _loading_status["ready"] = True  # Dashboard is now functional
-        logger.info("Phase 1 complete: %d priority symbols loaded. Dashboard ready.", len(_market_data))
-        
+        logger.info(
+            "Phase 1 complete: %d priority symbols loaded. Dashboard ready.",
+            len(_market_data),
+        )
+
         # Phase 2: Remaining symbols in batches of 10
         _loading_status["phase"] = "remaining"
         _loading_status["total"] = len(TOP_NSE_SYMBOLS)
         for i in range(0, len(_REMAINING_SYMBOLS), 10):
-            batch = _REMAINING_SYMBOLS[i:i+10]
-            logger.info("Phase 2: Loading batch %d-%d (%d symbols)...", i, i+len(batch), len(batch))
+            batch = _REMAINING_SYMBOLS[i : i + 10]
+            logger.info(
+                "Phase 2: Loading batch %d-%d (%d symbols)...",
+                i,
+                i + len(batch),
+                len(batch),
+            )
             batch_tasks = [_fetch_nse_symbol_safe(name, sem) for name in batch]
             await asyncio.gather(*batch_tasks)
             _loading_status["loaded"] = len(_market_data)
             # Small pause between batches to avoid rate limiting
             await asyncio.sleep(2)
-        
+
         logger.info("Phase 2 complete: %d total symbols loaded.", len(_market_data))
-        
+
         # Phase 3: Daily data for scanners (1y history = EMA_200 valid)
         _loading_status["phase"] = "daily"
         try:
             daily_sem = asyncio.Semaphore(3)
+
             async def _fetch_daily_safe(name: str, sem: asyncio.Semaphore):
                 async with sem:
                     try:
                         df = await asyncio.wait_for(
-                            asyncio.to_thread(fetch_ohlcv, name, "1y", "1d"),  # FIX: 1y so EMA_200 is valid
+                            asyncio.to_thread(
+                                fetch_ohlcv, name, "1y", "1d"
+                            ),  # FIX: 1y so EMA_200 is valid
                             timeout=30.0,
                         )
                         if df is not None and not df.empty and len(df) >= 30:
                             df = calculate_indicators(df)
                             _daily_data_cache[name] = df
-                            logger.debug("Phase 3 daily loaded %s: %d bars", name, len(df))
+                            logger.debug(
+                                "Phase 3 daily loaded %s: %d bars", name, len(df)
+                            )
                     except Exception as e:
                         logger.debug("Daily fetch failed for %s: %s", name, e)
 
@@ -382,7 +665,8 @@ async def _initial_load():
             await asyncio.gather(*daily_tasks)
             logger.info(
                 "Phase 3 complete: %d daily symbols loaded for swing scanner (watchlist=%d).",
-                len(_daily_data_cache), len(_swing_symbols),
+                len(_daily_data_cache),
+                len(_swing_symbols),
             )
 
             # Precompute swing cache immediately so UI doesn't wait for periodic refresh.
@@ -390,15 +674,17 @@ async def _initial_load():
                 await _recompute_swing_cache(timeout_sec=90.0)
         except Exception as e:
             logger.error("Daily data fetch failed: %s", e)
-        
+
         _loading_status["phase"] = "complete"
         _loading_status["loaded"] = len(_market_data)
         global _last_refresh
         _last_refresh = datetime.now()
         logger.info("Initial load complete. Tracking %d symbols.", len(_market_data))
-        
+
     except Exception as e:
-        logger.error("Initial load failed: %s — will retry on next background refresh", e)
+        logger.error(
+            "Initial load failed: %s — will retry on next background refresh", e
+        )
         _loading_status["phase"] = "error"
 
 
@@ -423,25 +709,182 @@ async def _fetch_nse_symbol_safe(display_name: str, sem: asyncio.Semaphore) -> N
         logger.error("Symbol %s failed: %s", display_name, e)
 
 
+async def _wait_until_ready_or_timeout(max_wait_s: int, *, task_name: str) -> None:
+    """Wait for startup readiness with a hard upper bound."""
+    waited_s = 0
+    while not _loading_status.get("ready") and waited_s < max_wait_s:
+        await asyncio.sleep(5)
+        waited_s += 5
+    if not _loading_status.get("ready"):
+        logger.warning(
+            "%s starting without startup ready flag after %ss (phase=%s)",
+            task_name,
+            waited_s,
+            _loading_status.get("phase"),
+        )
+
+
+async def _run_swing_outcome_eval_if_due() -> dict | None:
+    """Execute swing outcome evaluation if throttle interval has elapsed."""
+    global _last_swing_outcome_eval_monotonic
+
+    if not getattr(settings, "SWING_OUTCOME_EVAL_ENABLED", True):
+        return None
+
+    interval = max(
+        300, int(getattr(settings, "SWING_OUTCOME_EVAL_INTERVAL_SEC", 3600) or 3600)
+    )
+    now_m = time.monotonic()
+    if now_m - _last_swing_outcome_eval_monotonic < interval:
+        return None
+
+    try:
+        from db.swing_outcome_tracker import run_outcome_evaluation_once
+
+        summary = await asyncio.to_thread(run_outcome_evaluation_once)
+        _last_swing_outcome_eval_monotonic = now_m
+        return summary if isinstance(summary, dict) else None
+    except Exception as exc:
+        logger.debug("Swing outcome evaluation skipped: %s", exc)
+        return None
+
+
 async def _background_refresh():
     """Background task: refresh market data every 60 seconds.
     Waits for initial load to complete before starting refresh cycle."""
-    # Wait until initial load is done
-    while not _loading_status.get("ready"):
-        await asyncio.sleep(5)
-    
+    await _wait_until_ready_or_timeout(
+        BACKGROUND_READY_WAIT_SECONDS,
+        task_name="Background refresh",
+    )
+
     while True:
-        await asyncio.sleep(60)
+        await asyncio.sleep(REFRESH_INTERVAL_SECONDS)
         lock = _get_refresh_lock()
         if lock.locked():
             logger.debug("Background refresh skipped — previous refresh still running")
             continue
         try:
             logger.info("Background refresh triggered...")
-            await _refresh_market_data()
-            logger.info("Background refresh complete. %d symbols loaded.", len(_market_data))
+            await asyncio.wait_for(
+                _refresh_market_data(),
+                timeout=REFRESH_CYCLE_TIMEOUT_SECONDS,
+            )
+            logger.info(
+                "Background refresh complete. %d symbols loaded.", len(_market_data)
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Background refresh timed out after %ss — skipping this cycle",
+                REFRESH_CYCLE_TIMEOUT_SECONDS,
+            )
         except Exception as e:
             logger.error("Background refresh failed: %s", e)
+
+
+async def _swing_outcome_background() -> None:
+    """Dedicated loop for swing outcome evaluation, independent of refresh path."""
+    await _wait_until_ready_or_timeout(
+        BACKGROUND_READY_WAIT_SECONDS,
+        task_name="Swing outcome task",
+    )
+
+    while True:
+        await asyncio.sleep(SWING_OUTCOME_TASK_INTERVAL_SECONDS)
+        try:
+            summary = await _run_swing_outcome_eval_if_due()
+            if summary and not summary.get("skipped"):
+                logger.info("Swing outcome evaluation: %s", summary)
+        except Exception as exc:
+            logger.error("Swing outcome background task failed: %s", exc)
+
+
+# ── Nightly SwingSpectrum Batch Scan (auto-scheduled) ─────────────────────────
+
+_NIGHTLY_SCAN_HOUR = int(os.environ.get("NIGHTLY_SCAN_HOUR", 21))  # 9 PM IST
+_NIGHTLY_SCAN_MINUTE = int(os.environ.get("NIGHTLY_SCAN_MINUTE", 30))  # :30
+
+
+def _seconds_until_nightly_scan(now: datetime | None = None) -> float:
+    """Return seconds until next scheduled nightly scan time (IST)."""
+    from datetime import time as dt_time
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    _IST = ZoneInfo("Asia/Kolkata")
+    current = now or datetime.now(tz=_IST)
+    target = datetime.combine(
+        current.date(),
+        dt_time(_NIGHTLY_SCAN_HOUR, _NIGHTLY_SCAN_MINUTE),
+        tzinfo=_IST,
+    )
+    if current >= target:
+        target = target + timedelta(days=1)
+    return max((target - current).total_seconds(), 1.0)
+
+
+async def _nightly_swing_scan_background() -> None:
+    """
+    Scheduled background task: runs SwingSpectrum nightly scan daily.
+    - Fetches NIFTY 500 stock universe from NSE
+    - Scans all stocks for swing patterns + news sentiment
+    - Saves results to DB + evaluates past outcomes
+    - Updates the in-memory swing cache for dashboard
+    """
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    _IST = ZoneInfo("Asia/Kolkata")
+
+    # Wait for server to stabilize first
+    await _wait_until_ready_or_timeout(
+        BACKGROUND_READY_WAIT_SECONDS,
+        task_name="Nightly swing scan",
+    )
+
+    while True:
+        try:
+            delay = _seconds_until_nightly_scan()
+            next_run = datetime.now(tz=_IST) + timedelta(seconds=delay)
+            logger.info(
+                "Nightly SwingSpectrum scan scheduled in %.0f sec (next: %s IST)",
+                delay,
+                next_run.strftime("%Y-%m-%d %H:%M"),
+            )
+            await asyncio.sleep(delay)
+
+            logger.info("=== Nightly SwingSpectrum Scan STARTING ===")
+            universe = os.environ.get("SWING_UNIVERSE", "nifty500")
+
+            # Run the heavy scan in a thread to avoid blocking the event loop
+            from scripts.nightly_swing_scan import run_scan as nightly_run_scan
+
+            top_picks, payload = await asyncio.to_thread(
+                nightly_run_scan,
+                grade_filter=None,
+                top_n=15,
+                output_path=None,
+                universe=universe,
+            )
+
+            logger.info(
+                "=== Nightly SwingSpectrum Scan COMPLETE === "
+                "setups=%d grade_A=%d grade_B=%d",
+                payload.get("setups_found", 0),
+                payload.get("grade_summary", {}).get("A", 0),
+                payload.get("grade_summary", {}).get("B", 0),
+            )
+
+            # Update in-memory swing cache so dashboard shows fresh data
+            _swing_cache["setups"] = top_picks
+            _swing_cache["total_found"] = payload.get("setups_found", 0)
+            _swing_cache["symbols_scanned"] = payload.get("symbols_scanned", 0)
+            _swing_cache["scan_timestamp"] = payload.get("scan_timestamp")
+            _swing_cache["last_scan_source"] = "nightly_auto"
+
+        except Exception as exc:
+            logger.error("Nightly swing scan failed: %s", exc)
+            # Don't crash the loop — retry next day
+            await asyncio.sleep(60)
 
 
 def _fire_telegram_signal(display_name: str, df: pd.DataFrame) -> None:
@@ -467,7 +910,9 @@ def _fire_telegram_signal(display_name: str, df: pd.DataFrame) -> None:
                     entry=float(last["close"]),
                     stop_loss=float(sl) if pd.notna(sl) else float(last["close"]),
                     target=float(tp) if pd.notna(tp) else float(last["close"]),
-                    confidence=float(last.get("confidence", last.get("ai_confidence", 0))),
+                    confidence=float(
+                        last.get("confidence", last.get("ai_confidence", 0))
+                    ),
                     trend=str(last.get("htf_trend", "")),
                     rsi=float(last["RSI_14"]) if pd.notna(last.get("RSI_14")) else 0.0,
                     regime=_regime_cache.get(display_name, ""),
@@ -476,11 +921,15 @@ def _fire_telegram_signal(display_name: str, df: pd.DataFrame) -> None:
             # ── Trade journal recording ───────────────────────────
             try:
                 signal_data = {
-                    "symbol":        display_name,
-                    "signal":        latest_signal,
-                    "timestamp":     last["timestamp"].isoformat() if hasattr(last.get("timestamp"), "isoformat") else str(last.get("timestamp", "")),
-                    "confidence":    float(last.get("confidence", last.get("ai_confidence", 0))),
-                    "regime":        _regime_cache.get(display_name, "RANGING"),
+                    "symbol": display_name,
+                    "signal": latest_signal,
+                    "timestamp": last["timestamp"].isoformat()
+                    if hasattr(last.get("timestamp"), "isoformat")
+                    else str(last.get("timestamp", "")),
+                    "confidence": float(
+                        last.get("confidence", last.get("ai_confidence", 0))
+                    ),
+                    "regime": _regime_cache.get(display_name, "RANGING"),
                     "quality_score": int(last.get("quality_score", 0)),
                     "quality_grade": str(last.get("quality_grade", "D")),
                 }
@@ -509,7 +958,11 @@ async def _fetch_nse_symbol(display_name: str) -> None:
         df, report = await asyncio.to_thread(validate_ohlcv, df, display_name, "5m")
         _data_quality_cache[display_name] = report.quality_pct
         if not report.is_safe:
-            logger.warning("Skipping %s: data quality too low (%.1f%%)", display_name, report.quality_pct)
+            logger.warning(
+                "Skipping %s: data quality too low (%.1f%%)",
+                display_name,
+                report.quality_pct,
+            )
             return
 
         df = calculate_indicators(df)
@@ -529,11 +982,20 @@ async def _fetch_nse_symbol(display_name: str) -> None:
         # ── MTF score from resampled timeframes ───────────────────────────
         mtf_data = {"5m": df}
         try:
-            _agg = {"open": "first", "high": "max", "low": "min",
-                    "close": "last", "volume": "sum"}
-            df_15m = (df.set_index("timestamp")
-                      .resample("15min").agg(_agg)
-                      .dropna(subset=["close"]).reset_index())
+            _agg = {
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "volume": "sum",
+            }
+            df_15m = (
+                df.set_index("timestamp")
+                .resample("15min")
+                .agg(_agg)
+                .dropna(subset=["close"])
+                .reset_index()
+            )
             if len(df_15m) >= 30:
                 df_15m = calculate_indicators(df_15m)
                 mtf_data["15m"] = df_15m
@@ -566,8 +1028,11 @@ async def _fetch_nse_symbol(display_name: str) -> None:
             market_trend = None
 
         df = generate_signals(
-            df, ai_confidence=ai_confidence, regime=regime,
-            symbol=display_name, market_trend=market_trend,
+            df,
+            ai_confidence=ai_confidence,
+            regime=regime,
+            symbol=display_name,
+            market_trend=market_trend,
             mtf_score=mtf_score,
         )
         _market_data[display_name] = df
@@ -602,6 +1067,7 @@ async def _refresh_market_data():
         # ── Fetch crypto data via CCXT ────────────────────────
         try:
             from agents.data_ingestion.binance_fetcher import fetch_historical
+
             for symbol in settings.CRYPTO_SYMBOLS:
                 try:
                     df = await asyncio.to_thread(fetch_historical, symbol, "1h", 7)
@@ -609,10 +1075,16 @@ async def _refresh_market_data():
                         continue
 
                     # Data validation
-                    df, report = await asyncio.to_thread(validate_ohlcv, df, symbol, "1h")
+                    df, report = await asyncio.to_thread(
+                        validate_ohlcv, df, symbol, "1h"
+                    )
                     _data_quality_cache[symbol] = report.quality_pct
                     if not report.is_safe:
-                        logger.warning("Skipping %s: data quality too low (%.1f%%)", symbol, report.quality_pct)
+                        logger.warning(
+                            "Skipping %s: data quality too low (%.1f%%)",
+                            symbol,
+                            report.quality_pct,
+                        )
                         continue
 
                     df = calculate_indicators(df)
@@ -625,11 +1097,46 @@ async def _refresh_market_data():
                     else:
                         df = classify_trend(df)
 
+                    # ── A1: MTF confluence — fetch 4h trend independently.
+                    # Kept separate from 1d propagation so the gate has its
+                    # own medium-term view. Failures are non-fatal; gate
+                    # silently skips when trend is None.
+                    try:
+                        mtf_bars = max(
+                            60, int(getattr(settings, "CRYPTO_MTF_4H_BARS", 200) or 200)
+                        )
+                        days_for_4h = max(15, mtf_bars // 6 + 2)  # 6 × 4h bars per day
+                        htf4_df = await asyncio.to_thread(
+                            fetch_historical, symbol, "4h", days_for_4h
+                        )
+                        if (
+                            htf4_df is not None
+                            and not htf4_df.empty
+                            and len(htf4_df) >= 50
+                        ):
+                            htf4_df = calculate_indicators(htf4_df)
+                            htf4_df = classify_trend(htf4_df)
+                            trend_col = htf4_df.get("htf_trend")
+                            if trend_col is not None and len(trend_col) > 0:
+                                last_trend = (
+                                    str(trend_col.iloc[-1] or "").upper() or None
+                                )
+                                _crypto_htf4_trend[symbol] = last_trend
+                            else:
+                                _crypto_htf4_trend[symbol] = None
+                        else:
+                            _crypto_htf4_trend[symbol] = None
+                    except Exception as exc:  # pragma: no cover - network flakiness
+                        logger.debug("4h MTF fetch failed for %s: %s", symbol, exc)
+                        _crypto_htf4_trend[symbol] = None
+
                     raw_regime = detect_regime(df)
                     regime = _stable_regime(symbol, raw_regime)
                     _regime_cache[symbol] = regime.value
                     ai_conf_crypto = await asyncio.to_thread(predict_batch, df)
-                    df = generate_signals(df, ai_confidence=ai_conf_crypto, regime=regime, symbol=symbol)
+                    df = generate_signals(
+                        df, ai_confidence=ai_conf_crypto, regime=regime, symbol=symbol
+                    )
                     _market_data[symbol] = df
                     _signal_cache[symbol] = df
                     _last_feed_update = datetime.now()
@@ -650,6 +1157,7 @@ async def _refresh_market_data():
         # the full watchlist for comprehensive swing/breakout detection.
         try:
             daily_sem = asyncio.Semaphore(5)
+
             async def _fetch_daily(name: str, sem: asyncio.Semaphore):
                 async with sem:
                     try:
@@ -671,7 +1179,8 @@ async def _refresh_market_data():
             await asyncio.gather(*daily_tasks)
             logger.info(
                 "Daily data fetched: %d symbols for swing scanner (watchlist=%d).",
-                len(_daily_data_cache), len(_sw_list),
+                len(_daily_data_cache),
+                len(_sw_list),
             )
 
             # ── Pre-compute swing setups into cache ─────────────
@@ -733,7 +1242,9 @@ def _get_signal_for_symbol(symbol: str) -> dict:
 
     # Always use current-bar values for these live fields
     current_close = round(float(last["close"]), 2)
-    current_rsi = round(float(last["RSI_14"]), 1) if pd.notna(last.get("RSI_14")) else None
+    current_rsi = (
+        round(float(last["RSI_14"]), 1) if pd.notna(last.get("RSI_14")) else None
+    )
     current_trend = _clean_trend(last.get("htf_trend", "NEUTRAL"))
     current_regime = _regime_cache.get(symbol, "RANGING")
     current_ts = last["timestamp"].isoformat()
@@ -791,7 +1302,9 @@ def _get_signal_for_symbol(symbol: str) -> dict:
     quality_grade = str(last_signal.get("quality_grade", "D") or "D")
     quality_breakdown_raw = last_signal.get("quality_breakdown", "{}")
     try:
-        quality_breakdown = json.loads(str(quality_breakdown_raw)) if quality_breakdown_raw else {}
+        quality_breakdown = (
+            json.loads(str(quality_breakdown_raw)) if quality_breakdown_raw else {}
+        )
     except Exception:
         quality_breakdown = {}
     quality_hard_gate = str(last_signal.get("quality_hard_gate", "") or "")
@@ -825,32 +1338,42 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         atr_val = _safe_float(last, f"ATR_{settings.ATR_PERIOD}")
         if atr_val:
             sl = round(entry_price - atr_val * settings.ATR_SL_MULTIPLIER, 2)
-            tp = round(entry_price + atr_val * settings.ATR_SL_MULTIPLIER * settings.MIN_RISK_REWARD, 2)
+            tp = round(
+                entry_price
+                + atr_val * settings.ATR_SL_MULTIPLIER * settings.MIN_RISK_REWARD,
+                2,
+            )
     elif sl is not None and effective_dir == "SHORT" and sl <= entry_price:
         atr_val = _safe_float(last, f"ATR_{settings.ATR_PERIOD}")
         if atr_val:
             sl = round(entry_price + atr_val * settings.ATR_SL_MULTIPLIER, 2)
-            tp = round(entry_price - atr_val * settings.ATR_SL_MULTIPLIER * settings.MIN_RISK_REWARD, 2)
+            tp = round(
+                entry_price
+                - atr_val * settings.ATR_SL_MULTIPLIER * settings.MIN_RISK_REWARD,
+                2,
+            )
 
     return {
-        "symbol":    symbol,
-        "signal":    sig_label,                     # LONG / SHORT / SKIP / HOLD
-        "direction": effective_dir,                 # Underlying direction for SKIPs
-        "confidence": _cap_confidence(last_signal.get("confidence", last_signal.get("ai_confidence", 0))),
-        "entry":     entry_price,
-        "close":     current_close,                # always current price
+        "symbol": symbol,
+        "signal": sig_label,  # LONG / SHORT / SKIP / HOLD
+        "direction": effective_dir,  # Underlying direction for SKIPs
+        "confidence": _cap_confidence(
+            last_signal.get("confidence", last_signal.get("ai_confidence", 0))
+        ),
+        "entry": entry_price,
+        "close": current_close,  # always current price
         "stop_loss": sl,
-        "target":    tp,
-        "rsi":       current_rsi,                  # always current RSI
-        "trend":     current_trend,                # always current trend
-        "regime":    current_regime,
+        "target": tp,
+        "rsi": current_rsi,  # always current RSI
+        "trend": current_trend,  # always current trend
+        "regime": current_regime,
         "timestamp": last_signal["timestamp"].isoformat(),
         "sparkline": [round(float(c), 2) for c in df["close"].tail(20)],
-        "stale":     stale,
+        "stale": stale,
         "stale_minutes": round(signal_age_min, 1),
         # Signal quality
-        "quality_score":     quality_score,
-        "quality_grade":     quality_grade,
+        "quality_score": quality_score,
+        "quality_grade": quality_grade,
         "quality_breakdown": quality_breakdown,
         "quality_hard_gate": quality_hard_gate,
         "skip_reason": quality_hard_gate if sig_label == "SKIP" else "",
@@ -860,8 +1383,8 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         "data_quality": round(_data_quality_cache.get(symbol, 100.0), 1),
         # Live indicator values for signal card display
         "macd_hist": _safe_float(last, "MACD_hist"),
-        "ema_20":    _safe_float(last, "EMA_20"),
-        "ema_50":    _safe_float(last, "EMA_50"),
+        "ema_20": _safe_float(last, "EMA_20"),
+        "ema_50": _safe_float(last, "EMA_50"),
         # Context layer fields
         "context_score": _safe_float(last_signal, "context_score") or 0.0,
         "context_adjusted": bool(last_signal.get("context_adjusted", False)),
@@ -882,23 +1405,43 @@ def _build_market_records(df: pd.DataFrame) -> list[dict]:
     """Convert a market DataFrame to a list of API-friendly record dicts."""
     records = []
     for _, row in df.iterrows():
-        records.append({
-            "timestamp": row["timestamp"].isoformat(),
-            "open": round(float(row["open"]), 2),
-            "high": round(float(row["high"]), 2),
-            "low": round(float(row["low"]), 2),
-            "close": round(float(row["close"]), 2),
-            "volume": round(float(row["volume"]), 0),
-            "rsi": round(float(row["RSI_14"]), 1) if pd.notna(row.get("RSI_14")) else None,
-            "ema_20": round(float(row["EMA_20"]), 2) if pd.notna(row.get("EMA_20")) else None,
-            "ema_50": round(float(row["EMA_50"]), 2) if pd.notna(row.get("EMA_50")) else None,
-            "ema_200": round(float(row["EMA_200"]), 2) if pd.notna(row.get("EMA_200")) else None,
-            "vwap": round(float(row["VWAP"]), 2) if pd.notna(row.get("VWAP")) else None,
-            "bb_upper": round(float(row["BB_upper"]), 2) if pd.notna(row.get("BB_upper")) else None,
-            "bb_lower": round(float(row["BB_lower"]), 2) if pd.notna(row.get("BB_lower")) else None,
-            "adx": round(float(row[f"ADX_{settings.ADX_PERIOD}"]), 1) if pd.notna(row.get(f"ADX_{settings.ADX_PERIOD}")) else None,
-            "signal": str(row.get("signal", "HOLD")) if "signal" in row.index else "HOLD",
-        })
+        records.append(
+            {
+                "timestamp": row["timestamp"].isoformat(),
+                "open": round(float(row["open"]), 2),
+                "high": round(float(row["high"]), 2),
+                "low": round(float(row["low"]), 2),
+                "close": round(float(row["close"]), 2),
+                "volume": round(float(row["volume"]), 0),
+                "rsi": round(float(row["RSI_14"]), 1)
+                if pd.notna(row.get("RSI_14"))
+                else None,
+                "ema_20": round(float(row["EMA_20"]), 2)
+                if pd.notna(row.get("EMA_20"))
+                else None,
+                "ema_50": round(float(row["EMA_50"]), 2)
+                if pd.notna(row.get("EMA_50"))
+                else None,
+                "ema_200": round(float(row["EMA_200"]), 2)
+                if pd.notna(row.get("EMA_200"))
+                else None,
+                "vwap": round(float(row["VWAP"]), 2)
+                if pd.notna(row.get("VWAP"))
+                else None,
+                "bb_upper": round(float(row["BB_upper"]), 2)
+                if pd.notna(row.get("BB_upper"))
+                else None,
+                "bb_lower": round(float(row["BB_lower"]), 2)
+                if pd.notna(row.get("BB_lower"))
+                else None,
+                "adx": round(float(row[f"ADX_{settings.ADX_PERIOD}"]), 1)
+                if pd.notna(row.get(f"ADX_{settings.ADX_PERIOD}"))
+                else None,
+                "signal": str(row.get("signal", "HOLD"))
+                if "signal" in row.index
+                else "HOLD",
+            }
+        )
     return records
 
 
@@ -919,7 +1462,11 @@ def _compute_gainers_losers_from_cache(mode: str) -> list[dict]:
             close = float(df.iloc[-1]["close"])
 
             # Find today's open: first bar of the current trading day
-            today = df["timestamp"].iloc[-1].date() if hasattr(df["timestamp"].iloc[-1], "date") else None
+            today = (
+                df["timestamp"].iloc[-1].date()
+                if hasattr(df["timestamp"].iloc[-1], "date")
+                else None
+            )
             if today:
                 today_bars = df[df["timestamp"].dt.date == today]
                 if len(today_bars) >= 2:
@@ -943,16 +1490,18 @@ def _compute_gainers_losers_from_cache(mode: str) -> list[dict]:
             vol_cr = round(total_vol * close / 1e7, 1) if total_vol > 0 else 0.1
 
             # X-Factor: abs(pct_change) normalized later
-            results.append({
-                "symbol": symbol,
-                "company": symbol,
-                "sector": _get_sector_for_symbol(symbol),
-                "ltp": round(close, 2),
-                "pct_change": round(pct_change, 2),
-                "volume_cr": max(vol_cr, 0.1),
-                "x_factor": 1.0,  # normalized below
-                "oi_change": None,
-            })
+            results.append(
+                {
+                    "symbol": symbol,
+                    "company": symbol,
+                    "sector": _get_sector_for_symbol(symbol),
+                    "ltp": round(close, 2),
+                    "pct_change": round(pct_change, 2),
+                    "volume_cr": max(vol_cr, 0.1),
+                    "x_factor": 1.0,  # normalized below
+                    "oi_change": None,
+                }
+            )
         except Exception:
             continue
 
@@ -977,36 +1526,92 @@ def _compute_gainers_losers_from_cache(mode: str) -> list[dict]:
 
 # Sector mapping for cache-based screener/heatmap
 _SYMBOL_SECTOR_MAP = {
-    "RELIANCE": "Energy", "TCS": "IT", "HDFCBANK": "Finance",
-    "INFY": "IT", "ICICIBANK": "Finance", "SBIN": "Finance",
-    "BHARTIARTL": "Telecom", "KOTAKBANK": "Finance", "LT": "Infra",
-    "ITC": "FMCG", "AXISBANK": "Finance", "HINDUNILVR": "FMCG",
-    "BAJFINANCE": "Finance", "MARUTI": "Auto", "TITAN": "Consumer",
-    "WIPRO": "IT", "TATAMOTORS": "Auto", "SUNPHARMA": "Pharma",
-    "ULTRACEMCO": "Infra", "ADANIENT": "Metals", "ADANIPORTS": "Infra",
-    "ADANIPOWER": "Energy", "ADANIGREEN": "Energy", "TATASTEEL": "Metals",
-    "JSWSTEEL": "Metals", "HINDALCO": "Metals", "COALINDIA": "Energy",
-    "NTPC": "Energy", "POWERGRID": "Energy", "ONGC": "Energy",
-    "BPCL": "Energy", "IOC": "Energy", "GAIL": "Energy",
-    "TECHM": "IT", "HCLTECH": "IT", "DRREDDY": "Pharma",
-    "CIPLA": "Pharma", "DIVISLAB": "Pharma", "APOLLOHOSP": "Pharma",
-    "ASIANPAINT": "Consumer", "NESTLEIND": "FMCG", "BRITANNIA": "FMCG",
-    "DABUR": "FMCG", "GODREJCP": "FMCG", "PIDILITIND": "Consumer",
-    "BERGEPAINT": "Consumer", "HAVELLS": "Consumer", "VOLTAS": "Consumer",
-    "SIEMENS": "Infra", "ABB": "Infra", "BHEL": "Infra",
-    "M&M": "Auto", "EICHERMOT": "Auto", "HEROMOTOCO": "Auto",
-    "BAJAJ-AUTO": "Auto", "TVSMOTOR": "Auto", "INDUSINDBK": "Finance",
-    "BANDHANBNK": "Finance", "PNB": "Finance", "BANKBARODA": "Finance",
-    "HAL": "Defence", "BEL": "Defence", "IRCTC": "Consumer",
-    "ZOMATO": "Consumer", "TATAPOWER": "Energy", "DLF": "Realty",
-    "GODREJPROP": "Realty", "OBEROIRLTY": "Realty", "PRESTIGE": "Realty",
-    "TRENT": "Consumer", "DMART": "Consumer",
+    "RELIANCE": "Energy",
+    "TCS": "IT",
+    "HDFCBANK": "Finance",
+    "INFY": "IT",
+    "ICICIBANK": "Finance",
+    "SBIN": "Finance",
+    "BHARTIARTL": "Telecom",
+    "KOTAKBANK": "Finance",
+    "LT": "Infra",
+    "ITC": "FMCG",
+    "AXISBANK": "Finance",
+    "HINDUNILVR": "FMCG",
+    "BAJFINANCE": "Finance",
+    "MARUTI": "Auto",
+    "TITAN": "Consumer",
+    "WIPRO": "IT",
+    "TATAMOTORS": "Auto",
+    "SUNPHARMA": "Pharma",
+    "ULTRACEMCO": "Infra",
+    "ADANIENT": "Metals",
+    "ADANIPORTS": "Infra",
+    "ADANIPOWER": "Energy",
+    "ADANIGREEN": "Energy",
+    "TATASTEEL": "Metals",
+    "JSWSTEEL": "Metals",
+    "HINDALCO": "Metals",
+    "COALINDIA": "Energy",
+    "NTPC": "Energy",
+    "POWERGRID": "Energy",
+    "ONGC": "Energy",
+    "BPCL": "Energy",
+    "IOC": "Energy",
+    "GAIL": "Energy",
+    "TECHM": "IT",
+    "HCLTECH": "IT",
+    "DRREDDY": "Pharma",
+    "CIPLA": "Pharma",
+    "DIVISLAB": "Pharma",
+    "APOLLOHOSP": "Pharma",
+    "ASIANPAINT": "Consumer",
+    "NESTLEIND": "FMCG",
+    "BRITANNIA": "FMCG",
+    "DABUR": "FMCG",
+    "GODREJCP": "FMCG",
+    "PIDILITIND": "Consumer",
+    "BERGEPAINT": "Consumer",
+    "HAVELLS": "Consumer",
+    "VOLTAS": "Consumer",
+    "SIEMENS": "Infra",
+    "ABB": "Infra",
+    "BHEL": "Infra",
+    "M&M": "Auto",
+    "EICHERMOT": "Auto",
+    "HEROMOTOCO": "Auto",
+    "BAJAJ-AUTO": "Auto",
+    "TVSMOTOR": "Auto",
+    "INDUSINDBK": "Finance",
+    "BANDHANBNK": "Finance",
+    "PNB": "Finance",
+    "BANKBARODA": "Finance",
+    "HAL": "Defence",
+    "BEL": "Defence",
+    "IRCTC": "Consumer",
+    "ZOMATO": "Consumer",
+    "TATAPOWER": "Energy",
+    "DLF": "Realty",
+    "GODREJPROP": "Realty",
+    "OBEROIRLTY": "Realty",
+    "PRESTIGE": "Realty",
+    "TRENT": "Consumer",
+    "DMART": "Consumer",
 }
 
 _SECTOR_ICONS = {
-    "IT": "💻", "Finance": "🏦", "FMCG": "🛒", "Auto": "🚗",
-    "Pharma": "💊", "Energy": "⚡", "Metals": "⚙️", "Infra": "🏗️",
-    "Telecom": "📡", "Consumer": "🛍️", "Realty": "🏢", "Defence": "🛡️",
+    "IT": "💻",
+    "Finance": "🏦",
+    "FMCG": "🛒",
+    "Auto": "🚗",
+    "Pharma": "💊",
+    "Energy": "⚡",
+    "Metals": "⚙️",
+    "Infra": "🏗️",
+    "Telecom": "📡",
+    "Consumer": "🛍️",
+    "Realty": "🏢",
+    "Defence": "🛡️",
 }
 
 
@@ -1034,10 +1639,18 @@ def _compute_sectors_from_cache() -> list[dict]:
 
         try:
             close = float(df.iloc[-1]["close"])
-            today = df["timestamp"].iloc[-1].date() if hasattr(df["timestamp"].iloc[-1], "date") else None
+            today = (
+                df["timestamp"].iloc[-1].date()
+                if hasattr(df["timestamp"].iloc[-1], "date")
+                else None
+            )
             if today:
                 today_bars = df[df["timestamp"].dt.date == today]
-                day_open = float(today_bars.iloc[0]["open"]) if len(today_bars) >= 2 else float(df.iloc[0]["open"])
+                day_open = (
+                    float(today_bars.iloc[0]["open"])
+                    if len(today_bars) >= 2
+                    else float(df.iloc[0]["open"])
+                )
             else:
                 day_open = float(df.iloc[0]["open"])
 
@@ -1056,15 +1669,17 @@ def _compute_sectors_from_cache() -> list[dict]:
         adv = int(total * max(0.1, (avg_pct + 3.5) / 7.0))
         dec = total - adv
 
-        sectors.append({
-            "name": name,
-            "pct_change": avg_pct,
-            "stocks": total,
-            "adv": adv,
-            "dec": dec,
-            "icons": _SECTOR_ICONS.get(name, "📊"),
-            "real_data": True,
-        })
+        sectors.append(
+            {
+                "name": name,
+                "pct_change": avg_pct,
+                "stocks": total,
+                "adv": adv,
+                "dec": dec,
+                "icons": _SECTOR_ICONS.get(name, "📊"),
+                "real_data": True,
+            }
+        )
 
     # Sort by absolute change (most active sectors first)
     sectors.sort(key=lambda x: abs(x["pct_change"]), reverse=True)
@@ -1089,7 +1704,9 @@ def _compute_market_mood() -> dict:
         losers = _compute_gainers_losers_from_cache("losers")
 
     total_movers = len(gainers) + len(losers)
-    breadth_pct = ((len(gainers) - len(losers)) / total_movers * 100.0) if total_movers else 0.0
+    breadth_pct = (
+        ((len(gainers) - len(losers)) / total_movers * 100.0) if total_movers else 0.0
+    )
 
     long_count = 0
     short_count = 0
@@ -1107,7 +1724,9 @@ def _compute_market_mood() -> dict:
             hold_count += 1
 
     signal_total = long_count + short_count + hold_count
-    signal_bias_pct = ((long_count - short_count) / signal_total * 100.0) if signal_total else 0.0
+    signal_bias_pct = (
+        ((long_count - short_count) / signal_total * 100.0) if signal_total else 0.0
+    )
 
     # Breadth split score: % of tracked NSE stocks above 20-DMA proxy (EMA_20 in pipeline).
     index_symbols = {"NIFTY 50", "BANKNIFTY", "SENSEX", "NIFTY IT", "NIFTY BANK"}
@@ -1121,15 +1740,24 @@ def _compute_market_mood() -> dict:
         last = df.iloc[-1]
         close_val = last.get("close")
         dma20_val = last.get("EMA_20")
-        if close_val is None or dma20_val is None or pd.isna(close_val) or pd.isna(dma20_val):
+        if (
+            close_val is None
+            or dma20_val is None
+            or pd.isna(close_val)
+            or pd.isna(dma20_val)
+        ):
             continue
         breadth_universe += 1
         if float(close_val) > float(dma20_val):
             breadth_above_20 += 1
 
-    breadth_split_score = (breadth_above_20 / breadth_universe * 100.0) if breadth_universe else 50.0
+    breadth_split_score = (
+        (breadth_above_20 / breadth_universe * 100.0) if breadth_universe else 50.0
+    )
     buy_sell_total = long_count + short_count
-    signal_bias_score = (long_count / buy_sell_total * 100.0) if buy_sell_total else 50.0
+    signal_bias_score = (
+        (long_count / buy_sell_total * 100.0) if buy_sell_total else 50.0
+    )
     split_composite_score = (breadth_split_score * 0.6) + (signal_bias_score * 0.4)
 
     def _split_label(value: float) -> str:
@@ -1149,13 +1777,19 @@ def _compute_market_mood() -> dict:
     regime_bias = 0.0
     if regime_total:
         regime_bias = (
-            (regime_counts["TRENDING"] * 1.0) +
-            (regime_counts["RANGING"] * 0.0) +
-            (regime_counts["HIGH_VOLATILITY"] * -1.0)
-        ) / regime_total * 100.0
+            (
+                (regime_counts["TRENDING"] * 1.0)
+                + (regime_counts["RANGING"] * 0.0)
+                + (regime_counts["HIGH_VOLATILITY"] * -1.0)
+            )
+            / regime_total
+            * 100.0
+        )
 
     sectors = _compute_sectors_from_cache()
-    avg_sector_move = float(np.mean([s["pct_change"] for s in sectors])) if sectors else 0.0
+    avg_sector_move = (
+        float(np.mean([s["pct_change"] for s in sectors])) if sectors else 0.0
+    )
     sector_bias = max(min(avg_sector_move * 15.0, 100.0), -100.0)
 
     score = 50.0
@@ -1319,7 +1953,11 @@ def _phase2_composite_score(sig: dict, mood: dict) -> tuple[float, dict]:
             regime_adj = -4.0
 
     cp = sig.get("conflict")
-    has_conflict = bool(cp.get("has_conflict")) if isinstance(cp, dict) else bool(sig.get("signal_conflict"))
+    has_conflict = (
+        bool(cp.get("has_conflict"))
+        if isinstance(cp, dict)
+        else bool(sig.get("signal_conflict"))
+    )
     drift = bool(sig.get("drift_detected"))
     event = bool(sig.get("event_risk_active"))
 
@@ -1375,7 +2013,9 @@ def _calibration_for_setup(
 
     hist_note: str | None = None
     if reg_wr is not None and reg_n >= 3:
-        hist_note = f"{rkey}: ~{reg_wr:.0f}% WR in last {reg_n} similar-regime trades (paper)"
+        hist_note = (
+            f"{rkey}: ~{reg_wr:.0f}% WR in last {reg_n} similar-regime trades (paper)"
+        )
     elif overall_wr is not None and total_t >= 5:
         hist_note = f"Overall paper WR ~{overall_wr:.0f}% ({total_t} trades)"
 
@@ -1433,7 +2073,11 @@ def _confluence_for_setup(sig: dict, mood: dict) -> tuple[int, list[str]]:
     drift = bool(sig.get("drift_detected"))
     event = bool(sig.get("event_risk_active"))
     cp = sig.get("conflict", {})
-    has_conflict = bool(cp.get("has_conflict")) if isinstance(cp, dict) else bool(sig.get("signal_conflict"))
+    has_conflict = (
+        bool(cp.get("has_conflict"))
+        if isinstance(cp, dict)
+        else bool(sig.get("signal_conflict"))
+    )
 
     if not drift and not event and not has_conflict:
         score += 15
@@ -1453,7 +2097,9 @@ def _confluence_for_setup(sig: dict, mood: dict) -> tuple[int, list[str]]:
     return score, factors[:6]
 
 
-def _compute_delta_since_last_refresh(current_signals: dict, current_mood_score: float) -> dict:
+def _compute_delta_since_last_refresh(
+    current_signals: dict, current_mood_score: float
+) -> dict:
     """
     Phase 3: compare current signal state against last snapshot.
     Returns new LONGs/SHORTs, dropped signals, confidence/QS changes, mood shift.
@@ -1473,7 +2119,9 @@ def _compute_delta_since_last_refresh(current_signals: dict, current_mood_score:
         cur_qs = int(cur.get("quality_score", 0))
         cur_conf = float(cur.get("confidence", 0))
         prev_entry = prev.get(sym, {})
-        prev_sig = str(prev_entry.get("signal", "HOLD")).upper() if prev_entry else "HOLD"
+        prev_sig = (
+            str(prev_entry.get("signal", "HOLD")).upper() if prev_entry else "HOLD"
+        )
 
         if cur_sig == "LONG" and prev_sig != "LONG":
             new_longs.append(sym)
@@ -1488,9 +2136,21 @@ def _compute_delta_since_last_refresh(current_signals: dict, current_mood_score:
             qs_delta = cur_qs - prev_qs
             conf_delta = cur_conf - prev_conf
             if qs_delta >= 8:
-                improved.append({"symbol": sym, "qs_delta": qs_delta, "conf_delta": round(conf_delta, 1)})
+                improved.append(
+                    {
+                        "symbol": sym,
+                        "qs_delta": qs_delta,
+                        "conf_delta": round(conf_delta, 1),
+                    }
+                )
             elif qs_delta <= -8:
-                degraded.append({"symbol": sym, "qs_delta": qs_delta, "conf_delta": round(conf_delta, 1)})
+                degraded.append(
+                    {
+                        "symbol": sym,
+                        "qs_delta": qs_delta,
+                        "conf_delta": round(conf_delta, 1),
+                    }
+                )
 
     improved.sort(key=lambda x: x["qs_delta"], reverse=True)
     degraded.sort(key=lambda x: x["qs_delta"])
@@ -1523,9 +2183,23 @@ def _sector_rotation_summary() -> list[dict]:
     bot3 = sectors[-3:] if len(sectors) > 3 else []
     result: list[dict] = []
     for s in top3:
-        result.append({"name": s["name"], "pct_change": s["pct_change"], "icon": s.get("icons", ""), "direction": "up"})
+        result.append(
+            {
+                "name": s["name"],
+                "pct_change": s["pct_change"],
+                "icon": s.get("icons", ""),
+                "direction": "up",
+            }
+        )
     for s in reversed(bot3):
-        result.append({"name": s["name"], "pct_change": s["pct_change"], "icon": s.get("icons", ""), "direction": "down"})
+        result.append(
+            {
+                "name": s["name"],
+                "pct_change": s["pct_change"],
+                "icon": s.get("icons", ""),
+                "direction": "down",
+            }
+        )
     return result
 
 
@@ -1541,16 +2215,28 @@ def _index_leadership_summary() -> dict:
         try:
             last = df.iloc[-1]
             close = float(last["close"])
-            today = last["timestamp"].date() if hasattr(last.get("timestamp"), "date") else None
+            today = (
+                last["timestamp"].date()
+                if hasattr(last.get("timestamp"), "date")
+                else None
+            )
             if today:
                 today_bars = df[df["timestamp"].dt.date == today]
-                day_open = float(today_bars.iloc[0]["open"]) if len(today_bars) >= 2 else close
+                day_open = (
+                    float(today_bars.iloc[0]["open"]) if len(today_bars) >= 2 else close
+                )
             else:
                 day_open = close
             pct = ((close - day_open) / day_open * 100) if day_open > 0 else 0.0
             regime = _regime_cache.get(idx_name, "RANGING")
             trend_raw = str(last.get("htf_trend", "NEUTRAL") or "NEUTRAL").upper()
-            trend = "BULLISH" if "BULL" in trend_raw else "BEARISH" if "BEAR" in trend_raw else "NEUTRAL"
+            trend = (
+                "BULLISH"
+                if "BULL" in trend_raw
+                else "BEARISH"
+                if "BEAR" in trend_raw
+                else "NEUTRAL"
+            )
             result[idx_name] = {
                 "close": round(close, 2),
                 "pct_change": round(pct, 2),
@@ -1582,6 +2268,7 @@ def _compute_overview_intelligence() -> dict:
     insights_for_cal: dict = {}
     try:
         from agents.analytics.feedback_loop import get_learning_stats
+
         _ls = get_learning_stats()
         insights_for_cal = _ls.get("insights", {}) or {}
     except Exception:
@@ -1603,7 +2290,8 @@ def _compute_overview_intelligence() -> dict:
         conflict_payload = sig.get("conflict", {})
         has_conflict = bool(
             conflict_payload.get("has_conflict", False)
-            if isinstance(conflict_payload, dict) else False
+            if isinstance(conflict_payload, dict)
+            else False
         )
 
         composite, rank_explain = _phase2_composite_score(sig, mood)
@@ -1643,7 +2331,9 @@ def _compute_overview_intelligence() -> dict:
             if risk_dist > 0 and reward_dist > 0:
                 rr_label = f"1:{reward_dist / risk_dist:.1f}"
 
-        cal = _calibration_for_setup(regime, float(quality_score), confidence, insights_for_cal)
+        cal = _calibration_for_setup(
+            regime, float(quality_score), confidence, insights_for_cal
+        )
         conf_n, conf_factors = _confluence_for_setup(sig, mood)
 
         entry_data = {
@@ -1673,7 +2363,12 @@ def _compute_overview_intelligence() -> dict:
             "macd_hist": sig.get("macd_hist"),
         }
 
-        if signal_label in ("LONG", "SHORT") and quality_score >= 55 and confidence >= 40 and not stale:
+        if (
+            signal_label in ("LONG", "SHORT")
+            and quality_score >= 55
+            and confidence >= 40
+            and not stale
+        ):
             blockers: list[str] = []
             if drift_detected:
                 blockers.append("drift_detected")
@@ -1807,7 +2502,9 @@ def _compute_overview_intelligence() -> dict:
                 "confidence": float(sig.get("confidence", 0)),
             }
 
-    delta = _compute_delta_since_last_refresh(current_signals_snapshot, current_mood_score)
+    delta = _compute_delta_since_last_refresh(
+        current_signals_snapshot, current_mood_score
+    )
     sector_rotation = _sector_rotation_summary()
     index_leadership = _index_leadership_summary()
 
@@ -1822,8 +2519,10 @@ def _compute_overview_intelligence() -> dict:
         "circuit_breaker_reason": str(risk.get("circuit_breaker_reason") or ""),
         "consecutive_losses": consec_losses,
         "caution_level": (
-            "HIGH" if cb_active or heat_pct >= 80
-            else "MEDIUM" if heat_pct >= 60 or consec_losses >= 3
+            "HIGH"
+            if cb_active or heat_pct >= 80
+            else "MEDIUM"
+            if heat_pct >= 60 or consec_losses >= 3
             else "LOW"
         ),
         "caution_message": (
@@ -1864,7 +2563,9 @@ def _compute_overview_intelligence() -> dict:
             "regime_summary": {
                 "dominant": dominant_regime,
                 "counts": regime_counts,
-                "pct_trending": round(regime_counts["TRENDING"] / total_regimes * 100, 1),
+                "pct_trending": round(
+                    regime_counts["TRENDING"] / total_regimes * 100, 1
+                ),
             },
             "feed_status": feed_status,
             "sector_avg_pct": round(sec_avg, 2),
@@ -1896,24 +2597,27 @@ def _compute_overview_intelligence() -> dict:
 # Keyed futures context snapshot: symbol → {funding_rate, oi, basis, …}
 _crypto_futures_cache: dict[str, dict] = {}
 _crypto_futures_updated_at: datetime | None = None
+# 4h HTF trend label per symbol, used by the MTF confluence gate (A1).
+# Values: "BULLISH" / "BEARISH" / "NEUTRAL" / None (= unknown / not fetched).
+_crypto_htf4_trend: dict[str, str | None] = {}
 # Crypto-specific first-seen tracker for opportunity timeline
 _crypto_setup_first_seen: dict[str, str] = {}
 # Crypto theme classification
 _CRYPTO_THEMES: dict[str, str] = {
-    "BTC/USDT":  "Store of Value",
-    "ETH/USDT":  "Smart Contract L1",
-    "SOL/USDT":  "Smart Contract L1",
-    "BNB/USDT":  "Exchange Token",
-    "XRP/USDT":  "Payments",
-    "ADA/USDT":  "Smart Contract L1",
+    "BTC/USDT": "Store of Value",
+    "ETH/USDT": "Smart Contract L1",
+    "SOL/USDT": "Smart Contract L1",
+    "BNB/USDT": "Exchange Token",
+    "XRP/USDT": "Payments",
+    "ADA/USDT": "Smart Contract L1",
     "AVAX/USDT": "Smart Contract L1",
-    "DOT/USDT":  "Interoperability",
-    "MATIC/USDT":"Scaling L2",
+    "DOT/USDT": "Interoperability",
+    "MATIC/USDT": "Scaling L2",
     "LINK/USDT": "Oracle",
-    "UNI/USDT":  "DeFi",
+    "UNI/USDT": "DeFi",
     "DOGE/USDT": "Meme",
     "SHIB/USDT": "Meme",
-    "LTC/USDT":  "Payments",
+    "LTC/USDT": "Payments",
     "ATOM/USDT": "Interoperability",
 }
 _BINANCE_FAPI_BASE = "https://fapi.binance.com/fapi/v1"
@@ -1926,7 +2630,9 @@ def _fetch_binance_futures_context(symbols: list[str]) -> dict[str, dict]:
     Advisory only — never implies broker-grade precision.
     Degrades gracefully: returns {} on any failure.
     """
-    import urllib.request, json as _json
+    import json as _json
+    import urllib.request
+
     result: dict[str, dict] = {}
 
     # Convert CCXT format BTC/USDT → BTCUSDT for Binance REST
@@ -2040,6 +2746,8 @@ def _compute_crypto_intelligence() -> dict:
     Mirrors the NSE intelligence contract so the frontend can reuse cockpit patterns.
     """
     top_setups: list[dict] = []
+    premium_pool: list[dict] = []
+    exploratory_pool: list[dict] = []
     avoid_list: list[dict] = []
 
     mood_score = 50.0
@@ -2051,23 +2759,32 @@ def _compute_crypto_intelligence() -> dict:
 
     # ── Market mood from live ticker (best-effort) ────────────────────────────
     try:
-        import urllib.request as _ur, json as _jj
+        import json as _jj
+        import urllib.request as _ur
+
         raw_t = _jj.loads(
-            _ur.urlopen(
-                "https://api.binance.com/api/v3/ticker/24hr",
-                timeout=6
-            ).read().decode()
+            _ur.urlopen("https://api.binance.com/api/v3/ticker/24hr", timeout=6)
+            .read()
+            .decode()
         )
         if isinstance(raw_t, list):
             usdt = [
-                t for t in raw_t
+                t
+                for t in raw_t
                 if isinstance(t, dict)
                 and str(t.get("symbol", "")).endswith("USDT")
                 and float(t.get("quoteVolume") or 0) > 1_000_000
-                and not any(k in str(t.get("symbol", "")) for k in ("DOWN", "UP", "BEAR", "BULL"))
+                and not any(
+                    k in str(t.get("symbol", ""))
+                    for k in ("DOWN", "UP", "BEAR", "BULL")
+                )
             ]
-            gainers_n = sum(1 for t in usdt if float(t.get("priceChangePercent") or 0) > 0)
-            losers_n = sum(1 for t in usdt if float(t.get("priceChangePercent") or 0) < 0)
+            gainers_n = sum(
+                1 for t in usdt if float(t.get("priceChangePercent") or 0) > 0
+            )
+            losers_n = sum(
+                1 for t in usdt if float(t.get("priceChangePercent") or 0) < 0
+            )
             total = gainers_n + losers_n or 1
             breadth_ratio = (gainers_n - losers_n) / total
             btc_ticker = next((t for t in usdt if t.get("symbol") == "BTCUSDT"), {})
@@ -2091,9 +2808,13 @@ def _compute_crypto_intelligence() -> dict:
     # ── Fear & Greed ─────────────────────────────────────────────────────────
     fg_value: int | None = None
     try:
-        import urllib.request as _ur2, json as _jj2
+        import json as _jj2
+        import urllib.request as _ur2
+
         fg_raw = _jj2.loads(
-            _ur2.urlopen("https://api.alternative.me/fng/?limit=1", timeout=5).read().decode()
+            _ur2.urlopen("https://api.alternative.me/fng/?limit=1", timeout=5)
+            .read()
+            .decode()
         )
         if isinstance(fg_raw, dict):
             fg_s = (fg_raw.get("data") or [{}])[0].get("value")
@@ -2105,6 +2826,17 @@ def _compute_crypto_intelligence() -> dict:
     now_iso = datetime.now().isoformat()
     now_ts = datetime.now()
     active_syms: set[str] = set()
+
+    q_floor = max(0, int(getattr(settings, "CRYPTO_QUALITY_FLOOR", 45) or 45))
+    c_floor = float(getattr(settings, "CRYPTO_CONF_FLOOR", 35) or 35)
+    q_rel = max(0, int(getattr(settings, "CRYPTO_QUALITY_FLOOR_RELAXED", 40) or 40))
+    c_rel = float(getattr(settings, "CRYPTO_CONF_FLOOR_RELAXED", 28) or 28)
+    if q_rel > q_floor:
+        q_rel = q_floor
+    if c_rel > c_floor:
+        c_rel = c_floor
+    sparse_enabled = bool(getattr(settings, "CRYPTO_SPARSE_FILL_ENABLED", True))
+    sparse_target = max(1, int(getattr(settings, "CRYPTO_SPARSE_TARGET", 5) or 5))
 
     for sym_ccxt in list(_signal_cache.keys()):
         if "/" not in sym_ccxt:
@@ -2187,6 +2919,36 @@ def _compute_crypto_intelligence() -> dict:
             except Exception:
                 pass
 
+        # Crypto Phase 1 — volume confirmation (A2)
+        # Pulls volume_ratio_20 (already populated by calculate_indicators) from
+        # the most recent bar. Missing/NaN → ratio=None → gate is skipped.
+        volume_ratio: float | None = None
+        if df is not None and not df.empty and "volume_ratio_20" in df.columns:
+            try:
+                raw_vr = df.iloc[-1]["volume_ratio_20"]
+                if pd.notna(raw_vr):
+                    volume_ratio = float(raw_vr)
+            except Exception:
+                volume_ratio = None
+
+        # Crypto Phase 1 — funding rate hard gate inputs (A4)
+        # Pulls the raw (per-interval) funding rate from the futures cache.
+        # A missing entry → funding_rate=None → gate is skipped for that symbol.
+        futures_raw = _crypto_futures_cache.get(sym_ccxt, {}) or {}
+        funding_rate: float | None = None
+        if "funding_rate" in futures_raw:
+            try:
+                funding_rate = float(futures_raw.get("funding_rate"))
+            except (TypeError, ValueError):
+                funding_rate = None
+
+        # Crypto Phase 1 — MTF confluence input (A1).
+        # Pulls the cached 4h trend label (populated by _refresh_market_data).
+        # Missing value → gate skipped for this symbol (same pattern as A2/A4).
+        mtf_trend_4h = _crypto_htf4_trend.get(sym_ccxt)
+        if isinstance(mtf_trend_4h, str):
+            mtf_trend_4h = mtf_trend_4h.upper() or None
+
         # First-seen for timeline
         if signal_label in ("LONG", "SHORT"):
             active_syms.add(sym_ccxt)
@@ -2220,9 +2982,83 @@ def _compute_crypto_intelligence() -> dict:
             "theme": _CRYPTO_THEMES.get(sym_ccxt, "Other"),
             "futures_context": _crypto_futures_cache.get(sym_ccxt, {}),
             "first_seen": _crypto_setup_first_seen.get(sym_ccxt),
+            "volume_ratio": round(volume_ratio, 2)
+            if volume_ratio is not None
+            else None,
+            "funding_rate": round(funding_rate, 6)
+            if funding_rate is not None
+            else None,
+            "mtf_trend_4h": mtf_trend_4h,
         }
 
-        if signal_label in ("LONG", "SHORT") and quality_score >= 45 and confidence >= 35 and not stale:
+        # Crypto Phase 1 — accuracy gates.
+        # Computed as hard gates (move the setup from top_setups → avoid_list
+        # with an explicit blocker tag) so the UI can still show it but the
+        # user knows why it was blocked. This implements A2 + A4.
+        gate_blockers: list[str] = []
+
+        # A2 — volume confirmation gate
+        if (
+            signal_label in ("LONG", "SHORT")
+            and getattr(settings, "CRYPTO_VOL_GATE_ENABLED", True)
+            and volume_ratio is not None
+        ):
+            vr_min = float(getattr(settings, "CRYPTO_VOL_MIN_RATIO", 1.30) or 0.0)
+            if vr_min > 0 and volume_ratio < vr_min:
+                gate_blockers.append(f"low_volume({volume_ratio:.2f}<{vr_min:.2f})")
+
+        # A4 — funding rate hard gates (asymmetric for LONG vs SHORT)
+        if (
+            signal_label in ("LONG", "SHORT")
+            and getattr(settings, "CRYPTO_FUNDING_GATE_ENABLED", True)
+            and funding_rate is not None
+        ):
+            max_long = float(
+                getattr(settings, "CRYPTO_FUNDING_MAX_LONG", 0.0005) or 0.0
+            )
+            min_short = float(
+                getattr(settings, "CRYPTO_FUNDING_MIN_SHORT", -0.0005) or 0.0
+            )
+            if signal_label == "LONG" and funding_rate > max_long:
+                gate_blockers.append(f"crowded_longs(funding={funding_rate:.4%})")
+            elif signal_label == "SHORT" and funding_rate < min_short:
+                gate_blockers.append(f"crowded_shorts(funding={funding_rate:.4%})")
+
+        # A1 — MTF (4h) confluence gate.
+        # Relaxed mode (default): block only when 4h trend is *opposite* to
+        #   the signal direction. NEUTRAL 4h passes (avoids over-blocking).
+        # Strict mode: require exact 4h match (BULLISH for LONG, BEARISH for
+        #   SHORT). NEUTRAL 4h → blocked.
+        # Missing 4h trend → gate skipped (graceful degradation).
+        if (
+            signal_label in ("LONG", "SHORT")
+            and getattr(settings, "CRYPTO_MTF_GATE_ENABLED", True)
+            and mtf_trend_4h in ("BULLISH", "BEARISH", "NEUTRAL")
+        ):
+            strict = bool(getattr(settings, "CRYPTO_MTF_STRICT", False))
+            if signal_label == "LONG":
+                blocked_mtf = mtf_trend_4h == "BEARISH" or (
+                    strict and mtf_trend_4h != "BULLISH"
+                )
+            else:  # SHORT
+                blocked_mtf = mtf_trend_4h == "BULLISH" or (
+                    strict and mtf_trend_4h != "BEARISH"
+                )
+            if blocked_mtf:
+                gate_blockers.append(f"mtf_conflict(4h={mtf_trend_4h.lower()})")
+
+        meets_strict = quality_score >= q_floor and confidence >= c_floor
+        meets_relaxed = (
+            sparse_enabled and quality_score >= q_rel and confidence >= c_rel
+        )
+
+        if (
+            signal_label in ("LONG", "SHORT")
+            and not stale
+            and (meets_strict or meets_relaxed)
+        ):
+            tier = "premium" if meets_strict else "exploratory"
+            entry_data["tier"] = tier
             blockers: list[str] = []
             if drift:
                 blockers.append("drift_detected")
@@ -2230,8 +3066,15 @@ def _compute_crypto_intelligence() -> dict:
                 blockers.append("event_risk")
             if has_conflict:
                 blockers.append("signal_conflict")
+            # Phase-1 gates: any active blocker bumps to avoid_list
+            blockers.extend(gate_blockers)
             entry_data["blockers"] = blockers
-            top_setups.append(entry_data)
+            if gate_blockers:
+                avoid_list.append(entry_data)
+            elif tier == "premium":
+                premium_pool.append(entry_data)
+            else:
+                exploratory_pool.append(entry_data)
         elif signal_label == "SKIP" and quality_score >= 55:
             blockers = []
             if skip_reason:
@@ -2252,12 +3095,29 @@ def _compute_crypto_intelligence() -> dict:
         if s not in active_syms:
             del _crypto_setup_first_seen[s]
 
-    top_setups.sort(key=lambda x: x["composite_rank"], reverse=True)
+    premium_pool.sort(key=lambda x: x["composite_rank"], reverse=True)
+    exploratory_pool.sort(key=lambda x: x["composite_rank"], reverse=True)
     avoid_list.sort(key=lambda x: x["composite_rank"], reverse=True)
+
+    top_setups = list(premium_pool)
+    sparse_fill_applied = False
+    if sparse_enabled and len(top_setups) < sparse_target and exploratory_pool:
+        seen_syms = {t["symbol"] for t in top_setups}
+        for row in exploratory_pool:
+            if len(top_setups) >= sparse_target:
+                break
+            sym = row["symbol"]
+            if sym in seen_syms:
+                continue
+            top_setups.append(row)
+            seen_syms.add(sym)
+            sparse_fill_applied = True
 
     n_top = len(top_setups)
     for idx, t in enumerate(top_setups):
-        t["setup_percentile"] = round(100.0 * (1.0 - idx / max(n_top - 1, 1)), 1) if n_top > 1 else 100.0
+        t["setup_percentile"] = (
+            round(100.0 * (1.0 - idx / max(n_top - 1, 1)), 1) if n_top > 1 else 100.0
+        )
 
     # ── Theme leadership ─────────────────────────────────────────────────────
     themes: dict[str, list[float]] = {}
@@ -2271,17 +3131,18 @@ def _compute_crypto_intelligence() -> dict:
             themes.setdefault(theme, []).append(float(qs))
     theme_leadership = [
         {"theme": th, "avg_qs": round(float(np.mean(vals)), 1), "count": len(vals)}
-        for th, vals in themes.items() if vals
+        for th, vals in themes.items()
+        if vals
     ]
     theme_leadership.sort(key=lambda x: x["avg_qs"], reverse=True)
 
     # ── Futures context snapshot (last refresh or live) ───────────────────────
     futures_freshness = (
-        _crypto_futures_updated_at.isoformat()
-        if _crypto_futures_updated_at else None
+        _crypto_futures_updated_at.isoformat() if _crypto_futures_updated_at else None
     )
     futures_summary: list[dict] = [
-        v for v in _crypto_futures_cache.values()
+        v
+        for v in _crypto_futures_cache.values()
         if v.get("symbol") in [s["symbol"] for s in top_setups[:5]]
     ]
 
@@ -2315,7 +3176,20 @@ def _compute_crypto_intelligence() -> dict:
             "total_tracked": sum(1 for s in _signal_cache if "/" in s),
             "actionable": len(top_setups),
             "blocked_high_quality": len(avoid_list),
-            "scoring_version": "crypto_phase6_v1",
+            "scoring_version": "crypto_phase6_v2",
+            "sparse_fill_enabled": sparse_enabled,
+            "sparse_fill_applied": sparse_fill_applied,
+            "sparse_target": sparse_target,
+            "tier_premium_count": sum(
+                1 for t in top_setups if t.get("tier") == "premium"
+            ),
+            "tier_exploratory_count": sum(
+                1 for t in top_setups if t.get("tier") == "exploratory"
+            ),
+            "quality_floor": q_floor,
+            "confidence_floor": c_floor,
+            "quality_floor_relaxed": q_rel,
+            "confidence_floor_relaxed": c_rel,
         },
         "updated_at": now_iso,
     }
@@ -2328,7 +3202,9 @@ async def _refresh_crypto_futures_context() -> None:
     """
     global _crypto_futures_cache, _crypto_futures_updated_at
     try:
-        new_ctx = await asyncio.to_thread(_fetch_binance_futures_context, settings.CRYPTO_SYMBOLS)
+        new_ctx = await asyncio.to_thread(
+            _fetch_binance_futures_context, settings.CRYPTO_SYMBOLS
+        )
         if new_ctx:
             _crypto_futures_cache.update(new_ctx)
             _crypto_futures_updated_at = datetime.now()
@@ -2348,21 +3224,27 @@ def _train_xgboost_sync(
     min_return_pct: float,
 ) -> dict:
     """Blocking XGBoost training — runs in a thread executor."""
-    import numpy as np
-    import pickle
     import os
+    import pickle
 
+    import numpy as np
+
+    import agents.ai_engine.xgboost_model as xm
+    from agents.ai_engine.xgboost_model import (
+        FEATURE_COLS_XGB,
+        SKLEARN_AVAILABLE,
+        XGB_AVAILABLE,
+        get_xgb_predictor,
+        prepare_training_data,
+    )
     from agents.data_ingestion.binance_fetcher import fetch_historical
     from agents.feature_engine.indicators import calculate_indicators
     from agents.feature_engine.trend import classify_trend
-    from agents.ai_engine.xgboost_model import (
-        prepare_training_data, FEATURE_COLS_XGB, get_xgb_predictor,
-        XGB_AVAILABLE, SKLEARN_AVAILABLE,
-    )
-    import agents.ai_engine.xgboost_model as xm
 
     if not (XGB_AVAILABLE or SKLEARN_AVAILABLE):
-        raise RuntimeError("Neither xgboost nor scikit-learn is installed. Run: pip install xgboost")
+        raise RuntimeError(
+            "Neither xgboost nor scikit-learn is installed. Run: pip install xgboost"
+        )
 
     all_X, all_y = [], []
     symbol_stats = {}
@@ -2375,11 +3257,16 @@ def _train_xgboost_sync(
                 continue
             df = calculate_indicators(df)
             df = classify_trend(df)
-            X, y = prepare_training_data(df, forward_bars=forward_bars, min_return_pct=min_return_pct)
+            X, y = prepare_training_data(
+                df, forward_bars=forward_bars, min_return_pct=min_return_pct
+            )
             if len(X) >= 50:
                 all_X.append(X)
                 all_y.append(y)
-                symbol_stats[sym] = {"samples": len(X), "balance": round(float(y.mean()) * 100, 1)}
+                symbol_stats[sym] = {
+                    "samples": len(X),
+                    "balance": round(float(y.mean()) * 100, 1),
+                }
             else:
                 symbol_stats[sym] = {"error": f"only {len(X)} samples"}
         except Exception as e:
@@ -2401,15 +3288,26 @@ def _train_xgboost_sync(
     # Train
     if XGB_AVAILABLE:
         import xgboost as xgb_lib
+
         model = xgb_lib.XGBClassifier(
-            n_estimators=300, max_depth=5, learning_rate=0.03,
-            subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
-            gamma=0.1, eval_metric="logloss", random_state=42,
-            n_jobs=-1, verbosity=0,
+            n_estimators=300,
+            max_depth=5,
+            learning_rate=0.03,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            min_child_weight=3,
+            gamma=0.1,
+            eval_metric="logloss",
+            random_state=42,
+            n_jobs=-1,
+            verbosity=0,
         )
     else:
         from sklearn.ensemble import GradientBoostingClassifier
-        model = GradientBoostingClassifier(n_estimators=200, max_depth=4, learning_rate=0.05, random_state=42)
+
+        model = GradientBoostingClassifier(
+            n_estimators=200, max_depth=4, learning_rate=0.05, random_state=42
+        )
 
     split = int(len(X_all) * 0.8)
     model.fit(X_all[:split], y_all[:split])
@@ -2426,14 +3324,17 @@ def _train_xgboost_sync(
 
     os.makedirs("models", exist_ok=True)
     with open("models/xgb_model.pkl", "wb") as f:
-        pickle.dump({
-            "model": model,
-            "feature_importance": fi,
-            "feature_cols": FEATURE_COLS_XGB,
-            "n_samples": len(X_all),
-            "timeframe": timeframe,
-            "symbols": symbols,
-        }, f)
+        pickle.dump(
+            {
+                "model": model,
+                "feature_importance": fi,
+                "feature_cols": FEATURE_COLS_XGB,
+                "n_samples": len(X_all),
+                "timeframe": timeframe,
+                "symbols": symbols,
+            },
+            f,
+        )
 
     return {
         "val_accuracy": round(val_acc, 2),
@@ -2441,4 +3342,3 @@ def _train_xgboost_sync(
         "symbol_stats": symbol_stats,
         "top_features": dict(sorted(fi.items(), key=lambda x: -x[1])[:5]),
     }
-
