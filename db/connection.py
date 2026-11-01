@@ -39,7 +39,9 @@ def _create_engine():
         kwargs["max_overflow"] = 20
         # Disable server-side prepared statements for Supabase PgBouncer / Transaction pooler
         if "psycopg" in url and "psycopg2" not in url:
-            kwargs["connect_args"] = {"prepare_threshold": None}
+            kwargs["connect_args"] = {"prepare_threshold": None, "connect_timeout": 5}
+        else:
+            kwargs["connect_args"] = {"connect_timeout": 5}
 
     eng = create_engine(url, **kwargs)
     # Enable WAL mode for SQLite - allows concurrent reads

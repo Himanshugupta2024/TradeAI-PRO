@@ -71,7 +71,10 @@ def _lifespan_context():
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         svc._SERVER_START_TIME = time.time()
-        await asyncio.to_thread(init_db)
+        try:
+            await asyncio.wait_for(asyncio.to_thread(init_db), timeout=5.0)
+        except Exception as exc:
+            svc.logger.warning("Database schema initialization warning (non-fatal): %s", exc)
 
         # Hydrate the in-memory swing cache from the latest persisted scan so
         # the dashboard shows yesterday's shortlist immediately. Non-fatal.

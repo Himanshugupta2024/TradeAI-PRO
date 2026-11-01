@@ -51,14 +51,11 @@ except Exception as exc:
 
     @app.get("/api/health")
     async def degraded_health_check():
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "degraded",
-                "healthy": False,
-                "message": "Primary app failed to boot. Check server logs for details.",
-            },
-        )
+        return {
+            "status": "degraded",
+            "healthy": False,
+            "message": "Primary app failed to boot. Check server logs for details.",
+        }
 
     @app.get("/api/ready")
     async def degraded_ready_check():
