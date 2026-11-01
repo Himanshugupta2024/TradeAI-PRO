@@ -22,8 +22,9 @@ services:
         value: "1"
       - key: NUMEXPR_NUM_THREADS
         value: "1"
+      # Persistent cloud database (Supabase PostgreSQL): Set in Render dashboard environment
       - key: DATABASE_URL
-        value: sqlite:////tmp/trading.db
+        sync: false
       - key: HEALTH_FILE
         value: health.json
       - key: CONTEXT_CACHE_FILE
