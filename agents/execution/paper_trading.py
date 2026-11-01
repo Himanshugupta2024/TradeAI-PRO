@@ -274,12 +274,13 @@ class PaperTradingEngine:
         adjusted_tp = self._scale_target(entry=entry, target=tp, direction=direction, multiplier=target_multiplier)
         partial_target = self._partial_target(entry=entry, target=adjusted_tp, direction=direction)
 
-        # Calculate position size
+        # Calculate position size (strict 1.0x cash leverage cap)
         qty = calculate_position_size(
             capital=self.capital,
             risk_pct=settings.RISK_PER_TRADE_PCT,
             entry=entry,
             stop_loss=sl,
+            max_leverage=getattr(settings, "MAX_POSITION_LEVERAGE", 1.0),
         )
         qty = self._apply_correlation_size_reduction(symbol, qty)
         if qty <= 0:

@@ -1074,36 +1074,210 @@ body::before {
 /* ── Footer ──────────────────────────────────────────── */
 .footer {
     text-align: center;
-    padding: 1.5rem;
+    padding: 1.25rem 1.5rem;
     font-size: 0.72rem;
     color: var(--text-muted);
     border-top: 1px solid var(--border-color);
     margin-top: 1rem;
 }
 
+.footer-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    margin-top: 0.6rem;
+}
+
+.footer-author {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+.footer-author a {
+    color: var(--accent-light);
+    text-decoration: none;
+    font-weight: 600;
+    transition: color var(--transition-fast);
+}
+.footer-author a:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
+
+.footer-dot {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    opacity: 0.5;
+    flex-shrink: 0;
+}
+
+/* ── Buy Me a Coffee Button ─────────────────────────── */
 .bmc-btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.45rem;
-    background: #FFDD00;
-    color: #000000 !important;
-    font-weight: 700;
-    font-size: 0.78rem;
-    padding: 0.35rem 0.95rem;
-    border-radius: 9999px;
-    border: none;
+    gap: 0.5rem;
+    background: var(--bg-glass);
+    color: var(--text-primary) !important;
+    font-weight: 600;
+    font-size: 0.75rem;
+    padding: 0.4rem 1rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
     cursor: pointer;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-    transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+    backdrop-filter: blur(12px);
+    transition: all var(--transition-fast);
     text-decoration: none;
+    letter-spacing: 0.01em;
 }
 .bmc-btn:hover {
-    background: #ffe333;
+    background: var(--bg-glass-hover);
+    border-color: var(--accent);
+    box-shadow: 0 0 16px var(--accent-glow), var(--shadow-sm);
     transform: translateY(-1px);
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
 }
 .bmc-btn:active {
     transform: translateY(0);
+    box-shadow: none;
+}
+.bmc-btn .bmc-icon {
+    font-size: 0.95rem;
+    line-height: 1;
+    filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.4));
+}
+
+.footer-linkedin {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: color var(--transition-fast);
+}
+.footer-linkedin:hover {
+    color: #0a66c2;
+}
+.footer-linkedin svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+}
+
+/* ── BMC Support Modal ──────────────────────────────── */
+.bmc-modal {
+    max-width: 360px;
+    width: 90%;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xl);
+    padding: 2rem 1.75rem;
+    position: relative;
+    text-align: center;
+    box-shadow: var(--shadow-lg);
+    animation: modalSlideIn 0.3s ease;
+}
+.bmc-modal-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: all var(--transition-fast);
+}
+.bmc-modal-close:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+.bmc-modal-header {
+    margin-bottom: 1.25rem;
+}
+.bmc-modal-header h3 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0.5rem 0 0.25rem;
+    letter-spacing: -0.01em;
+}
+.bmc-modal-header p {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin: 0;
+}
+.bmc-modal-qr {
+    background: #ffffff;
+    border-radius: var(--radius-md);
+    padding: 14px;
+    display: inline-block;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+.bmc-modal-qr img {
+    display: block;
+    border-radius: 6px;
+}
+.bmc-modal-upi {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 0.55rem 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+}
+.bmc-modal-upi code {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--green);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+.bmc-modal-copy {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 0.3rem 0.7rem;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+}
+.bmc-modal-copy:hover {
+    background: var(--accent-light);
+}
+.bmc-modal-links {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    font-size: 0.72rem;
+}
+.bmc-modal-links a {
+    color: var(--text-muted);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: color var(--transition-fast);
+}
+.bmc-modal-links a:hover {
+    color: var(--accent-light);
 }
 
 /* ── Animations ──────────────────────────────────────── */

@@ -7,7 +7,7 @@ tests don't collide with the developer's real trading.db.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -142,7 +142,7 @@ def test_mark_outcome_updates_status(isolated_db):
         status="T1_HIT",
         hit_level="t1",
         hit_price=110.0,
-        hit_at=datetime.utcnow(),
+        hit_at=datetime.now(timezone.utc),
         bars_to_hit=4,
         pnl_pct=10.0,
     )

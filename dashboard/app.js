@@ -2642,7 +2642,7 @@ async function loadLearningStats() {
         const tb = document.getElementById('learningOutcomesBody');
         const outcomes = outcomesData.outcomes || [];
         if (!outcomes.length) {
-            tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--text-muted)">No learning trades yet</td></tr>';
+            tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:1.5rem;color:var(--text-muted)">No learning trades yet</td></tr>';
         } else {
             tb.innerHTML = outcomes.map(t => {
                 const pnlClass = t.pnl_pct >= 0 ? 'positive' : 'negative';
@@ -4990,7 +4990,7 @@ let _breakoutData = null;  // Cached for filtering
 
 async function loadBreakouts() {
     const body = document.getElementById('breakoutsBody');
-    body.innerHTML = '<tr><td colspan="9" class="empty-row"><div class="loader" style="margin:0 auto;"></div> Scanning for breakouts...</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" class="empty-row"><div class="loader" style="margin:0 auto;"></div> Scanning for breakouts...</td></tr>';
 
     try {
         const res = await fetch(`${API}/api/breakouts`);
@@ -5007,7 +5007,7 @@ async function loadBreakouts() {
 
     } catch (err) {
         console.error('Breakout scanner error:', err);
-        body.innerHTML = '<tr><td colspan="9" class="empty-row" style="color:var(--red);">Failed to load breakouts</td></tr>';
+        body.innerHTML = '<tr><td colspan="10" class="empty-row" style="color:var(--red);">Failed to load breakouts</td></tr>';
     }
 }
 
@@ -5043,7 +5043,7 @@ function renderBreakoutsTable(breakouts) {
     const body = document.getElementById('breakoutsBody');
 
     if (!breakouts.length) {
-        body.innerHTML = '<tr><td colspan="9" class="empty-row">No breakouts found in this category</td></tr>';
+        body.innerHTML = '<tr><td colspan="10" class="empty-row">No breakouts found in this category</td></tr>';
         return;
     }
 
@@ -5463,7 +5463,7 @@ async function loadEdgeTopSetups(assetClass = null) {
     if (assetClass) _currentEdgeAssetClass = assetClass;
     const body = document.getElementById('edgeTopSetupsBody');
     if (!body) return;
-    body.innerHTML = '<tr><td colspan="9" class="empty-row"><div class="loader" style="margin:0.5rem auto;"></div>Loading top setups...</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" class="empty-row"><div class="loader" style="margin:0.5rem auto;"></div>Loading top setups...</td></tr>';
     try {
         const query = _currentEdgeAssetClass === 'all' ? '' : `?asset_class=${_currentEdgeAssetClass}`;
         const resp = await fetchWithTimeout(`/api/edge/top-setups${query}`);
@@ -5471,7 +5471,7 @@ async function loadEdgeTopSetups(assetClass = null) {
         const data = await resp.json();
         const setups = data.setups || [];
         if (!setups.length) {
-            body.innerHTML = '<tr><td colspan="9" class="empty-row">No active edge setups found for current filter.</td></tr>';
+            body.innerHTML = '<tr><td colspan="10" class="empty-row">No active edge setups found for current filter.</td></tr>';
             return;
         }
         body.innerHTML = setups.map((s, idx) => {
@@ -5483,6 +5483,7 @@ async function loadEdgeTopSetups(assetClass = null) {
             const cot = s.cot != null ? Number(s.cot).toFixed(1) : '—';
             const sent = s.sentiment != null ? Number(s.sentiment).toFixed(1) : '—';
             const risk = s.risk != null ? Number(s.risk).toFixed(1) : '—';
+            const mom = s.momentum != null ? Number(s.momentum).toFixed(1) : '—';
             const seas = s.seasonal != null ? Number(s.seasonal).toFixed(1) : '—';
             const carry = s.carry != null ? Number(s.carry).toFixed(1) : '—';
             return `<tr>
@@ -5493,13 +5494,14 @@ async function loadEdgeTopSetups(assetClass = null) {
                 <td style="font-family:var(--font-mono);">${cot}</td>
                 <td style="font-family:var(--font-mono);">${sent}</td>
                 <td style="font-family:var(--font-mono);">${risk}</td>
+                <td style="font-family:var(--font-mono);">${mom}</td>
                 <td style="font-family:var(--font-mono);">${seas}</td>
                 <td style="font-family:var(--font-mono);">${carry}</td>
             </tr>`;
         }).join('');
     } catch (err) {
         console.error('[loadEdgeTopSetups] error:', err);
-        body.innerHTML = `<tr><td colspan="9" class="empty-row" style="color:var(--red);">Failed to load edge setups (${_escHtml(err.message)})</td></tr>`;
+        body.innerHTML = `<tr><td colspan="10" class="empty-row" style="color:var(--red);">Failed to load edge setups (${_escHtml(err.message)})</td></tr>`;
     }
 }
 

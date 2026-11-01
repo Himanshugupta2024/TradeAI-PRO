@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from sqlalchemy import func
@@ -137,7 +137,7 @@ def save_scan(
     try:
         scan = SwingScan(
             scan_date=today,
-            scan_time=datetime.utcnow(),
+            scan_time=datetime.now(timezone.utc),
             trigger=trigger,
             symbols_scanned=int(symbols_scanned or 0),
             total_setups=len(payload),
@@ -211,7 +211,7 @@ def save_scan(
                         target_2=float(s.get("target_2") or 0.0),
                         risk_reward=float(s.get("risk_reward") or 0.0),
                         timeframe=str(s.get("timeframe") or "")[:20] or None,
-                        emitted_at=datetime.utcnow(),
+                        emitted_at=datetime.now(timezone.utc),
                         status="OPEN",
                     )
                 )
@@ -380,7 +380,7 @@ def compute_stats(days: int = 30) -> dict[str, Any]:
     """Aggregate outcome stats for the last N days (overall + by grade + by pattern)."""
     session = _session()
     try:
-        cutoff = datetime.utcnow() - timedelta(days=max(1, int(days)))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))
         base = session.query(SwingSetupOutcome).filter(
             SwingSetupOutcome.emitted_at >= cutoff
         )

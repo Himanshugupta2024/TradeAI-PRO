@@ -112,9 +112,14 @@ def create_app() -> FastAPI:
     settings.validate_runtime_config()
     lifespan = _lifespan_context()
     app = FastAPI(title="AI Trading System — Live", version="4.1.0", lifespan=lifespan)
+    cors_origins_raw = os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://localhost:5173",
+    )
+    cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins or ["http://localhost:8000"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

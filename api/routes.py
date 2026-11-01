@@ -4273,6 +4273,20 @@ async def get_edge_top_setups(
 
                         "edge_score": score,
 
+                        "macro": getattr(cached, "macro_score", None),
+
+                        "cot": getattr(cached, "cot_score", None),
+
+                        "sentiment": getattr(cached, "sentiment_score", None),
+
+                        "risk": getattr(cached, "risk_score", None),
+
+                        "momentum": getattr(cached, "momentum_score", None),
+
+                        "seasonal": getattr(cached, "seasonal_bonus", None),
+
+                        "carry": getattr(cached, "carry_bonus", None),
+
                         "cache_age_seconds": cache_age_seconds,
 
                     }

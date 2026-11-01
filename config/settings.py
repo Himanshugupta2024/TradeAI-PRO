@@ -1277,3 +1277,6 @@ PAPER_TRADING_FORWARD_DAYS = int(os.getenv("PAPER_TRADING_FORWARD_DAYS", "5"))
 
 # Max open paper trades at once (prevents over-crowding)
 PAPER_TRADING_MAX_OPEN = int(os.getenv("PAPER_TRADING_MAX_OPEN", "5"))
+
+# ── Position Sizing & Margin Bounds ──────────────────────────────────────────
+MAX_POSITION_LEVERAGE: float = float(os.getenv("MAX_POSITION_LEVERAGE", "1.0"))

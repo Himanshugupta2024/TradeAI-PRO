@@ -37,7 +37,19 @@ class TestPositionSizing:
     def test_sell_position(self):
         # Sell: entry=100, SL=105 → risk/unit = 5
         qty = calculate_position_size(capital=100000, risk_pct=2.0, entry=100, stop_loss=105)
-        assert qty == 400.0  # 2000 / 5
+        assert qty == 400.0  # 2000 / 5\n
+    def test_max_leverage_bound(self):
+        # 100k capital, 2% risk = 2000 risk.
+        # With super tight stop (entry=100, SL=99.99, risk/unit=0.01), unbounded qty = 200,000 units.
+        # But with max_leverage=1.0, max allowed qty = 100,000 / 100 = 1,000 units.
+        qty = calculate_position_size(capital=100000, risk_pct=2.0, entry=100, stop_loss=99.99, max_leverage=1.0)
+        assert qty == 1000.0
+
+    def test_default_unbounded_when_no_leverage(self):
+        # Without max_leverage specified, existing tests remain backward compatible
+        qty = calculate_position_size(capital=100000, risk_pct=2.0, entry=100, stop_loss=95)
+        assert qty == 400.0
+
 
 
 class TestKellyCriterion:

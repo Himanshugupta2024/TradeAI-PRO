@@ -11,12 +11,21 @@ from db.models import Base
 
 def _create_engine():
     """Create the SQLAlchemy engine with appropriate settings."""
+    url = DATABASE_URL or "sqlite:///trading.db"
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+
     kwargs = {"echo": False}
-    if "sqlite" in DATABASE_URL:
+    if "sqlite" in url:
         kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
-    eng = create_engine(DATABASE_URL, **kwargs)
-    # Enable WAL mode for SQLite — allows concurrent reads
-    if "sqlite" in DATABASE_URL:
+    else:
+        kwargs["pool_pre_ping"] = True
+        kwargs["pool_size"] = 10
+        kwargs["max_overflow"] = 20
+
+    eng = create_engine(url, **kwargs)
+    # Enable WAL mode for SQLite - allows concurrent reads
+    if "sqlite" in url:
         from sqlalchemy import event
         @event.listens_for(eng, "connect")
         def _set_sqlite_pragma(dbapi_conn, connection_record):

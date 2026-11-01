@@ -72,6 +72,7 @@ def calculate_position_size(
     stop_loss: float,
     current_atr: float = 0.0,
     historical_atr: float = 0.0,
+    max_leverage: float = None,
 ) -> float:
     """
     Calculate position size based on fixed percent risk, optionally adjusted for volatility.
@@ -101,6 +102,11 @@ def calculate_position_size(
 
     risk_amount = capital * (risk_pct / 100.0)
     qty = risk_amount / risk_per_unit
+
+    # Enforce purchasing power / cash equity bound if max_leverage is set
+    if max_leverage is not None and max_leverage > 0 and entry > 0:
+        max_allowed_qty = (capital * max_leverage) / entry
+        qty = min(qty, max_allowed_qty)
 
     log.debug(
         "Position size: ₹%.2f capital × %.1f%% risk = ₹%.2f risk → %.4f units (risk/unit=%.2f)",
