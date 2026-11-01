@@ -1,5 +1,10 @@
 # TradeAI-PRO
 
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Himanshu%20Gupta-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/himanshugupta10/)
+[![Support](https://img.shields.io/badge/Support-Buy%20Me%20a%20Coffee%20%2F%20UPI-FFDD00?style=for-the-badge&logo=coffeescript&logoColor=black)](#-support--coffee)
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+
 Python trading stack with a FastAPI backend, static dashboard, and an optional React SPA (**tradvix-app**).
 
 ## Prerequisites
@@ -75,3 +80,20 @@ Notes:
 See [PROJECT_ARCHITECTURE_FLOW.md](PROJECT_ARCHITECTURE_FLOW.md) for deeper architecture notes.
 
 NSE data: two `nse_fetcher` modules are intentional — [docs/nse_fetcher_modules.md](docs/nse_fetcher_modules.md).
+
+## ☕ Support & Coffee
+
+Agar ye open-source trading stack aapke research ya portfolio analysis mein helpful raha, toh aap development ko support karne ke liye ek coffee sponsor kar sakte hain!
+
+### 👤 Author / Connect
+- **LinkedIn**: [Himanshu Gupta](https://www.linkedin.com/in/himanshugupta10/)
+- **GitHub**: [@Himanshugupta2024](https://github.com/Himanshugupta2024)
+
+### 💳 UPI Support (India - Instant & Zero Fee)
+India mein direct UPI ke through contribute kar sakte hain (GPay, PhonePe, Paytm, BHIM):
+
+- **UPI ID**: `himanshugupta@ptaxis`
+
+<p align="left">
+  <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa=himanshugupta@ptaxis%26pn=Himanshu%20Gupta%26cu=INR" alt="UPI QR Code - himanshugupta@ptaxis" width="180" />
+</p>
