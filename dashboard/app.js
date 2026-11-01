@@ -57,6 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initPhase5Cockpit();
     updateMarketSessionBanner();
     initModal();
+    initBmcModal();
     startClock();
     loadAllData({ background: false });
     connectPriceWebSocket();
@@ -3233,6 +3234,74 @@ function drawEquityCurve(points) {
 
 
 // ── Symbol Detail Modal ─────────────────────────────────
+
+function initBmcModal() {
+    const backdrop = document.getElementById('bmcModalBackdrop');
+    const openBtn = document.getElementById('bmcOpenBtn');
+    const closeBtn = document.getElementById('bmcModalClose');
+    const copyBtn = document.getElementById('bmcCopyUpiBtn');
+    if (!backdrop || !openBtn) return;
+
+    const openBmc = () => {
+        backdrop.style.display = 'flex';
+        backdrop.classList.add('visible');
+    };
+    const closeBmc = () => {
+        backdrop.style.display = 'none';
+        backdrop.classList.remove('visible');
+    };
+
+    openBtn.addEventListener('click', openBmc);
+    if (closeBtn) closeBtn.addEventListener('click', closeBmc);
+    backdrop.addEventListener('click', (e) => {
+        if (e.target === backdrop) closeBmc();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && backdrop.classList.contains('visible')) {
+            closeBmc();
+        }
+    });
+
+    if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+            const upi = 'himanshugupta@ptaxis';
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(upi).then(() => {
+                    const orig = copyBtn.textContent;
+                    copyBtn.textContent = 'Copied! ✓';
+                    copyBtn.style.background = '#10b981';
+                    setTimeout(() => {
+                        copyBtn.textContent = orig;
+                        copyBtn.style.background = '';
+                    }, 2000);
+                }).catch(() => {
+                    _fallbackCopyUpi(upi, copyBtn);
+                });
+            } else {
+                _fallbackCopyUpi(upi, copyBtn);
+            }
+        });
+    }
+}
+
+function _fallbackCopyUpi(text, btn) {
+    try {
+        const t = document.createElement('textarea');
+        t.value = text;
+        t.style.position = 'fixed';
+        t.style.opacity = '0';
+        document.body.appendChild(t);
+        t.select();
+        document.execCommand('copy');
+        document.body.removeChild(t);
+        btn.textContent = 'Copied! ✓';
+        btn.style.background = '#10b981';
+        setTimeout(() => {
+            btn.textContent = 'Copy';
+            btn.style.background = '';
+        }, 2000);
+    } catch (_) {}
+}
 
 function initModal() {
     document.getElementById('modalBackdrop').addEventListener('click', (e) => {

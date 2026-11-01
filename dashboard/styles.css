@@ -1081,6 +1081,31 @@ body::before {
     margin-top: 1rem;
 }
 
+.bmc-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    background: #FFDD00;
+    color: #000000 !important;
+    font-weight: 700;
+    font-size: 0.78rem;
+    padding: 0.35rem 0.95rem;
+    border-radius: 9999px;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+    text-decoration: none;
+}
+.bmc-btn:hover {
+    background: #ffe333;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+.bmc-btn:active {
+    transform: translateY(0);
+}
+
 /* ── Animations ──────────────────────────────────────── */
 @keyframes fadeSlideIn {
     from { opacity: 0; transform: translateY(16px); }

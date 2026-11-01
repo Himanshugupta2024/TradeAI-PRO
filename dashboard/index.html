@@ -2380,8 +2380,40 @@
 
     <footer class="footer">
         <p>⚠️ AI signals are for reference only. Always do your own analysis before trading real money.</p>
-        <p style="font-size: 0.78rem; opacity: 0.85; margin-top: 0.4rem;">Built by <a href="https://www.linkedin.com/in/himanshugupta10/" target="_blank" rel="noopener noreferrer" style="color: #60a5fa; text-decoration: none; font-weight: 500;">Himanshu Gupta</a> &bull; Support / Coffee: <span style="font-family: monospace; color: #34d399; background: rgba(52, 211, 153, 0.1); padding: 2px 6px; border-radius: 4px;">himanshugupta@ptaxis</span></p>
+        <div style="margin-top: 0.75rem; display: flex; align-items: center; justify-content: center; gap: 0.75rem; flex-wrap: wrap;">
+            <button id="bmcOpenBtn" class="bmc-btn" type="button" aria-label="Buy Me a Coffee">
+                <span style="font-size: 1.1rem; line-height: 1;">☕</span>
+                <span>Buy Me a Coffee</span>
+            </button>
+            <span style="font-size: 0.78rem; opacity: 0.5;">•</span>
+            <span style="font-size: 0.78rem; opacity: 0.85;">Built by <a href="https://www.linkedin.com/in/himanshugupta10/" target="_blank" rel="noopener noreferrer" style="color: var(--accent, #60a5fa); text-decoration: none; font-weight: 500;">Himanshu Gupta</a></span>
+        </div>
     </footer>
+
+    <!-- Buy Me a Coffee / UPI Modal -->
+    <div class="modal-backdrop" id="bmcModalBackdrop" style="display: none;">
+        <div class="modal" id="bmcModal" style="max-width: 380px; text-align: center; padding: 1.5rem; position: relative;">
+            <button class="modal-close" id="bmcModalClose" style="position: absolute; top: 12px; right: 12px; background: none; border: none; font-size: 1.3rem; cursor: pointer; color: var(--text-muted);">&times;</button>
+            <div style="margin-bottom: 1rem;">
+                <div style="font-size: 2.2rem; margin-bottom: 0.25rem;">☕</div>
+                <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 0.25rem; color: var(--text-primary);">Support TradeAI-PRO</h3>
+                <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0;">Scan via any UPI App (GPay, PhonePe, Paytm, BHIM)</p>
+            </div>
+            
+            <div style="background: #ffffff; border-radius: 12px; padding: 12px; display: inline-block; margin-bottom: 1rem; box-shadow: 0 4px 14px rgba(0,0,0,0.2);">
+                <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa=himanshugupta@ptaxis%26pn=Himanshu%20Gupta%26cu=INR" alt="UPI QR Code" width="160" height="160" style="display: block; border-radius: 6px;" />
+            </div>
+
+            <div style="background: var(--bg-tertiary, rgba(255,255,255,0.05)); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 1rem;">
+                <span style="font-family: monospace; font-size: 0.85rem; color: #34d399; font-weight: 600;">himanshugupta@ptaxis</span>
+                <button id="bmcCopyUpiBtn" type="button" style="background: var(--accent, #3b82f6); color: #fff; border: none; padding: 5px 12px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.2s;">Copy</button>
+            </div>
+
+            <div style="font-size: 0.75rem; color: var(--text-muted);">
+                <a href="https://www.linkedin.com/in/himanshugupta10/" target="_blank" rel="noopener noreferrer" style="color: var(--accent, #60a5fa); text-decoration: none;">🔗 Connect on LinkedIn</a>
+            </div>
+        </div>
+    </div>
 
     <script src="/static/app.js"></script>
 </body>
