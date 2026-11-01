@@ -31,6 +31,7 @@ python-telegram-bot>=20.0
 xgboost>=2.0.0,<2.1.0
 # scikit-learn (GradientBoosting fallback + label utilities)
 scikit-learn>=1.4.0
+lightgbm>=4.0.0
 # PyTorch LSTM — requires Python <=3.12 (install in a separate venv)
 # python3.12 -m venv venv_torch && venv_torch\Scripts\activate
 # pip install torch>=2.1.0 --index-url https://download.pytorch.org/whl/cpu
