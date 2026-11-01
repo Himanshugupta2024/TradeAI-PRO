@@ -1,7 +1,7 @@
 # TradeAI-PRO
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Himanshu%20Gupta-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/himanshugupta10/)
-[![Support](https://img.shields.io/badge/Support-Buy%20Me%20a%20Coffee%20%2F%20UPI-FFDD00?style=for-the-badge&logo=coffeescript&logoColor=black)](#-support--coffee)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](#-support--coffee)
 [![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 
@@ -84,6 +84,12 @@ NSE data: two `nse_fetcher` modules are intentional — [docs/nse_fetcher_module
 ## ☕ Support & Coffee
 
 Agar ye open-source trading stack aapke research ya portfolio analysis mein helpful raha, toh aap development ko support karne ke liye ek coffee sponsor kar sakte hain!
+
+<p align="left">
+  <a href="#-support--coffee">
+    <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me A Coffee" />
+  </a>
+</p>
 
 ### 👤 Author / Connect
 - **LinkedIn**: [Himanshu Gupta](https://www.linkedin.com/in/himanshugupta10/)
