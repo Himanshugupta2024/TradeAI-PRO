@@ -47,6 +47,32 @@ function _escHtml(s) {
     return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+function _getAuthHeaders(customHeaders = {}) {
+    const headers = { 'Content-Type': 'application/json', ...customHeaders };
+    const key = localStorage.getItem('tradeai_admin_key') || localStorage.getItem('admin_api_key');
+    if (key && key.trim()) {
+        headers['X-API-Key'] = key.trim();
+    }
+    return headers;
+}
+
+function _handleAuthChallenge(status) {
+    if (status === 401 || status === 403) {
+        const key = prompt('Admin API authentication required. Please enter your ADMIN_API_KEY:');
+        if (key && key.trim()) {
+            localStorage.setItem('tradeai_admin_key', key.trim());
+            if (typeof showToast === 'function') {
+                showToast('Admin API key saved. Please retry your action.', 'info');
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+const _activeTradeSubmissions = new Set();
+
+
 // ── Init ────────────────────────────────────────────────
 
 function hydrateFromLocalStorageCache() {
@@ -112,7 +138,7 @@ async function triggerManualRefresh() {
         btn.textContent = 'Refreshing...';
     }
     try {
-        await fetchWithTimeout(`${API}/api/refresh`, { method: 'POST' }, 30000);
+        await fetchWithTimeout(`${API}/api/refresh`, { method: 'POST', headers: _getAuthHeaders() }, 30000);
     } catch (err) {
         console.warn('Manual backend refresh failed:', err);
     } finally {
@@ -712,7 +738,7 @@ function _renderSystemState(sys, intelligenceUpdatedAt) {
     const el = document.getElementById('cockpitSysInner');
     if (!el) return;
 
-    const fmt = v => `₹${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+    const fmt = v => (v != null && !isNaN(v)) ? `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '—';
     const pnl = Number(sys.total_pnl || 0);
     const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     const heatPct = Number(sys.portfolio_heat_pct || 0);
@@ -1691,6 +1717,31 @@ function handleLoadError() {
 
 // ── Manual Paper Trade Execution ─────────────────────────
 async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, strategy, btnEl, extraMeta = {}) {
+    const subKey = `${symbol}_${direction}`;
+    if (_activeTradeSubmissions.has(subKey)) {
+        console.warn(`Trade submission already in progress for ${subKey}`);
+        return;
+    }
+
+    const numEntry = Number(entry || 0);
+    const numSl = Number(stopLoss || 0);
+    const numTp = Number(target || 0);
+    const cleanDir = String(direction || 'LONG').trim().toUpperCase();
+
+    // Client-side geometry validation before network dispatch
+    if (cleanDir === 'LONG' || cleanDir === 'BUY') {
+        if (!(numSl < numEntry && numEntry < numTp)) {
+            showToast(`⚠️ Invalid geometry for LONG: Stop Loss (${numSl}) < Entry (${numEntry}) < Target (${numTp}) required`, 'warn');
+            return;
+        }
+    } else if (cleanDir === 'SHORT' || cleanDir === 'SELL') {
+        if (!(numTp < numEntry && numEntry < numSl)) {
+            showToast(`⚠️ Invalid geometry for SHORT: Target (${numTp}) < Entry (${numEntry}) < Stop Loss (${numSl}) required`, 'warn');
+            return;
+        }
+    }
+
+    _activeTradeSubmissions.add(subKey);
     if (btnEl) {
         btnEl.disabled = true;
         btnEl.innerHTML = `<span class="spin">⏳</span> Executing...`;
@@ -1698,13 +1749,13 @@ async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, s
     try {
         const res = await fetchWithTimeout(`${API}/api/paper/trade`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: _getAuthHeaders(),
             body: JSON.stringify({
                 symbol: String(symbol || '').trim(),
-                direction: String(direction || 'LONG').trim().toUpperCase(),
-                entry: Number(entry || 0),
-                stop_loss: Number(stopLoss || 0),
-                target: Number(target || 0),
+                direction: cleanDir,
+                entry: numEntry,
+                stop_loss: numSl,
+                target: numTp,
                 atr: Number(atr || 0),
                 strategy: strategy || 'MANUAL',
                 confidence: Number(extraMeta.confidence || 0),
@@ -1713,6 +1764,15 @@ async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, s
                 volume_above_avg: Boolean(extraMeta.volume_above_avg),
             }),
         }, 10000);
+
+        if (res.status === 401 || res.status === 403) {
+            _handleAuthChallenge(res.status);
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.innerHTML = `⚡ Paper Trade`;
+            }
+            return;
+        }
         let data = {};
         try {
             data = await res.json();
@@ -1748,6 +1808,8 @@ async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, s
             btnEl.disabled = false;
             btnEl.innerHTML = `⚡ Paper Trade`;
         }
+    } finally {
+        _activeTradeSubmissions.delete(subKey);
     }
 }
 
@@ -1801,15 +1863,20 @@ function renderOverviewActiveTrades(openTrades) {
 }
 
 function updateStatsStrip(stats) {
-    const fmt = (v) => `₹${(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
-    document.getElementById('statCapital').textContent = fmt(stats.capital || 100000);
+    const fmt = (v) => (v != null && !isNaN(v)) ? `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '—';
+    const cap = stats && (stats.capital != null ? stats.capital : stats.initial_capital);
+    document.getElementById('statCapital').textContent = cap != null ? fmt(cap) : '—';
     const pnlEl = document.getElementById('statPnl');
-    const pnl = stats.total_pnl || 0;
-    pnlEl.textContent = `${pnl >= 0 ? '+' : ''}${fmt(pnl)}`;
-    pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-    const closedTrades = Number(stats.total_trades || 0);
-    const openTrades = Number(stats.open_trades || 0);
-    document.getElementById('statWinRate').textContent = closedTrades > 0 ? `${(stats.win_rate || 0).toFixed(1)}%` : '—';
+    const pnl = stats ? stats.total_pnl : null;
+    if (pnl != null) {
+        pnlEl.textContent = `${pnl >= 0 ? '+' : ''}${fmt(pnl)}`;
+        pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    } else {
+        pnlEl.textContent = '—';
+    }
+    const closedTrades = Number(stats?.total_trades || 0);
+    const openTrades = Number(stats?.open_trades || 0);
+    document.getElementById('statWinRate').textContent = (closedTrades > 0 && stats.win_rate != null) ? `${Number(stats.win_rate).toFixed(1)}%` : '—';
     document.getElementById('statTrades').textContent = openTrades > 0 ? `${closedTrades} (${openTrades} open)` : closedTrades;
 
     const hint = document.getElementById('statsHint');
@@ -1859,7 +1926,11 @@ async function loadPaperScorecard() {
 async function paperResolveEOD() {
     showToast('⏳ Resolving paper trades against EOD prices...', 'info');
     try {
-        const res = await fetchWithTimeout(`${API}/api/paper/resolve`, { method: 'POST' }, 15000);
+        const res = await fetchWithTimeout(`${API}/api/paper/resolve`, { method: 'POST', headers: _getAuthHeaders() }, 15000);
+        if (res.status === 401 || res.status === 403) {
+            _handleAuthChallenge(res.status);
+            return;
+        }
         let data = {};
         try { data = await res.json(); } catch (_) { data = {}; }
         if (!res.ok) {
@@ -2600,9 +2671,13 @@ async function closePaperTrade(tradeId, currentPrice) {
     try {
         const res = await fetchWithTimeout(`${API}/api/paper/close/${tradeId}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: _getAuthHeaders(),
             body: JSON.stringify({ exit_price: Number(currentPrice || 0) }),
         }, 10000);
+        if (res.status === 401 || res.status === 403) {
+            _handleAuthChallenge(res.status);
+            return;
+        }
         const data = await parseJsonResponse(res);
         if (data.status === 'closed') {
             const pnl = data.trade?.total_pnl ?? data.trade?.pnl ?? 0;
@@ -2732,16 +2807,18 @@ async function loadPerformance() {
         const dd = m.max_drawdown_pct || 0;
         const pf = m.profit_factor || 0;
 
-        _setKpi('pkCapitalVal', `₹${Math.round(m.capital || m.initial_capital || 100000).toLocaleString('en-IN')}`);
-        _setKpi('pkPnlVal',     `${totalPnl >= 0 ? '+' : ''}₹${Math.round(totalPnl).toLocaleString('en-IN')}`, totalPnl >= 0 ? 'positive' : 'negative');
-        _setKpi('pkReturnVal',  `${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%`, ret >= 0 ? 'positive' : 'negative');
-        _setKpi('pkWinRateVal', `${(m.win_rate || 0).toFixed(1)}%`, (m.win_rate||0) >= 50 ? 'positive' : 'negative');
+        const hasTrades = Number(m.total_trades || 0) > 0;
+        const cap = m.capital != null ? m.capital : m.initial_capital;
+        _setKpi('pkCapitalVal', cap != null ? `₹${Math.round(cap).toLocaleString('en-IN')}` : '—');
+        _setKpi('pkPnlVal',     hasTrades ? `${totalPnl >= 0 ? '+' : ''}₹${Math.round(totalPnl).toLocaleString('en-IN')}` : '—', hasTrades ? (totalPnl >= 0 ? 'positive' : 'negative') : 'neutral');
+        _setKpi('pkReturnVal',  hasTrades ? `${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%` : '—', hasTrades ? (ret >= 0 ? 'positive' : 'negative') : 'neutral');
+        _setKpi('pkWinRateVal', (hasTrades && m.win_rate != null) ? `${Number(m.win_rate).toFixed(1)}%` : '—', hasTrades ? ((m.win_rate||0) >= 50 ? 'positive' : 'negative') : 'neutral');
         _setKpi('pkTradesVal',  String(m.total_trades || 0));
-        _setKpi('pkSharpeVal',  sharpe.toFixed(2), sharpe >= 1 ? 'positive' : sharpe >= 0 ? 'neutral' : 'negative');
-        _setKpi('pkDrawdownVal',`${dd.toFixed(1)}%`, dd > 20 ? 'negative' : dd > 10 ? 'neutral' : 'positive');
-        _setKpi('pkPFVal',      pf.toFixed(2), pf >= 1.5 ? 'positive' : pf >= 1 ? 'neutral' : 'negative');
-        _setKpi('pkBestVal',    `+₹${(m.best_trade || 0).toFixed(0)}`, 'positive');
-        _setKpi('pkWorstVal',   `₹${(m.worst_trade || 0).toFixed(0)}`, 'negative');
+        _setKpi('pkSharpeVal',  hasTrades ? sharpe.toFixed(2) : '—', hasTrades ? (sharpe >= 1 ? 'positive' : sharpe >= 0 ? 'neutral' : 'negative') : 'neutral');
+        _setKpi('pkDrawdownVal',hasTrades ? `${dd.toFixed(1)}%` : '—', hasTrades ? (dd > 20 ? 'negative' : dd > 10 ? 'neutral' : 'positive') : 'neutral');
+        _setKpi('pkPFVal',      hasTrades ? pf.toFixed(2) : '—', hasTrades ? (pf >= 1.5 ? 'positive' : pf >= 1 ? 'neutral' : 'negative') : 'neutral');
+        _setKpi('pkBestVal',    (hasTrades && m.best_trade != null) ? `+₹${Number(m.best_trade).toFixed(0)}` : '—', 'positive');
+        _setKpi('pkWorstVal',   (hasTrades && m.worst_trade != null) ? `₹${Number(m.worst_trade).toFixed(0)}` : '—', 'negative');
 
         // ── Return pill ────────────────────────────────
         const pill = document.getElementById('perfReturnPill');
@@ -5402,7 +5479,12 @@ async function runIntradayScan() {
         grid.innerHTML = '<div class="loading-state" style="padding:2rem;"><div class="loader" style="margin:0 auto 1rem;"></div><p style="color:var(--text-muted);">Running 0-delay hybrid intraday scan across watchlist... please wait (~20-40s)</p></div>';
     }
     try {
-        const res = await fetchWithTimeout(`${API}/api/intraday/scan`, { method: "POST" }, 300000);
+        const res = await fetchWithTimeout(`${API}/api/intraday/scan`, { method: "POST", headers: _getAuthHeaders() }, 300000);
+        if (res.status === 401 || res.status === 403) {
+            _handleAuthChallenge(res.status);
+            if (btn) { btn.disabled = false; btn.innerHTML = "⚡ Run Scan"; }
+            return;
+        }
         const data = await parseJsonResponse(res);
         renderIntradayGrid(data.signals || []);
         const meta = document.getElementById("intradayMeta");

@@ -3,11 +3,19 @@ Central configuration for the AI Trading System.
 Loaded from environment variables with sensible defaults.
 """
 
+import logging
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
+
+# ── Environment & Security ────────────────────────────────
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").strip().lower()
+IS_PRODUCTION = (ENVIRONMENT in {"production", "prod"}) or bool(os.getenv("RENDER"))
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "").strip()
 
 # ── Database ─────────────────────────────────────────────
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./trading.db")
@@ -1249,6 +1257,12 @@ def validate_runtime_config() -> None:
 
     if (CONTEXT_NEWS_WEIGHT_24HR + CONTEXT_NEWS_WEIGHT_7D) > 1.0:
         errors.append("CONTEXT_NEWS_WEIGHT_24HR + CONTEXT_NEWS_WEIGHT_7D must be <= 1.0")
+
+    if IS_PRODUCTION:
+        if not DATABASE_URL or not any(DATABASE_URL.startswith(p) for p in ("postgresql://", "postgres://", "postgresql+psycopg://", "postgresql+psycopg2://")):
+            errors.append(f"In production, DATABASE_URL must be set and must point to persistent PostgreSQL (got: {DATABASE_URL})")
+        if not ADMIN_API_KEY:
+            errors.append("In production, ADMIN_API_KEY must be configured for API security")
 
     if errors:
         raise ValueError("Invalid runtime config: " + "; ".join(errors))

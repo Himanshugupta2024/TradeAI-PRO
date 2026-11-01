@@ -28,7 +28,10 @@ import numpy as np
 
 import pandas as pd
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from api.security import require_admin
+from api.schemas import PaperTradeRequest, ClosePaperTradeRequest
+from db.connection import check_db_connectivity
 
 from fastapi.responses import FileResponse, JSONResponse, Response
 
@@ -326,7 +329,7 @@ async def favicon():
 
 async def health_check():
 
-    """Health check endpoint — shows loading progress and server status."""
+    """Health check endpoint — shows loading progress, server status, and DB availability."""
 
     try:
         from agents.ai_engine.ensemble import get_model_status
@@ -334,15 +337,24 @@ async def health_check():
     except Exception as _e:
         ai_engine_info = {"mode": "Statistical Heuristic (fallback)", "badge_text": "AI Engine: Statistical Heuristic (0/3 models fitted)", "fitted_count": 0}
 
+    db_ok = check_db_connectivity()
+    symbols_loaded = len(svc._market_data)
+    uptime_sec = round(time.time() - getattr(svc, "_SERVER_START_TIME", time.time()), 1)
+    status_str = "ok" if db_ok and symbols_loaded > 0 else "degraded" if not db_ok else "starting"
+
     return {
 
-        "status": "ok",
+        "status": status_str,
+
+        "healthy": db_ok,
+
+        "database": {"connected": db_ok},
 
         "loading": svc._loading_status,
 
         "feed": svc._get_feed_status(),
 
-        "symbols_loaded": len(svc._market_data),
+        "symbols_loaded": symbols_loaded,
 
         "signals_cached": len(svc._signal_cache),
 
@@ -354,8 +366,46 @@ async def health_check():
 
         else None,
 
-        "uptime": datetime.now().isoformat(),
+        "uptime_seconds": uptime_sec,
 
+        "server_time": datetime.now(timezone.utc).isoformat(),
+
+    }
+
+
+@router.get("/api/ready")
+
+async def readiness_check():
+
+    """Readiness probe: verifies DB connectivity and that market data is loaded."""
+
+    db_ok = check_db_connectivity()
+    symbols_count = len(svc._market_data)
+    ready = db_ok and (symbols_count > 0 or svc._loading_status.get("ready", False))
+
+    if not ready:
+        reasons = []
+        if not db_ok:
+            reasons.append("Database unavailable")
+        if symbols_count == 0:
+            reasons.append("Zero market symbols loaded")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ready": False,
+                "status": "degraded" if not db_ok else "warming_up",
+                "reasons": reasons,
+                "symbols_loaded": symbols_count,
+                "db_connected": db_ok,
+            },
+        )
+
+    return {
+        "ready": True,
+        "status": "ready",
+        "symbols_loaded": symbols_count,
+        "db_connected": db_ok,
+        "last_refresh": svc._last_refresh.isoformat() if svc._last_refresh != datetime.min else None,
     }
 
 
@@ -1837,7 +1887,7 @@ async def telegram_status():
 
 
 
-@router.post("/api/telegram/test")
+@router.post("/api/telegram/test", dependencies=[Depends(require_admin)])
 
 async def telegram_test_alert():
 
@@ -2097,7 +2147,7 @@ async def get_ai_weight_state():
 
 
 
-@router.post("/api/risk/reset-circuit")
+@router.post("/api/risk/reset-circuit", dependencies=[Depends(require_admin)])
 
 async def reset_risk_circuit(rebase_capital: bool = Query(False)):
 
@@ -2221,7 +2271,7 @@ async def get_paper_scorecard():
 
 
 
-@router.post("/api/paper/resolve")
+@router.post("/api/paper/resolve", dependencies=[Depends(require_admin)])
 
 async def resolve_paper_trades():
 
@@ -2286,6 +2336,32 @@ async def place_paper_trade_endpoint(payload: dict):
             content={"error": "Invalid trade details: symbol, entry, stop_loss, and target must be > 0."},
         )
 
+    norm_dir = "LONG" if direction in ("LONG", "BUY") else ("SHORT" if direction in ("SHORT", "SELL") else None)
+    if not norm_dir:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Invalid trade direction '{direction}'. Must be LONG or SHORT."},
+        )
+
+    if norm_dir == "LONG":
+        if not (stop_loss < entry < target):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": f"Invalid trade geometry for LONG: stop_loss ({stop_loss}) must be below entry ({entry}), and target ({target}) must be above entry."
+                },
+            )
+    else:
+        if not (target < entry < stop_loss):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": f"Invalid trade geometry for SHORT: target ({target}) must be below entry ({entry}), and stop_loss ({stop_loss}) must be above entry."
+                },
+            )
+
+    direction = norm_dir
+
     engine = svc._get_engine()
     trade = engine.execute(
         symbol=symbol,
@@ -2340,11 +2416,11 @@ async def get_open_paper_trades_endpoint():
 
 
 @router.post("/api/paper/close/{trade_id}")
-async def close_paper_trade_endpoint(trade_id: int, payload: dict = None):
+async def close_paper_trade_endpoint(trade_id: int, payload: dict | None = None):
     """Manually close an open paper trade at exit price."""
     engine = svc._get_engine()
     payload = payload or {}
-    exit_price = float(payload.get("exit_price") or 0.0)
+    exit_price = float((payload.get("exit_price") if isinstance(payload, dict) else getattr(payload, "exit_price", 0.0)) or 0.0)
 
     if exit_price <= 0:
         for t in engine.open_trades:
@@ -5088,7 +5164,7 @@ async def swing_outcome_stats(days: int = Query(30, ge=7, le=365)):
 
 
 
-@router.post("/api/swing/scan-now")
+@router.post("/api/swing/scan-now", dependencies=[Depends(require_admin)])
 
 async def swing_scan_now():
 
@@ -5112,7 +5188,7 @@ async def swing_scan_now():
 
 
 
-@router.post("/api/intraday/scan")
+@router.post("/api/intraday/scan", dependencies=[Depends(require_admin)])
 
 async def intraday_run_scan():
 
@@ -6324,7 +6400,7 @@ async def websocket_prices(websocket: WebSocket):
 
 
 
-@router.post("/api/refresh")
+@router.post("/api/refresh", dependencies=[Depends(require_admin)])
 
 async def refresh_data():
 
@@ -7238,7 +7314,7 @@ async def ensemble_status():
 
 
 
-@router.post("/api/retrain")
+@router.post("/api/retrain", dependencies=[Depends(require_admin)])
 
 async def retrain_xgboost(
 

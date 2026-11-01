@@ -17,7 +17,8 @@ from datetime import datetime, date, timezone, timedelta
 from dataclasses import dataclass, field, asdict
 
 from config import settings
-from db.runtime_state import get_runtime_state, set_runtime_state
+import math
+from db.runtime_state import get_runtime_state, set_runtime_state, DatabaseStateError
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -110,11 +111,17 @@ class PaperTradingEngine:
         self,
         initial_capital: float = 100_000.0,
         log_file: str = "paper_trades.json",
+        state_key: str | None = None,
     ):
         self.initial_capital = initial_capital
         self.capital = initial_capital
         self.log_file = log_file
-        self._state_key = f"paper_trading_state:{os.path.abspath(self.log_file)}"
+        if state_key is not None:
+            self._state_key = state_key
+        elif os.path.basename(log_file) == "paper_trades.json":
+            self._state_key = os.getenv("PAPER_TRADING_STATE_KEY", "paper_trading_state:v1")
+        else:
+            self._state_key = f"paper_trading_state:{os.path.abspath(log_file)}"
         self.trades: list[PaperTrade] = []
         self.open_trades: list[PaperTrade] = []
         self._trade_counter = 0
@@ -274,6 +281,29 @@ class PaperTradingEngine:
         adjusted_tp = self._scale_target(entry=entry, target=tp, direction=direction, multiplier=target_multiplier)
         partial_target = self._partial_target(entry=entry, target=adjusted_tp, direction=direction)
 
+        # Safeguard: prevent trading with non-positive capital
+        if self.capital <= 0:
+            self.last_rejection_reason = f"Insufficient capital (current capital is {self.capital:.2f})"
+            log.warning("BLOCKED: %s", self.last_rejection_reason)
+            return None
+
+        # Safeguard: check for NaN / Inf
+        for val_name, val_val in [("entry", entry), ("sl", sl), ("tp", tp), ("atr", atr)]:
+            if math.isnan(val_val) or math.isinf(val_val):
+                self.last_rejection_reason = f"Non-finite value in {val_name}"
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
+
+        # Safeguard: strictly validate trade geometry
+        if direction == "LONG" and not (sl < entry < tp):
+            self.last_rejection_reason = f"Invalid trade geometry for LONG: SL ({sl:.2f}) < entry ({entry:.2f}) < TP ({tp:.2f}) required"
+            log.warning("BLOCKED: %s", self.last_rejection_reason)
+            return None
+        elif direction == "SHORT" and not (tp < entry < sl):
+            self.last_rejection_reason = f"Invalid trade geometry for SHORT: TP ({tp:.2f}) < entry ({entry:.2f}) < SL ({sl:.2f}) required"
+            log.warning("BLOCKED: %s", self.last_rejection_reason)
+            return None
+
         # Calculate position size (strict 1.0x cash leverage cap)
         qty = calculate_position_size(
             capital=self.capital,
@@ -284,7 +314,13 @@ class PaperTradingEngine:
         )
         qty = self._apply_correlation_size_reduction(symbol, qty)
         if qty <= 0:
-            qty = 1.0  # Fallback to 1 unit
+            max_lev = getattr(settings, "MAX_POSITION_LEVERAGE", 1.0)
+            if self.capital * max_lev >= entry:
+                qty = 1.0
+            else:
+                self.last_rejection_reason = f"Insufficient purchasing power for minimum position (capital={self.capital:.2f}, entry={entry:.2f})"
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
 
         # Risk check: portfolio heat (projected risk after this trade)
         projected_heat = self._projected_portfolio_heat_pct(entry, sl, qty)
@@ -451,8 +487,8 @@ class PaperTradingEngine:
         closed = [t for t in self.trades if t.status != "OPEN"]
         if not closed:
             return {
-                "total_trades": 0, "capital": self.capital,
-                "total_pnl": 0, "win_rate": 0, "consecutive_losses": 0,
+                "total_trades": 0, "sample_size": 0, "capital": self.capital,
+                "total_pnl": 0, "win_rate": None, "consecutive_losses": 0,
                 "sharpe_ratio": 0, "max_drawdown": 0, "max_drawdown_pct": 0,
                 "profit_factor": 0, "avg_win": 0, "avg_loss": 0,
                 "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
@@ -506,6 +542,7 @@ class PaperTradingEngine:
 
         return {
             "total_trades": len(closed),
+            "sample_size": len(closed),
             "winning_trades": len(wins),
             "losing_trades": len(losses),
             "win_rate": round(len(wins) / len(closed) * 100, 1) if closed else 0,
@@ -614,15 +651,12 @@ class PaperTradingEngine:
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:
-        s = (symbol or "").upper().replace("/", "")
-        aliases = {
-            "RELIANCE": "RELIANCE.NS",
-            "ONGC": "ONGC.NS",
-            "HDFCBANK": "HDFCBANK.NS",
-            "ICICIBANK": "ICICIBANK.NS",
-            "KOTAKBANK": "KOTAKBANK.NS",
-        }
-        return aliases.get(s, s)
+        s = (symbol or "").strip().upper().replace("/", "").replace("-", "").replace(" ", "")
+        if s.endswith(".NS"):
+            s = s[:-3]
+        elif s.endswith(".BO"):
+            s = s[:-3]
+        return s
 
     def _has_correlated_open_position(self, symbol: str) -> bool:
         candidate = self._normalize_symbol(symbol)
@@ -810,7 +844,7 @@ class PaperTradingEngine:
             log.debug("Feedback logger skipped: %s", _fb_err)
 
     def _save(self):
-        """Persist paper trading state to DB runtime state."""
+        """Persist paper trading state to DB runtime state atomically with local backup."""
         data = {
             "capital": self.capital,
             "initial_capital": self.initial_capital,
@@ -824,6 +858,17 @@ class PaperTradingEngine:
             "circuit_breaker_reason": self._circuit_breaker_reason,
         }
         set_runtime_state(self._state_key, data)
+        if self.log_file:
+            try:
+                import tempfile
+                dir_name = os.path.dirname(os.path.abspath(self.log_file)) or "."
+                os.makedirs(dir_name, exist_ok=True)
+                with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
+                    json.dump(data, tf, indent=2, default=str)
+                    temp_path = tf.name
+                os.replace(temp_path, self.log_file)
+            except Exception as f_err:
+                log.debug("Atomic file backup skipped: %s", f_err)
 
     def _load_from_payload(self, data: dict) -> None:
         self.capital = data.get("capital", self.initial_capital)
@@ -869,8 +914,29 @@ class PaperTradingEngine:
         self._trade_counter = max((t.id for t in self.trades), default=0)
 
     def _load(self):
-        """Load state from DB runtime state, then fallback legacy JSON once."""
-        data = get_runtime_state(self._state_key)
+        """Load state from DB runtime state, with automatic legacy key migration and fail-loud DB safety."""
+        try:
+            data = get_runtime_state(self._state_key)
+        except DatabaseStateError as dse:
+            log.critical("Failed to load paper trading state due to database connectivity error: %s", dse)
+            raise RuntimeError(f"Database error while loading paper trading state: {dse}") from dse
+
+        if data is None:
+            legacy_key = f"paper_trading_state:{os.path.abspath(self.log_file)}"
+            try:
+                legacy_data = get_runtime_state(legacy_key)
+            except DatabaseStateError as dse:
+                log.critical("Failed to read legacy paper trading state due to DB error: %s", dse)
+                raise RuntimeError(f"Database error while reading legacy paper trading state: {dse}") from dse
+
+            if isinstance(legacy_data, dict):
+                data = legacy_data
+                try:
+                    set_runtime_state(self._state_key, data)
+                    log.info("Migrated paper trading state to logical key: %s", self._state_key)
+                except Exception as m_err:
+                    log.warning("Could not persist migrated state: %s", m_err)
+
         if isinstance(data, dict):
             try:
                 self._load_from_payload(data)
@@ -878,16 +944,17 @@ class PaperTradingEngine:
                 return
             except Exception as exc:
                 log.error("Could not load DB paper trading state: %s", exc)
+                raise RuntimeError(f"Corrupt paper trading state in database: {exc}") from exc
 
         if not os.path.exists(self.log_file):
             return
 
         try:
-            with open(self.log_file) as f:
+            with open(self.log_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
             self._load_from_payload(data)
             set_runtime_state(self._state_key, data)
             log.debug("Loaded %d trades from %s", len(self.trades), self.log_file)
-        except (json.JSONDecodeError, TypeError):
-            log.error("Could not load trade history from %s — starting fresh", self.log_file)
+        except (json.JSONDecodeError, TypeError) as err:
+            log.error("Could not load trade history from %s: %s", self.log_file, err)

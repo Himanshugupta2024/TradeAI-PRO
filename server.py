@@ -51,11 +51,25 @@ except Exception as exc:
 
     @app.get("/api/health")
     async def degraded_health_check():
-        return {
-            "status": "degraded",
-            "error": _startup_error,
-            "message": "Primary app failed to boot; fallback app is serving health only.",
-        }
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "healthy": False,
+                "message": "Primary app failed to boot. Check server logs for details.",
+            },
+        )
+
+    @app.get("/api/ready")
+    async def degraded_ready_check():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ready": False,
+                "status": "degraded",
+                "message": "Primary app failed to boot. Check server logs for details.",
+            },
+        )
 
     @app.get("/")
     async def degraded_root():
@@ -63,7 +77,7 @@ except Exception as exc:
             status_code=503,
             content={
                 "status": "degraded",
-                "error": _startup_error,
+                "healthy": False,
                 "message": "Service startup failed. Check Render logs and fix the primary bootstrap error.",
             },
         )

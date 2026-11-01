@@ -89,6 +89,8 @@ from agents.stock_screener import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+_SERVER_START_TIME = time.time()
+
 # ── Real data stores ──────────────────────────────────────
 _market_data: dict[str, pd.DataFrame] = {}
 _signal_cache: dict[str, pd.DataFrame] = {}
@@ -769,52 +771,73 @@ async def _run_swing_outcome_eval_if_due() -> dict | None:
 
 
 async def _background_refresh():
-    """Background task: refresh market data every 60 seconds.
-    Waits for initial load to complete before starting refresh cycle."""
-    await _wait_until_ready_or_timeout(
-        BACKGROUND_READY_WAIT_SECONDS,
-        task_name="Background refresh",
-    )
-
-    while True:
-        await asyncio.sleep(REFRESH_INTERVAL_SECONDS)
+    """Background task: refresh market data periodically.
+    If initial load was skipped, immediately triggers a first refresh cycle.
+    """
+    initial_load_enabled = os.environ.get("INITIAL_LOAD_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    if initial_load_enabled:
+        await _wait_until_ready_or_timeout(
+            BACKGROUND_READY_WAIT_SECONDS,
+            task_name="Background refresh",
+        )
+    else:
+        logger.info("INITIAL_LOAD_ENABLED=false: performing immediate first refresh cycle in background refresh worker")
         lock = _get_refresh_lock()
-        if lock.locked():
-            logger.debug("Background refresh skipped — previous refresh still running")
-            continue
-        try:
-            logger.info("Background refresh triggered...")
-            await asyncio.wait_for(
-                _refresh_market_data(),
-                timeout=REFRESH_CYCLE_TIMEOUT_SECONDS,
-            )
-            logger.info(
-                "Background refresh complete. %d symbols loaded.", len(_market_data)
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Background refresh timed out after %ss — skipping this cycle",
-                REFRESH_CYCLE_TIMEOUT_SECONDS,
-            )
-        except Exception as e:
-            logger.error("Background refresh failed: %s", e)
+        if not lock.locked():
+            try:
+                await asyncio.wait_for(
+                    _refresh_market_data(),
+                    timeout=REFRESH_CYCLE_TIMEOUT_SECONDS,
+                )
+                logger.info("Immediate first background refresh complete. %d symbols loaded.", len(_market_data))
+            except Exception as exc:
+                logger.error("Immediate first background refresh failed: %s", exc)
+
+    try:
+        while True:
+            await asyncio.sleep(REFRESH_INTERVAL_SECONDS)
+            lock = _get_refresh_lock()
+            if lock.locked():
+                logger.debug("Background refresh skipped — previous refresh still running")
+                continue
+            try:
+                logger.info("Background refresh triggered...")
+                await asyncio.wait_for(
+                    _refresh_market_data(),
+                    timeout=REFRESH_CYCLE_TIMEOUT_SECONDS,
+                )
+                logger.info(
+                    "Background refresh complete. %d symbols loaded.", len(_market_data)
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Background refresh timed out after %ss — skipping this cycle",
+                    REFRESH_CYCLE_TIMEOUT_SECONDS,
+                )
+            except Exception as e:
+                logger.error("Background refresh failed: %s", e)
+    except asyncio.CancelledError:
+        logger.info("Background refresh worker cancelled.")
 
 
 async def _swing_outcome_background() -> None:
     """Dedicated loop for swing outcome evaluation, independent of refresh path."""
-    await _wait_until_ready_or_timeout(
-        BACKGROUND_READY_WAIT_SECONDS,
-        task_name="Swing outcome task",
-    )
+    try:
+        await _wait_until_ready_or_timeout(
+            BACKGROUND_READY_WAIT_SECONDS,
+            task_name="Swing outcome task",
+        )
 
-    while True:
-        await asyncio.sleep(SWING_OUTCOME_TASK_INTERVAL_SECONDS)
-        try:
-            summary = await _run_swing_outcome_eval_if_due()
-            if summary and not summary.get("skipped"):
-                logger.info("Swing outcome evaluation: %s", summary)
-        except Exception as exc:
-            logger.error("Swing outcome background task failed: %s", exc)
+        while True:
+            await asyncio.sleep(SWING_OUTCOME_TASK_INTERVAL_SECONDS)
+            try:
+                summary = await _run_swing_outcome_eval_if_due()
+                if summary and not summary.get("skipped"):
+                    logger.info("Swing outcome evaluation: %s", summary)
+            except Exception as exc:
+                logger.error("Swing outcome background task failed: %s", exc)
+    except asyncio.CancelledError:
+        logger.info("Swing outcome background task cancelled.")
 
 
 # ── Nightly SwingSpectrum Batch Scan (auto-scheduled) ─────────────────────────

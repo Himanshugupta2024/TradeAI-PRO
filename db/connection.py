@@ -3,10 +3,13 @@ Database connection and session management.
 Auto-creates all tables on import.
 """
 
-from sqlalchemy import create_engine
+import logging
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-from config.settings import DATABASE_URL
+from config.settings import DATABASE_URL, IS_PRODUCTION
 from db.models import Base
+
+logger = logging.getLogger(__name__)
 
 
 def _create_engine():
@@ -59,7 +62,24 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 def init_db():
     """Create all tables if they don't exist."""
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as exc:
+        logger.exception("Failed to initialize database schema: %s", exc)
+        if IS_PRODUCTION:
+            raise RuntimeError(f"Database schema initialization failed in production: {exc}") from exc
+        raise
+
+
+def check_db_connectivity() -> bool:
+    """Check if the database is reachable and accepting queries."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception as exc:
+        logger.debug("Database connectivity check failed: %s", exc)
+        return False
 
 
 def get_session():

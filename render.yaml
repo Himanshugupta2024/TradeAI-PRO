@@ -1,6 +1,6 @@
 # Free-tier web services cannot attach persistent disks (disks require a paid instance).
-# SQLite here is ephemeral: data resets on redeploy/restart. For durable DB, add
-# Render Postgres and set DATABASE_URL from the database connection string.
+# SQLite is ephemeral: data resets on redeploy/restart. In production, configure
+# Render Postgres or Supabase PostgreSQL and set DATABASE_URL from the database connection string.
 services:
   - type: web
     name: trading-api
@@ -22,8 +22,11 @@ services:
         value: "1"
       - key: NUMEXPR_NUM_THREADS
         value: "1"
-      # Persistent cloud database (Supabase PostgreSQL): Set in Render dashboard environment
+      # Persistent cloud database (Render PostgreSQL / Supabase): Set in Render dashboard environment
       - key: DATABASE_URL
+        sync: false
+      # Admin security key for protected routes (/api/paper/trade, /api/refresh, /api/risk/reset-circuit, etc.)
+      - key: ADMIN_API_KEY
         sync: false
       - key: HEALTH_FILE
         value: health.json
@@ -48,6 +51,6 @@ services:
       - key: NSE_SYMBOL_LIMIT
         value: 15
       - key: MAX_NSE_CONCURRENCY
-        value: "3"
-      - key: MARKETAUX_API_KEY
-        sync: false
+        value: 5
+      - key: SYMBOL_FETCH_TIMEOUT_SECONDS
+        value: 45

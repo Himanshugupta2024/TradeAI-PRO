@@ -77,3 +77,63 @@ def test_api_paper_trade_flow(test_engine):
     assert "CLOSED" in close_data["trade"]["status"]
     assert close_data["stats"]["total_trades"] >= 1
     assert close_data["stats"]["open_trades"] == 0
+
+
+def test_trade_geometry_validation(test_engine):
+    client = TestClient(app)
+
+    # 1. Invalid LONG: stop_loss > entry
+    resp = client.post("/api/paper/trade", json={
+        "symbol": "INFY",
+        "direction": "LONG",
+        "entry": 1500.0,
+        "stop_loss": 1550.0,
+        "target": 1600.0,
+    })
+    assert resp.status_code == 400
+    assert "Invalid trade geometry for LONG" in resp.json().get("error", "")
+
+    # 2. Invalid LONG: target < entry
+    resp = client.post("/api/paper/trade", json={
+        "symbol": "INFY",
+        "direction": "LONG",
+        "entry": 1500.0,
+        "stop_loss": 1450.0,
+        "target": 1480.0,
+    })
+    assert resp.status_code == 400
+    assert "Invalid trade geometry for LONG" in resp.json().get("error", "")
+
+    # 3. Invalid SHORT: stop_loss < entry
+    resp = client.post("/api/paper/trade", json={
+        "symbol": "INFY",
+        "direction": "SHORT",
+        "entry": 1500.0,
+        "stop_loss": 1450.0,
+        "target": 1400.0,
+    })
+    assert resp.status_code == 400
+    assert "Invalid trade geometry for SHORT" in resp.json().get("error", "")
+
+    # 4. Invalid SHORT: target > entry
+    resp = client.post("/api/paper/trade", json={
+        "symbol": "INFY",
+        "direction": "SHORT",
+        "entry": 1500.0,
+        "stop_loss": 1550.0,
+        "target": 1520.0,
+    })
+    assert resp.status_code == 400
+    assert "Invalid trade geometry for SHORT" in resp.json().get("error", "")
+
+    # 5. Invalid direction
+    resp = client.post("/api/paper/trade", json={
+        "symbol": "INFY",
+        "direction": "SIDEWAYS",
+        "entry": 1500.0,
+        "stop_loss": 1450.0,
+        "target": 1600.0,
+    })
+    assert resp.status_code == 400
+    assert "Invalid trade direction" in resp.json().get("error", "")
+
