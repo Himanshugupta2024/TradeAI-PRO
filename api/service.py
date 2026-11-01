@@ -127,6 +127,26 @@ def _get_refresh_lock() -> asyncio.Lock:
     return _refresh_lock
 
 
+def _get_providers_telemetry() -> dict:
+    """Return health and latency telemetry from MarketDataRouter and providers."""
+    try:
+        from data.router import get_default_router
+        status = get_default_router().get_health_status()
+        try:
+            from data.providers.gdelt import get_gdelt_provider
+            gdelt = get_gdelt_provider()
+            status["gdelt"] = {
+                "active": True,
+                "cached_symbols": len(gdelt._cache),
+            }
+        except Exception:
+            pass
+        return status
+    except Exception as exc:
+        logger.debug("Failed to get providers telemetry: %s", exc)
+        return {}
+
+
 # Paper trading engine (loads real trade data from paper_trades.json)
 _engine: PaperTradingEngine | None = None
 

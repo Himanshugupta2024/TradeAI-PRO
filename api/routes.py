@@ -359,6 +359,11 @@ async def health_check():
         "signals_cached": len(svc._signal_cache),
 
         "ai_engine": ai_engine_info,
+        "providers": (
+            getattr(svc, "_get_providers_telemetry", lambda: {})()
+            if hasattr(svc, "_get_providers_telemetry")
+            else {}
+        ),
 
         "last_refresh": svc._last_refresh.isoformat()
 

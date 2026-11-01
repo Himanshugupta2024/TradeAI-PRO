@@ -6132,6 +6132,19 @@ async function updateAiModelHealthBadge() {
             }
         }
 
+        // Update V2 Multi-Provider Pipeline Telemetry
+        const pipelineText = document.getElementById('v2PipelineText');
+        const pipelineDot = document.getElementById('v2PipelineDot');
+        if (pipelineText && data.providers) {
+            const yf = data.providers.yahoo || {};
+            const lat = yf.avg_latency_ms ? `${Math.round(yf.avg_latency_ms)}ms` : 'fast';
+            const healthy = yf.healthy !== false;
+            pipelineText.textContent = `V2: YAHOO (${lat}) | UDIFF | GDELT`;
+            if (pipelineDot) {
+                pipelineDot.style.background = healthy ? '#10b981' : '#f59e0b';
+            }
+        }
+
         const badgeCockpit = document.getElementById('aiModelBadgeCockpit');
         if (badgeCockpit) {
             badgeCockpit.textContent = ai.badge_text || `AI Engine: ${ai.mode}`;
