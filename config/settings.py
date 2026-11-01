@@ -1280,3 +1280,10 @@ PAPER_TRADING_MAX_OPEN = int(os.getenv("PAPER_TRADING_MAX_OPEN", "5"))
 
 # ── Position Sizing & Margin Bounds ──────────────────────────────────────────
 MAX_POSITION_LEVERAGE: float = float(os.getenv("MAX_POSITION_LEVERAGE", "1.0"))
+
+
+# ── Supabase Cloud Configuration ─────────────────────────────────────────────
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+SUPABASE_PUBLISHABLE_KEY: str = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+SUPABASE_SECRET_KEY: str = os.getenv("SUPABASE_SECRET_KEY", "")
+SUPABASE_JWKS_URL: str = os.getenv("SUPABASE_JWKS_URL", "")
