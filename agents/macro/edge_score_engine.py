@@ -489,19 +489,24 @@ class EdgeScoreEngine:
     def _save_cache(self, symbol: str, breakdown: EdgeScoreBreakdown) -> None:
         """Save EdgeScore to cache file"""
         try:
-            # Load existing cache
+            # Load existing cache safely
             cache = {}
             if self.cache_file.exists():
-                with open(self.cache_file, "r") as f:
-                    cache = json.load(f)
+                try:
+                    with open(self.cache_file, "r") as f:
+                        cache = json.load(f)
+                except Exception:
+                    cache = {}
 
             # Update cache for this symbol
             cache[symbol] = breakdown.to_dict()
 
-            # Save cache
+            # Save cache atomically
             self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.cache_file, "w") as f:
+            tmp_file = self.cache_file.with_suffix(".tmp")
+            with open(tmp_file, "w") as f:
                 json.dump(cache, f, indent=2)
+            tmp_file.replace(self.cache_file)
 
             logger.info(f"Saved EdgeScore to cache for {symbol}")
 
