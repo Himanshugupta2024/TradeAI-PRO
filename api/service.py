@@ -170,6 +170,9 @@ _market_mood_cache: dict[str, object] = {
     "updated_at": None,
 }
 _lazy_bootstrap_started = False
+# Fast-boot snapshot for instant dashboard delivery before first refresh cycle completes
+_persisted_signals_snapshot: list[dict] = []
+_persisted_signals_updated_at: str | None = None
 
 # Regime hysteresis: (confirmed_regime, tentative_regime, consecutive_count)
 _regime_hysteresis: dict[str, tuple[str, str, int]] = {}
@@ -328,6 +331,22 @@ async def _persist_swing_scan(
     except Exception as exc:
         logger.warning("Swing scan persistence failed (non-fatal): %s", exc)
         return None
+
+
+async def _hydrate_signals_cache_from_db() -> bool:
+    """On startup, load the latest persisted signals snapshot from DB so /api/signals/all is instant."""
+    global _persisted_signals_snapshot, _persisted_signals_updated_at
+    try:
+        from db.runtime_state import get_runtime_state
+        data = await asyncio.to_thread(get_runtime_state, "latest_signals_snapshot")
+        if isinstance(data, dict) and data.get("signals"):
+            _persisted_signals_snapshot = data["signals"]
+            _persisted_signals_updated_at = data.get("updated_at")
+            logger.info("Hydrated %d signals from DB snapshot on startup", len(_persisted_signals_snapshot))
+            return True
+    except Exception as e:
+        logger.warning("Failed to hydrate signals snapshot from DB: %s", e)
+    return False
 
 
 async def _hydrate_swing_cache_from_db() -> bool:
@@ -1196,6 +1215,29 @@ async def _refresh_market_data():
             _compute_market_mood()
         except Exception as e:
             logger.debug("Dashboard precompute failed: %s", e)
+
+        # Persist latest signals snapshot to DB for instant cold-boot recovery
+        try:
+            current_signals = []
+            for sym in list(_signal_cache.keys()):
+                sig = _get_signal_for_symbol(sym)
+                if sig:
+                    current_signals.append(sig)
+            if current_signals:
+                _persisted_signals_snapshot = current_signals
+                _persisted_signals_updated_at = datetime.now().isoformat()
+                from db.runtime_state import set_runtime_state
+                await asyncio.to_thread(
+                    set_runtime_state,
+                    "latest_signals_snapshot",
+                    {
+                        "signals": current_signals,
+                        "updated_at": _persisted_signals_updated_at,
+                    },
+                )
+                logger.debug("Persisted %d signals to DB runtime snapshot", len(current_signals))
+        except Exception as e:
+            logger.debug("Persisting signals snapshot failed: %s", e)
 
         _last_refresh = datetime.now()
         logger.info("Market data refreshed: %d symbols loaded", len(_market_data))

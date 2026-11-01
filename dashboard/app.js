@@ -49,6 +49,40 @@ function _escHtml(s) {
 
 // ── Init ────────────────────────────────────────────────
 
+function hydrateFromLocalStorageCache() {
+    try {
+        const raw = localStorage.getItem('tradeai_cached_signals_v1');
+        if (!raw) return;
+        const cached = JSON.parse(raw);
+        if (Array.isArray(cached.signals) && cached.signals.length > 0) {
+            allSignals = cached.signals;
+            _lastSignalsSignature = getSignalsSignature(allSignals);
+            if (_cockpitFilter !== 'all') {
+                applyCockpitFilter();
+            } else {
+                renderSignals(allSignals);
+            }
+            updateSummary(allSignals);
+            const loader = document.getElementById('loadingState');
+            if (loader) loader.classList.add('hidden');
+            if (cached.stats) {
+                _lastStatsData = cached.stats;
+                updateStatsStrip(_lastStatsData);
+            }
+            if (cached.updated_at) {
+                const updated = new Date(cached.updated_at);
+                if (!isNaN(updated.getTime())) {
+                    const el = document.getElementById('lastUpdated');
+                    if (el) el.textContent = updated.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+                }
+            }
+            console.debug(`[Hydrate] Loaded ${allSignals.length} signals instantly from local cache.`);
+        }
+    } catch (e) {
+        console.debug('[Hydrate] Local cache hydration skipped:', e);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initTabs();
@@ -59,6 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initModal();
     initBmcModal();
     startClock();
+    hydrateFromLocalStorageCache();
     loadAllData({ background: false });
     connectPriceWebSocket();
     startBackgroundRefresh();
@@ -536,9 +571,18 @@ async function loadAllData({ background = false } = {}) {
             document.getElementById('lastUpdated').textContent =
                 updated.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
         }
+        if (nextSignals.length > 0) {
+            try {
+                localStorage.setItem('tradeai_cached_signals_v1', JSON.stringify({
+                    signals: nextSignals,
+                    stats: _lastStatsData,
+                    updated_at: signalsData.updated_at || new Date().toISOString()
+                }));
+            } catch (e) {}
+        }
         const loader = document.getElementById('loadingState');
         if (loader) {
-            if (nextSignals.length === 0) {
+            if (nextSignals.length === 0 && (!allSignals || allSignals.length === 0)) {
                 loader.classList.remove('hidden');
                 loader.innerHTML = '<div class="loader"></div><p>Warming up market data... this can take 1-2 minutes on first load.</p>';
             } else {

@@ -412,15 +412,29 @@ async def get_all_signals():
 
             results.append(sig)
 
+        # Fast cold-boot fallback: if live cache is still computing, return persisted DB snapshot immediately
+    if not results and getattr(svc, "_persisted_signals_snapshot", None):
+        return {
+            "signals": svc._persisted_signals_snapshot,
+            "updated_at": getattr(svc, "_persisted_signals_updated_at", None) or datetime.now().isoformat(),
+            "source": "persisted_snapshot",
+        }
+
     return {"signals": results, "updated_at": datetime.now().isoformat()}
 
 
 
 
 
-@router.get("/api/crypto/meme")
+_meme_cache: dict = {"payload": None, "timestamp": 0.0}
+_MEME_CACHE_TTL_SEC: float = 60.0
 
+
+@router.get("/api/crypto/meme")
 async def get_meme_coin_signals():
+    now_ts = time.time()
+    if _meme_cache["payload"] is not None and (now_ts - _meme_cache["timestamp"]) < _MEME_CACHE_TTL_SEC:
+        return _meme_cache["payload"]
 
     """
 
@@ -1714,31 +1728,22 @@ async def get_meme_coin_signals():
 
 
 
-    return {
-
+    payload = {
         "meme_coins": results,
-
         "total": len(results),
-
         "static_universe": len(static_bases),
-
         "discovered_universe": len(discovered_bases),
-
         "dynamic_discovery_enabled": settings.MEME_DYNAMIC_DISCOVERY_ENABLED,
-
         "buy_count": sum(1 for r in results if r["signal"] == "BUY"),
-
         "sell_count": sum(1 for r in results if r["signal"] == "SELL"),
-
         "hold_count": sum(1 for r in results if r["signal"] == "HOLD"),
-
         "skip_count": sum(1 for r in results if r["signal"] == "SKIP"),
-
         "hot_count": sum(1 for r in results if r["is_hot"]),
-
         "updated_at": datetime.now().isoformat(),
-
     }
+    _meme_cache["payload"] = payload
+    _meme_cache["timestamp"] = time.time()
+    return payload
 
 
 
@@ -7437,7 +7442,15 @@ async def get_forex_signals():
 
     try:
 
-        setups = await asyncio.to_thread(scan_all_forex)
+        from agents.market_intelligence.forex_scanner import _scan_cache, is_forex_scanning
+        # Non-blocking: if cache has data or scan in flight, return cache immediately without 144s rate-limit wait
+        if _scan_cache.get("setups"):
+            setups = _scan_cache["setups"]
+        elif is_forex_scanning():
+            setups = _scan_cache.get("setups", [])
+        else:
+            asyncio.create_task(asyncio.to_thread(scan_all_forex))
+            setups = _scan_cache.get("setups", [])
 
         return {
 

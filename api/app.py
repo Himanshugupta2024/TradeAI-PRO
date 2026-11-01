@@ -62,6 +62,12 @@ def _lifespan_context():
         except Exception as exc:
             svc.logger.warning("Swing cache hydration raised on startup: %s", exc)
 
+        # Hydrate the latest signals snapshot from DB so /api/signals/all is instant on boot.
+        try:
+            await svc._hydrate_signals_cache_from_db()
+        except Exception as exc:
+            svc.logger.warning("Signals cache hydration raised on startup: %s", exc)
+
         svc.logger.info("Starting server — market data will load in background...")
         if _env_flag("INITIAL_LOAD_ENABLED", True):
             asyncio.create_task(svc._initial_load())
