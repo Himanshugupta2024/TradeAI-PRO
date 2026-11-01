@@ -134,7 +134,6 @@ class MetaStackingLearner:
 
         self._model = LogisticRegression(
             C=1.0,
-            penalty="l2",
             solver="lbfgs",
             max_iter=300,
             random_state=42,

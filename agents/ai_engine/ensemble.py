@@ -55,10 +55,11 @@ log = logging.getLogger(__name__)
 
 # Base model weights (renormalized if some models are unavailable)
 _BASE_WEIGHTS = {
-    "statistical": 0.25,
-    "xgboost":     0.30,
+    "statistical": 0.20,
+    "xgboost":     0.25,
     "lightgbm":    0.25,
-    "lstm":        0.20,
+    "lstm":        0.15,
+    "logistic":    0.15,
 }
 
 _CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "BNB", "XRP", "USDT", "ADA", "DOT", "AVAX", "MATIC"}
@@ -88,6 +89,7 @@ class _ModelPerformanceTracker:
             "xgboost":     collections.deque(maxlen=window),
             "lightgbm":    collections.deque(maxlen=window),
             "lstm":        collections.deque(maxlen=window),
+            "logistic":    collections.deque(maxlen=window),
         }
 
     def record(self, model_name: str, predicted_up: bool, actual_up: bool):
@@ -295,7 +297,7 @@ def get_dynamic_weight_state() -> dict:
 
 # ── Main Ensemble Functions ────────────────────────────────────────────────────
 
-def predict_advanced(df: pd.DataFrame, symbol: str = "") -> dict:
+def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False) -> dict:
     """
     Run the full 4-model ensemble on the latest bar of df.
 
@@ -352,7 +354,7 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "") -> dict:
         log.debug("[Ensemble] LightGBM failed: %s", exc)
 
     # ── 4. LSTM predictor ──────────────────────────────────────────────────
-    lstm_result = {"direction": "NEUTRAL", "confidence": 0.0}
+    lstm_result = {"direction": "NEUTRAL", "confidence": 0.0, "prob_up": 50.0}
     lstm_fitted = False
     try:
         import torch
@@ -382,7 +384,51 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "") -> dict:
     except Exception as exc:
         log.debug("[Ensemble] LSTM failed: %s", exc)
 
-    # ── 5. Sentiment adjustment ────────────────────────────────────────────
+    # ── 4b. Logistic Regression Baseline (Linear Anchor) ───────────────────
+    logit_result = {"direction": "NEUTRAL", "confidence": 0.0, "prob_up": 50.0}
+    logit_fitted = False
+    try:
+        from agents.ai_engine.logistic_baseline import get_logistic_predictor
+        logit = get_logistic_predictor()
+        logit_result = logit.predict_row(df)
+        logit_fitted = logit.is_fitted
+    except Exception as exc:
+        log.debug("[Ensemble] Logistic baseline failed: %s", exc)
+
+    # ── 5. Two-Axis Market Regime Classification ───────────────────────────
+    try:
+        from agents.feature_engine.regime_classifier import detect_two_axis_regime
+        regime_res = detect_two_axis_regime(df)
+    except Exception as exc:
+        log.debug("[Ensemble] Two-Axis Regime failed: %s", exc)
+        from agents.feature_engine.regime_classifier import (
+            TwoAxisRegimeResult, TrendRegime, VolatilityRegime
+        )
+        from agents.feature_engine.regime_detector import MarketRegime
+        regime_res = TwoAxisRegimeResult(
+            trend_regime=TrendRegime.RANGING,
+            trend_score=0.0,
+            volatility_regime=VolatilityRegime.NORMAL,
+            volatility_score=0.5,
+            legacy_regime=MarketRegime.RANGING,
+        )
+
+    # ── 5b. Graduated Market Anomaly Detection ─────────────────────────────
+    try:
+        from agents.ai_engine.anomaly_detector import get_anomaly_detector
+        anom_res = get_anomaly_detector().score_row(df)
+    except Exception as exc:
+        log.debug("[Ensemble] Anomaly detector failed: %s", exc)
+        anom_res = {
+            "tier": "CLEAN",
+            "anomaly_score": 0.10,
+            "confidence_multiplier": 1.0,
+            "is_vetoed": False,
+            "reason": "fallback_clean",
+            "anomaly_features": {},
+        }
+
+    # ── 5c. Sentiment adjustment ───────────────────────────────────────────
     sentiment_result = {}
     sentiment_adj = 0.0
     is_crypto = _is_crypto_symbol(symbol)
@@ -397,14 +443,15 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "") -> dict:
         except Exception:
             pass
 
-    # ── 6. Compute dynamic weights ─────────────────────────────────────────
+    # ── 6. Compute dynamic weights (Fallback Baseline) ─────────────────────
     multipliers = _tracker.get_all_multipliers()
 
     raw_weights = {}
-    raw_weights["statistical"] = _BASE_WEIGHTS["statistical"] * multipliers["statistical"]
-    raw_weights["xgboost"]     = (_BASE_WEIGHTS["xgboost"]  * multipliers["xgboost"])  if xgb_fitted  else 0.0
-    raw_weights["lightgbm"]    = (_BASE_WEIGHTS["lightgbm"] * multipliers["lightgbm"]) if lgbm_fitted else 0.0
-    raw_weights["lstm"]        = (_BASE_WEIGHTS["lstm"]      * multipliers["lstm"])     if lstm_fitted else 0.0
+    raw_weights["statistical"] = _BASE_WEIGHTS["statistical"] * multipliers.get("statistical", 1.0)
+    raw_weights["xgboost"]     = (_BASE_WEIGHTS["xgboost"]  * multipliers.get("xgboost", 1.0))  if xgb_fitted  else 0.0
+    raw_weights["lightgbm"]    = (_BASE_WEIGHTS["lightgbm"] * multipliers.get("lightgbm", 1.0)) if lgbm_fitted else 0.0
+    raw_weights["lstm"]        = (_BASE_WEIGHTS["lstm"]      * multipliers.get("lstm", 1.0))     if lstm_fitted else 0.0
+    raw_weights["logistic"]    = (_BASE_WEIGHTS["logistic"]  * multipliers.get("logistic", 1.0)) if logit_fitted else 0.0
 
     global _last_effective_weights
     weights = _guardrailed_normalize_weights(raw_weights, previous_weights=_last_effective_weights)
@@ -412,7 +459,6 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "") -> dict:
 
     # ── 7. Signed confidence scores ────────────────────────────────────────
     def _signed(result: dict) -> float:
-        """Convert direction+confidence to signed score: UP=+conf, DOWN=-conf."""
         d = result.get("direction", "NEUTRAL")
         c = float(result.get("confidence", 0.0))
         if d == "UP":
@@ -426,15 +472,71 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "") -> dict:
         "xgboost":     _signed(xgb_result),
         "lightgbm":    _signed(lgbm_result),
         "lstm":        _signed(lstm_result),
+        "logistic":    _signed(logit_result),
     }
 
-    # Weighted sum
-    weighted_score = sum(signed_scores[k] * weights[k] for k in weights)
+    # Fallback weighted score
+    fallback_weighted_score = sum(signed_scores[k] * weights.get(k, 0.0) for k in weights)
+    fallback_weighted_score += sentiment_adj
 
-    # Apply sentiment adjustment
-    weighted_score += sentiment_adj
+    # ── 8. Stacking Meta-Learner with Interaction Features ──────────────────
+    meta_active = False
+    calib_active = False
+    meta_prob_up = 50.0
 
-    # ── 8. Consensus boosting ──────────────────────────────────────────────
+    # Option B Fail-Safe: Check if critical models are active
+    if xgb_fitted and lgbm_fitted and lstm_fitted and logit_fitted:
+        try:
+            from agents.ai_engine.meta_learner import build_meta_feature_vector, get_meta_learner
+            meta = get_meta_learner()
+            if meta.is_fitted:
+                stat_prob_up = float(stat_result.get("prob_up", 50.0))
+                xgb_p = float(xgb_result.get("prob_up", 50.0)) / 100.0
+                lgb_p = float(lgbm_result.get("prob_up", 50.0)) / 100.0
+                lst_p = float(lstm_result.get("prob_up", 50.0)) / 100.0
+                log_p = float(logit_result.get("prob_up", 50.0)) / 100.0
+                sta_p = stat_prob_up / 100.0
+
+                adx_val = float(df.iloc[-1].get(f"ADX_{settings.ADX_PERIOD}", 20.0)) if f"ADX_{settings.ADX_PERIOD}" in df.columns else 20.0
+                atr_val = float(df.iloc[-1].get(f"ATR_{settings.ATR_PERIOD}", 1.0)) if f"ATR_{settings.ATR_PERIOD}" in df.columns else 1.0
+                close_val = max(float(df.iloc[-1]["close"]), 1.0)
+                atr_pct = atr_val / close_val
+
+                X_meta = build_meta_feature_vector(
+                    xgb_prob=xgb_p,
+                    lgbm_prob=lgb_p,
+                    lstm_prob=lst_p,
+                    logit_prob=log_p,
+                    stat_score=sta_p,
+                    trend_score=regime_res.trend_score,
+                    volatility_score=regime_res.volatility_score,
+                    adx=adx_val,
+                    atr_pct=atr_pct,
+                )
+                pred_meta = meta.predict_meta(X_meta)
+                if pred_meta.get("meta_active", False):
+                    meta_prob_up = pred_meta["meta_prob_up"]
+                    meta_active = True
+
+                    # Independent Sigmoid Calibration (Phase 4)
+                    try:
+                        from agents.ai_engine.calibrator import get_calibrator
+                        calib = get_calibrator()
+                        if calib.is_fitted:
+                            calibrated_trade_win_prob = round(float(calib.calibrate(X_meta)[0]) * 100.0, 1)
+                            calib_active = True
+                    except Exception:
+                        pass
+        except Exception as _meta_exc:
+            log.debug("[Ensemble] Meta-learner error, falling back to dynamic weights: %s", _meta_exc)
+
+    # If meta-learner was active, derive raw_weighted_score from meta_prob_up
+    if meta_active:
+        raw_weighted_score = (meta_prob_up - 50.0) * 2.0
+    else:
+        raw_weighted_score = fallback_weighted_score
+
+    # ── 9. Consensus boosting ──────────────────────────────────────────────
     active_results = [stat_result]
     if xgb_fitted:
         active_results.append(xgb_result)
@@ -442,6 +544,8 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "") -> dict:
         active_results.append(lgbm_result)
     if lstm_fitted:
         active_results.append(lstm_result)
+    if logit_fitted:
+        active_results.append(logit_result)
 
     n_active = len(active_results)
     directions = [r.get("direction", "NEUTRAL") for r in active_results]
@@ -449,63 +553,92 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "") -> dict:
     down_votes = directions.count("DOWN")
     agreement  = max(up_votes, down_votes)
 
-    # Consensus multiplier
-    if n_active >= 3 and agreement == n_active:
-        consensus_mult = 1.20   # Full agreement — boost confidence
-    elif n_active >= 2 and agreement >= n_active - 1:
-        consensus_mult = 1.10   # Near-agreement
+    if n_active >= 4 and agreement == n_active:
+        consensus_mult = 1.20
+    elif n_active >= 3 and agreement >= n_active - 1:
+        consensus_mult = 1.10
     elif agreement <= 1 and n_active >= 3:
-        consensus_mult = 0.70   # Strong disagreement — reduce confidence
+        consensus_mult = 0.70
     else:
         consensus_mult = 1.00
 
-    final_confidence = min(abs(weighted_score) * consensus_mult, 100.0)
+    raw_ensemble_score = min(abs(raw_weighted_score) * consensus_mult, 100.0)
 
-    # ── 9. Final direction ─────────────────────────────────────────────────
-    if weighted_score > 5:
+    # ── 10. Direction and Calibrated Trade Win Probability ──────────────────
+    if raw_weighted_score > 5:
         direction = "UP"
-        prob_up   = 50 + final_confidence / 2
-        prob_down = 50 - final_confidence / 2
-    elif weighted_score < -5:
+        prob_up   = 50 + raw_ensemble_score / 2
+        prob_down = 50 - raw_ensemble_score / 2
+    elif raw_weighted_score < -5:
         direction = "DOWN"
-        prob_down = 50 + final_confidence / 2
-        prob_up   = 50 - final_confidence / 2
+        prob_down = 50 + raw_ensemble_score / 2
+        prob_up   = 50 - raw_ensemble_score / 2
     else:
         direction = "NEUTRAL"
         prob_up = prob_down = 50.0
+        raw_ensemble_score = 0.0
+
+    # If calibrator wasn't fitted, apply realistic Platt Sigmoid compression
+    if not calib_active:
+        calibrated_trade_win_prob = round(50.0 + (raw_ensemble_score / 2.0) * 0.72, 1)
+
+    # ── 11. Anomaly Tier Application (Phase 1) ─────────────────────────────
+    is_vetoed = anom_res.get("is_vetoed", False)
+    anomaly_tier = anom_res.get("tier", "CLEAN")
+    confidence_multiplier = anom_res.get("confidence_multiplier", 1.0)
+
+    if is_vetoed:
+        direction = "SKIP"
         final_confidence = 0.0
+        calibrated_trade_win_prob = 50.0
+    else:
+        final_confidence = min(raw_ensemble_score * confidence_multiplier, 100.0)
 
     model_votes = {
         "statistical": stat_result,
         "xgboost":     xgb_result  if xgb_fitted  else None,
         "lightgbm":    lgbm_result if lgbm_fitted  else None,
         "lstm":        lstm_result if lstm_fitted  else None,
+        "logistic":    logit_result if logit_fitted else None,
     }
 
-    log.debug(
-        "[Ensemble] %s conf=%.1f (stat=%.1f xgb=%.1f lgbm=%.1f lstm=%.1f) "
-        "agreement=%d/%d consensus=%.2f sentiment_adj=%.1f",
-        direction, final_confidence,
-        signed_scores["statistical"], signed_scores["xgboost"],
-        signed_scores["lightgbm"],    signed_scores["lstm"],
-        agreement, n_active, consensus_mult, sentiment_adj,
-    )
-
-    return {
-        "direction":          direction,
-        "confidence":         round(final_confidence, 1),
-        "prob_up":            round(max(0, min(100, prob_up)), 1),
-        "prob_down":          round(max(0, min(100, prob_down)), 1),
-        "method":             "ensemble_advanced",
-        "model_votes":        model_votes,
-        "sentiment":          sentiment_result,
-        "ensemble_agreement": agreement,
-        "n_active_models":    n_active,
-        "dynamic_weights":    {k: round(v, 3) for k, v in weights.items()},
-        "signed_scores":      {k: round(v, 1) for k, v in signed_scores.items()},
-        "sentiment_adj":      round(sentiment_adj, 1),
-        "model_accuracy":     _tracker.get_accuracy_summary(),
+    result = {
+        "direction":                        direction,
+        "confidence":                       round(final_confidence, 1),
+        "raw_ensemble_score":               round(raw_ensemble_score, 1),
+        "calibrated_trade_win_probability": round(calibrated_trade_win_prob, 1),
+        "prob_up":                          round(max(0, min(100, prob_up)), 1),
+        "prob_down":                        round(max(0, min(100, prob_down)), 1),
+        "method":                           "ensemble_v2" if meta_active else "ensemble_advanced_fallback",
+        "trend_regime":                     regime_res.trend_regime.value,
+        "trend_score":                      round(regime_res.trend_score, 3),
+        "volatility_regime":                regime_res.volatility_regime.value,
+        "volatility_score":                 round(regime_res.volatility_score, 3),
+        "legacy_regime":                    regime_res.legacy_regime.value,
+        "anomaly_tier":                     anomaly_tier,
+        "is_vetoed":                        is_vetoed,
+        "meta_active":                      meta_active,
+        "calibration_active":               calib_active,
+        "model_votes":                      model_votes,
+        "sentiment":                        sentiment_result,
+        "ensemble_agreement":               agreement,
+        "n_active_models":                  n_active,
+        "dynamic_weights":                  {k: round(v, 3) for k, v in weights.items()},
+        "signed_scores":                    {k: round(v, 1) for k, v in signed_scores.items()},
+        "sentiment_adj":                    round(sentiment_adj, 1),
+        "model_accuracy":                   _tracker.get_accuracy_summary(),
     }
+
+    # ── 12. Shadow Mode Logging (Phase 5) ──────────────────────────────────
+    if symbol and not offline:
+        try:
+            from agents.ai_engine.shadow_evaluator import get_shadow_evaluator
+            v1_mock = {"direction": "UP" if raw_weighted_score > 5 else ("DOWN" if raw_weighted_score < -5 else "NEUTRAL"), "confidence": raw_ensemble_score}
+            get_shadow_evaluator().record_shadow_signal(symbol=symbol, v1_result=v1_mock, v2_result=result)
+        except Exception:
+            pass
+
+    return result
 
 
 def predict_batch_ensemble(df: pd.DataFrame, symbol: str = "", offline: bool = False) -> pd.Series:
@@ -556,12 +689,24 @@ def predict_batch_ensemble(df: pd.DataFrame, symbol: str = "", offline: bool = F
     except Exception as exc:
         log.debug("[Ensemble batch] LightGBM failed: %s", exc)
 
+    # ── Logistic Baseline batch ───────────────────────────────────────────
+    logit_conf   = np.full(n, 50.0)
+    logit_fitted = False
+    try:
+        from agents.ai_engine.logistic_baseline import get_logistic_predictor
+        logit = get_logistic_predictor()
+        logit_conf = logit.predict_batch(df).values.astype(float)
+        logit_fitted = logit.is_fitted
+    except Exception as exc:
+        log.debug("[Ensemble batch] Logistic baseline failed: %s", exc)
+
     # ── Dynamic weights for batch ──────────────────────────────────────────
     multipliers = _tracker.get_all_multipliers()
 
-    stat_w = _BASE_WEIGHTS["statistical"] * multipliers["statistical"]
-    xgb_w  = (_BASE_WEIGHTS["xgboost"]  * multipliers["xgboost"])  if xgb_fitted  else 0.0
-    lgbm_w = (_BASE_WEIGHTS["lightgbm"] * multipliers["lightgbm"]) if lgbm_fitted else 0.0
+    stat_w  = _BASE_WEIGHTS["statistical"] * multipliers.get("statistical", 1.0)
+    xgb_w   = (_BASE_WEIGHTS["xgboost"]  * multipliers.get("xgboost", 1.0))  if xgb_fitted  else 0.0
+    lgbm_w  = (_BASE_WEIGHTS["lightgbm"] * multipliers.get("lightgbm", 1.0)) if lgbm_fitted else 0.0
+    logit_w = (_BASE_WEIGHTS["logistic"] * multipliers.get("logistic", 1.0)) if logit_fitted else 0.0
 
     global _last_effective_weights
     weight_map = _guardrailed_normalize_weights(
@@ -570,6 +715,7 @@ def predict_batch_ensemble(df: pd.DataFrame, symbol: str = "", offline: bool = F
             "xgboost": xgb_w,
             "lightgbm": lgbm_w,
             "lstm": 0.0,
+            "logistic": logit_w,
         },
         previous_weights=_last_effective_weights,
     )
@@ -577,9 +723,10 @@ def predict_batch_ensemble(df: pd.DataFrame, symbol: str = "", offline: bool = F
 
     # Weighted blend
     blended = (
-        stat_conf * weight_map["statistical"] +
-        xgb_conf  * weight_map["xgboost"] +
-        lgbm_conf * weight_map["lightgbm"]
+        stat_conf * weight_map.get("statistical", 0.0) +
+        xgb_conf  * weight_map.get("xgboost", 0.0) +
+        lgbm_conf * weight_map.get("lightgbm", 0.0) +
+        logit_conf * weight_map.get("logistic", 0.0)
     )
 
     # ── Sentiment flat-shift ───────────────────────────────────────────────
@@ -649,18 +796,57 @@ def get_model_status() -> dict:
 
     lstm_fitted = os.path.exists("models/best_model.pt")
 
-    fitted_count = sum([xgb_fitted, lgbm_fitted, lstm_fitted])
-    mode = "Trained ML Ensemble" if fitted_count == 3 else (
-        f"Hybrid Ensemble ({fitted_count}/3 ML fitted)" if fitted_count > 0 else "Statistical Heuristic (0/3 models fitted)"
-    )
+    logit_fitted = False
+    try:
+        from agents.ai_engine.logistic_baseline import get_logistic_predictor
+        logit = get_logistic_predictor()
+        logit_fitted = bool(getattr(logit, "is_fitted", False))
+    except Exception:
+        pass
+
+    meta_fitted = False
+    try:
+        from agents.ai_engine.meta_learner import get_meta_learner
+        meta = get_meta_learner()
+        meta_fitted = bool(getattr(meta, "is_fitted", False))
+    except Exception:
+        pass
+
+    calib_fitted = False
+    try:
+        from agents.ai_engine.calibrator import get_calibrator
+        calib = get_calibrator()
+        calib_fitted = bool(getattr(calib, "is_fitted", False))
+    except Exception:
+        pass
+
+    fitted_count = sum([xgb_fitted, lgbm_fitted, lstm_fitted, logit_fitted])
+    total_ml = 4
+
+    if fitted_count == total_ml and calib_fitted:
+        mode = "Ensemble V2 (4/4 ML + Calibrated)"
+        badge_short = "🧠 Ensemble 4/4 • Calibrated"
+    elif fitted_count == total_ml:
+        mode = "Ensemble V2 (4/4 ML Fitted)"
+        badge_short = "🧠 Ensemble (4/4 ML)"
+    elif fitted_count > 0:
+        mode = f"Hybrid Ensemble ({fitted_count}/{total_ml} ML fitted)"
+        badge_short = f"🧠 AI: Hybrid ({fitted_count}/{total_ml} ML)"
+    else:
+        mode = "Statistical Heuristic (0/4 models fitted)"
+        badge_short = "🧠 AI: Heuristic (0/4 ML)"
 
     return {
         "mode": mode,
         "fitted_count": fitted_count,
-        "total_ml_models": 3,
+        "total_ml_models": total_ml,
         "statistical_heuristic": True,
         "xgboost_fitted": xgb_fitted,
         "lightgbm_fitted": lgbm_fitted,
         "lstm_fitted": lstm_fitted,
+        "logistic_fitted": logit_fitted,
+        "meta_learner_fitted": meta_fitted,
+        "calibrator_fitted": calib_fitted,
         "badge_text": f"AI Engine: {mode}",
+        "badge_short": badge_short,
     }

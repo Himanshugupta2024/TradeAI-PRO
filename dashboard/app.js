@@ -6117,11 +6117,11 @@ async function updateAiModelHealthBadge() {
 
         const badgeHeader = document.getElementById('aiEngineStatusBadge');
         if (badgeHeader) {
-            badgeHeader.textContent = ai.fitted_count === 3 
-                ? '🧠 AI: ML Ensemble (3/3)' 
-                : (ai.fitted_count > 0 ? `🧠 AI: Hybrid (${ai.fitted_count}/3 ML)` : '🧠 AI: Heuristic (0/3 ML)');
+            badgeHeader.textContent = ai.badge_short || (ai.fitted_count === 4 
+                ? '🧠 Ensemble 4/4 • Calibrated' 
+                : (ai.fitted_count > 0 ? `🧠 AI: Hybrid (${ai.fitted_count}/4 ML)` : '🧠 AI: Heuristic (0/4 ML)'));
             badgeHeader.title = ai.badge_text || 'AI Engine Status';
-            if (ai.fitted_count === 3) {
+            if (ai.fitted_count >= 3) {
                 badgeHeader.style.background = 'rgba(16,185,129,0.15)';
                 badgeHeader.style.color = '#10b981';
                 badgeHeader.style.borderColor = 'rgba(16,185,129,0.3)';
