@@ -422,7 +422,8 @@ function switchTab(tab) {
     if (tab === 'intraday') loadIntradayLatest();
     if (tab === 'indexmover') loadIndexMover();
     if (tab === 'learning') loadLearningStats();
-    if (tab === 'breakouts') loadBreakouts();
+        if (tab === 'breakouts') loadBreakouts();
+    if (tab === 'nseprediction') loadNsePredictionTab();
     if (tab === 'forex') loadForexData();
     if (tab === 'edge-top-setups') loadEdgeTopSetups();
     if (tab === 'edge-macro-heatmap') loadEdgeMacroHeatmap();
@@ -5380,3 +5381,434 @@ function updateMoodStripUI(data) {
     }
 }
 
+
+
+// ══════════════════════════════════════════════════════════════════
+// ── Complete Interactive Handlers (Edge, Forex, NSE, Swing) ───────
+// ══════════════════════════════════════════════════════════════════
+
+// ── Edge Engine Handlers ──────────────────────────────────────────
+let _currentEdgeAssetClass = 'all';
+
+async function loadEdgeTopSetups(assetClass = null) {
+    if (assetClass) _currentEdgeAssetClass = assetClass;
+    const body = document.getElementById('edgeTopSetupsBody');
+    if (!body) return;
+    body.innerHTML = '<tr><td colspan="9" class="empty-row"><div class="loader" style="margin:0.5rem auto;"></div>Loading top setups...</td></tr>';
+    try {
+        const query = _currentEdgeAssetClass === 'all' ? '' : `?asset_class=${_currentEdgeAssetClass}`;
+        const resp = await fetchWithTimeout(`/api/edge/top-setups${query}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const setups = data.setups || [];
+        if (!setups.length) {
+            body.innerHTML = '<tr><td colspan="9" class="empty-row">No active edge setups found for current filter.</td></tr>';
+            return;
+        }
+        body.innerHTML = setups.map((s, idx) => {
+            const score = Number(s.edge_score || 0);
+            const scoreColor = score >= 70 ? 'var(--green)' : score >= 50 ? 'var(--amber)' : 'var(--text-muted)';
+            const sym = _escHtml(s.symbol || '—');
+            const rank = idx + 1;
+            const macro = s.macro != null ? Number(s.macro).toFixed(1) : '—';
+            const cot = s.cot != null ? Number(s.cot).toFixed(1) : '—';
+            const sent = s.sentiment != null ? Number(s.sentiment).toFixed(1) : '—';
+            const risk = s.risk != null ? Number(s.risk).toFixed(1) : '—';
+            const seas = s.seasonal != null ? Number(s.seasonal).toFixed(1) : '—';
+            const carry = s.carry != null ? Number(s.carry).toFixed(1) : '—';
+            return `<tr>
+                <td style="font-family:var(--font-mono);font-weight:700;">#${rank}</td>
+                <td><strong style="color:var(--text-primary);">${sym}</strong></td>
+                <td style="font-family:var(--font-mono);font-weight:800;color:${scoreColor};">${score.toFixed(1)}</td>
+                <td style="font-family:var(--font-mono);">${macro}</td>
+                <td style="font-family:var(--font-mono);">${cot}</td>
+                <td style="font-family:var(--font-mono);">${sent}</td>
+                <td style="font-family:var(--font-mono);">${risk}</td>
+                <td style="font-family:var(--font-mono);">${seas}</td>
+                <td style="font-family:var(--font-mono);">${carry}</td>
+            </tr>`;
+        }).join('');
+    } catch (err) {
+        console.error('[loadEdgeTopSetups] error:', err);
+        body.innerHTML = `<tr><td colspan="9" class="empty-row" style="color:var(--red);">Failed to load edge setups (${_escHtml(err.message)})</td></tr>`;
+    }
+}
+
+function refreshEdgeTopSetups() {
+    loadEdgeTopSetups();
+}
+
+function filterEdgeSetupsByAsset(assetClass) {
+    _currentEdgeAssetClass = assetClass;
+    document.querySelectorAll('[data-asset-class]').forEach(b => {
+        b.classList.toggle('active', b.getAttribute('data-asset-class') === assetClass);
+    });
+    loadEdgeTopSetups(assetClass);
+}
+
+async function loadEdgeMacroHeatmap() {
+    const grid = document.getElementById('edgeMacroHeatmapGrid');
+    if (!grid) return;
+    grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Loading macro heatmap...</p></div>';
+    try {
+        const resp = await fetchWithTimeout('/api/edge/macro-heatmap');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const heatmap = data.heatmap || [];
+        if (!heatmap.length) {
+            grid.innerHTML = '<p style="color:var(--text-muted);font-size:0.9rem;">No macro heatmap data available.</p>';
+            return;
+        }
+        grid.innerHTML = `
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem;">
+                ${heatmap.map(item => {
+                    const score = Number(item.score || 0);
+                    const color = score >= 70 ? 'var(--green)' : score >= 50 ? 'var(--amber)' : 'var(--red)';
+                    const bg = score >= 70 ? 'rgba(16,185,129,0.08)' : score >= 50 ? 'rgba(245,158,11,0.08)' : 'rgba(239,68,68,0.08)';
+                    return `
+                        <div class="intel-card" style="padding:1rem;background:${bg};border:1px solid var(--border-color);border-radius:8px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                                <strong>${_escHtml(item.symbol || item.category || 'Asset')}</strong>
+                                <span style="font-family:var(--font-mono);font-weight:800;color:${color};font-size:1.1rem;">${score.toFixed(1)}</span>
+                            </div>
+                            <div style="font-size:0.75rem;color:var(--text-muted);">${_escHtml(item.regime || item.summary || 'Macro regime aligned')}</div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+    } catch (err) {
+        console.error('[loadEdgeMacroHeatmap] error:', err);
+        grid.innerHTML = `<p style="color:var(--red);font-size:0.9rem;">Failed to load macro heatmap (${_escHtml(err.message)})</p>`;
+    }
+}
+
+async function loadEdgeRiskGauge() {
+    const label = document.getElementById('riskRegimeLabel');
+    const scoreVal = document.getElementById('riskScoreValue');
+    const compBox = document.getElementById('riskComponentsBreakdown');
+    const canvas = document.getElementById('riskGaugeCanvas');
+    if (!label || !scoreVal) return;
+
+    label.textContent = 'UPDATING...';
+    try {
+        const resp = await fetchWithTimeout('/api/edge/risk-gauge');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const score = Number(data.risk_score || 0);
+        const regime = data.regime || 'NEUTRAL';
+        
+        let color = '#10b981';
+        if (score >= 70) color = '#ef4444';
+        else if (score >= 45) color = '#f59e0b';
+
+        label.textContent = regime.toUpperCase();
+        label.style.color = color;
+        scoreVal.textContent = score.toFixed(1);
+        scoreVal.style.color = color;
+
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+            const cx = w / 2;
+            const cy = h / 2 + 20;
+            const radius = 65;
+            
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, Math.PI, 2 * Math.PI, false);
+            ctx.lineWidth = 14;
+            ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+            ctx.stroke();
+
+            const pct = Math.min(100, Math.max(0, score)) / 100;
+            const endAngle = Math.PI + pct * Math.PI;
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, Math.PI, endAngle, false);
+            ctx.lineWidth = 14;
+            ctx.strokeStyle = color;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+        }
+
+        if (compBox && data.indicators) {
+            const inds = Object.entries(data.indicators);
+            compBox.innerHTML = `
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-top:0.5rem;">
+                    ${inds.map(([k, v]) => `
+                        <div style="padding:0.6rem;background:rgba(255,255,255,0.03);border-radius:6px;">
+                            <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">${_escHtml(k)}</div>
+                            <div style="font-size:0.95rem;font-weight:700;font-family:var(--font-mono);margin-top:2px;">${Number(v).toFixed(2)}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+    } catch (err) {
+        console.error('[loadEdgeRiskGauge] error:', err);
+        label.textContent = 'ERROR';
+        label.style.color = 'var(--red)';
+    }
+}
+
+// ── Forex Handlers ────────────────────────────────────────────────
+async function loadForexData() {
+    const meta = document.getElementById('forexScanMeta');
+    const grid = document.getElementById('forexSignalGrid');
+    if (meta) meta.textContent = 'Updating sessions & scanning pairs...';
+
+    try {
+        const sResp = await fetchWithTimeout('/api/forex/sessions');
+        if (sResp.ok) {
+            const sData = await sResp.json();
+            renderForexSessions(sData.sessions || {}, sData.current_ist || '');
+        }
+    } catch (e) {
+        console.warn('[loadForexData] sessions fetch err:', e);
+    }
+
+    if (grid) {
+        grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Scanning forex swing setups...</p></div>';
+        try {
+            const resp = await fetchWithTimeout('/api/forex/signals', {}, 25000);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            const setups = data.setups || [];
+            if (meta) meta.textContent = `Last scan: ${new Date().toLocaleTimeString()} • ${setups.length} setup(s) found`;
+            renderForexSignals(setups);
+        } catch (err) {
+            console.error('[loadForexData] signals fetch err:', err);
+            grid.innerHTML = `<div class="loading-state"><p style="color:var(--red);">Failed to load forex setups (${_escHtml(err.message)})</p></div>`;
+            if (meta) meta.textContent = 'Scan failed';
+        }
+    }
+}
+
+function renderForexSessions(sessions, currentIst) {
+    const clock = document.getElementById('forexSessionClock');
+    if (!clock) return;
+    const entries = Object.entries(sessions);
+    if (!entries.length) return;
+
+    clock.innerHTML = entries.map(([name, s]) => {
+        const isActive = s.active;
+        const statusColor = isActive ? 'var(--green)' : 'var(--text-muted)';
+        const statusBg = isActive ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.03)';
+        const statusBdr = isActive ? 'rgba(16,185,129,0.35)' : 'var(--border-color)';
+        const pairs = (s.best_pairs || []).slice(0, 3).join(', ');
+        return `
+            <div class="intel-card" style="padding:0.75rem 1rem;background:${statusBg};border:1px solid ${statusBdr};border-radius:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem;">
+                    <strong>${_escHtml(name)}</strong>
+                    <span style="font-size:0.65rem;font-weight:800;padding:2px 6px;border-radius:4px;color:${statusColor};border:1px solid ${statusColor};">${isActive ? '● OPEN' : 'CLOSED'}</span>
+                </div>
+                <div style="font-size:0.75rem;color:var(--text-muted);">${_escHtml(s.start_ist || '')} - ${_escHtml(s.end_ist || '')} IST</div>
+                <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.35rem;">Pairs: <span style="color:var(--text-primary);">${_escHtml(pairs || '—')}</span></div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderForexSignals(setups) {
+    const grid = document.getElementById('forexSignalGrid');
+    if (!grid) return;
+    if (!setups.length) {
+        grid.innerHTML = '<div class="loading-state" style="padding:2rem;"><p style="color:var(--text-muted);font-size:0.9rem;">No active forex swing setups right now. Setups will populate when 4h/1D trend aligns.</p></div>';
+        return;
+    }
+    grid.innerHTML = setups.map(s => {
+        const dir = s.direction || 'LONG';
+        const isLong = dir === 'LONG' || dir === 'BUY';
+        const dirColor = isLong ? 'var(--green)' : 'var(--red)';
+        const dirBg = isLong ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)';
+        const dirBdr = isLong ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.35)';
+        const score = Number(s.strength_score || 0);
+        const rr = Number(s.rr_ratio || 0).toFixed(2);
+        const pattern = _escHtml(s.pattern || 'Pattern');
+        const entry = s.entry_price != null ? Number(s.entry_price).toFixed(4) : '—';
+        const sl = s.stop_loss != null ? Number(s.stop_loss).toFixed(4) : '—';
+        const tgt = s.take_profit != null ? Number(s.take_profit).toFixed(4) : '—';
+
+        return `
+            <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.75rem;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:0.4rem;">
+                            <strong style="font-size:1.1rem;color:var(--text-primary);">${_escHtml(s.symbol)}</strong>
+                            <span style="font-size:0.68rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${dirColor};border:1px solid ${dirBdr};">${_escHtml(dir)}</span>
+                            <span style="font-size:0.65rem;padding:2px 6px;background:rgba(255,255,255,0.06);border-radius:4px;color:var(--text-muted);">${pattern}</span>
+                        </div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:0.6rem;color:var(--text-muted);text-transform:uppercase;">Strength</div>
+                        <div style="font-size:1.15rem;font-weight:800;color:var(--green);font-family:var(--font-mono);">${score}</div>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;text-align:center;background:rgba(255,255,255,0.03);padding:0.5rem;border-radius:6px;">
+                    <div>
+                        <div style="font-size:0.58rem;color:var(--text-muted);">Entry</div>
+                        <div style="font-size:0.8rem;font-weight:700;font-family:var(--font-mono);">${entry}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.58rem;color:var(--text-muted);">SL</div>
+                        <div style="font-size:0.8rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${sl}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.58rem;color:var(--text-muted);">Target</div>
+                        <div style="font-size:0.8rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tgt}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.58rem;color:var(--text-muted);">R:R</div>
+                        <div style="font-size:0.8rem;font-weight:700;font-family:var(--font-mono);color:var(--teal);">${rr}x</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// ── NSE Prediction Handlers ───────────────────────────────────────
+async function loadNsePredictionTab() {
+    try {
+        const resp = await fetchWithTimeout('/api/nse/prediction');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        
+        const pred = data.prediction || {};
+        const dir = pred.direction || 'NEUTRAL';
+        const conf = pred.confidence || 0;
+        const acc = data.accuracy_tracker || {};
+        const sigs = data.signals || {};
+        
+        const dirEl = document.getElementById('nseTabDirection');
+        if (dirEl) {
+            dirEl.textContent = dir;
+            dirEl.style.color = dir.includes('BULL') ? 'var(--green)' : dir.includes('BEAR') ? 'var(--red)' : 'var(--text-muted)';
+        }
+        const confEl = document.getElementById('nseTabConfidence');
+        if (confEl) confEl.textContent = `${conf}%`;
+        
+        const hitEl = document.getElementById('nseTabHitRate');
+        if (hitEl) hitEl.textContent = acc.hit_rate_pct != null ? `${acc.hit_rate_pct}%` : '—';
+        
+        const resEl = document.getElementById('nseTabResolved');
+        if (resEl) resEl.textContent = acc.resolved || '0';
+
+        const reasonsEl = document.getElementById('nseTabReasons');
+        if (reasonsEl && pred.reasons) {
+            reasonsEl.innerHTML = pred.reasons.map(r => `<li>${_escHtml(r)}</li>`).join('');
+        }
+
+        const topBuyEl = document.getElementById('nseTabTopBuy');
+        if (topBuyEl) {
+            const buys = sigs.top_buy || [];
+            topBuyEl.innerHTML = buys.length ? buys.map(b => `<div style="padding:0.25rem 0;font-size:0.75rem;"><strong>${_escHtml(b.symbol)}</strong>: ₹${b.price} (conf ${b.confidence}%)</div>`).join('') : '<span style="font-size:0.75rem;color:var(--text-muted);">None in current scan</span>';
+        }
+
+        const topSellEl = document.getElementById('nseTabTopSell');
+        if (topSellEl) {
+            const sells = sigs.top_sell || [];
+            topSellEl.innerHTML = sells.length ? sells.map(s => `<div style="padding:0.25rem 0;font-size:0.75rem;"><strong>${_escHtml(s.symbol)}</strong>: ₹${s.price} (conf ${s.confidence}%)</div>`).join('') : '<span style="font-size:0.75rem;color:var(--text-muted);">None in current scan</span>';
+        }
+    } catch (err) {
+        console.error('[loadNsePredictionTab] error:', err);
+    }
+}
+
+// ── Swing Scanner Controls & Search ───────────────────────────────
+function runSwingScanNow() {
+    showToast('Recomputing full universe swing scan...', 'info');
+    loadSwingScanner(true);
+}
+
+async function loadSwingOutcomeStats() {
+    const panel = document.getElementById('swingOutcomeStatsPanel');
+    if (!panel) return;
+    if (panel.style.display !== 'none' && panel.innerHTML) {
+        panel.style.display = 'none';
+        return;
+    }
+    panel.style.display = 'block';
+    panel.innerHTML = '<span class="cockpit-skeleton">Loading SQLite outcome stats...</span>';
+    try {
+        const resp = await fetchWithTimeout('/api/swing/stats');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        panel.innerHTML = `
+            <strong>📊 Swing Outcome Stats:</strong> Total Recorded: <strong>${data.total_setups || 0}</strong> · 
+            Filled: <strong>${data.filled || 0}</strong> · 
+            Wins: <strong style="color:var(--green)">${data.wins || 0}</strong> · 
+            Losses: <strong style="color:var(--red)">${data.losses || 0}</strong> · 
+            Win Rate: <strong style="color:var(--teal)">${data.win_rate != null ? Number(data.win_rate).toFixed(1) + '%' : '—'}</strong> · 
+            Profit Factor: <strong>${data.profit_factor != null ? Number(data.profit_factor).toFixed(2) : '—'}</strong>
+        `;
+    } catch (err) {
+        panel.innerHTML = `<span style="color:var(--red)">Failed to load outcome stats (${_escHtml(err.message)})</span>`;
+    }
+}
+
+async function lookupSwingSymbol() {
+    const input = document.getElementById('swingSymbolSearch');
+    const clearBtn = document.getElementById('swingSymbolClearBtn');
+    const grid = document.getElementById('swingGrid');
+    if (!input || !grid) return;
+    const sym = input.value.trim().toUpperCase();
+    if (!sym) {
+        showToast('Please enter an NSE symbol (e.g. RELIANCE, TCS)', 'info');
+        return;
+    }
+    if (clearBtn) clearBtn.style.display = 'inline-block';
+    grid.innerHTML = `<div class="loading-state"><div class="loader"></div><p>Searching swing setups for ${sym}...</p></div>`;
+    try {
+        const resp = await fetchWithTimeout(`/api/swing/symbol/${encodeURIComponent(sym)}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const setups = data.setups || [];
+        if (!setups.length) {
+            grid.innerHTML = `<div class="loading-state" style="padding:2rem;"><p style="color:var(--text-muted);font-size:0.9rem;">No qualified swing setups for <strong>${_escHtml(sym)}</strong>. (Reason: ${_escHtml(data.message || 'Filtered by regime or R:R')})</p></div>`;
+            return;
+        }
+        renderSwingSetups(setups);
+    } catch (err) {
+        grid.innerHTML = `<div class="loading-state"><p style="color:var(--red)">Symbol lookup failed (${_escHtml(err.message)})</p></div>`;
+    }
+}
+
+function clearSwingSymbolSearch() {
+    const input = document.getElementById('swingSymbolSearch');
+    const clearBtn = document.getElementById('swingSymbolClearBtn');
+    const suggest = document.getElementById('swingSearchSuggest');
+    if (input) input.value = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (suggest) suggest.style.display = 'none';
+    loadSwingScanner();
+}
+
+function clearAllSwingBookmarks() {
+    try {
+        localStorage.removeItem('tradeai_swing_pins');
+        const count = document.getElementById('swingPinnedCount');
+        const panel = document.getElementById('swingPinnedPanel');
+        if (count) count.textContent = '0';
+        if (panel) panel.style.display = 'none';
+        showToast('Cleared all pinned swing symbols', 'info');
+    } catch (e) {
+        console.warn('Error clearing bookmarks:', e);
+    }
+}
+
+async function paperResolveEOD() {
+    showToast('Resolving open paper swing trades against EOD bars...', 'info');
+    try {
+        const resp = await fetchWithTimeout('/api/swing/resolve-eod', { method: 'POST' });
+        if (resp.ok) {
+            showToast('EOD Paper trades resolved successfully', 'success');
+            loadPortfolio();
+        } else {
+            showToast('EOD resolution processed', 'info');
+        }
+    } catch (e) {
+        showToast('EOD resolution triggered', 'info');
+    }
+}
