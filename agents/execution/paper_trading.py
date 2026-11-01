@@ -239,13 +239,14 @@ class PaperTradingEngine:
             log.warning("BLOCKED: %s", self.last_rejection_reason)
             return None
 
-        # Risk check: cooldown timer
-        if symbol in self._cooldowns and self._cooldowns[symbol] > 0:
+        # Risk check: cooldown timer (normalized key check)
+        norm_sym = self._normalize_symbol(symbol)
+        if norm_sym in self._cooldowns and self._cooldowns[norm_sym] > 0:
             self.last_rejection_reason = (
-                f"{symbol} on cooldown ({self._cooldowns[symbol]} candles remaining)"
+                f"{symbol} on cooldown ({self._cooldowns[norm_sym]} candles remaining)"
             )
             log.warning("BLOCKED: %s on cooldown (%d candles remaining)",
-                        symbol, self._cooldowns[symbol])
+                        symbol, self._cooldowns[norm_sym])
             return None
 
         # Normalize and validate direction
@@ -291,6 +292,21 @@ class PaperTradingEngine:
         # Regime-aware target scaling for better exit fit across market states.
         target_multiplier = self._target_multiplier_for_regime(regime=regime, direction=direction)
         adjusted_tp = self._scale_target(entry=entry, target=tp, direction=direction, multiplier=target_multiplier)
+
+        # Recompute and validate RR after regime target scaling (never allow target to shrink below required RR)
+        if direction == "LONG":
+            adjusted_reward = adjusted_tp - entry
+        else:
+            adjusted_reward = entry - adjusted_tp
+
+        adjusted_rr = adjusted_reward / risk
+        if adjusted_rr < required_rr:
+            self.last_rejection_reason = (
+                f"Adjusted RR {adjusted_rr:.2f} below minimum {required_rr:.2f} after regime scaling"
+            )
+            log.warning("BLOCKED: %s", self.last_rejection_reason)
+            return None
+
         partial_target = self._partial_target(entry=entry, target=adjusted_tp, direction=direction)
 
         # Safeguard: prevent trading with non-positive capital
@@ -331,6 +347,21 @@ class PaperTradingEngine:
                 qty = 1.0
             else:
                 self.last_rejection_reason = f"Insufficient purchasing power for minimum position (capital={self.capital:.2f}, entry={entry:.2f})"
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
+
+        # Risk check: portfolio-wide gross exposure limit (cumulative leverage across all open positions)
+        current_exposure = sum(abs(t.entry_price * t.quantity) for t in self.open_trades)
+        max_exposure = self.capital * float(getattr(settings, "MAX_PORTFOLIO_LEVERAGE", 1.0))
+        new_exposure = abs(entry * qty)
+        if current_exposure + new_exposure > max_exposure:
+            remaining_exposure = max(max_exposure - current_exposure, 0.0)
+            if remaining_exposure >= entry:
+                qty = math.floor(remaining_exposure / entry) if entry >= 10 else round(remaining_exposure / entry, 4)
+            else:
+                self.last_rejection_reason = (
+                    f"Portfolio leverage limit exceeded (current={current_exposure:.2f}, new={new_exposure:.2f}, max={max_exposure:.2f})"
+                )
                 log.warning("BLOCKED: %s", self.last_rejection_reason)
                 return None
 
@@ -402,6 +433,7 @@ class PaperTradingEngine:
             List of trades that were closed in this update.
         """
         closed = []
+        state_changed = False
         atr_values = atr_values or {}
 
         for trade in list(self.open_trades):
@@ -409,8 +441,30 @@ class PaperTradingEngine:
             if not price:
                 continue
 
-            high = price.get("high", 0)
-            low = price.get("low", 0)
+            raw_high = price.get("high")
+            raw_low = price.get("low")
+
+            try:
+                high = float(raw_high)
+                low = float(raw_low)
+            except (TypeError, ValueError):
+                log.warning("Skipping invalid price bar for %s: high=%s low=%s", trade.symbol, raw_high, raw_low)
+                continue
+
+            if (
+                not math.isfinite(high)
+                or not math.isfinite(low)
+                or high <= 0
+                or low <= 0
+                or low > high
+            ):
+                log.warning(
+                    "Skipping malformed price bar for %s: high=%s low=%s",
+                    trade.symbol,
+                    high,
+                    low,
+                )
+                continue
 
             # Update trailing SL if ATR is available
             atr = atr_values.get(trade.symbol, 0)
@@ -422,8 +476,9 @@ class PaperTradingEngine:
                     current_low=low,
                     atr=atr,
                 )
-                if new_sl is not None:
+                if new_sl is not None and new_sl != trade.stop_loss:
                     trade.stop_loss = new_sl
+                    state_changed = True
 
             if trade.direction in ("LONG", "BUY"):
                 # Check SL
@@ -433,7 +488,9 @@ class PaperTradingEngine:
                     closed.append(trade)
                 else:
                     # Optional scale-out: book partial at mid-target and trail remainder.
-                    self._maybe_take_partial_profit(trade, high=high, low=low, atr=atr)
+                    partial_changed = self._maybe_take_partial_profit(trade, high=high, low=low, atr=atr)
+                    if partial_changed:
+                        state_changed = True
                     # Check TP
                     if high >= trade.target:
                         self._close_trade(trade, trade.target, "CLOSED_TP")
@@ -446,12 +503,14 @@ class PaperTradingEngine:
                     self._close_trade(trade, trade.stop_loss, exit_reason)
                     closed.append(trade)
                 else:
-                    self._maybe_take_partial_profit(trade, high=high, low=low, atr=atr)
+                    partial_changed = self._maybe_take_partial_profit(trade, high=high, low=low, atr=atr)
+                    if partial_changed:
+                        state_changed = True
                     if low <= trade.target:
                         self._close_trade(trade, trade.target, "CLOSED_TP")
                         closed.append(trade)
 
-        if closed:
+        if closed or state_changed:
             self._save()
 
         return closed
@@ -465,6 +524,16 @@ class PaperTradingEngine:
 
     def close_manual(self, trade_id: int, exit_price: float) -> PaperTrade | None:
         """Manually close a trade at a specified price."""
+        try:
+            exit_price = float(exit_price)
+        except (TypeError, ValueError):
+            log.warning("Invalid manual exit price '%s' for trade #%s", exit_price, trade_id)
+            return None
+
+        if not math.isfinite(exit_price) or exit_price <= 0:
+            log.warning("Non-positive or non-finite manual exit price %s for trade #%s", exit_price, trade_id)
+            return None
+
         for trade in self.open_trades:
             if trade.id == trade_id:
                 self._close_trade(trade, exit_price, "CLOSED_MANUAL")
@@ -523,13 +592,13 @@ class PaperTradingEngine:
         max_dd = float(drawdown.max())
         max_dd_pct = float((drawdown / peak).max() * 100) if peak.max() > 0 else 0
 
-        # Profit factor
-        gross_profit = sum(p for p in pnls if p > 0) or 0
-        gross_loss = abs(sum(p for p in pnls if p < 0)) or 1
-        profit_factor = gross_profit / gross_loss
+        # Profit factor: undefined/None if gross_loss is 0
+        gross_profit = sum(p for p in pnls if p > 0)
+        gross_loss = abs(sum(p for p in pnls if p < 0))
+        profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else None
 
-        # Sharpe & Sortino ratio (annualized)
-        # Prefer true calendar daily returns if >= 2 distinct trading days exist
+        # Sharpe & Sortino ratio
+        # Annualized with sqrt(252) ONLY if >= 2 calendar daily returns exist
         daily_pnls = [v for v in self._daily_pnl.values() if v != 0]
         if len(daily_pnls) > 1:
             base_cap = max(self.initial_capital, 1.0)
@@ -541,47 +610,51 @@ class PaperTradingEngine:
             downside_std = np.std(downside, ddof=1) if len(downside) > 1 else std_ret
             sortino = (mean_ret / downside_std) * np.sqrt(252) if downside_std > 0 else 0.0
         elif len(pnl_pcts) > 1:
+            # Per-trade returns != daily returns: do NOT apply sqrt(252) annualization factor
             returns = np.array(pnl_pcts) / 100.0
             mean_ret = np.mean(returns)
             std_ret = np.std(returns, ddof=1)
-            sharpe = (mean_ret / std_ret) * np.sqrt(252) if std_ret > 0 else 0.0
+            sharpe = round(mean_ret / std_ret, 2) if std_ret > 0 else 0.0
             downside = returns[returns < 0]
             downside_std = np.std(downside, ddof=1) if len(downside) > 1 else std_ret
-            sortino = (mean_ret / downside_std) * np.sqrt(252) if downside_std > 0 else 0.0
+            sortino = round(mean_ret / downside_std, 2) if downside_std > 0 else 0.0
         else:
-            sharpe = 0.0
-            sortino = 0.0
+            sharpe = None
+            sortino = None
 
         return {
             "total_trades": len(closed),
             "sample_size": len(closed),
             "winning_trades": len(wins),
             "losing_trades": len(losses),
-            "win_rate": round(len(wins) / len(closed) * 100, 1) if closed else 0,
+            "win_rate": round(len(wins) / len(closed) * 100, 1) if closed else None,
             "capital": round(self.capital, 2),
             "total_pnl": round(sum(pnls), 2),
-            "avg_pnl": round(sum(pnls) / len(pnls), 2),
-            "avg_win": round(np.mean([self._trade_total_pnl(t) for t in wins]), 2) if wins else 0,
-            "avg_loss": round(np.mean([self._trade_total_pnl(t) for t in losses]), 2) if losses else 0,
-            "best_trade": round(max(pnls), 2),
-            "worst_trade": round(min(pnls), 2),
+            "avg_pnl": round(sum(pnls) / len(pnls), 2) if pnls else 0.0,
+            "avg_win": round(np.mean([self._trade_total_pnl(t) for t in wins]), 2) if wins else 0.0,
+            "avg_loss": round(np.mean([self._trade_total_pnl(t) for t in losses]), 2) if losses else 0.0,
+            "best_trade": round(max(pnls), 2) if pnls else 0.0,
+            "worst_trade": round(min(pnls), 2) if pnls else 0.0,
             "consecutive_losses": self._consecutive_losses,
             "daily_pnl": round(self._daily_pnl.get(_today_ist(), 0), 2),
-            "sharpe_ratio": round(sharpe, 2),
-            "sortino_ratio": round(sortino, 2),
+            "sharpe_ratio": round(sharpe, 2) if sharpe is not None else None,
+            "sortino_ratio": round(sortino, 2) if sortino is not None else None,
             "max_drawdown": round(max_dd, 2),
             "max_drawdown_pct": round(max_dd_pct, 1),
-            "profit_factor": round(profit_factor, 2),
+            "profit_factor": profit_factor,
             "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
         }
 
     def get_portfolio_heat_pct(self) -> float:
-        """Current portfolio heat = open risk / capital."""
+        """Current portfolio heat = open risk / capital (protects trailing-profit positions)."""
         if self.capital <= 0:
             return 0.0
         open_risk = 0.0
         for trade in self.open_trades:
-            risk_per_unit = abs(trade.entry_price - trade.stop_loss)
+            if trade.direction in ("LONG", "BUY"):
+                risk_per_unit = max(trade.entry_price - trade.stop_loss, 0.0)
+            else:
+                risk_per_unit = max(trade.stop_loss - trade.entry_price, 0.0)
             open_risk += risk_per_unit * max(trade.quantity, 0.0)
         return max(open_risk / self.capital, 0.0)
 
@@ -703,18 +776,18 @@ class PaperTradingEngine:
             return total
         return float(getattr(trade, "pnl", 0.0) or 0.0) * float(getattr(trade, "quantity", 0.0) or 0.0)
 
-    def _maybe_take_partial_profit(self, trade: PaperTrade, *, high: float, low: float, atr: float) -> None:
-        """Take partial profit once and keep remainder running with tighter protection."""
+    def _maybe_take_partial_profit(self, trade: PaperTrade, *, high: float, low: float, atr: float) -> bool:
+        """Take partial profit once and keep remainder running with tighter protection. Returns True if taken."""
         if not getattr(settings, "PARTIAL_TP_ENABLED", True):
-            return
+            return False
         if trade.partial_taken or trade.status != "OPEN":
-            return
+            return False
         if trade.quantity <= 0:
-            return
+            return False
 
         trigger = float(trade.partial_target or 0.0)
         if trigger <= 0:
-            return
+            return False
 
         if trade.direction in ("LONG", "BUY"):
             hit = high >= trigger
@@ -723,13 +796,13 @@ class PaperTradingEngine:
             hit = low <= trigger
             pnl_per_unit = trade.entry_price - trigger
         if not hit:
-            return
+            return False
 
         frac = float(getattr(settings, "PARTIAL_TP_CLOSE_FRACTION", 0.5))
         frac = min(0.9, max(0.1, frac))
         close_qty = max(0.0, trade.quantity * frac)
         if close_qty <= 0:
-            return
+            return False
 
         realized = pnl_per_unit * close_qty
         trade.partial_taken = True
@@ -768,6 +841,7 @@ class PaperTradingEngine:
             realized,
             trade.quantity,
         )
+        return True
 
     def _update_circuit_breaker_state(self) -> None:
         if self.initial_capital <= 0:
@@ -806,8 +880,8 @@ class PaperTradingEngine:
         # Remove from trailing manager
         self.trailing_manager.remove(trade.id)
 
-        # Start cooldown for this symbol
-        self._cooldowns[trade.symbol] = settings.COOLDOWN_CANDLES
+        # Start cooldown for this symbol (key normalized)
+        self._cooldowns[self._normalize_symbol(trade.symbol)] = settings.COOLDOWN_CANDLES
 
         # Track daily PnL (keyed by IST date)
         today = _today_ist()
@@ -888,7 +962,8 @@ class PaperTradingEngine:
         self._consecutive_losses = data.get("consecutive_losses", 0)
         self._last_trade_date = data.get("last_trade_date", _today_ist())
         self._daily_pnl = data.get("daily_pnl", {})
-        self._cooldowns = data.get("cooldowns", {})
+        raw_cooldowns = data.get("cooldowns", {})
+        self._cooldowns = {self._normalize_symbol(k): int(v) for k, v in raw_cooldowns.items()}
         self._circuit_breaker_active = bool(data.get("circuit_breaker_active", False))
         self._circuit_breaker_reason = str(data.get("circuit_breaker_reason", ""))
         self.equity_history = data.get("equity_history", [])
