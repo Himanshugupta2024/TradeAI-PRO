@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+import pandas as pd
 import yfinance as yf
 
 from data.providers.base import MarketDataProvider, MarketQuote
@@ -147,6 +148,101 @@ class YahooProvider(MarketDataProvider):
                 continue
 
         return quotes
+
+    async def get_batch_ohlcv(
+        self,
+        symbols: list[str],
+        period: str = "5d",
+        interval: str = "5m",
+    ) -> dict[str, pd.DataFrame]:
+        """
+        Fetch OHLCV candles for multiple symbols in a single vectorized HTTP download.
+        Returns a dict of {symbol: pd.DataFrame} with normalized columns:
+        ['timestamp', 'open', 'high', 'low', 'close', 'volume'].
+        """
+        if not symbols:
+            return {}
+
+        clean_to_yf = {s: _normalize_yahoo_symbol(s) for s in symbols}
+        yf_tickers = list(set(clean_to_yf.values()))
+        t0 = time.perf_counter()
+
+        def _fetch_sync():
+            return yf.download(
+                tickers=yf_tickers,
+                period=period,
+                interval=interval,
+                group_by="ticker",
+                threads=True,
+                timeout=self.timeout,
+                progress=False,
+            )
+
+        try:
+            df = await asyncio.to_thread(_fetch_sync)
+            latency_ms = (time.perf_counter() - t0) * 1000.0
+            self.health.record_success(latency_ms)
+        except Exception as exc:
+            self.health.record_failure()
+            logger.warning("[YahooProvider] Batch OHLCV download failed: %s", exc)
+            return {}
+
+        if df is None or df.empty:
+            return {}
+
+        results: dict[str, pd.DataFrame] = {}
+        is_multi = len(yf_tickers) > 1
+
+        for clean_sym, yf_sym in clean_to_yf.items():
+            try:
+                if is_multi:
+                    if yf_sym not in df.columns.levels[0]:
+                        continue
+                    sym_df = df[yf_sym].dropna(how="all").copy()
+                else:
+                    sym_df = df.dropna(how="all").copy()
+
+                if sym_df.empty:
+                    continue
+
+                # Standardize column names to lowercase
+                sym_df = sym_df.rename(columns={
+                    "Open": "open", "High": "high", "Low": "low",
+                    "Close": "close", "Volume": "volume",
+                })
+                keep = [c for c in ["open", "high", "low", "close", "volume"] if c in sym_df.columns]
+                sym_df = sym_df[keep].copy()
+
+                # Reset index to timestamp column
+                if sym_df.index.name in ("Date", "Datetime", "Timestamp") or isinstance(sym_df.index, pd.DatetimeIndex):
+                    sym_df = sym_df.reset_index()
+                    col0 = sym_df.columns[0]
+                    if col0.lower() in ("date", "datetime", "timestamp", "index"):
+                        sym_df = sym_df.rename(columns={col0: "timestamp"})
+                elif "timestamp" not in sym_df.columns:
+                    sym_df = sym_df.reset_index()
+                    col0 = sym_df.columns[0]
+                    if col0.lower() in ("date", "datetime", "timestamp", "index"):
+                        sym_df = sym_df.rename(columns={col0: "timestamp"})
+
+                sym_df["timestamp"] = pd.to_datetime(sym_df["timestamp"], errors="coerce", format="mixed")
+                sym_df = sym_df.dropna(subset=["timestamp"]).reset_index(drop=True)
+
+                if sym_df["timestamp"].dt.tz is not None:
+                    try:
+                        from zoneinfo import ZoneInfo
+                        sym_df["timestamp"] = sym_df["timestamp"].dt.tz_convert(ZoneInfo("Asia/Kolkata")).dt.tz_localize(None)
+                    except Exception:
+                        sym_df["timestamp"] = sym_df["timestamp"].dt.tz_localize(None)
+
+                # Basic validation: must have at least 1 row and required columns
+                if len(sym_df) > 0 and "close" in sym_df.columns and "open" in sym_df.columns:
+                    results[clean_sym] = sym_df
+            except Exception as e:
+                logger.debug("[YahooProvider] OHLCV parse error for %s: %s", clean_sym, e)
+                continue
+
+        return results
 
     async def get_candles(
         self,

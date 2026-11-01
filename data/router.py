@@ -163,6 +163,36 @@ class MarketDataRouter:
 
         return []
 
+    async def get_batch_ohlcv(
+        self,
+        symbols: list[str],
+        period: str = "5d",
+        interval: str = "5m",
+    ) -> dict[str, Any]:
+        """
+        Fetch OHLCV DataFrames for multiple symbols via healthy providers.
+        """
+        if not symbols:
+            return {}
+
+        for provider in self.providers:
+            if not provider.is_available():
+                continue
+            try:
+                dfs = await provider.get_batch_ohlcv(symbols, period=period, interval=interval)
+                if dfs:
+                    return dfs
+            except Exception as exc:
+                provider.health.record_failure()
+                logger.warning(
+                    "[MarketDataRouter] get_batch_ohlcv on '%s' failed: %s",
+                    provider.name,
+                    exc,
+                )
+                continue
+
+        return {}
+
     def get_health_status(self) -> dict[str, Any]:
         """Expose operational telemetry for all providers."""
         import time
@@ -191,3 +221,14 @@ def create_default_router() -> MarketDataRouter:
     yahoo = YahooProvider(timeout=8.0)
     twelve = TwelveDataProvider()
     return MarketDataRouter(providers=[yahoo, twelve])
+
+
+_default_router: MarketDataRouter | None = None
+
+
+def get_default_router() -> MarketDataRouter:
+    """Return singleton instance of default MarketDataRouter."""
+    global _default_router
+    if _default_router is None:
+        _default_router = create_default_router()
+    return _default_router

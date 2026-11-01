@@ -709,7 +709,12 @@ async def _initial_load():
         _loading_status["phase"] = "error"
 
 
-async def _fetch_nse_symbol_safe(display_name: str, sem: asyncio.Semaphore) -> None:
+async def _fetch_nse_symbol_safe(
+    display_name: str,
+    sem: asyncio.Semaphore,
+    preloaded_df: pd.DataFrame | None = None,
+    preloaded_htf_df: pd.DataFrame | None = None,
+) -> None:
     """Fetch one symbol with timeout starting only after semaphore acquisition."""
     try:
         # Important: do not include semaphore queue wait in timeout.
@@ -717,7 +722,11 @@ async def _fetch_nse_symbol_safe(display_name: str, sem: asyncio.Semaphore) -> N
         # causing false timeouts before a symbol even starts processing.
         async with sem:
             await asyncio.wait_for(
-                _fetch_nse_symbol(display_name),
+                _fetch_nse_symbol(
+                    display_name,
+                    preloaded_df=preloaded_df,
+                    preloaded_htf_df=preloaded_htf_df,
+                ),
                 timeout=SYMBOL_FETCH_TIMEOUT_SECONDS,
             )
     except asyncio.TimeoutError:
@@ -987,11 +996,18 @@ def _fire_telegram_signal(display_name: str, df: pd.DataFrame) -> None:
         logger.warning("Telegram/journal fire failed for %s: %s", display_name, exc)
 
 
-async def _fetch_nse_symbol(display_name: str) -> None:
+async def _fetch_nse_symbol(
+    display_name: str,
+    preloaded_df: pd.DataFrame | None = None,
+    preloaded_htf_df: pd.DataFrame | None = None,
+) -> None:
     """Fetch, validate, process, and cache a single NSE symbol."""
     try:
         global _last_feed_update
-        df = await asyncio.to_thread(fetch_ohlcv, display_name, "5d", "5m")
+        if preloaded_df is not None and not preloaded_df.empty:
+            df = preloaded_df.copy()
+        else:
+            df = await asyncio.to_thread(fetch_ohlcv, display_name, "5d", "5m")
         if df is None or df.empty:
             logger.warning("No 5m data for %s — skipping", display_name)
             return
@@ -1012,7 +1028,10 @@ async def _fetch_nse_symbol(display_name: str) -> None:
         # ── Real AI confidence from ensemble predictor ────────────────────
         ai_confidence = await asyncio.to_thread(predict_batch, df)
 
-        htf_df = await asyncio.to_thread(fetch_ohlcv, display_name, "60d", "1d")
+        if preloaded_htf_df is not None and not preloaded_htf_df.empty:
+            htf_df = preloaded_htf_df.copy()
+        else:
+            htf_df = await asyncio.to_thread(fetch_ohlcv, display_name, "60d", "1d")
         if htf_df is not None and not htf_df.empty and len(htf_df) >= 20:
             htf_df = calculate_indicators(htf_df)
             htf_df = classify_trend(htf_df)
@@ -1101,9 +1120,36 @@ async def _refresh_market_data():
     """
     global _last_refresh, _last_feed_update
     async with _get_refresh_lock():
-        # ── Concurrent NSE symbol fetching (with per-symbol timeout) ──
+        # ── V2: Fast Vectorized Batch Download via MarketDataRouter ──
+        try:
+            from data.router import get_default_router
+            router = get_default_router()
+            t_batch = time.perf_counter()
+            dfs_5m = await router.get_batch_ohlcv(TOP_NSE_SYMBOLS, period="5d", interval="5m")
+            dfs_1d = await router.get_batch_ohlcv(TOP_NSE_SYMBOLS, period="60d", interval="1d")
+            elapsed_batch = time.perf_counter() - t_batch
+            logger.info(
+                "[V2 Router] Batch download completed in %.2fs (5m: %d symbols, 1d: %d symbols)",
+                elapsed_batch,
+                len(dfs_5m),
+                len(dfs_1d),
+            )
+        except Exception as router_exc:
+            logger.warning("[V2 Router] Batch download error, falling back to per-symbol: %s", router_exc)
+            dfs_5m = {}
+            dfs_1d = {}
+
+        # ── Concurrent NSE symbol processing (with per-symbol timeout) ──
         sem = asyncio.Semaphore(MAX_NSE_CONCURRENCY)
-        nse_tasks = [_fetch_nse_symbol_safe(name, sem) for name in TOP_NSE_SYMBOLS]
+        nse_tasks = [
+            _fetch_nse_symbol_safe(
+                name,
+                sem,
+                preloaded_df=dfs_5m.get(name),
+                preloaded_htf_df=dfs_1d.get(name),
+            )
+            for name in TOP_NSE_SYMBOLS
+        ]
         await asyncio.gather(*nse_tasks)
 
         # ── Fetch crypto data via CCXT ────────────────────────

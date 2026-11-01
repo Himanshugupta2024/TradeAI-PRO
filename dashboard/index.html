@@ -1008,81 +1008,100 @@
 
         <!-- ════════ OVERVIEW TAB ════════ -->
         <section class="tab-content active" id="overviewTab">
-            <div id="marketSessionBanner" style="display:none;margin-bottom:0.75rem;padding:0.6rem 0.9rem;border-radius:10px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#fecaca;font-size:0.82rem;font-weight:600;"></div>
-            <div class="stats-strip" id="statsStrip">
-                <div class="stat-chip">
-                    <span class="stat-value" id="statCapital">₹0</span>
-                    <span class="stat-label">Capital</span>
+            <!-- ── Market Session Alert (Slim Terminal Notification) ── -->
+            <div id="marketSessionBanner" class="terminal-session-alert" style="display:none;"></div>
+
+            <!-- ── Hero Capital & Performance Metric Strip ── -->
+            <div class="terminal-hero-strip" id="statsStrip">
+                <div class="hero-metric-tile">
+                    <span class="hero-metric-lbl">Account Capital</span>
+                    <span class="hero-metric-val" id="statCapital">₹0</span>
                 </div>
-                <div class="stat-chip accent">
-                    <span class="stat-value" id="statPnl">₹0</span>
-                    <span class="stat-label">Total P&L</span>
+                <div class="hero-metric-tile">
+                    <span class="hero-metric-lbl">Total Realized P&L</span>
+                    <span class="hero-metric-val" id="statPnl">₹0</span>
                 </div>
-                <div class="stat-chip">
-                    <span class="stat-value" id="statWinRate">0%</span>
-                    <span class="stat-label">Win Rate</span>
+                <div class="hero-metric-tile">
+                    <span class="hero-metric-lbl">Model Win Rate</span>
+                    <span class="hero-metric-val" id="statWinRate">0%</span>
                 </div>
-                <div class="stat-chip" id="chipTrades" style="cursor:pointer;" onclick="switchTab('portfolio')" title="Click to view open positions in Portfolio">
-                    <span class="stat-value" id="statTrades">0</span>
-                    <span class="stat-label">Trades (View ➔)</span>
-                </div>
-            </div>
-            <div id="statsHint" style="margin:0.4rem 0 0.65rem;color:var(--text-muted);font-size:0.75rem;display:none;"></div>
-            <!-- Active Open Trades Quick-Card (shown on Overview when trades > 0) -->
-            <div id="overviewActiveTradesCard" style="display:none;margin:0.5rem 0 0.9rem;padding:0.75rem 0.9rem;border-radius:10px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.25);">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;">
-                    <div style="display:flex;align-items:center;gap:0.45rem;">
-                        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#10b981;"></span>
-                        <span style="font-size:0.8rem;font-weight:700;letter-spacing:0.02em;">Active Paper Positions</span>
-                        <span id="overviewOpenCountBadge" class="badge-buy" style="font-size:0.68rem;padding:1px 5px;">2 Open</span>
+                <div class="hero-metric-tile interactive" id="chipTrades" onclick="switchTab('portfolio')" title="Click to view open positions in Portfolio">
+                    <div class="hero-metric-header">
+                        <span class="hero-metric-lbl">Open Positions</span>
+                        <span class="hero-tile-arrow">➔</span>
                     </div>
-                    <button class="refresh-btn" onclick="switchTab('portfolio')" type="button" style="font-size:0.72rem;padding:2px 8px;cursor:pointer;">View Full Portfolio ➔</button>
-                </div>
-                <div id="overviewOpenTradesList" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:0.6rem;">
-                    <!-- Injected by app.js -->
+                    <span class="hero-metric-val" id="statTrades">0</span>
                 </div>
             </div>
-            <div class="update-bar">
-                <span class="update-label">Last updated:</span>
-                <span class="update-time" id="lastUpdated">—</span>
-                <span class="update-dot" id="refreshDot"></span>
-                <span class="auto-refresh-label">Auto-refresh 60s</span>
-                <label style="display:inline-flex;align-items:center;gap:0.35rem;margin-left:0.5rem;font-size:0.75rem;color:var(--text-muted);">
-                    <input type="checkbox" id="showSkipToggle">
-                    <span id="showSkipLabel">Show filtered signals</span>
-                </label>
-                <button class="refresh-btn" id="manualRefreshBtn">↻ Refresh</button>
+            <div id="statsHint" class="stats-hint-text" style="display:none;"></div>
+
+            <!-- ── Active Open Trades Panel (Institutional Position Tickets) ── -->
+            <div id="overviewActiveTradesCard" class="terminal-positions-panel" style="display:none;">
+                <div class="terminal-panel-header">
+                    <div class="terminal-panel-title">
+                        <span class="panel-live-dot"></span>
+                        <span>Active Paper Positions</span>
+                        <span id="overviewOpenCountBadge" class="terminal-badge-counter">0 Open</span>
+                    </div>
+                    <button class="terminal-ghost-btn" onclick="switchTab('portfolio')" type="button">
+                        View Full Portfolio ➔
+                    </button>
+                </div>
+                <div id="overviewOpenTradesList" class="terminal-positions-grid">
+                    <!-- Injected dynamically by app.js -->
+                </div>
             </div>
-            <div class="signal-controls-row" style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin:0.35rem 0 0.55rem;">
-                <button class="refresh-btn signal-filter-btn active" data-signal-filter="all" type="button">All</button>
-                <button class="refresh-btn signal-filter-btn" data-signal-filter="buy" type="button">BUY</button>
-                <button class="refresh-btn signal-filter-btn" data-signal-filter="sell" type="button">SELL</button>
-                <button class="refresh-btn signal-filter-btn" data-signal-filter="high_conf" type="button">High Confidence (&gt;75%)</button>
-                <span style="margin-left:auto;color:var(--text-muted);font-size:0.74rem;">Sort by</span>
-                <select id="signalSortSelect" style="background:var(--bg-input);border:1px solid var(--border-color);color:var(--text-primary);padding:0.32rem 0.5rem;border-radius:7px;font-size:0.75rem;">
-                    <option value="qs_desc">QS Score (High to Low)</option>
-                    <option value="conf_desc">Confidence (High to Low)</option>
-                    <option value="signal_type">Signal Type (BUY/SELL)</option>
-                </select>
+
+            <!-- ── Consolidated Action & Signal Control Bar (Single-Ribbon Command) ── -->
+            <div class="terminal-action-ribbon">
+                <!-- Left: Filter Segmented Control -->
+                <div class="segmented-control" role="tablist">
+                    <button class="seg-btn signal-filter-btn active" data-signal-filter="all" type="button">All Signals</button>
+                    <button class="seg-btn signal-filter-btn" data-signal-filter="buy" type="button">BUY</button>
+                    <button class="seg-btn signal-filter-btn" data-signal-filter="sell" type="button">SELL</button>
+                    <button class="seg-btn signal-filter-btn" data-signal-filter="high_conf" type="button">High Conf (&gt;75%)</button>
+                </div>
+
+                <!-- Center: Sort & Filter Toggle -->
+                <div class="ribbon-center-cluster">
+                    <div class="sort-select-wrap">
+                        <span class="ribbon-label">Sort:</span>
+                        <select id="signalSortSelect" class="terminal-select">
+                            <option value="qs_desc">QS Score (High to Low)</option>
+                            <option value="conf_desc">Confidence (High to Low)</option>
+                            <option value="signal_type">Signal Type (BUY/SELL)</option>
+                        </select>
+                    </div>
+                    <label class="terminal-checkbox-label">
+                        <input type="checkbox" id="showSkipToggle">
+                        <span id="showSkipLabel">Show Filtered (0 SKIP)</span>
+                    </label>
+                </div>
+
+                <!-- Right: Telemetry & Utility Actions -->
+                <div class="ribbon-right-cluster">
+                    <div class="telemetry-pill">
+                        <span class="update-dot" id="refreshDot"></span>
+                        <span class="update-time" id="lastUpdated">—</span>
+                    </div>
+                    <button class="ribbon-btn" id="manualRefreshBtn" title="Refresh market feeds">↻ Refresh</button>
+                    <div class="ribbon-btn-group">
+                        <button type="button" class="ribbon-btn-ghost" id="p5ExportJsonBtn" title="Export signals JSON">JSON</button>
+                        <button type="button" class="ribbon-btn-ghost" id="p5ExportCsvBtn" title="Export signals CSV">CSV</button>
+                        <button type="button" class="ribbon-btn-ghost" id="p5ToggleNotesBtn" title="Open private trader journal">Notes ▾</button>
+                    </div>
+                </div>
             </div>
-            <!-- ── Decision Cockpit ────────────────────────── -->
+
+            <!-- Notes Tray (Accordion dropdown) -->
+            <div id="p5TraderNotesWrap" class="p5-trader-notes-wrap" style="display:none;margin-bottom:0.85rem;">
+                <label class="p5-notes-label">Private notes (stored in this browser only)</label>
+                <textarea id="p5TraderNotes" class="p5-trader-notes" rows="3" placeholder="Journal: thesis, size, what you’ll watch next…"></textarea>
+            </div>
+
             <div id="cockpitSection" class="cockpit-section">
                 <!-- Phase 5: Feed health banner (hidden when OK) -->
                 <div id="cockpitFeedBanner" class="p5-feed-banner" style="display:none;" role="status"></div>
-
-                <!-- Phase 5: Export + trader notes -->
-                <div class="p5-cockpit-toolbar">
-                    <div class="p5-toolbar-left">
-                        <button type="button" class="p5-btn" id="p5ExportJsonBtn" title="Download cockpit + briefing as JSON">Export JSON</button>
-                        <button type="button" class="p5-btn" id="p5ExportCsvBtn" title="Top setups as CSV">Export CSV</button>
-                        <span class="p5-kbd-hint" title="Keyboard shortcuts">Press <kbd>r</kbd> refresh · <kbd>?</kbd> help</span>
-                    </div>
-                    <button type="button" class="p5-btn p5-btn-ghost" id="p5ToggleNotesBtn" aria-expanded="false">Trader notes ▾</button>
-                </div>
-                <div id="p5TraderNotesWrap" class="p5-trader-notes-wrap" style="display:none;">
-                    <label class="p5-notes-label">Private notes (stored in this browser only)</label>
-                    <textarea id="p5TraderNotes" class="p5-trader-notes" rows="3" placeholder="Journal: thesis, size, what you’ll watch next…"></textarea>
-                </div>
 
                 <!-- Row 1: System State + Market Guardrails -->
                 <div class="cockpit-row" id="cockpitStateRow">

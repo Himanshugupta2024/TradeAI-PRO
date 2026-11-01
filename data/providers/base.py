@@ -103,6 +103,15 @@ class MarketDataProvider(ABC):
         """Fetch quotes for a batch of symbols in one efficient call."""
         ...
 
+    async def get_batch_ohlcv(
+        self,
+        symbols: list[str],
+        period: str = "5d",
+        interval: str = "5m",
+    ) -> dict[str, Any]:
+        """Fetch OHLCV DataFrames for a batch of symbols (optional, default empty dict)."""
+        return {}
+
     def is_available(self) -> bool:
         """Check if provider is healthy and not in cooldown."""
         import time

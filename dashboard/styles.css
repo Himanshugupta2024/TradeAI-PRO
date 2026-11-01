@@ -1884,3 +1884,524 @@ body::before {
     }
 }
 
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   INSTITUTIONAL PRECISION TERMINAL DESIGN SYSTEM
+   Linear-grade dark terminal aesthetic with high-density financial typography
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Terminal Session Alert ────────────────────────────────────────── */
+.terminal-session-alert {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    margin-bottom: 0.85rem;
+    padding: 0.55rem 0.95rem;
+    border-radius: 6px;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.22);
+    border-left: 3px solid #F59E0B;
+    color: #FDE68A;
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+.terminal-session-alert::before {
+    content: '●';
+    color: #F59E0B;
+    font-size: 0.65rem;
+    animation: blink 1.8s infinite ease-in-out;
+}
+
+/* ── 2. Unified Hero Capital Metric Strip ────────────────────────────── */
+.terminal-hero-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    background: rgba(17, 22, 34, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    margin-bottom: 0.85rem;
+    overflow: hidden;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+}
+
+.hero-metric-tile {
+    padding: 0.85rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    transition: background 0.15s ease;
+    position: relative;
+}
+.hero-metric-tile:last-child {
+    border-right: none;
+}
+.hero-metric-tile.interactive {
+    cursor: pointer;
+}
+.hero-metric-tile.interactive:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.hero-metric-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.hero-metric-lbl {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: #64748B;
+}
+.hero-tile-arrow {
+    font-size: 0.65rem;
+    color: #64748B;
+    transition: transform 0.15s ease, color 0.15s ease;
+}
+.hero-metric-tile.interactive:hover .hero-tile-arrow {
+    transform: translateX(3px);
+    color: #38BDF8;
+}
+
+.hero-metric-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.35rem;
+    font-weight: 800;
+    color: #F8FAFC;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+}
+
+.stats-hint-text {
+    margin: -0.35rem 0 0.65rem 0.25rem;
+    color: #64748B;
+    font-size: 0.72rem;
+}
+
+/* ── 3. Terminal Positions Panel & Tickets ───────────────────────────── */
+.terminal-positions-panel {
+    background: rgba(17, 22, 34, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 0.75rem 1rem 0.95rem;
+    margin-bottom: 0.85rem;
+    backdrop-filter: blur(12px);
+}
+
+.terminal-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.65rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.terminal-panel-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #E2E8F0;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.panel-live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #10B981;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.7);
+    animation: blink 2s infinite ease-in-out;
+}
+.terminal-badge-counter {
+    font-size: 0.62rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(16, 185, 129, 0.12);
+    color: #10B981;
+    border: 1px solid rgba(16, 185, 129, 0.28);
+}
+.terminal-ghost-btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #94A3B8;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.terminal-ghost-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #F8FAFC;
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+.terminal-positions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.75rem;
+}
+
+/* Position Ticket Cards */
+.pos-ticket {
+    background: rgba(13, 17, 27, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 7px;
+    padding: 0.65rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    position: relative;
+    overflow: hidden;
+}
+.pos-ticket:hover {
+    border-color: rgba(255, 255, 255, 0.16);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.pos-ticket.pos-ticket-long {
+    border-left: 3px solid #10B981;
+}
+.pos-ticket.pos-ticket-short {
+    border-left: 3px solid #F43F5E;
+}
+
+.pos-ticket-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.pos-symbol-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.pos-dir-pill {
+    font-size: 0.62rem;
+    font-weight: 800;
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.pos-dir-pill.dir-long {
+    background: rgba(16, 185, 129, 0.12);
+    color: #10B981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.pos-dir-pill.dir-short {
+    background: rgba(244, 63, 94, 0.12);
+    color: #F43F5E;
+    border: 1px solid rgba(244, 63, 94, 0.3);
+}
+.pos-symbol-name {
+    font-size: 0.92rem;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    color: #F8FAFC;
+    letter-spacing: -0.01em;
+}
+.pos-exit-btn {
+    background: rgba(244, 63, 94, 0.08);
+    border: 1px solid rgba(244, 63, 94, 0.25);
+    color: #F43F5E;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.pos-exit-btn:hover {
+    background: #F43F5E;
+    color: #FFFFFF;
+    border-color: #F43F5E;
+}
+
+.pos-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.35rem;
+    padding: 0.45rem 0.55rem;
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.03);
+}
+.pos-metric-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.pos-metric-label {
+    font-size: 0.54rem;
+    font-weight: 600;
+    color: #64748B;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.pos-metric-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: #F1F5F9;
+}
+.pos-metric-number.text-loss { color: #F43F5E; }
+.pos-metric-number.text-profit { color: #10B981; }
+
+.pos-ticket-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+.pos-status-pulse {
+    font-size: 0.62rem;
+    font-weight: 700;
+    color: #10B981;
+    letter-spacing: 0.04em;
+}
+
+/* ── 4. Consolidated Action & Command Ribbon ─────────────────────────── */
+.terminal-action-ribbon {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(17, 22, 34, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    margin-bottom: 0.95rem;
+    backdrop-filter: blur(12px);
+}
+
+.segmented-control {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.32);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 2px;
+}
+.seg-btn {
+    background: none;
+    border: none;
+    color: #94A3B8;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+}
+.seg-btn:hover {
+    color: #F8FAFC;
+}
+.seg-btn.active {
+    background: #38BDF8;
+    color: #090D14;
+    font-weight: 700;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.ribbon-center-cluster {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+.sort-select-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+.ribbon-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #64748B;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.terminal-select {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #E2E8F0;
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 5px;
+    outline: none;
+    cursor: pointer;
+    font-family: inherit;
+}
+.terminal-select:focus {
+    border-color: #38BDF8;
+}
+.terminal-checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.72rem;
+    color: #94A3B8;
+    cursor: pointer;
+    user-select: none;
+}
+
+.ribbon-right-cluster {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.telemetry-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.68rem;
+    color: #94A3B8;
+    font-family: 'JetBrains Mono', monospace;
+    background: rgba(0, 0, 0, 0.28);
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+}
+.ribbon-btn {
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    color: #38BDF8;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.ribbon-btn:hover {
+    background: #38BDF8;
+    color: #090D14;
+}
+
+.ribbon-btn-group {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 5px;
+    overflow: hidden;
+}
+.ribbon-btn-ghost {
+    background: none;
+    border: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    color: #94A3B8;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.ribbon-btn-ghost:last-child {
+    border-right: none;
+}
+.ribbon-btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #F8FAFC;
+}
+
+/* ── 5. Decision Cockpit Tiles Polish ────────────────────────────────── */
+.cockpit-tile {
+    background: rgba(17, 22, 34, 0.75) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 8px !important;
+    padding: 0.85rem 1rem !important;
+    backdrop-filter: blur(14px) !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+.cockpit-tile:hover {
+    border-color: rgba(56, 189, 248, 0.25) !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25) !important;
+}
+.cockpit-tile-label {
+    font-size: 0.66rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+    color: #94A3B8 !important;
+    margin-bottom: 0.65rem !important;
+}
+
+/* ── 6. Sidebar Polish ───────────────────────────────────────────────── */
+.sidebar {
+    background: #090D14 !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+.sidebar-group-label {
+    font-size: 0.62rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
+    color: #475569 !important;
+    padding: 0.75rem 0.85rem 0.35rem !important;
+}
+.sidebar-item {
+    font-size: 0.82rem !important;
+    font-weight: 500 !important;
+    color: #94A3B8 !important;
+    padding: 0.5rem 0.85rem !important;
+    border-radius: 6px !important;
+    margin: 1px 0.5rem !important;
+    transition: all 0.15s ease !important;
+    position: relative !important;
+}
+.sidebar-item:hover {
+    background: rgba(255, 255, 255, 0.04) !important;
+    color: #F8FAFC !important;
+}
+.sidebar-item.active {
+    background: rgba(56, 189, 248, 0.08) !important;
+    color: #38BDF8 !important;
+    font-weight: 600 !important;
+}
+.sidebar-item.active::before {
+    content: '' !important;
+    position: absolute !important;
+    left: -0.5rem !important;
+    top: 4px !important;
+    bottom: 4px !important;
+    width: 3px !important;
+    background: #38BDF8 !important;
+    border-radius: 0 2px 2px 0 !important;
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.5) !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 900px) {
+    .terminal-hero-strip {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .hero-metric-tile:nth-child(2) {
+        border-right: none;
+    }
+    .hero-metric-tile:nth-child(1),
+    .hero-metric-tile:nth-child(2) {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .terminal-action-ribbon {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .ribbon-right-cluster {
+        justify-content: space-between;
+    }
+}

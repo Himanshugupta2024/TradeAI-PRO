@@ -72,3 +72,41 @@ async def test_twelve_data_credit_budgeting():
     # Calling get_quote with exhausted budget must yield None without making network call
     res = await provider.get_quote("EUR/USD")
     assert res is None
+
+
+@pytest.mark.asyncio
+async def test_yahoo_batch_ohlcv_parsing():
+    import pandas as pd
+    provider = YahooProvider()
+
+    # Create mock MultiIndex DataFrame returned by yf.download
+    dates = pd.date_range("2026-11-01 09:15:00", periods=3, freq="5min")
+    tuples = [
+        ("INFY.NS", "Open"), ("INFY.NS", "High"), ("INFY.NS", "Low"), ("INFY.NS", "Close"), ("INFY.NS", "Volume"),
+        ("TCS.NS", "Open"), ("TCS.NS", "High"), ("TCS.NS", "Low"), ("TCS.NS", "Close"), ("TCS.NS", "Volume"),
+    ]
+    cols = pd.MultiIndex.from_tuples(tuples)
+    data = [
+        [1500, 1510, 1495, 1505, 1000, 3500, 3520, 3490, 3510, 2000],
+        [1505, 1515, 1500, 1512, 1200, 3510, 3530, 3505, 3525, 2200],
+        [1512, 1520, 1508, 1518, 1500, 3525, 3540, 3515, 3535, 2500],
+    ]
+    mock_df = pd.DataFrame(data, index=dates, columns=cols)
+
+    with patch("yfinance.download", return_value=mock_df):
+        res = await provider.get_batch_ohlcv(["INFY", "TCS"], period="5d", interval="5m")
+
+    assert "INFY" in res
+    assert "TCS" in res
+
+    infy_df = res["INFY"]
+    assert len(infy_df) == 3
+    for col in ["timestamp", "open", "high", "low", "close", "volume"]:
+        assert col in infy_df.columns
+
+    assert infy_df.iloc[-1]["close"] == 1518.0
+    assert infy_df.iloc[-1]["high"] == 1520.0
+
+    tcs_df = res["TCS"]
+    assert len(tcs_df) == 3
+    assert tcs_df.iloc[-1]["close"] == 3535.0

@@ -134,3 +134,27 @@ async def test_router_batch_quotes_and_health_telemetry():
     assert "primary" in telemetry
     assert telemetry["primary"]["healthy"] is True
     assert telemetry["primary"]["total_calls"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_router_get_batch_ohlcv():
+    import pandas as pd
+    cache = MemoryCache()
+
+    class OhlcvProvider(DummyProvider):
+        async def get_batch_ohlcv(self, symbols, period="5d", interval="5m"):
+            df = pd.DataFrame({
+                "timestamp": [pd.Timestamp.now()],
+                "open": [100.0], "high": [105.0], "low": [98.0],
+                "close": [102.0], "volume": [500.0]
+            })
+            return {s: df for s in symbols}
+
+    primary = OhlcvProvider("primary")
+    router = MarketDataRouter(providers=[primary], cache=cache)
+
+    dfs = await router.get_batch_ohlcv(["INFY", "TCS"])
+    assert len(dfs) == 2
+    assert "INFY" in dfs
+    assert "TCS" in dfs
+    assert dfs["INFY"].iloc[0]["close"] == 102.0

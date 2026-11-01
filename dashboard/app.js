@@ -1831,31 +1831,43 @@ function renderOverviewActiveTrades(openTrades) {
 
     list.innerHTML = openTrades.map(t => {
         const isLong = t.direction === 'LONG' || t.direction === 'BUY';
-        const sideColor = isLong ? '#10b981' : '#ef4444';
-        const sideBg = isLong ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)';
-        const sideBorder = isLong ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)';
+        const sideClass = isLong ? 'pos-ticket-long' : 'pos-ticket-short';
         const entry = Number(t.entry_price || 0).toFixed(2);
         const sl = Number(t.stop_loss || 0).toFixed(2);
         const tp = Number(t.target || 0).toFixed(2);
         const qty = Number(t.quantity || 1).toFixed(1);
 
         return `
-            <div style="padding:0.6rem 0.75rem;border-radius:8px;background:var(--bg-card);border:1px solid ${sideBorder};display:flex;flex-direction:column;gap:0.35rem;">
-                <div style="display:flex;align-items:center;justify-content:space-between;">
-                    <div style="display:flex;align-items:center;gap:0.4rem;">
-                        <span style="font-size:0.7rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${sideBg};color:${sideColor};border:1px solid ${sideBorder};">${t.direction}</span>
-                        <b style="font-size:0.85rem;">${t.symbol}</b>
+            <div class="pos-ticket ${sideClass}">
+                <div class="pos-ticket-top">
+                    <div class="pos-symbol-group">
+                        <span class="pos-dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${t.direction}</span>
+                        <span class="pos-symbol-name">${t.symbol}</span>
                     </div>
-                    <button class="refresh-btn" onclick="closePaperTrade(${t.id}, ${t.entry_price})" style="font-size:0.68rem;padding:2px 7px;background:rgba(239,68,68,0.15);border:1px solid var(--red);color:var(--red);cursor:pointer;border-radius:4px;">Exit</button>
+                    <button class="pos-exit-btn" onclick="closePaperTrade(${t.id}, ${t.entry_price})" type="button">
+                        Exit
+                    </button>
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(3, 1fr);font-size:0.72rem;color:var(--text-muted);font-family:var(--font-mono, monospace);margin-top:0.2rem;">
-                    <div>Entry: <b style="color:var(--text-primary)">₹${entry}</b></div>
-                    <div>SL: <b style="color:var(--red)">₹${sl}</b></div>
-                    <div>Target: <b style="color:var(--green)">₹${tp}</b></div>
+                <div class="pos-metrics-grid">
+                    <div class="pos-metric-cell">
+                        <span class="pos-metric-label">ENTRY</span>
+                        <span class="pos-metric-number">₹${entry}</span>
+                    </div>
+                    <div class="pos-metric-cell">
+                        <span class="pos-metric-label">SL</span>
+                        <span class="pos-metric-number text-loss">₹${sl}</span>
+                    </div>
+                    <div class="pos-metric-cell">
+                        <span class="pos-metric-label">TARGET</span>
+                        <span class="pos-metric-number text-profit">₹${tp}</span>
+                    </div>
+                    <div class="pos-metric-cell">
+                        <span class="pos-metric-label">QTY</span>
+                        <span class="pos-metric-number">${qty}</span>
+                    </div>
                 </div>
-                <div style="font-size:0.68rem;color:var(--text-muted);display:flex;justify-content:space-between;margin-top:0.15rem;">
-                    <span>Qty: ${qty}</span>
-                    <span>Status: <b style="color:#10b981;">RUNNING</b></span>
+                <div class="pos-ticket-footer">
+                    <span class="pos-status-pulse">● RUNNING</span>
                 </div>
             </div>
         `;
