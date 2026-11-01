@@ -1088,6 +1088,14 @@ async def _fetch_nse_symbol(
         else:
             market_trend = None
 
+        # ── Targeted News Sentiment Gate (GDELT / Google RSS) ────────────
+        sent_data = None
+        try:
+            from data.providers.gdelt import get_gdelt_provider
+            sent_data = await get_gdelt_provider().get_sentiment(display_name)
+        except Exception as sent_err:
+            logger.debug("[Service] Sentiment lookup failed for %s: %s", display_name, sent_err)
+
         df = generate_signals(
             df,
             ai_confidence=ai_confidence,
@@ -1095,6 +1103,7 @@ async def _fetch_nse_symbol(
             symbol=display_name,
             market_trend=market_trend,
             mtf_score=mtf_score,
+            news_sentiment=sent_data,
         )
         _market_data[display_name] = df
         _signal_cache[display_name] = df

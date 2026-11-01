@@ -1124,6 +1124,9 @@ EDGE_SCORES_CACHE_FILE: str = "edge_scores_cache.json"
 # Fallback behavior
 EDGE_FALLBACK_ENABLED: bool = True     # Use stale cache on API failure
 
+# V2 Targeted News & Sentiment Gate
+SENTIMENT_GATE_ENABLED: bool = os.getenv("SENTIMENT_GATE_ENABLED", "true").lower() in ("true", "1")
+
 
 def validate_runtime_config() -> None:
     """Fail fast on invalid runtime settings that can break refresh/signals."""

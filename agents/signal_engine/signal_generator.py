@@ -363,6 +363,7 @@ def generate_signals(
     edge_score: EdgeScoreBreakdown = None,  # Optional EdgeScore from macro intelligence layer
     asset_class: str = None,  # "forex" | "crypto" | "nse" | "index" (for EdgeScore routing)
     offline: bool = False,
+    news_sentiment: dict | None = None,
 ) -> pd.DataFrame:
     """
     Apply the signal generation rules to an enriched DataFrame.
@@ -911,12 +912,38 @@ def generate_signals(
         buy_condition = buy_condition & mtf_signal_gate_buy_ok
         sell_condition = sell_condition & mtf_signal_gate_sell_ok
 
+    # ── News Sentiment Advisory Gate ──────────────────────────────────────────
+    sentiment_tone = 0.0
+    sentiment_label = "NEUTRAL"
+    sentiment_buy_ok = True
+    sentiment_sell_ok = True
+
+    if news_sentiment and getattr(settings, "SENTIMENT_GATE_ENABLED", True):
+        try:
+            sentiment_tone = float(news_sentiment.get("tone_score", 0.0) or 0.0)
+            sentiment_label = str(news_sentiment.get("sentiment", "NEUTRAL") or "NEUTRAL").upper()
+            if sentiment_label == "BEARISH" and sentiment_tone <= -4.0:
+                sentiment_buy_ok = False
+                log.info("[SentimentGate] Blocked LONG for %s: tone=%.1f (%s)", symbol, sentiment_tone, sentiment_label)
+            elif sentiment_label == "BULLISH" and sentiment_tone >= 4.0:
+                sentiment_sell_ok = False
+                log.info("[SentimentGate] Blocked SHORT for %s: tone=%.1f (%s)", symbol, sentiment_tone, sentiment_label)
+        except Exception as sent_err:
+            log.debug("[SentimentGate] Parse error for %s: %s", symbol, sent_err)
+
+    if getattr(settings, "SENTIMENT_GATE_ENABLED", True):
+        buy_condition = buy_condition & sentiment_buy_ok
+        sell_condition = sell_condition & sentiment_sell_ok
+
     # Store scores for debugging and dashboard display
     result["signal_score_buy"] = buy_score.round(1)
     result["signal_score_sell"] = sell_score.round(1)
     result["confluence_votes_buy"] = confluence_buy_votes
     result["confluence_votes_sell"] = confluence_sell_votes
     result["confluence_gate_ok"] = (confluence_buy_ok | confluence_sell_ok)
+    result["sentiment_tone"] = sentiment_tone
+    result["sentiment_label"] = sentiment_label
+    result["sentiment_gate_ok"] = np.where(buy_condition, sentiment_buy_ok, np.where(sell_condition, sentiment_sell_ok, True))
     result["ema200_gate_ok"] = np.where(
         buy_condition,
         ema200_long_ok,

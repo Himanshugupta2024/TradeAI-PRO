@@ -2811,6 +2811,24 @@ def scan_all_symbols(
     # ── Fetch news context scores (cached — non-blocking) ──────────────────
     news_contexts: dict[str, dict] = {}
     try:
+        from data.providers.gdelt import get_gdelt_provider
+        _gd = get_gdelt_provider()
+        for sym in symbol_data:
+            clean_s = sym.replace(".NS", "").replace(".BO", "").strip().upper()
+            cached_s = _gd._cache.get(clean_s)
+            if cached_s:
+                t_score = float(cached_s[1].get("tone_score", 0.0) or 0.0)
+                news_contexts[sym] = {
+                    "context_score": round(t_score / 10.0, 2),
+                    "news_sentiment_24hr": round(t_score / 10.0, 2),
+                    "news_sentiment_7d": round(t_score / 10.0, 2),
+                    "weekly_trend_bias": cached_s[1].get("sentiment", "NEUTRAL"),
+                    "news_volume_spike": False,
+                    "event_risk_active": False,
+                }
+    except Exception:
+        pass
+    try:
         from agents.data_ingestion.context_fetcher import build_context_fetcher
 
         _cf = build_context_fetcher()
