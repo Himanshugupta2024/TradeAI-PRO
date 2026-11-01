@@ -911,6 +911,9 @@
             <button class="theme-toggle" id="themeToggle" title="Toggle theme">
                 <span class="theme-icon" id="themeIcon">🌙</span>
             </button>
+            <div id="aiEngineStatusBadge" class="ai-engine-badge" title="AI Model Status: Statistical heuristic fallback active while ML models are unfitted." style="display:flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;font-size:0.65rem;font-weight:700;background:rgba(245,158,11,0.12);color:var(--amber,#f59e0b);border:1px solid rgba(245,158,11,0.3);white-space:nowrap;cursor:help;">
+                <span>🧠 AI: Heuristic (0/3 ML)</span>
+            </div>
             <div class="market-status" id="marketStatus">
                 <span class="status-dot live"></span>
                 <span>LIVE</span>
@@ -1081,7 +1084,10 @@
                 <!-- Row 1: System State + Market Guardrails -->
                 <div class="cockpit-row" id="cockpitStateRow">
                     <div class="cockpit-tile cockpit-system" id="cockpitSystemState">
-                        <div class="cockpit-tile-label">System State</div>
+                        <div class="cockpit-tile-label" style="display:flex;align-items:center;justify-content:space-between;">
+                            <span>System State</span>
+                            <span id="aiModelBadgeCockpit" style="font-size:0.62rem;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(245,158,11,0.12);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">AI Engine: Statistical Heuristic (0/3 models fitted)</span>
+                        </div>
                         <div class="cockpit-sys-inner" id="cockpitSysInner">
                             <span class="cockpit-skeleton">Loading…</span>
                         </div>
@@ -2381,49 +2387,72 @@
 
     <footer class="footer">
         <p>⚠️ AI signals are for reference only. Always do your own analysis before trading real money.</p>
-        <div class="footer-row">
-            <button id="bmcOpenBtn" class="bmc-btn" type="button" aria-label="Buy Me a Coffee">
-                <span class="bmc-icon">☕</span>
-                <span>Buy Me a Coffee</span>
-            </button>
-            <span class="footer-dot"></span>
-            <span class="footer-author">Built by <a href="https://www.linkedin.com/in/himanshugupta10/" target="_blank" rel="noopener noreferrer">Himanshu Gupta</a></span>
-            <span class="footer-dot"></span>
-            <a href="https://www.linkedin.com/in/himanshugupta10/" target="_blank" rel="noopener noreferrer" class="footer-linkedin" aria-label="LinkedIn">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-                <span>LinkedIn</span>
-            </a>
-        </div>
+        <p class="footer-credit">TradeAI PRO &bull; Developed by <a href="https://www.linkedin.com/in/himanshugupta10/" target="_blank" rel="noopener noreferrer">Himanshu Gupta</a></p>
     </footer>
 
-    <!-- Buy Me a Coffee / UPI Support Modal -->
-    <div class="modal-backdrop" id="bmcModalBackdrop">
-        <div class="bmc-modal" id="bmcModal">
-            <button class="bmc-modal-close" id="bmcModalClose" aria-label="Close">&times;</button>
+    <!-- Floating Buy Me a Coffee Trigger Button (Image 1) -->
+    <button id="bmcFloatBtn" class="bmc-float-btn" type="button" aria-label="Support Creator">
+        <svg id="bmcCoffeeSvg" viewBox="0 0 24 24">
+            <path d="M18 8h1a4 4 0 0 1 0 8h-1"></path>
+            <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path>
+            <line x1="6" y1="1" x2="6" y2="4"></line>
+            <line x1="10" y1="1" x2="10" y2="4"></line>
+            <line x1="14" y1="1" x2="14" y2="4"></line>
+        </svg>
+        <svg id="bmcCloseSvg" viewBox="0 0 24 24" style="display: none;">
+            <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+    </button>
 
-            <div class="bmc-modal-header">
-                <div style="font-size: 2rem;">☕</div>
-                <h3>Support TradeAI-PRO</h3>
-                <p>Scan via any UPI app — GPay, PhonePe, Paytm, BHIM</p>
+    <!-- Floating Widget Card (Image 2) -->
+    <div id="bmcWidgetCard" class="bmc-float-card" style="display: none;">
+        <div class="bmc-card-header">
+            <div class="bmc-card-title-wrap">
+                <span style="font-size: 1.3rem;">☕</span>
+                <div>
+                    <h4 style="margin: 0; font-size: 0.95rem; font-weight: 700; color: var(--text-primary);">Buy Himanshu a coffee</h4>
+                    <span style="font-size: 0.7rem; color: var(--text-muted);">TradeAI-PRO Developer</span>
+                </div>
+            </div>
+            <button id="bmcWidgetClose" class="bmc-card-close" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="bmc-card-body">
+            <!-- Multiplier Selector -->
+            <div class="bmc-multipliers-row">
+                <span class="bmc-mug-label">☕ ×</span>
+                <button type="button" class="bmc-mult-btn active" data-amount="50">1</button>
+                <button type="button" class="bmc-mult-btn" data-amount="150">3</button>
+                <button type="button" class="bmc-mult-btn" data-amount="250">5</button>
+                <button type="button" class="bmc-mult-btn" data-amount="500">10</button>
+                <button type="button" class="bmc-mult-btn" data-amount="1000">20</button>
             </div>
 
-            <div class="bmc-modal-qr">
-                <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=upi://pay?pa=himanshugupta@ptaxis%26pn=Himanshu%20Gupta%26cu=INR" alt="UPI QR Code" width="152" height="152" loading="lazy" />
+            <!-- Optional Name / Social Input -->
+            <input type="text" id="bmcDonorName" class="bmc-donor-input" placeholder="Name or @yoursocial (optional)" maxlength="30" />
+
+            <!-- Dynamic QR Code Container -->
+            <div class="bmc-qr-box">
+                <img id="bmcUpiQrImg" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=upi://pay?pa=himanshugupta@ptaxis%26pn=Himanshu%20Gupta%26am=50%26cu=INR" alt="UPI QR Code" width="130" height="130" />
+                <span class="bmc-qr-sub">Scan with GPay, PhonePe, Paytm, BHIM</span>
             </div>
 
-            <div class="bmc-modal-upi">
-                <code>himanshugupta@ptaxis</code>
-                <button id="bmcCopyUpiBtn" class="bmc-modal-copy" type="button">Copy</button>
+            <!-- Big Action CTA Button -->
+            <button id="bmcPayActionBtn" class="bmc-action-btn" type="button">
+                <span id="bmcPayBtnText">Support ₹50</span>
+            </button>
+
+            <!-- UPI ID Copy Bar -->
+            <div class="bmc-upi-bar">
+                <span class="bmc-upi-id-text">himanshugupta@ptaxis</span>
+                <button id="bmcCopyIdOnlyBtn" class="bmc-upi-copy-small" type="button">Copy ID</button>
             </div>
 
-            <div class="bmc-modal-links">
+            <!-- Bottom author link -->
+            <div class="bmc-card-footer">
                 <a href="https://www.linkedin.com/in/himanshugupta10/" target="_blank" rel="noopener noreferrer">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
                     <span>Connect on LinkedIn</span>
-                </a>
-                <a href="https://github.com/Himanshugupta2024" target="_blank" rel="noopener noreferrer">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-                    <span>GitHub</span>
                 </a>
             </div>
         </div>

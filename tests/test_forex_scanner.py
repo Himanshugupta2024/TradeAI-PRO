@@ -236,3 +236,22 @@ def test_position_sizing_lot_capped_at_one():
     assert result["lot_size"] >= 0.01, "Lot size should be at least 0.01 (micro lot)"
     assert "sl_pips" in result
     assert "risk_amount_inr" in result
+
+
+def test_scan_all_forex_non_blocking_when_already_scanning():
+    from agents.market_intelligence import forex_scanner
+    import agents.market_intelligence.forex_scanner as fs
+
+    # When scanning is flagged true, it immediately returns existing cached setups
+    orig_scanning = fs._is_scanning
+    orig_cache = fs._scan_cache
+    try:
+        fs._is_scanning = True
+        fs._scan_cache = {"setups": ["mock_setup"], "fetched_at": 100.0}
+        assert fs.is_forex_scanning() is True
+
+        res = fs.scan_all_forex()
+        assert res == ["mock_setup"]
+    finally:
+        fs._is_scanning = orig_scanning
+        fs._scan_cache = orig_cache

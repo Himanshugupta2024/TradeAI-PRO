@@ -627,3 +627,40 @@ def _neutral(reason: str) -> dict:
 
 # ── Lazy import for os (used in LSTM path check) ───────────────────────────────
 import os
+
+
+def get_model_status() -> dict:
+    """Return status of all models in the ensemble."""
+    xgb_fitted = False
+    try:
+        from agents.ai_engine.xgboost_model import get_xgb_predictor
+        xgb = get_xgb_predictor()
+        xgb_fitted = bool(getattr(xgb, "is_fitted", False))
+    except Exception:
+        pass
+
+    lgbm_fitted = False
+    try:
+        from agents.ai_engine.lightgbm_model import get_lgbm_predictor
+        lgbm = get_lgbm_predictor()
+        lgbm_fitted = bool(getattr(lgbm, "is_fitted", False))
+    except Exception:
+        pass
+
+    lstm_fitted = os.path.exists("models/best_model.pt")
+
+    fitted_count = sum([xgb_fitted, lgbm_fitted, lstm_fitted])
+    mode = "Trained ML Ensemble" if fitted_count == 3 else (
+        f"Hybrid Ensemble ({fitted_count}/3 ML fitted)" if fitted_count > 0 else "Statistical Heuristic (0/3 models fitted)"
+    )
+
+    return {
+        "mode": mode,
+        "fitted_count": fitted_count,
+        "total_ml_models": 3,
+        "statistical_heuristic": True,
+        "xgboost_fitted": xgb_fitted,
+        "lightgbm_fitted": lgbm_fitted,
+        "lstm_fitted": lstm_fitted,
+        "badge_text": f"AI Engine: {mode}",
+    }

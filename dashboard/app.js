@@ -63,6 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
     connectPriceWebSocket();
     startBackgroundRefresh();
     loadPortfolio();
+    updateAiModelHealthBadge();
     const refreshBtn = document.getElementById('manualRefreshBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', triggerManualRefresh);
@@ -3236,71 +3237,149 @@ function drawEquityCurve(points) {
 // ── Symbol Detail Modal ─────────────────────────────────
 
 function initBmcModal() {
-    const backdrop = document.getElementById('bmcModalBackdrop');
-    const openBtn = document.getElementById('bmcOpenBtn');
-    const closeBtn = document.getElementById('bmcModalClose');
-    const copyBtn = document.getElementById('bmcCopyUpiBtn');
-    if (!backdrop || !openBtn) return;
+    const floatBtn = document.getElementById('bmcFloatBtn');
+    const card = document.getElementById('bmcWidgetCard');
+    const closeBtn = document.getElementById('bmcWidgetClose');
+    const coffeeSvg = document.getElementById('bmcCoffeeSvg');
+    const closeSvg = document.getElementById('bmcCloseSvg');
+    const qrImg = document.getElementById('bmcUpiQrImg');
+    const payBtn = document.getElementById('bmcPayActionBtn');
+    const payBtnText = document.getElementById('bmcPayBtnText');
+    const copyIdBtn = document.getElementById('bmcCopyIdOnlyBtn');
+    const donorInput = document.getElementById('bmcDonorName');
+    const multBtns = document.querySelectorAll('.bmc-mult-btn');
 
-    const openBmc = () => {
-        backdrop.style.display = 'flex';
-        backdrop.classList.add('visible');
-    };
-    const closeBmc = () => {
-        backdrop.style.display = 'none';
-        backdrop.classList.remove('visible');
-    };
+    if (!floatBtn || !card) return;
 
-    openBtn.addEventListener('click', openBmc);
-    if (closeBtn) closeBtn.addEventListener('click', closeBmc);
-    backdrop.addEventListener('click', (e) => {
-        if (e.target === backdrop) closeBmc();
-    });
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && backdrop.classList.contains('visible')) {
-            closeBmc();
+    let currentAmount = 50;
+    const upiId = 'himanshugupta@ptaxis';
+    const payeeName = 'Himanshu Gupta';
+
+    function updatePaymentState() {
+        if (payBtnText) payBtnText.textContent = `Support ₹${currentAmount}`;
+        const donorName = (donorInput && donorInput.value.trim()) ? donorInput.value.trim() : 'Trader';
+        const note = `Coffee from ${donorName}`;
+        const upiUrl = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${currentAmount}&cu=INR&tn=${encodeURIComponent(note)}`;
+        if (qrImg) {
+            qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(upiUrl)}`;
         }
+    }
+
+    function toggleWidget(show) {
+        const isVisible = show !== undefined ? show : (card.style.display !== 'none');
+        if (isVisible) {
+            card.style.display = 'none';
+            if (coffeeSvg) coffeeSvg.style.display = 'block';
+            if (closeSvg) closeSvg.style.display = 'none';
+        } else {
+            card.style.display = 'block';
+            if (coffeeSvg) coffeeSvg.style.display = 'none';
+            if (closeSvg) closeSvg.style.display = 'block';
+        }
+    }
+
+    floatBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleWidget();
     });
 
-    if (copyBtn) {
-        copyBtn.addEventListener('click', () => {
-            const upi = 'himanshugupta@ptaxis';
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(upi).then(() => {
-                    const orig = copyBtn.textContent;
-                    copyBtn.textContent = 'Copied! ✓';
-                    copyBtn.style.background = '#10b981';
-                    setTimeout(() => {
-                        copyBtn.textContent = orig;
-                        copyBtn.style.background = '';
-                    }, 2000);
-                }).catch(() => {
-                    _fallbackCopyUpi(upi, copyBtn);
-                });
+    if (closeBtn) {
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleWidget(true);
+        });
+    }
+
+    // Multiplier pills click
+    multBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            multBtns.forEach((b) => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentAmount = parseInt(btn.dataset.amount, 10) || 50;
+            updatePaymentState();
+        });
+    });
+
+    if (donorInput) {
+        donorInput.addEventListener('input', updatePaymentState);
+    }
+
+    // Action button
+    if (payBtn) {
+        payBtn.addEventListener('click', () => {
+            const isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent);
+            const donorName = (donorInput && donorInput.value.trim()) ? donorInput.value.trim() : 'Trader';
+            const note = `Coffee from ${donorName}`;
+            const upiUrl = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName)}&am=${currentAmount}&cu=INR&tn=${encodeURIComponent(note)}`;
+
+            if (isMobile) {
+                window.location.href = upiUrl;
             } else {
-                _fallbackCopyUpi(upi, copyBtn);
+                _copyToClipboard(upiId, () => {
+                    const orig = payBtnText.textContent;
+                    payBtnText.textContent = 'Copied UPI ID! ✓';
+                    payBtn.style.background = '#10b981';
+                    setTimeout(() => {
+                        payBtnText.textContent = orig;
+                        payBtn.style.background = '';
+                    }, 2000);
+                });
             }
         });
     }
-}
 
-function _fallbackCopyUpi(text, btn) {
-    try {
-        const t = document.createElement('textarea');
-        t.value = text;
-        t.style.position = 'fixed';
-        t.style.opacity = '0';
-        document.body.appendChild(t);
-        t.select();
-        document.execCommand('copy');
-        document.body.removeChild(t);
-        btn.textContent = 'Copied! ✓';
-        btn.style.background = '#10b981';
-        setTimeout(() => {
-            btn.textContent = 'Copy';
-            btn.style.background = '';
-        }, 2000);
-    } catch (_) {}
+    // Copy ID Only button
+    if (copyIdBtn) {
+        copyIdBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            _copyToClipboard(upiId, () => {
+                copyIdBtn.textContent = 'Copied! ✓';
+                copyIdBtn.style.borderColor = '#10b981';
+                copyIdBtn.style.color = '#10b981';
+                setTimeout(() => {
+                    copyIdBtn.textContent = 'Copy ID';
+                    copyIdBtn.style.borderColor = '';
+                    copyIdBtn.style.color = '';
+                }, 2000);
+            });
+        });
+    }
+
+    // Close when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!card.contains(e.target) && !floatBtn.contains(e.target)) {
+            toggleWidget(true);
+        }
+    });
+
+    // Close on Escape
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && card.style.display !== 'none') {
+            toggleWidget(true);
+        }
+    });
+
+    function _copyToClipboard(text, onSuccess) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(onSuccess).catch(() => _fallbackCopy(text, onSuccess));
+        } else {
+            _fallbackCopy(text, onSuccess);
+        }
+    }
+
+    function _fallbackCopy(text, onSuccess) {
+        try {
+            const t = document.createElement('textarea');
+            t.value = text;
+            t.style.position = 'fixed';
+            t.style.opacity = '0';
+            document.body.appendChild(t);
+            t.select();
+            document.execCommand('copy');
+            document.body.removeChild(t);
+            if (onSuccess) onSuccess();
+        } catch (_) {}
+    }
 }
 
 function initModal() {
@@ -5882,4 +5961,42 @@ async function paperResolveEOD() {
     } catch (e) {
         showToast('EOD resolution triggered', 'info');
     }
+}
+
+
+async function updateAiModelHealthBadge() {
+    try {
+        const res = await fetchWithTimeout(`${API}/api/health`, {}, 5000);
+        if (!res.ok) return;
+        const data = await res.json();
+        const ai = data.ai_engine;
+        if (!ai) return;
+
+        const badgeHeader = document.getElementById('aiEngineStatusBadge');
+        if (badgeHeader) {
+            badgeHeader.textContent = ai.fitted_count === 3 
+                ? '🧠 AI: ML Ensemble (3/3)' 
+                : (ai.fitted_count > 0 ? `🧠 AI: Hybrid (${ai.fitted_count}/3 ML)` : '🧠 AI: Heuristic (0/3 ML)');
+            badgeHeader.title = ai.badge_text || 'AI Engine Status';
+            if (ai.fitted_count === 3) {
+                badgeHeader.style.background = 'rgba(16,185,129,0.15)';
+                badgeHeader.style.color = '#10b981';
+                badgeHeader.style.borderColor = 'rgba(16,185,129,0.3)';
+            } else {
+                badgeHeader.style.background = 'rgba(245,158,11,0.12)';
+                badgeHeader.style.color = 'var(--amber, #f59e0b)';
+                badgeHeader.style.borderColor = 'rgba(245,158,11,0.3)';
+            }
+        }
+
+        const badgeCockpit = document.getElementById('aiModelBadgeCockpit');
+        if (badgeCockpit) {
+            badgeCockpit.textContent = ai.badge_text || `AI Engine: ${ai.mode}`;
+            if (ai.fitted_count === 3) {
+                badgeCockpit.style.background = 'rgba(16,185,129,0.15)';
+                badgeCockpit.style.color = '#10b981';
+                badgeCockpit.style.borderColor = 'rgba(16,185,129,0.3)';
+            }
+        }
+    } catch (_) { /* ignore */ }
 }

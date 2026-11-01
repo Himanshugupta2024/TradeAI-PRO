@@ -214,6 +214,8 @@ try:
 
     from agents.market_intelligence.forex_scanner import (
 
+        is_forex_scanning,
+
         scan_all_forex,
 
         scan_forex_setup,
@@ -245,6 +247,12 @@ except Exception as _forex_import_err:
 
 
         return pd.DataFrame()
+
+
+
+    def is_forex_scanning():
+
+        return False
 
 
 
@@ -320,6 +328,12 @@ async def health_check():
 
     """Health check endpoint — shows loading progress and server status."""
 
+    try:
+        from agents.ai_engine.ensemble import get_model_status
+        ai_engine_info = get_model_status()
+    except Exception as _e:
+        ai_engine_info = {"mode": "Statistical Heuristic (fallback)", "badge_text": "AI Engine: Statistical Heuristic (0/3 models fitted)", "fitted_count": 0}
+
     return {
 
         "status": "ok",
@@ -331,6 +345,8 @@ async def health_check():
         "symbols_loaded": len(svc._market_data),
 
         "signals_cached": len(svc._signal_cache),
+
+        "ai_engine": ai_engine_info,
 
         "last_refresh": svc._last_refresh.isoformat()
 
@@ -7428,6 +7444,8 @@ async def get_forex_signals():
             "setups": [s.to_dict() for s in setups],
 
             "count": len(setups),
+
+            "scanning_in_background": is_forex_scanning(),
 
             "updated_at": datetime.now().isoformat(),
 

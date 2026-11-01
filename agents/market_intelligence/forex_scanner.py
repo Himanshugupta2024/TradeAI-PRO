@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 # ── Setup cache ───────────────────────────────────────────────────────────────
 _scan_cache: dict = {"setups": [], "fetched_at": 0.0}
 _scan_lock = threading.Lock()
+_is_scanning: bool = False
+
+
+def is_forex_scanning() -> bool:
+    return _is_scanning
 
 
 # ── Data class ────────────────────────────────────────────────────────────────
@@ -388,50 +393,48 @@ def scan_forex_setup(
     )
 
 
-def scan_all_forex() -> list[ForexSetup]:
-    """
-    Run the forex scanner across all FOREX_SYMBOLS.
-
-    Fetches 4h and daily OHLCV for each pair, runs scan_forex_setup,
-    and returns results sorted by strength_score descending.
-
-    Results are cached for FOREX_CACHE_MINUTES minutes.
-    """
-    global _scan_cache
+def scan_all_forex(force_refresh: bool = False) -> list[ForexSetup]:
+    global _scan_cache, _is_scanning
 
     now_ts = time.time()
     cache_age = (now_ts - _scan_cache["fetched_at"]) / 60
-    if _scan_cache["setups"] and cache_age < settings.FOREX_CACHE_MINUTES:
+    if not force_refresh and _scan_cache["setups"] and cache_age < settings.FOREX_CACHE_MINUTES:
         logger.debug("[FOREX] scan_all_forex: cache hit (age=%.1fm)", cache_age)
         return _scan_cache["setups"]
 
-    with _scan_lock:
-        now_ts = time.time()
-        cache_age = (now_ts - _scan_cache["fetched_at"]) / 60
-        if _scan_cache["setups"] and cache_age < settings.FOREX_CACHE_MINUTES:
-            return _scan_cache["setups"]
+    if _is_scanning:
+        logger.info("[FOREX] Scan already in progress; returning cached setups (count=%d)", len(_scan_cache["setups"]))
+        return _scan_cache["setups"]
 
-    logger.info("[FOREX] Running full forex scan across %d symbols", len(settings.FOREX_SYMBOLS))
-    setups: list[ForexSetup] = []
+    acquired = _scan_lock.acquire(blocking=False)
+    if not acquired:
+        return _scan_cache["setups"]
 
-    # Scan majors first under free-tier minute limits; INR pairs follow.
-    ordered_symbols = sorted(settings.FOREX_SYMBOLS, key=lambda s: 1 if s.endswith("/INR") else 0)
+    try:
+        _is_scanning = True
+        logger.info("[FOREX] Running full forex scan across %d symbols", len(settings.FOREX_SYMBOLS))
+        setups: list[ForexSetup] = []
 
-    for symbol in ordered_symbols:
-        try:
-            df_4h = get_forex_ohlcv(symbol, "4h", outputsize=200)
-            df_daily = get_forex_ohlcv(symbol, "1day", outputsize=100)
-            setup = scan_forex_setup(symbol, df_4h, df_daily)
-            if setup is not None:
-                setups.append(setup)
-                logger.info(
-                    "[FOREX] %s %s setup: strength=%d, pattern=%s, R:R=%.2f",
-                    symbol, setup.direction, setup.strength_score, setup.pattern, setup.rr_ratio,
-                )
-        except Exception as e:
-            logger.warning("[FOREX] %s scan failed: %s", symbol, e)
+        ordered_symbols = sorted(settings.FOREX_SYMBOLS, key=lambda s: 1 if s.endswith("/INR") else 0)
 
-    setups.sort(key=lambda s: s.strength_score, reverse=True)
-    _scan_cache = {"setups": setups, "fetched_at": now_ts}
-    logger.info("[FOREX] Scan complete: %d setups found", len(setups))
-    return setups
+        for symbol in ordered_symbols:
+            try:
+                df_4h = get_forex_ohlcv(symbol, "4h", outputsize=200)
+                df_daily = get_forex_ohlcv(symbol, "1day", outputsize=100)
+                setup = scan_forex_setup(symbol, df_4h, df_daily)
+                if setup is not None:
+                    setups.append(setup)
+                    logger.info(
+                        "[FOREX] %s %s setup: strength=%d, pattern=%s, R:R=%.2f",
+                        symbol, setup.direction, setup.strength_score, setup.pattern, setup.rr_ratio,
+                    )
+            except Exception as e:
+                logger.warning("[FOREX] %s scan failed: %s", symbol, e)
+
+        setups.sort(key=lambda s: s.strength_score, reverse=True)
+        _scan_cache = {"setups": setups, "fetched_at": time.time()}
+        logger.info("[FOREX] Scan complete: %d setups found", len(setups))
+        return setups
+    finally:
+        _is_scanning = False
+        _scan_lock.release()

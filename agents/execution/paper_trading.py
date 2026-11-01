@@ -480,14 +480,29 @@ class PaperTradingEngine:
         gross_loss = abs(sum(p for p in pnls if p < 0)) or 1
         profit_factor = gross_profit / gross_loss
 
-        # Sharpe ratio (annualized)
-        if len(pnl_pcts) > 1:
+        # Sharpe & Sortino ratio (annualized)
+        # Prefer true calendar daily returns if >= 2 distinct trading days exist
+        daily_pnls = [v for v in self._daily_pnl.values() if v != 0]
+        if len(daily_pnls) > 1:
+            base_cap = max(self.initial_capital, 1.0)
+            daily_returns = np.array(daily_pnls) / base_cap
+            mean_ret = np.mean(daily_returns)
+            std_ret = np.std(daily_returns, ddof=1)
+            sharpe = (mean_ret / std_ret) * np.sqrt(252) if std_ret > 0 else 0.0
+            downside = daily_returns[daily_returns < 0]
+            downside_std = np.std(downside, ddof=1) if len(downside) > 1 else std_ret
+            sortino = (mean_ret / downside_std) * np.sqrt(252) if downside_std > 0 else 0.0
+        elif len(pnl_pcts) > 1:
             returns = np.array(pnl_pcts) / 100.0
             mean_ret = np.mean(returns)
             std_ret = np.std(returns, ddof=1)
             sharpe = (mean_ret / std_ret) * np.sqrt(252) if std_ret > 0 else 0.0
+            downside = returns[returns < 0]
+            downside_std = np.std(downside, ddof=1) if len(downside) > 1 else std_ret
+            sortino = (mean_ret / downside_std) * np.sqrt(252) if downside_std > 0 else 0.0
         else:
             sharpe = 0.0
+            sortino = 0.0
 
         return {
             "total_trades": len(closed),
@@ -504,6 +519,7 @@ class PaperTradingEngine:
             "consecutive_losses": self._consecutive_losses,
             "daily_pnl": round(self._daily_pnl.get(_today_ist(), 0), 2),
             "sharpe_ratio": round(sharpe, 2),
+            "sortino_ratio": round(sortino, 2),
             "max_drawdown": round(max_dd, 2),
             "max_drawdown_pct": round(max_dd_pct, 1),
             "profit_factor": round(profit_factor, 2),
