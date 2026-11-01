@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 # ── Environment & Security ────────────────────────────────
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").strip().lower()
-IS_PRODUCTION = (ENVIRONMENT in {"production", "prod"}) or bool(os.getenv("RENDER"))
+IS_PRODUCTION = ENVIRONMENT in {"production", "prod"}
+ON_RENDER = bool(os.getenv("RENDER"))
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "").strip()
 
 # ── Database ─────────────────────────────────────────────
