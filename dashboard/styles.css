@@ -1721,6 +1721,7 @@ body::before {
     transition: all 0.2s ease;
     border-radius: var(--radius-sm);
     min-width: 56px;
+    flex: 1;
 }
 .bottom-nav-item:active {
     transform: scale(0.92);
@@ -1732,13 +1733,13 @@ body::before {
     transition: transform 0.2s ease;
 }
 .bottom-nav-label {
-    font-size: 0.58rem;
+    font-size: 0.62rem;
     font-weight: 600;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.2px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 58px;
+    max-width: 76px;
 }
 
 .bottom-nav-item.active {
@@ -1836,6 +1837,17 @@ body::before {
     font-size: 1.1rem;
 }
 
+.more-menu-disclaimer {
+    margin-top: 1rem;
+    padding: 0.75rem 0.5rem 0.25rem;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    text-align: center;
+    line-height: 1.4;
+    opacity: 0.85;
+}
+
 @keyframes slideUpMenu {
     from { transform: translateY(100%); }
     to { transform: translateY(0); }
@@ -1852,6 +1864,23 @@ body::before {
     .footer {
         margin-bottom: 0;
         padding-bottom: calc(1.5rem + 70px);
+    }
+    /* Floating BMC widget elevated above mobile bottom nav */
+    .bmc-float-btn {
+        bottom: 74px;
+        right: 16px;
+        width: 48px;
+        height: 48px;
+    }
+    .bmc-float-btn svg {
+        width: 22px;
+        height: 22px;
+    }
+    .bmc-float-card {
+        bottom: 130px;
+        right: 16px;
+        width: calc(100vw - 32px);
+        max-width: 320px;
     }
 }
 
