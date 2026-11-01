@@ -15,6 +15,18 @@ def _create_engine():
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
 
+    # Normalize bare postgresql:// URLs to an installed driver (psycopg3 or psycopg2)
+    if url.startswith("postgresql://"):
+        try:
+            import psycopg
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+        except ImportError:
+            try:
+                import psycopg2
+                url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+            except ImportError:
+                pass
+
     kwargs = {"echo": False}
     if "sqlite" in url:
         kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}

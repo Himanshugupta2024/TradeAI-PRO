@@ -263,7 +263,7 @@ class ContextSnapshot(Base):
 class RuntimeState(Base):
     __tablename__ = "runtime_state"
 
-    state_key = Column(String(120), primary_key=True)
+    state_key = Column(String(500), primary_key=True)
     state_json = Column(Text, nullable=False)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
