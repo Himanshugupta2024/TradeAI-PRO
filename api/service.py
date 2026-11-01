@@ -174,7 +174,7 @@ _lazy_bootstrap_started = False
 # Regime hysteresis: (confirmed_regime, tentative_regime, consecutive_count)
 _regime_hysteresis: dict[str, tuple[str, str, int]] = {}
 REGIME_HYSTERESIS_MIN = 3  # Must see new regime N times before switching
-MAX_NSE_CONCURRENCY = 10
+MAX_NSE_CONCURRENCY = int(os.getenv("MAX_NSE_CONCURRENCY", "3"))
 SYMBOL_FETCH_TIMEOUT_SECONDS = float(
     getattr(settings, "NSE_SYMBOL_TIMEOUT_SECONDS", 150.0)
 )

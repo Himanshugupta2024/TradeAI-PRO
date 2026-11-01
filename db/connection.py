@@ -34,6 +34,9 @@ def _create_engine():
         kwargs["pool_pre_ping"] = True
         kwargs["pool_size"] = 10
         kwargs["max_overflow"] = 20
+        # Disable server-side prepared statements for Supabase PgBouncer / Transaction pooler
+        if "psycopg" in url and "psycopg2" not in url:
+            kwargs["connect_args"] = {"prepare_threshold": None}
 
     eng = create_engine(url, **kwargs)
     # Enable WAL mode for SQLite - allows concurrent reads

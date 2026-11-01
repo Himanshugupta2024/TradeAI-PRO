@@ -30,9 +30,13 @@ def _env_flag(name: str, default: bool) -> bool:
 
 
 async def _keep_alive_task():
-    """Periodically ping our own /api/health to prevent Render free-tier spin-down."""
-    port = int(os.environ.get("PORT", 10000))
-    url = f"http://localhost:{port}/api/health"
+    """Periodically ping public URL or localhost fallback to prevent Render free-tier spin-down."""
+    public_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if public_url:
+        url = f"{public_url.rstrip('/')}/api/health"
+    else:
+        port = int(os.environ.get("PORT", 10000))
+        url = f"http://localhost:{port}/api/health"
     await asyncio.sleep(30)  # Wait for startup to settle before first ping
     while True:
         try:
