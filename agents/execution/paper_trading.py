@@ -13,6 +13,7 @@ Upgrades:
 
 import json
 import os
+from pathlib import Path
 from datetime import datetime, date, timezone, timedelta
 from dataclasses import dataclass, field, asdict
 
@@ -116,9 +117,14 @@ class PaperTradingEngine:
         self.initial_capital = initial_capital
         self.capital = initial_capital
         self.log_file = log_file
+        default_state_paths = {
+            os.path.abspath("paper_trades.json"),
+            os.path.abspath("logs/paper_trades.json"),
+            os.path.abspath(str(getattr(settings, "LOG_DIR", Path("logs")) / "paper_trades.json")),
+        }
         if state_key is not None:
             self._state_key = state_key
-        elif os.path.basename(log_file) == "paper_trades.json":
+        elif log_file in ("paper_trades.json", "logs/paper_trades.json") or os.path.abspath(log_file) in default_state_paths:
             self._state_key = os.getenv("PAPER_TRADING_STATE_KEY", "paper_trading_state:v1")
         else:
             self._state_key = f"paper_trading_state:{os.path.abspath(log_file)}"
