@@ -304,7 +304,7 @@ _BTC_DOM_LAST_WARN_TS: float = 0.0
 
 
 
-@router.get("/favicon.ico", include_in_schema=False)
+@router.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
 
 async def favicon():
 

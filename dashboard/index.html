@@ -5,7 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TradeAI PRO — Autonomous Trading Dashboard</title>
-    <link rel="icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
     <meta name="description"
         content="AI-powered autonomous trading dashboard with signals, portfolio, sectoral heatmap, PCR analysis and institutional trade flow">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -858,7 +860,8 @@
 
     <!-- ── Market Mood Strip (Top Bar) ── -->
     <div class="mood-strip" id="moodStrip">
-        <div class="mood-strip-logo">
+        <div class="mood-strip-logo" style="display: flex; align-items: center; gap: 8px;">
+            <img src="/static/favicon.svg" alt="TradeAI PRO" width="22" height="22" style="border-radius: 5px;">
             <span class="logo-text">TradeAI</span>
             <span class="logo-badge">PRO</span>
         </div>
