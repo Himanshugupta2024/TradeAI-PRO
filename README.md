@@ -59,15 +59,19 @@ pytest                        # run everything, including `integration`-marked t
 This repo includes a Render Blueprint config in `render.yaml` for FastAPI (`server:app`).
 
 1. Push this repo to GitHub.
-2. In Render, click **New +** -> **Blueprint** and select your repository.
-3. Render will read `render.yaml` and create the web service automatically.
-4. Add any optional API keys in Render Environment (for example `MARKETAUX_API_KEY`, `RAPIDAPI_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`).
-5. Deploy.
+2. In Render, create a persistent **PostgreSQL** database service (or attach an external managed PostgreSQL).
+3. Click **New +** -> **Blueprint** and select your repository.
+4. Render will read `render.yaml` and configure the web service automatically.
+5. In Render Environment variables, configure:
+   - `DATABASE_URL`: Your production PostgreSQL connection URI (e.g., `postgresql://user:pass@host:5432/dbname`). Production strictly requires PostgreSQL; silent SQLite fallback is disallowed.
+   - `ADMIN_API_KEY`: Strong secret key securing all state-changing and execution endpoints (`/api/paper/trade`, `/api/paper/close/*`, `/api/refresh`, etc.).
+   - Optional API keys (e.g., `MARKETAUX_API_KEY`, `RAPIDAPI_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`).
+6. Deploy.
 
 Notes:
 - Start command uses `uvicorn server:app --host 0.0.0.0 --port $PORT`.
-- SQLite is persisted on a mounted disk at `/var/data` via `DATABASE_URL=sqlite:////var/data/trading.db`.
-- Health check path is `/api/health`.
+- Liveness check is `/api/health` (reports uptime and database connection status).
+- Readiness check is `/api/ready` (ensures database connectivity and market symbols loaded).
 
 ## Project layout (short)
 

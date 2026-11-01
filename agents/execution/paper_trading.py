@@ -184,6 +184,12 @@ class PaperTradingEngine:
                 self._consecutive_losses = 0
         self._last_trade_date = today
 
+        # Safeguard: prevent trading with non-positive capital
+        if self.capital <= 0:
+            self.last_rejection_reason = f"Insufficient capital (current capital is {self.capital:.2f})"
+            log.warning("BLOCKED: %s", self.last_rejection_reason)
+            return None
+
         # Risk check: consecutive losses
         if self._consecutive_losses >= settings.MAX_CONSECUTIVE_LOSSES:
             self.last_rejection_reason = (
