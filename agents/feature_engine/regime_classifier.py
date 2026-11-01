@@ -209,3 +209,4 @@ def detect_two_axis_regime_series(df: pd.DataFrame, lookback: int = 50) -> pd.Da
         results.append(res.to_dict())
 
     return pd.DataFrame(results, index=df.index)
+

@@ -144,3 +144,4 @@ def get_calibrator() -> ProbabilityCalibrator:
     if _CALIBRATOR is None:
         _CALIBRATOR = ProbabilityCalibrator()
     return _CALIBRATOR
+

@@ -108,3 +108,4 @@ class TestAnomalyDetector:
             assert detector2._is_fitted is True
             res_reload = detector2.score_row(df)
             assert res_reload["tier"] == res_normal["tier"]
+

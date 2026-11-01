@@ -137,3 +137,4 @@ class TestTradeOutcomeTargetContract:
         assert len(mask) == len(df)
         assert set(target.unique()).issubset({0, 1})
         assert mask.dtype == bool
+

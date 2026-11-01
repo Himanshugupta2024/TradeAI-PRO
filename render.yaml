@@ -47,7 +47,7 @@ services:
       - key: MORNING_SCAN_TASK_ENABLED
         value: false
       - key: SELF_PING_ENABLED
-        value: false
+        value: "true"
       - key: NSE_SYMBOL_LIMIT
         value: 15
       - key: MAX_NSE_CONCURRENCY

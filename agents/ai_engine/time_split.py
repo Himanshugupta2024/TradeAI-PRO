@@ -197,3 +197,4 @@ def prepare_trade_outcome_targets(
     valid_mask.name = "trade_outcome_mask"
 
     return target, valid_mask
+

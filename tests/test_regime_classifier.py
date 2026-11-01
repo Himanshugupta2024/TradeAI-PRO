@@ -95,3 +95,4 @@ class TestTwoAxisRegimeClassifier:
         expected_cols = ["trend_regime", "trend_score", "volatility_regime", "volatility_score", "legacy_regime"]
         assert list(series_df.columns) == expected_cols
         assert not series_df["trend_score"].isna().any()
+
