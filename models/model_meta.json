@@ -1,0 +1,14 @@
+{
+  "epoch": 4,
+  "val_loss": 0.6927069395780563,
+  "val_accuracy": 50.88,
+  "input_size": 13,
+  "class_distribution": [
+    2456,
+    2543
+  ],
+  "trained_at": "2026-03-16T21:37:43.764402",
+  "random_seed": 42,
+  "batch_size": 64,
+  "learning_rate": 0.001
+}
