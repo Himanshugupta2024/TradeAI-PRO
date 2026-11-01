@@ -224,6 +224,7 @@ class TestPaperTrading:
         monkeypatch.setattr(settings, "REGIME_TARGET_SCALING_ENABLED", True)
         monkeypatch.setattr(settings, "REGIME_TARGET_STRONG_TREND_MULT", 1.5)
         monkeypatch.setattr(settings, "REGIME_TARGET_RANGE_MULT", 0.7)
+        monkeypatch.setattr(settings, "MIN_RISK_REWARD", 1.0)
 
         engine, path = self._engine()
         t1 = engine.execute("BTC/USDT", "LONG", 100.0, 95.0, 110.0, regime="RANGING")
