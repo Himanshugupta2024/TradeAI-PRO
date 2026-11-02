@@ -4691,6 +4691,36 @@ async def get_edge_macro_heatmap(
 
         return {"error": str(e)}
 
+@router.get("/api/macro/intelligence")
+async def get_macro_intelligence(force_refresh: bool = Query(False, description="Bypass cache and fetch fresh")):
+    """Get real-time global commodities, yields, US indices, macro regime, and targeted breaking news."""
+    from agents.market_intelligence.global_macro_fetcher import get_global_macro_fetcher
+    from dataclasses import asdict
+    try:
+        fetcher = get_global_macro_fetcher()
+        intel = await asyncio.to_thread(fetcher.get_intelligence, force_refresh)
+        return {"status": "ok", "macro": asdict(intel)}
+    except Exception as e:
+        logger.error("Failed to get macro intelligence: %s", e)
+        return {"status": "error", "error": str(e)}
+
+@router.get("/api/macro/sector-impact")
+async def get_macro_sector_impact(symbol: str = Query(..., description="Stock symbol (e.g. ASIANPAINT)"), direction: str = Query("LONG", description="Trade direction (LONG/SHORT)")):
+    """Evaluate whether a proposed trade setup violates severe macro sector risk headwinds."""
+    from agents.market_intelligence.global_macro_fetcher import get_global_macro_fetcher
+    try:
+        fetcher = get_global_macro_fetcher()
+        allowed, reason = await asyncio.to_thread(fetcher.evaluate_macro_sector_gate, symbol, direction)
+        return {
+            "symbol": symbol.upper(),
+            "direction": direction.upper(),
+            "allowed": allowed,
+            "block_reason": reason,
+        }
+    except Exception as e:
+        logger.error("Failed to evaluate macro sector impact: %s", e)
+        return {"allowed": True, "block_reason": None, "error": str(e)}
+
 @router.get("/api/edge/risk-gauge")
 
 async def get_edge_risk_gauge(

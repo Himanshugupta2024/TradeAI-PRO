@@ -13,6 +13,8 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
+      - key: PYTHONWARNINGS
+        value: "ignore:::yfinance,ignore::DeprecationWarning"
       # Small Render instances: avoid BLAS oversubscription during numpy/scipy import.
       - key: OMP_NUM_THREADS
         value: "1"

@@ -14,6 +14,7 @@ import logging
 import warnings
 
 # Silence upstream third-party deprecation and unpickling noise on Python 3.12 / Pandas 3+
+warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")
 warnings.filterwarnings("ignore", message=".*The inplace keyword in DataFrame.*")
 warnings.filterwarnings("ignore", message=".*mode.copy_on_write.*")
 warnings.filterwarnings("ignore", message=".*Trying to unpickle estimator.*")
