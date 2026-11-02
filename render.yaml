@@ -38,8 +38,9 @@ services:
         value: daily_api_usage.json
       - key: CONTEXT_USE_PAID_APIS
         value: false
+      # Disable concurrent boot-time batch ML inference to stay strictly under Render 512MB RAM cap
       - key: INITIAL_LOAD_ENABLED
-        value: "true"
+        value: "false"
       - key: BACKGROUND_REFRESH_ENABLED
         value: true
       - key: SCREENER_TASK_ENABLED

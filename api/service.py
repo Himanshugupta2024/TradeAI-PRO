@@ -1181,15 +1181,18 @@ async def _refresh_market_data():
         ]
         await asyncio.gather(*nse_tasks)
 
-        # ── Fetch crypto data via CCXT ────────────────────────
+        # ── Fetch crypto data concurrently (CCXT with Yahoo fallback) ──
         try:
             from agents.data_ingestion.binance_fetcher import fetch_historical
 
-            for symbol in settings.CRYPTO_SYMBOLS:
+            async def _process_crypto_symbol(symbol: str) -> None:
                 try:
-                    df = await asyncio.to_thread(fetch_historical, symbol, "1h", 7)
+                    df = await asyncio.wait_for(
+                        asyncio.to_thread(fetch_historical, symbol, "1h", 7),
+                        timeout=12.0,
+                    )
                     if df is None or df.empty:
-                        continue
+                        return
 
                     # Data validation
                     df, report = await asyncio.to_thread(
@@ -1202,11 +1205,14 @@ async def _refresh_market_data():
                             symbol,
                             report.quality_pct,
                         )
-                        continue
+                        return
 
                     df = calculate_indicators(df)
 
-                    htf_df = await asyncio.to_thread(fetch_historical, symbol, "1d", 60)
+                    htf_df = await asyncio.wait_for(
+                        asyncio.to_thread(fetch_historical, symbol, "1d", 60),
+                        timeout=10.0,
+                    )
                     if htf_df is not None and not htf_df.empty and len(htf_df) >= 20:
                         htf_df = calculate_indicators(htf_df)
                         htf_df = classify_trend(htf_df)
@@ -1215,16 +1221,14 @@ async def _refresh_market_data():
                         df = classify_trend(df)
 
                     # ── A1: MTF confluence — fetch 4h trend independently.
-                    # Kept separate from 1d propagation so the gate has its
-                    # own medium-term view. Failures are non-fatal; gate
-                    # silently skips when trend is None.
                     try:
                         mtf_bars = max(
                             60, int(getattr(settings, "CRYPTO_MTF_4H_BARS", 200) or 200)
                         )
                         days_for_4h = max(15, mtf_bars // 6 + 2)  # 6 × 4h bars per day
-                        htf4_df = await asyncio.to_thread(
-                            fetch_historical, symbol, "4h", days_for_4h
+                        htf4_df = await asyncio.wait_for(
+                            asyncio.to_thread(fetch_historical, symbol, "4h", days_for_4h),
+                            timeout=10.0,
                         )
                         if (
                             htf4_df is not None
@@ -1243,7 +1247,7 @@ async def _refresh_market_data():
                                 _crypto_htf4_trend[symbol] = None
                         else:
                             _crypto_htf4_trend[symbol] = None
-                    except Exception as exc:  # pragma: no cover - network flakiness
+                    except Exception as exc:
                         logger.debug("4h MTF fetch failed for %s: %s", symbol, exc)
                         _crypto_htf4_trend[symbol] = None
 
@@ -1262,6 +1266,12 @@ async def _refresh_market_data():
 
                 except Exception as e:
                     logger.error("Failed to fetch %s: %s", symbol, e)
+
+            # Parallelize crypto processing with a fast timeout so crypto never blocks NSE
+            await asyncio.gather(
+                *[_process_crypto_symbol(s) for s in settings.CRYPTO_SYMBOLS],
+                return_exceptions=True
+            )
         except ImportError:
             logger.warning("CCXT not available for crypto data")
 
@@ -1339,6 +1349,13 @@ async def _refresh_market_data():
 
         _last_refresh = datetime.now()
         logger.info("Market data refreshed: %d symbols loaded", len(_market_data))
+
+        # Force garbage collection to keep Render free tier memory footprint strictly under 400 MB
+        try:
+            import gc
+            gc.collect()
+        except Exception:
+            pass
 
 
 # ── API Endpoints ────────────────────────────────────────

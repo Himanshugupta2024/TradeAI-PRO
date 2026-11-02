@@ -71,11 +71,57 @@ def _is_supported_spot_symbol(exchange: ccxt.binance, symbol: str) -> bool:
 
 
 def _init_exchange() -> ccxt.binance:
-    """Create a Binance exchange instance."""
+    """Create a Binance exchange instance with short timeout for fast fallback."""
     return ccxt.binance({
         "enableRateLimit": settings.BINANCE_RATE_LIMIT,
         "options": {"defaultType": "spot"},
+        "timeout": 3500,
     })
+
+
+def _fetch_yahoo_crypto_fallback(
+    symbol: str, timeframe: str, since_days: int = settings.HISTORICAL_DAYS
+) -> pd.DataFrame:
+    """
+    Zero-cost, unblocked Yahoo Finance fallback for crypto in case Binance CCXT is
+    throttled or blocked by Indian ISPs (Jio/Airtel/ACT).
+    Maps e.g. BTC/USDT -> BTC-USD, ETH/USDT -> ETH-USD, SOL/USDT -> SOL-USD.
+    """
+    try:
+        import yfinance as yf
+
+        clean = symbol.replace("-", "/").split("/")[0].upper().strip()
+        yf_sym = f"{clean}-USD"
+
+        # Map interval
+        tf_map = {
+            "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+            "1h": "1h", "4h": "1h", "1d": "1d", "1w": "1wk"
+        }
+        interval = tf_map.get(timeframe, "1h")
+        period = f"{min(since_days, 30)}d" if since_days > 0 else "7d"
+        if interval == "1d":
+            period = f"{min(since_days, 730)}d"
+
+        df = yf.download(yf_sym, period=period, interval=interval, progress=False)
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        df = df.reset_index()
+        # Flatten columns
+        df.columns = [str(c[0] if isinstance(c, tuple) else c).lower() for c in df.columns]
+        date_col = next((c for c in df.columns if c in ("datetime", "date", "timestamp")), None)
+        if date_col:
+            df = df.rename(columns={date_col: "timestamp"})
+
+        cols_needed = ["timestamp", "open", "high", "low", "close", "volume"]
+        df = df[[c for c in cols_needed if c in df.columns]]
+        df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+        log.info("[Yahoo Crypto Fallback] Fetched %d candles for %s (%s)", len(df), yf_sym, timeframe)
+        return df
+    except Exception as exc:
+        log.warning("Yahoo crypto fallback failed for %s: %s", symbol, exc)
+        return pd.DataFrame()
 
 
 def fetch_historical(
@@ -110,7 +156,7 @@ def fetch_historical(
     all_candles = []
     limit = 1000  # Binance max per request
     retries = 0
-    max_retries = 5
+    max_retries = 1
 
     log.info("Fetching %s %s since %s", symbol, timeframe, since_dt.date())
 
@@ -124,8 +170,8 @@ def fetch_historical(
             if retries > max_retries:
                 log.error("Max retries (%d) exceeded for %s: %s", max_retries, symbol, e)
                 break
-            wait = min(5 * retries, 30)
-            log.warning("Network error (retry %d/%d), waiting %ds: %s", retries, max_retries, wait, e)
+            wait = 1
+            log.warning("Network error on Binance (retry %d/%d): %s — falling back soon", retries, max_retries, e)
             time.sleep(wait)
             continue
         except ccxt.ExchangeError as e:
@@ -153,8 +199,8 @@ def fetch_historical(
         time.sleep(exchange.rateLimit / 1000)
 
     if not all_candles:
-        log.warning("No data returned for %s %s", symbol, timeframe)
-        return pd.DataFrame()
+        log.warning("Binance returned no data for %s %s; trying Yahoo crypto fallback...", symbol, timeframe)
+        return _fetch_yahoo_crypto_fallback(symbol, timeframe, since_days)
 
     df = pd.DataFrame(
         all_candles, columns=["timestamp", "open", "high", "low", "close", "volume"]
