@@ -964,10 +964,12 @@ SWING_WATCHLIST: list[str] = [
 TWELVE_DATA_API_KEY: str = os.getenv("TWELVE_DATA_API_KEY", "")
 
 FOREX_SYMBOLS: list = [
+    # Major Global Pairs — 24hr but best during sessions
+    "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD", "NZD/USD", "USD/CAD",
+    # Liquid Crosses
+    "EUR/GBP", "EUR/JPY", "GBP/JPY", "AUD/JPY",
     # INR Pairs — trade on NSE 9:00 AM to 5:00 PM IST
     "USD/INR", "EUR/INR", "GBP/INR", "JPY/INR",
-    # Major Global Pairs — 24hr but best during sessions
-    "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD",
 ]
 
 FOREX_TIMEFRAMES: list = ["1h", "4h", "1day"]
@@ -1056,6 +1058,54 @@ FOREX_PROFILES: dict = {
         "best_patterns": ["EMA20_PULLBACK", "RANGE_BREAKOUT"],
         "hold_hours": [48, 120],
         "session": "NEWYORK",
+    },
+    "USD/CHF": {
+        "max_sl_pips": 40,
+        "min_rr": 1.5,
+        "rsi_buy_zone": [40, 60],
+        "best_patterns": ["EMA20_PULLBACK", "SUPPORT_REVERSAL"],
+        "hold_hours": [48, 120],
+        "session": "LONDON",
+    },
+    "NZD/USD": {
+        "max_sl_pips": 40,
+        "min_rr": 1.5,
+        "rsi_buy_zone": [40, 60],
+        "best_patterns": ["EMA20_PULLBACK", "RANGE_BREAKOUT"],
+        "hold_hours": [48, 120],
+        "session": "ASIAN",
+    },
+    "EUR/GBP": {
+        "max_sl_pips": 35,
+        "min_rr": 1.5,
+        "rsi_buy_zone": [40, 60],
+        "best_patterns": ["EMA20_PULLBACK", "RANGE_BREAKOUT"],
+        "hold_hours": [48, 120],
+        "session": "LONDON",
+    },
+    "EUR/JPY": {
+        "max_sl_pips": 50,
+        "min_rr": 1.6,
+        "rsi_buy_zone": [40, 62],
+        "best_patterns": ["EMA20_PULLBACK", "BB_SQUEEZE"],
+        "hold_hours": [48, 120],
+        "session": "LONDON",
+    },
+    "GBP/JPY": {
+        "max_sl_pips": 65,
+        "min_rr": 1.8,
+        "rsi_buy_zone": [38, 60],
+        "best_patterns": ["RANGE_BREAKOUT", "SUPPORT_REVERSAL"],
+        "hold_hours": [48, 120],
+        "session": "LONDON",
+    },
+    "AUD/JPY": {
+        "max_sl_pips": 45,
+        "min_rr": 1.5,
+        "rsi_buy_zone": [40, 60],
+        "best_patterns": ["EMA20_PULLBACK", "RANGE_BREAKOUT"],
+        "hold_hours": [48, 120],
+        "session": "ASIAN",
     },
 }
 

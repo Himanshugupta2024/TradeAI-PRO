@@ -2158,10 +2158,68 @@ body::before {
 .pos-metric-number.text-loss { color: #F43F5E; }
 .pos-metric-number.text-profit { color: #10B981; }
 
+.pos-live-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.35rem 0.55rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.pos-live-left {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+.pos-live-lbl {
+    font-size: 0.55rem;
+    font-weight: 700;
+    color: #64748B;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.pos-live-price {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 800;
+    color: #F8FAFC;
+}
+.pos-pnl-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+.pos-pnl-pill.pnl-profit {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10B981;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+}
+.pos-pnl-pill.pnl-loss {
+    background: rgba(244, 63, 94, 0.15);
+    color: #F43F5E;
+    border: 1px solid rgba(244, 63, 94, 0.35);
+}
+.pos-pnl-pill.pnl-neutral {
+    background: rgba(148, 163, 184, 0.1);
+    color: #94A3B8;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+}
+.pos-dist-hint {
+    font-size: 0.6rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: #94A3B8;
+}
+
 .pos-ticket-footer {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
 }
 .pos-status-pulse {
     font-size: 0.62rem;

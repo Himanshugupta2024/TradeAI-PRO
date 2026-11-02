@@ -1209,9 +1209,15 @@
 
             <!-- ── Hero Capital & Performance Metric Strip ── -->
             <div class="terminal-hero-strip" id="statsStrip">
-                <div class="hero-metric-tile">
-                    <span class="hero-metric-lbl">Account Capital</span>
-                    <span class="hero-metric-val" id="statCapital">₹0</span>
+                <div class="hero-metric-tile interactive" id="heroCapitalTile" onclick="openSelfLearningModal()" title="Manage Self-Learning Bankroll & Configure Capital">
+                    <div class="hero-metric-header" style="display:flex;justify-content:space-between;align-items:center;">
+                        <span class="hero-metric-lbl">Self-Learning Capital</span>
+                        <span class="hero-tile-gear" style="font-size:0.75rem;opacity:0.75;">⚙️</span>
+                    </div>
+                    <span class="hero-metric-val" id="statCapital">₹1,00,000</span>
+                    <div class="hero-metric-sub" id="statCapitalSub" style="font-size:0.68rem;opacity:0.8;margin-top:2px;">
+                        <span id="statCapitalSeed">Seed: ₹1,00,000</span> • <span id="statUnrealizedPnl">MTM: ₹0</span>
+                    </div>
                 </div>
                 <div class="hero-metric-tile">
                     <span class="hero-metric-lbl">Total Realized P&L</span>
@@ -1227,6 +1233,9 @@
                         <span class="hero-tile-arrow">➔</span>
                     </div>
                     <span class="hero-metric-val" id="statTrades">0</span>
+                    <div class="hero-metric-sub" id="statTradesSub" style="font-size:0.68rem;opacity:0.8;margin-top:2px;">
+                        <span id="statTradesSubDetail">0 closed</span>
+                    </div>
                 </div>
             </div>
             <div id="statsHint" class="stats-hint-text" style="display:none;"></div>
@@ -2130,32 +2139,78 @@
 
         <!-- ════════ FOREX TAB ════════ -->
         <section class="tab-content" id="forexTab">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.25rem;flex-wrap:wrap;gap:0.75rem;">
+                <div>
+                    <h2 class="section-title">💱 Forex Intelligence &amp; Paper Engine</h2>
+                    <p style="font-size:0.78rem;color:var(--text-muted);margin-top:0.25rem;">
+                        Multi-timeframe swing analysis · 4/4 ML Consensus · Keyless fallback active · Strict Paper Trading Only
+                    </p>
+                </div>
+                <div style="display:flex;align-items:center;gap:0.5rem;">
+                    <div id="forexLiquidityBadge" class="live-pill" style="background:rgba(56,189,248,0.12);color:var(--cyan);border:1px solid rgba(56,189,248,0.3);font-size:0.75rem;padding:3px 10px;font-weight:700;">
+                        <span class="status-dot live"></span> LIQUIDITY: HIGH
+                    </div>
+                    <button class="toggle-btn" onclick="loadForexData()" style="font-size:0.74rem;padding:0.3rem 0.85rem;">↺ Refresh Scanner</button>
+                </div>
+            </div>
+
+            <!-- Top Forex Setups Banner -->
             <div style="margin-bottom:1.5rem;">
-                <h2 class="section-title">💱 Forex Trading — Swing Setups</h2>
-                <p style="font-size:0.78rem;color:var(--text-muted);margin-top:0.25rem;">
-                    Powered by Twelve Data (free plan) · Paper trade only · Not financial advice
-                </p>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem;">
+                    <span style="font-size:0.78rem;font-weight:700;color:var(--accent);letter-spacing:0.06em;text-transform:uppercase;">★ Top Qualified Forex Setups</span>
+                    <span id="forexTopCountBadge" style="font-size:0.7rem;color:var(--text-muted);">0 Qualified</span>
+                </div>
+                <div id="forexTopSetupsGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:1rem;">
+                    <div class="kpi-card" style="padding:1.5rem;text-align:center;"><span style="color:var(--text-muted);font-size:0.85rem;">Scanning for high-probability setups…</span></div>
+                </div>
             </div>
 
-            <!-- Section A: Session Clock -->
-            <div id="forexSessionClock" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:1.5rem;">
-                <!-- Populated by renderForexSessions() -->
-                <div class="kpi-card"><span class="kpi-lbl">Loading sessions…</span></div>
+            <!-- Global Session & Market Intelligence Row -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem;margin-bottom:1.5rem;">
+                <!-- Session Intelligence Card -->
+                <div class="card" style="padding:1rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+                        <span style="font-size:0.75rem;font-weight:700;color:var(--text-muted);letter-spacing:0.05em;text-transform:uppercase;">Global Market Sessions</span>
+                        <span id="forexOverlapText" style="font-size:0.72rem;font-weight:700;color:var(--cyan);background:rgba(56,189,248,0.1);padding:2px 7px;border-radius:4px;">LONDON + NEW YORK</span>
+                    </div>
+                    <div id="forexSessionClock" style="display:grid;grid-template-columns:repeat(2,1fr);gap:0.6rem;">
+                        <!-- Populated by renderForexSessions() -->
+                        <div class="kpi-card"><span class="kpi-lbl">Loading sessions…</span></div>
+                    </div>
+                </div>
+
+                <!-- Currency Relative Strength & Risk Sentiment Card -->
+                <div class="card" style="padding:1rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+                        <span style="font-size:0.75rem;font-weight:700;color:var(--text-muted);letter-spacing:0.05em;text-transform:uppercase;">Currency Relative Strength</span>
+                        <span id="forexRiskSentimentBadge" style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:4px;background:rgba(16,185,129,0.15);color:var(--green);border:1px solid rgba(16,185,129,0.3);">RISK ON</span>
+                    </div>
+                    <div id="forexCurrencyMatrix" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;text-align:center;">
+                        <!-- Populated by renderCurrencyStrength() -->
+                        <div style="font-size:0.78rem;color:var(--text-muted);">Loading strengths…</div>
+                    </div>
+                </div>
             </div>
 
-            <!-- Section B: INR Pair Strip -->
+            <!-- INR Pair Strip -->
             <div id="forexInrStrip" style="background:var(--bg-raised);border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.5rem;overflow-x:auto;">
-                <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.5rem;letter-spacing:0.05em;text-transform:uppercase;">INR Pairs (NSE Currency)</div>
+                <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.5rem;letter-spacing:0.05em;text-transform:uppercase;">INR Pairs (NSE Currency — 09:00 to 17:00 IST)</div>
                 <div id="forexInrRow" style="display:flex;gap:1.5rem;min-width:max-content;">
                     <!-- Populated by renderInrStrip() -->
                     <span style="color:var(--text-muted);font-size:0.82rem;">Loading…</span>
                 </div>
             </div>
 
-            <!-- Section C: Signal Cards -->
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;">
-                <div style="font-size:0.82rem;color:var(--text-muted);" id="forexScanMeta">Scanning…</div>
-                <button class="toggle-btn" onclick="loadForexData()" style="font-size:0.72rem;padding:0.25rem 0.75rem;">↺ Refresh</button>
+            <!-- Universe Pair Scanner -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem;">
+                <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;">
+                    <button class="toggle-btn active" id="fxFilterAll" onclick="filterForexPairs('all')">All Pairs</button>
+                    <button class="toggle-btn" id="fxFilterQualified" onclick="filterForexPairs('qualified')">★ Qualified Only</button>
+                    <button class="toggle-btn" id="fxFilterMajors" onclick="filterForexPairs('majors')">Majors</button>
+                    <button class="toggle-btn" id="fxFilterCrosses" onclick="filterForexPairs('crosses')">Crosses</button>
+                    <button class="toggle-btn" id="fxFilterInr" onclick="filterForexPairs('inr')">INR Pairs</button>
+                </div>
+                <div style="font-size:0.78rem;color:var(--text-muted);" id="forexScanMeta">Scanning universe…</div>
             </div>
             <div id="forexSignalGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:1rem;">
                 <div class="loading-state"><div class="loader"></div><p>Scanning forex pairs…</p></div>
@@ -2527,6 +2582,62 @@
                 <div class="modal-backtest-section" id="modalBacktestSection">
                     <p style="color:var(--text-muted);font-size:0.8rem">Backtest loading...</p>
                 </div>
+            </div>
+        </div>
+    </div>
+
+        <!-- ── Self-Learning & Capital Management Modal ── -->
+    <div class="modal-backdrop" id="selfLearningModalBackdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;" onclick="if(event.target===this)closeSelfLearningModal()">
+        <div class="modal" id="selfLearningModal" style="max-width:480px;width:90%;background:#0d1117;border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:20px;box-shadow:0 20px 40px rgba(0,0,0,0.6);">
+            <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.08);padding-bottom:12px;margin-bottom:16px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:1.2rem;">🧠</span>
+                    <h3 style="margin:0;font-size:1.05rem;font-weight:700;color:#f0f6fc;">Self-Learning Capital Setup</h3>
+                </div>
+                <button onclick="closeSelfLearningModal()" style="background:none;border:none;color:#8b949e;font-size:1.2rem;cursor:pointer;">✕</button>
+            </div>
+            <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;color:#c9d1d9;font-size:0.85rem;">
+                <p style="margin:0;line-height:1.4;color:#8b949e;">
+                    Yeh virtual seed capital autonomous paper-trading aur reinforcement feedback learning ke liye use hota hai. Live PnL ke saath equity dynamically fluctuate karti hai.
+                </p>
+                <div style="background:rgba(255,255,255,0.03);padding:12px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <div>
+                        <div style="font-size:0.7rem;color:#8b949e;text-transform:uppercase;">Current Equity</div>
+                        <div id="slModalEquity" style="font-size:1.1rem;font-weight:700;color:#58a6ff;">₹1,00,000</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:#8b949e;text-transform:uppercase;">Unrealized MTM</div>
+                        <div id="slModalMtm" style="font-size:1.1rem;font-weight:700;color:#3fb950;">₹0</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:#8b949e;text-transform:uppercase;">Realized PnL</div>
+                        <div id="slModalRealized" style="font-size:1.1rem;font-weight:700;color:#f0f6fc;">₹0</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:#8b949e;text-transform:uppercase;">Open Positions</div>
+                        <div id="slModalPositions" style="font-size:1.1rem;font-weight:700;color:#f0f6fc;">0 Active</div>
+                    </div>
+                </div>
+
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                    <label style="font-weight:600;font-size:0.8rem;color:#f0f6fc;">Set Virtual Seed Capital (₹):</label>
+                    <div style="display:flex;gap:8px;">
+                        <input type="number" id="inputLearningCapital" value="100000" min="5000" step="5000" style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 12px;color:#f0f6fc;font-size:0.9rem;" />
+                        <button onclick="applyNewCapital()" style="background:#238636;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-weight:600;cursor:pointer;">Update</button>
+                    </div>
+                    <div style="display:flex;gap:6px;margin-top:4px;">
+                        <button onclick="document.getElementById('inputLearningCapital').value=50000" style="background:#21262d;border:1px solid #30363d;color:#8b949e;padding:3px 8px;border-radius:4px;font-size:0.75rem;cursor:pointer;">₹50,000</button>
+                        <button onclick="document.getElementById('inputLearningCapital').value=100000" style="background:#21262d;border:1px solid #30363d;color:#8b949e;padding:3px 8px;border-radius:4px;font-size:0.75rem;cursor:pointer;">₹1,00,000</button>
+                        <button onclick="document.getElementById('inputLearningCapital').value=200000" style="background:#21262d;border:1px solid #30363d;color:#8b949e;padding:3px 8px;border-radius:4px;font-size:0.75rem;cursor:pointer;">₹2,00,000</button>
+                        <button onclick="document.getElementById('inputLearningCapital').value=500000" style="background:#21262d;border:1px solid #30363d;color:#8b949e;padding:3px 8px;border-radius:4px;font-size:0.75rem;cursor:pointer;">₹5,00,000</button>
+                    </div>
+                </div>
+
+                <div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;display:flex;gap:10px;">
+                    <button onclick="resetLearningAccount()" style="flex:1;background:rgba(218,54,51,0.15);border:1px solid rgba(218,54,51,0.4);color:#f85149;padding:8px;border-radius:6px;font-weight:600;font-size:0.8rem;cursor:pointer;">Reset Paper Account</button>
+                    <button onclick="triggerLearningCycleNow()" style="flex:1;background:rgba(56,139,253,0.15);border:1px solid rgba(56,139,253,0.4);color:#58a6ff;padding:8px;border-radius:6px;font-weight:600;font-size:0.8rem;cursor:pointer;">⚡ Scan & Auto-Trade Now</button>
+                </div>
+                <div id="slModalFeedback" style="font-size:0.75rem;color:#8b949e;text-align:center;min-height:16px;"></div>
             </div>
         </div>
     </div>

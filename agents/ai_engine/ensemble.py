@@ -96,6 +96,21 @@ class _ModelPerformanceTracker:
             "lstm":        collections.deque(maxlen=window),
             "logistic":    collections.deque(maxlen=window),
         }
+        self._restore_history_from_db()
+
+    def _restore_history_from_db(self):
+        try:
+            import sqlite3
+            conn = sqlite3.connect("trading.db")
+            c = conn.cursor()
+            rows = c.execute("SELECT result FROM trade_outcomes ORDER BY id DESC LIMIT 50").fetchall()
+            if rows:
+                for r in reversed(rows):
+                    is_win = 1 if r[0] == "WIN" else 0
+                    for m in self._history:
+                        self._history[m].append(is_win)
+        except Exception as e:
+            log.debug("Could not restore model performance history: %s", e)
 
     def record(self, model_name: str, predicted_up: bool, actual_up: bool):
         """Record a prediction outcome for a model."""

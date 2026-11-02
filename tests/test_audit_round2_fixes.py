@@ -239,18 +239,21 @@ def test_portfolio_wide_gross_leverage_limit(clean_engine):
     clean_engine.initial_capital = 10_000.0
 
     # Place trade 1 taking 8,000 exposure (entry 1000, sl 980, qty 8)
-    trade1 = clean_engine.execute(
-        symbol="STOCK_A",
-        direction="LONG",
-        entry=1000.0,
-        sl=980.0,
-        tp=1050.0,
-        atr=10.0,
-    )
-    assert trade1 is not None
+    with patch.object(settings, "MAX_POSITION_LEVERAGE", 1.0), \
+         patch.object(settings, "RISK_PER_TRADE_PCT", 1.6), \
+         patch.object(settings, "MAX_PORTFOLIO_LEVERAGE", 1.0):
+        trade1 = clean_engine.execute(
+            symbol="STOCK_A",
+            direction="LONG",
+            entry=1000.0,
+            sl=980.0,
+            tp=1050.0,
+            atr=10.0,
+        )
+        assert trade1 is not None
+        assert trade1.quantity == 8.0
 
-    # Place trade 2 with high entry that exceeds remaining 2,000 exposure
-    with patch.object(settings, "MAX_PORTFOLIO_LEVERAGE", 1.0):
+        # Place trade 2 with high entry that exceeds remaining 2,000 exposure
         trade2 = clean_engine.execute(
             symbol="STOCK_B",
             direction="LONG",

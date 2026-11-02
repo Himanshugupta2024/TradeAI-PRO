@@ -173,6 +173,7 @@ class LightGBMPredictor:
                     saved = pickle.load(f)
                 self.model = saved.get("model")
                 self._feature_importance = saved.get("feature_importance", {})
+                self.feature_cols = saved.get("feature_cols", None)
                 self.is_fitted = self.model is not None
                 if self.is_fitted:
                     log.info("LightGBM model loaded from %s", self.model_path)
@@ -361,6 +362,12 @@ class LightGBMPredictor:
 
         try:
             features = extract_features(df.tail(1))
+            if getattr(self, "feature_cols", None):
+                cols = [c for c in self.feature_cols if c in features.columns]
+                if len(cols) == len(self.feature_cols):
+                    features = features[cols]
+            elif hasattr(self.model, "n_features_in_") and features.shape[1] > self.model.n_features_in_:
+                features = features.iloc[:, :self.model.n_features_in_]
             X = features.values.astype(np.float64)
 
             col_medians = np.nanmedian(X, axis=0)

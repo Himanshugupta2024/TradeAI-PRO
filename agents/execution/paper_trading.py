@@ -1,3 +1,6 @@
+import sys
+import tempfile
+import uuid
 """
 Paper Trading Engine.
 
@@ -588,9 +591,31 @@ class PaperTradingEngine:
                 return trade
         return None
 
-    def get_open_trades(self) -> list[dict]:
-        """Get all open trades as dicts."""
-        return [asdict(t) for t in self.open_trades]
+    def get_open_trades(self, current_prices: dict = None) -> list[dict]:
+        """Get all open trades as dicts with optional live pricing & unrealized PnL."""
+        current_prices = current_prices or {}
+        results = []
+        for trade in self.open_trades:
+            td = asdict(trade)
+            price_info = current_prices.get(trade.symbol) or {}
+            if isinstance(price_info, dict):
+                cur_price = float(price_info.get("close", trade.entry_price))
+            elif isinstance(price_info, (int, float)):
+                cur_price = float(price_info)
+            else:
+                cur_price = trade.entry_price
+
+            is_long = trade.direction in ("LONG", "BUY")
+            qty = trade.quantity
+            mult = 1.0 if is_long else -1.0
+            unrealized = (cur_price - trade.entry_price) * qty * mult
+            unrealized_pct = ((cur_price - trade.entry_price) / trade.entry_price * 100.0 * mult) if trade.entry_price > 0 else 0.0
+
+            td["current_price"] = round(cur_price, 2)
+            td["unrealized_pnl"] = round(unrealized, 2)
+            td["unrealized_pnl_pct"] = round(unrealized_pct, 2)
+            results.append(td)
+        return results
 
     def get_history(self, limit: int = 50) -> list[dict]:
         """Get closed trade history."""
@@ -610,12 +635,73 @@ class PaperTradingEngine:
             return curve
         return self.equity_history
 
-    def get_stats(self) -> dict:
+    def get_portfolio_equity(self, current_prices: dict = None) -> dict:
+        """Calculate live equity including floating mark-to-market (MTM) of open trades."""
+        current_prices = current_prices or {}
+        unrealized_pnl = 0.0
+        deployed_margin = 0.0
+
+        for trade in self.open_trades:
+            price_info = current_prices.get(trade.symbol) or {}
+            if isinstance(price_info, dict):
+                cur_price = float(price_info.get("close", trade.entry_price))
+            elif isinstance(price_info, (int, float)):
+                cur_price = float(price_info)
+            else:
+                cur_price = trade.entry_price
+
+            qty = trade.quantity
+            if trade.direction in ("LONG", "BUY"):
+                mtm = (cur_price - trade.entry_price) * qty
+            else:
+                mtm = (trade.entry_price - cur_price) * qty
+
+            unrealized_pnl += mtm
+            deployed_margin += trade.entry_price * qty
+
+        total_equity = self.capital + unrealized_pnl
+        closed = [t for t in self.trades if t.status != "OPEN"]
+        realized_pnl = sum(self._trade_total_pnl(t) for t in closed)
+
+        return {
+            "initial_capital": round(self.initial_capital, 2),
+            "cash_capital": round(self.capital, 2),
+            "total_equity": round(total_equity, 2),
+            "unrealized_pnl": round(unrealized_pnl, 2),
+            "realized_pnl": round(realized_pnl, 2),
+            "deployed_margin": round(deployed_margin, 2),
+            "free_cash": round(max(0.0, self.capital - deployed_margin), 2),
+            "open_positions": len(self.open_trades),
+        }
+
+    def reset_account(self, new_capital: float = 100000.0, clear_trades: bool = False) -> dict:
+        """Reset or reconfigure self-learning paper capital."""
+        if new_capital > 0:
+            self.initial_capital = float(new_capital)
+            self.capital = float(new_capital)
+        if clear_trades:
+            self.trades.clear()
+            self._daily_pnl.clear()
+            self.equity_history = [{"timestamp": _now_ist_isoformat(), "equity": self.capital}]
+        self._circuit_breaker_active = False
+        self._circuit_breaker_reason = ""
+        self._consecutive_losses = 0
+        self._cooldowns.clear()
+        self._save()
+        return self.get_stats()
+
+    def get_stats(self, current_prices: dict = None) -> dict:
         """Get performance stats."""
+        equity_info = self.get_portfolio_equity(current_prices)
         closed = [t for t in self.trades if t.status != "OPEN"]
         if not closed:
             return {
                 "total_trades": 0, "sample_size": 0, "capital": self.capital,
+                "total_equity": equity_info["total_equity"],
+                "unrealized_pnl": equity_info["unrealized_pnl"],
+                "initial_capital": equity_info["initial_capital"],
+                "deployed_margin": equity_info["deployed_margin"],
+                "free_cash": equity_info["free_cash"],
                 "total_pnl": 0, "win_rate": None, "consecutive_losses": 0,
                 "sharpe_ratio": 0, "max_drawdown": 0, "max_drawdown_pct": 0,
                 "profit_factor": 0, "avg_win": 0, "avg_loss": 0,
@@ -676,6 +762,11 @@ class PaperTradingEngine:
             "losing_trades": len(losses),
             "win_rate": round(len(wins) / len(closed) * 100, 1) if closed else None,
             "capital": round(self.capital, 2),
+            "total_equity": equity_info["total_equity"],
+            "unrealized_pnl": equity_info["unrealized_pnl"],
+            "initial_capital": equity_info["initial_capital"],
+            "deployed_margin": equity_info["deployed_margin"],
+            "free_cash": equity_info["free_cash"],
             "total_pnl": round(sum(pnls), 2),
             "avg_pnl": round(sum(pnls) / len(pnls), 2) if pnls else 0.0,
             "avg_win": round(np.mean([self._trade_total_pnl(t) for t in wins]), 2) if wins else 0.0,

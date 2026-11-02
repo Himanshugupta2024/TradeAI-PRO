@@ -513,9 +513,13 @@ async def get_dashboard_overview():
     tracker = PerfTracker("dashboard/overview", slow_threshold_ms=100.0)
 
     engine = svc._get_engine()
-
-    stats = engine.get_stats() if engine else {}
-
+    prices = {}
+    for sym, d in svc._market_data.items():
+        if isinstance(d, pd.DataFrame) and not d.empty and "close" in d.columns:
+            prices[sym] = {"close": float(d["close"].iloc[-1])}
+        elif isinstance(d, dict) and "close" in d:
+            prices[sym] = {"close": float(d["close"])}
+    stats = engine.get_stats(current_prices=prices) if engine else {}
     positions = engine.get_open_trades() if engine else []
 
     top_signals = []
@@ -556,7 +560,10 @@ async def get_dashboard_overview():
             "dominant_regime": dominant_regime,
         },
         "portfolio_summary": {
-            "capital": stats.get("capital", 100000.0),
+            "capital": stats.get("total_equity", stats.get("capital", 100000.0)),
+            "cash_capital": stats.get("capital", 100000.0),
+            "initial_capital": stats.get("initial_capital", 100000.0),
+            "unrealized_pnl": stats.get("unrealized_pnl", 0.0),
             "total_pnl": stats.get("total_pnl", 0.0),
             "win_rate": stats.get("win_rate", 0.0),
             "open_positions_count": len(positions),
@@ -576,8 +583,10 @@ async def get_dashboard_overview():
 
         "market_status": "OPEN" if svc.is_market_open() else "CLOSED",
 
-        "capital": stats.get("capital", 100000.0),
-
+        "capital": stats.get("total_equity", stats.get("capital", 100000.0)),
+        "cash_capital": stats.get("capital", 100000.0),
+        "initial_capital": stats.get("initial_capital", 100000.0),
+        "unrealized_pnl": stats.get("unrealized_pnl", 0.0),
         "total_pnl": stats.get("total_pnl", 0.0),
 
         "win_rate": stats.get("win_rate", 0.0),
@@ -2629,8 +2638,14 @@ async def get_open_paper_trades_endpoint():
     """Get all currently open paper trades."""
 
     engine = svc._get_engine()
+    prices = {}
+    for sym, d in svc._market_data.items():
+        if isinstance(d, pd.DataFrame) and not d.empty and "close" in d.columns:
+            prices[sym] = {"close": float(d["close"].iloc[-1])}
+        elif isinstance(d, dict) and "close" in d:
+            prices[sym] = {"close": float(d["close"])}
 
-    return {"open_trades": engine.get_open_trades()}
+    return {"open_trades": engine.get_open_trades(current_prices=prices)}
 
 @router.post("/api/paper/close/{trade_id}")
 
@@ -2681,6 +2696,31 @@ async def close_paper_trade_endpoint(trade_id: int, payload: dict | None = None)
     trade_dict = trade.__dict__ if hasattr(trade, "__dict__") else dict(trade)
 
     return {"status": "closed", "trade": trade_dict, "stats": engine.get_stats()}
+
+@router.post("/api/paper/capital")
+async def set_paper_capital_endpoint(payload: dict | None = None):
+    """Reconfigure self-learning paper capital and reset portfolio baseline."""
+    payload = payload or {}
+    capital = float(payload.get("capital") or 100000.0)
+    clear_trades = bool(payload.get("clear_trades", False))
+    engine = svc._get_engine()
+    new_stats = engine.reset_account(new_capital=capital, clear_trades=clear_trades)
+    return {
+        "status": "ok",
+        "message": f"Self-learning capital set to ₹{capital:,.2f}",
+        "stats": new_stats,
+    }
+
+@router.post("/api/paper/reset")
+async def reset_paper_trading_endpoint(capital: float = Query(100000.0, ge=1000.0)):
+    """Reset paper trading portfolio and self-learning state."""
+    engine = svc._get_engine()
+    new_stats = engine.reset_account(new_capital=capital, clear_trades=True)
+    return {
+        "status": "ok",
+        "message": f"Paper trading account reset with ₹{capital:,.2f} initial capital",
+        "stats": new_stats,
+    }
 
 # ── Autonomous Daemon & Decision Feed endpoints ──────────────────────────────
 
@@ -3645,8 +3685,13 @@ async def get_stats():
     """Get dashboard summary statistics from real trading engine."""
 
     engine = svc._get_engine()
-
-    stats = engine.get_stats()
+    prices = {}
+    for sym, d in svc._market_data.items():
+        if isinstance(d, pd.DataFrame) and not d.empty and "close" in d.columns:
+            prices[sym] = {"close": float(d["close"].iloc[-1])}
+        elif isinstance(d, dict) and "close" in d:
+            prices[sym] = {"close": float(d["close"])}
+    stats = engine.get_stats(current_prices=prices)
 
     return {
 
@@ -3658,13 +3703,23 @@ async def get_stats():
 
         "total_pnl": stats.get("total_pnl", 0),
 
+        "unrealized_pnl": stats.get("unrealized_pnl", 0),
+
         "avg_pnl": stats.get("avg_pnl", 0),
 
         "best_trade": stats.get("best_trade", 0),
 
         "worst_trade": stats.get("worst_trade", 0),
 
-        "capital": stats.get("capital", 100000),
+        "capital": stats.get("total_equity", stats.get("capital", 100000)),
+
+        "cash_capital": stats.get("capital", 100000),
+
+        "initial_capital": stats.get("initial_capital", 100000),
+
+        "deployed_margin": stats.get("deployed_margin", 0),
+
+        "free_cash": stats.get("free_cash", stats.get("capital", 100000)),
 
         "open_trades": stats.get("open_trades", len(engine.get_open_trades())),
 
@@ -7262,13 +7317,11 @@ async def get_forex_rates():
 
 async def get_forex_signals():
 
-    """Return cached forex swing setups sorted by strength score."""
+    """Return cached forex swing setups sorted by strength score, segregated by qualification."""
 
     try:
 
-        from agents.market_intelligence.forex_scanner import _scan_cache, is_forex_scanning
-
-        # Non-blocking: if cache has data or scan in flight, return cache immediately without 144s rate-limit wait
+        from agents.market_intelligence.forex_scanner import _scan_cache, is_forex_scanning, scan_all_forex
 
         if _scan_cache.get("setups"):
 
@@ -7284,11 +7337,27 @@ async def get_forex_signals():
 
             setups = _scan_cache.get("setups", [])
 
+        all_dicts = [s.to_dict() for s in setups]
+
+        qualified = [s for s in all_dicts if s.get("status") == "QUALIFIED"]
+
+        skipped = [s for s in all_dicts if s.get("status") == "SKIP"]
+
+        top_setups = qualified[:3]
+
         return {
 
-            "setups": [s.to_dict() for s in setups],
+            "setups": all_dicts,
 
-            "count": len(setups),
+            "qualified_setups": qualified,
+
+            "top_setups": top_setups,
+
+            "skipped_setups": skipped,
+
+            "count": len(all_dicts),
+
+            "qualified_count": len(qualified),
 
             "scanning_in_background": is_forex_scanning(),
 
@@ -7301,6 +7370,42 @@ async def get_forex_signals():
         logger.error("Forex signals error: %s", e)
 
         return JSONResponse(status_code=503, content={"error": str(e), "setups": []})
+
+@router.get("/api/forex/intelligence")
+
+async def get_forex_intelligence():
+
+    """Return relative currency strengths, risk sentiment, and session overlap liquidity."""
+
+    try:
+
+        from agents.data_ingestion.forex_fetcher import compute_currency_strengths, compute_session_intelligence
+
+        sess = await asyncio.to_thread(compute_session_intelligence)
+
+        cs = await asyncio.to_thread(compute_currency_strengths)
+
+        return {
+
+            "session_intelligence": sess,
+
+            "currency_strengths": cs.get("strengths", {}),
+
+            "risk_sentiment": cs.get("risk_sentiment", "NEUTRAL"),
+
+            "growth_score": cs.get("growth_score", 0.0),
+
+            "safe_haven_score": cs.get("safe_haven_score", 0.0),
+
+            "updated_at": datetime.now().isoformat(),
+
+        }
+
+    except Exception as e:
+
+        logger.error("Forex intelligence error: %s", e)
+
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @router.get("/api/forex/signal/{symbol}")
 

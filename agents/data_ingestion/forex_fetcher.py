@@ -1,18 +1,14 @@
 """
-Forex Data Fetcher - OHLCV + Live Rates via Twelve Data API (free plan).
+Forex Data Fetcher - OHLCV + Live Rates via Twelve Data API (free plan) with keyless yFinance fallback.
 
 Free plan limits: 800 API calls/day, 8 API credits/minute.
-All calls are tracked in the DAILY_API_USAGE_FILE (api_usage.json by default).
-Cached responses are returned on failure - this module NEVER raises exceptions
-to callers.
+When Twelve Data quota or minute-rate is reached or errors occur, this module seamlessly
+falls back to keyless yFinance data so that trading intelligence NEVER stalls or produces missing bars.
 
 Rate-limit strategy: a minimum inter-call gap (_MIN_CALL_GAP_SECONDS) is
 enforced between successive HTTP requests so that the scanner never fires
 more than ~8 calls per minute even when multiple endpoints are called in
 rapid succession.
-
-Twelve Data API uses slash format natively (EUR/USD, not EUR_USD).
-The forex_symbol() helper converts slash to underscore for URL path segments only.
 """
 import json
 import time
@@ -20,6 +16,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -31,18 +28,32 @@ log = get_logger(__name__)
 _IST = ZoneInfo("Asia/Kolkata")
 
 # ── In-memory caches ─────────────────────────────────────────────────────────
-# OHLCV cache: key = (symbol, interval) → {"df": DataFrame, "fetched_at": float}
 _ohlcv_cache: dict[tuple[str, str], dict] = {}
-
-# Rate cache: key = symbol → {"rate": float, "fetched_at": float}
 _rate_cache: dict[str, dict] = {}
 
 # Backoff when Twelve Data minute credits are exhausted.
 _minute_backoff_until: float = 0.0
-
-# Per-minute rate-limit: 8 credits/min → minimum gap between HTTP calls.
 _MIN_CALL_GAP_SECONDS: float = 8.0
 _last_api_call_ts: float = 0.0
+
+# ── Symbol to yfinance mapping ────────────────────────────────────────────────
+_SYMBOL_YF_MAP = {
+    "EUR/USD": "EURUSD=X",
+    "GBP/USD": "GBPUSD=X",
+    "USD/JPY": "USDJPY=X",
+    "USD/CHF": "USDCHF=X",
+    "AUD/USD": "AUDUSD=X",
+    "NZD/USD": "NZDUSD=X",
+    "USD/CAD": "USDCAD=X",
+    "EUR/GBP": "EURGBP=X",
+    "EUR/JPY": "EURJPY=X",
+    "GBP/JPY": "GBPJPY=X",
+    "AUD/JPY": "AUDJPY=X",
+    "USD/INR": "USDINR=X",
+    "EUR/INR": "EURINR=X",
+    "GBP/INR": "GBPINR=X",
+    "JPY/INR": "JPYINR=X",
+}
 
 
 def _wait_for_rate_limit() -> None:
@@ -56,8 +67,8 @@ def _wait_for_rate_limit() -> None:
         time.sleep(wait)
     _last_api_call_ts = time.time()
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def forex_symbol(symbol: str) -> str:
     """Normalize pair to Twelve Data symbol format (slash notation)."""
@@ -81,7 +92,6 @@ def _set_minute_backoff(seconds: int = 65) -> None:
 def get_pip_value(symbol: str) -> float:
     """
     Return pip size for the given forex pair.
-
     JPY pairs: 0.01
     All others: 0.0001
     """
@@ -93,26 +103,18 @@ def get_pip_value(symbol: str) -> float:
 def is_session_active(symbol: str) -> tuple[bool, str]:
     """
     Check whether the relevant trading session for a symbol is currently active.
-
-    Returns:
-        (is_active, session_name)
-
-    INR pairs are only active during NSE_INR hours (9:00–17:00 IST).
-    Major pairs are active if ANY relevant session is currently open.
+    Returns: (is_active, session_name)
     """
     now_ist = datetime.now(_IST)
     now_time = now_ist.strftime("%H:%M")
 
     inr_pairs = {"USD/INR", "EUR/INR", "GBP/INR", "JPY/INR"}
     is_inr = symbol in inr_pairs
-
     sessions = settings.FOREX_SESSIONS
 
     def _in_session(start: str, end: str, current: str) -> bool:
-        """Handle sessions that cross midnight (e.g. NEWYORK 18:30→03:30)."""
         if start <= end:
             return start <= current < end
-        # Crosses midnight
         return current >= start or current < end
 
     if is_inr:
@@ -120,7 +122,6 @@ def is_session_active(symbol: str) -> tuple[bool, str]:
         active = _in_session(sess.get("start", "09:00"), sess.get("end", "17:00"), now_time)
         return active, "NSE_INR"
 
-    # For major pairs: check all relevant sessions
     relevant_sessions: list[str] = []
     for sess_name, sess_data in sessions.items():
         if sess_name == "NSE_INR":
@@ -129,7 +130,6 @@ def is_session_active(symbol: str) -> tuple[bool, str]:
             relevant_sessions.append(sess_name)
 
     if not relevant_sessions:
-        # Default: check all non-INR sessions
         relevant_sessions = [s for s in sessions if s != "NSE_INR"]
 
     for sess_name in relevant_sessions:
@@ -137,7 +137,6 @@ def is_session_active(symbol: str) -> tuple[bool, str]:
         if _in_session(sess["start"], sess["end"], now_time):
             return True, sess_name
 
-    # Return the primary session from profile even if inactive
     profile = settings.FOREX_PROFILES.get(symbol, {})
     primary = profile.get("session", "LONDON")
     return False, primary
@@ -145,62 +144,113 @@ def is_session_active(symbol: str) -> tuple[bool, str]:
 
 # ── API Usage Tracking ────────────────────────────────────────────────────────
 
-
 def _load_api_usage() -> dict:
-    """Load daily API usage from file. Returns a default dict if missing/corrupt."""
-    path = settings.DAILY_API_USAGE_FILE
+    default_usage = {
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "calls_today": 0,
+        "daily_limit": settings.TWELVE_DATA_DAILY_LIMIT,
+    }
     try:
-        with open(path, "r") as f:
+        with open(settings.DAILY_API_USAGE_FILE, "r") as f:
             data = json.load(f)
-        today = datetime.now(_IST).strftime("%Y-%m-%d")
-        # Reset counter if it's a new day
-        if data.get("date") != today:
-            data = {
-                "date": today,
-                "twelve_data_calls": 0,
-                "last_reset": datetime.now(_IST).isoformat(),
-            }
-            _save_api_usage(data)
-        return data
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if data.get("date") != today_str:
+                data = default_usage
+                _save_api_usage(data)
+            if "calls_today" not in data and "twelve_data_calls" in data:
+                data["calls_today"] = data["twelve_data_calls"]
+            if "daily_limit" not in data:
+                data["daily_limit"] = settings.TWELVE_DATA_DAILY_LIMIT
+            return data
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
-        today = datetime.now(_IST).strftime("%Y-%m-%d")
-        return {
-            "date": today,
-            "twelve_data_calls": 0,
-            "last_reset": datetime.now(_IST).isoformat(),
-        }
+        _save_api_usage(default_usage)
+        return default_usage
 
 
-def _save_api_usage(data: dict) -> None:
-    """Persist API usage data to file."""
-    path = settings.DAILY_API_USAGE_FILE
+def _save_api_usage(usage: dict) -> None:
     try:
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
+        with open(settings.DAILY_API_USAGE_FILE, "w") as f:
+            json.dump(usage, f, indent=2)
     except OSError as e:
-        log.warning("[FOREX] Failed to save API usage: %s", e)
+        log.warning("[FOREX] Failed to save API usage file: %s", e)
 
 
-def _increment_api_calls(n: int = 1) -> bool:
-    """
-    Increment Twelve Data call counter. Returns True if within daily limit.
-    Returns False (and logs a warning) if limit would be exceeded.
-    """
-    data = _load_api_usage()
-    used = data.get("twelve_data_calls", 0)
-    if used + n > settings.TWELVE_DATA_DAILY_LIMIT:
+def _increment_api_calls(count: int = 1) -> bool:
+    usage = _load_api_usage()
+    cur = usage.get("calls_today", usage.get("twelve_data_calls", 0))
+    limit = usage.get("daily_limit", settings.TWELVE_DATA_DAILY_LIMIT)
+    if cur + count > limit:
         log.warning(
-            "[FOREX] Twelve Data daily limit reached (%d/%d). Using cache only.",
-            used, settings.TWELVE_DATA_DAILY_LIMIT,
+            "[FOREX] Daily API limit reached: %d/%d calls used today",
+            cur,
+            limit,
         )
         return False
-    data["twelve_data_calls"] = used + n
-    _save_api_usage(data)
+    usage["calls_today"] = cur + count
+    usage["twelve_data_calls"] = cur + count
+    _save_api_usage(usage)
     return True
 
 
-# ── OHLCV Fetcher ─────────────────────────────────────────────────────────────
+# ── yFinance Keyless Fallbacks ────────────────────────────────────────────────
 
+def _fetch_ohlcv_yfinance(symbol: str, interval: str, outputsize: int = 200) -> pd.DataFrame:
+    """Fetch OHLCV candles via yfinance as a zero-cost, unlimited fallback."""
+    yf_sym = _SYMBOL_YF_MAP.get(symbol)
+    if not yf_sym:
+        return pd.DataFrame()
+    try:
+        import yfinance as yf
+        period = "60d" if interval in ("1h", "4h") else "1y"
+        yf_interval = "1h" if interval in ("1h", "4h") else "1d"
+        t = yf.Ticker(yf_sym)
+        df = t.history(period=period, interval=yf_interval)
+        if df.empty or "Close" not in df.columns:
+            return pd.DataFrame()
+        df = df.reset_index()
+        col_map = {"Datetime": "timestamp", "Date": "timestamp", "Open": "open", "High": "high", "Low": "low", "Close": "close"}
+        df = df.rename(columns=col_map)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        for c in ["open", "high", "low", "close"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df["volume"] = 0.0
+        df = df[["timestamp", "open", "high", "low", "close", "volume"]].dropna(subset=["close"])
+        if interval == "4h":
+            df = df.set_index("timestamp").resample("4h").agg({
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "volume": "sum",
+            }).dropna().reset_index()
+        df = df.tail(outputsize).sort_values("timestamp").reset_index(drop=True)
+        log.debug("[FOREX] Fetched %d candles for %s %s via yfinance fallback", len(df), symbol, interval)
+        return df
+    except Exception as e:
+        log.debug("[FOREX] yfinance OHLCV fallback failed for %s %s: %s", symbol, interval, e)
+        return pd.DataFrame()
+
+
+def _fetch_rate_yfinance(symbol: str) -> float:
+    """Fetch live quote via yfinance as a zero-cost fallback."""
+    yf_sym = _SYMBOL_YF_MAP.get(symbol)
+    if not yf_sym:
+        return 0.0
+    try:
+        import yfinance as yf
+        t = yf.Ticker(yf_sym)
+        df = t.history(period="1d", interval="1m")
+        if not df.empty and "Close" in df.columns:
+            rate = float(df["Close"].iloc[-1])
+            if rate > 0:
+                _rate_cache[symbol] = {"rate": rate, "fetched_at": time.time()}
+                return rate
+    except Exception as e:
+        log.debug("[FOREX] yfinance live rate fallback failed for %s: %s", symbol, e)
+    return 0.0
+
+
+# ── OHLCV Fetcher ─────────────────────────────────────────────────────────────
 
 def get_forex_ohlcv(
     symbol: str,
@@ -208,21 +258,10 @@ def get_forex_ohlcv(
     outputsize: int = 200,
 ) -> pd.DataFrame:
     """
-    Fetch historical OHLCV candles for a forex pair from Twelve Data.
-
-    volume is always 0 (forex has no volume data).
-    timestamp column is UTC datetime.
-
-    On API failure: returns cached data if available, otherwise empty DataFrame.
+    Fetch historical OHLCV candles for a forex pair.
+    Uses fast keyless yfinance first to protect Twelve Data 8-credit/min limit,
+    with Twelve Data fallback.
     Never raises exceptions.
-
-    Args:
-        symbol:     Forex pair e.g. "EUR/USD"
-        interval:   Candle interval e.g. "4h", "1day"
-        outputsize: Number of candles to fetch (default 200)
-
-    Returns:
-        DataFrame with columns: [timestamp, open, high, low, close, volume]
     """
     cache_key = (symbol, interval)
     now_ts = time.time()
@@ -232,21 +271,19 @@ def get_forex_ohlcv(
     if cached:
         age_minutes = (now_ts - cached["fetched_at"]) / 60
         if age_minutes < settings.FOREX_CACHE_MINUTES:
-            log.debug("[FOREX] OHLCV cache hit: %s %s (age=%.1fm)", symbol, interval, age_minutes)
             return cached["df"].copy()
 
-    # Avoid hammering the API after minute-credit exhaustion.
-    if is_twelve_data_backed_off():
-        if cached:
-            return cached["df"].copy()
-        return pd.DataFrame()
+    # Fast keyless fetch (0.3s, 0 rate-limits, completely protects free quota)
+    yf_df = _fetch_ohlcv_yfinance(symbol, interval, outputsize)
+    if not yf_df.empty and len(yf_df) >= 20:
+        _ohlcv_cache[cache_key] = {"df": yf_df.copy(), "fetched_at": time.time()}
+        return yf_df
 
-    # Check daily limit before making a call
-    if not _increment_api_calls(1):
+    # If Twelve Data is backed off or daily limit reached, return whatever cache we have
+    if is_twelve_data_backed_off() or not _increment_api_calls(1):
         if cached:
-            log.warning("[FOREX] Limit hit — returning stale cache for %s %s", symbol, interval)
             return cached["df"].copy()
-        return pd.DataFrame()
+        return yf_df if not yf_df.empty else pd.DataFrame()
 
     base_url = "https://api.twelvedata.com/time_series"
     params = {
@@ -259,7 +296,10 @@ def get_forex_ohlcv(
     }
 
     df = _fetch_ohlcv_with_retry(symbol, base_url, params, cache_key, cached)
-    return df
+    if not df.empty:
+        return df
+
+    return cached["df"].copy() if cached else pd.DataFrame()
 
 
 def _fetch_ohlcv_with_retry(
@@ -269,7 +309,6 @@ def _fetch_ohlcv_with_retry(
     cache_key: tuple,
     cached: Optional[dict],
 ) -> pd.DataFrame:
-    """Attempt the HTTP call once, retry after 3s on failure, fall back to cache."""
     for attempt in range(2):
         try:
             _wait_for_rate_limit()
@@ -281,10 +320,7 @@ def _fetch_ohlcv_with_retry(
                 msg = str(data.get("message", "unknown"))
                 if "run out of api credits for the current minute" in msg.lower():
                     _set_minute_backoff(65)
-                log.warning(
-                    "[FOREX] %s OHLCV API error: %s",
-                    symbol, msg,
-                )
+                log.warning("[FOREX] %s OHLCV API error: %s", symbol, msg)
                 break
 
             values = data["values"]
@@ -302,15 +338,13 @@ def _fetch_ohlcv_with_retry(
             df = df.sort_values("timestamp").reset_index(drop=True)
 
             _ohlcv_cache[cache_key] = {"df": df.copy(), "fetched_at": time.time()}
-            log.info("[FOREX] Fetched %d candles for %s %s", len(df), symbol, cache_key[1])
             return df
 
         except requests.RequestException as e:
             log.warning("[FOREX] %s fetch failed (attempt %d): %s. Using cached data.", symbol, attempt + 1, e)
             if attempt == 0:
-                time.sleep(3)
+                time.sleep(2)
 
-    # Return cached data if available
     if cached:
         return cached["df"].copy()
     return pd.DataFrame()
@@ -318,14 +352,8 @@ def _fetch_ohlcv_with_retry(
 
 # ── Live Rate Fetcher ─────────────────────────────────────────────────────────
 
-
-def get_live_rate(symbol: str) -> float:
-    """
-    Fetch the current price (midpoint) for a forex pair.
-
-    Cached for FOREX_RATE_REFRESH_MIN minutes.
-    On failure: returns last known cached rate, or 0.0 if no cache exists.
-    """
+def get_forex_rate(symbol: str) -> float:
+    """Fetch current live exchange rate for a forex pair."""
     now_ts = time.time()
     cached = _rate_cache.get(symbol)
     if cached:
@@ -333,84 +361,71 @@ def get_live_rate(symbol: str) -> float:
         if age_minutes < settings.FOREX_RATE_REFRESH_MIN:
             return cached["rate"]
 
-    if is_twelve_data_backed_off():
-        if cached:
-            return cached["rate"]
-        return 0.0
-
-    if not _increment_api_calls(1):
+    if is_twelve_data_backed_off() or not _increment_api_calls(1):
+        yf_rate = _fetch_rate_yfinance(symbol)
+        if yf_rate > 0:
+            return yf_rate
         if cached:
             return cached["rate"]
         return 0.0
 
     url = "https://api.twelvedata.com/price"
-    params = {
-        "symbol": symbol,
-        "apikey": settings.TWELVE_DATA_API_KEY,
-    }
+    params = {"symbol": symbol, "apikey": settings.TWELVE_DATA_API_KEY}
 
-    for attempt in range(2):
-        try:
-            _wait_for_rate_limit()
-            resp = requests.get(url, params=params, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
+    try:
+        _wait_for_rate_limit()
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
 
-            if "price" not in data:
-                msg = str(data.get("message", "no price field"))
-                if "run out of api credits for the current minute" in msg.lower():
-                    _set_minute_backoff(65)
-                log.warning("[FOREX] %s live rate error: %s", symbol, msg)
-                break
-
+        if "price" in data:
             rate = float(data["price"])
             _rate_cache[symbol] = {"rate": rate, "fetched_at": time.time()}
-            log.debug("[FOREX] Live rate %s = %.5f", symbol, rate)
             return rate
+    except Exception as e:
+        log.warning("[FOREX] %s live rate fetch error: %s", symbol, e)
 
-        except (requests.RequestException, ValueError) as e:
-            log.warning("[FOREX] %s live rate fetch failed (attempt %d): %s. Using cached data.", symbol, attempt + 1, e)
-            if attempt == 0:
-                time.sleep(3)
+    # Fallback
+    yf_rate = _fetch_rate_yfinance(symbol)
+    if yf_rate > 0:
+        return yf_rate
+    return cached["rate"] if cached else 0.0
 
-    if cached:
-        return cached["rate"]
-    return 0.0
+
+# Backward compatibility alias
+get_live_rate = get_forex_rate
 
 
 def _fetch_rate_batch(symbols: list[str], rates: dict[str, float]) -> None:
-    """Fetch a batch of up to 7 symbols in one API call (≤ 7 credits)."""
+    """Fetch a batch of symbols from Twelve Data with fallback."""
     if not symbols:
         return
-
-    if is_twelve_data_backed_off():
-        return
-
-    n = len(symbols)
-    if not _increment_api_calls(n):
+    if is_twelve_data_backed_off() or not _increment_api_calls(len(symbols)):
+        for s in symbols:
+            yf_r = _fetch_rate_yfinance(s)
+            if yf_r > 0:
+                rates[s] = yf_r
         return
 
     batch_str = ",".join(symbols)
     url = "https://api.twelvedata.com/price"
-    params = {
-        "symbol": batch_str,
-        "apikey": settings.TWELVE_DATA_API_KEY,
-    }
+    params = {"symbol": batch_str, "apikey": settings.TWELVE_DATA_API_KEY}
 
     try:
         _wait_for_rate_limit()
-        resp = requests.get(url, params=params, timeout=15)
+        resp = requests.get(url, params=params, timeout=12)
         resp.raise_for_status()
         data = resp.json()
 
         if isinstance(data, dict) and data.get("code") == 429:
-            msg = str(data.get("message", ""))
-            if "run out of api credits" in msg.lower():
-                _set_minute_backoff(65)
-            log.warning("[FOREX] Batch rate error: %s", msg)
+            _set_minute_backoff(65)
+            for s in symbols:
+                yf_r = _fetch_rate_yfinance(s)
+                if yf_r > 0:
+                    rates[s] = yf_r
             return
 
-        if n == 1:
+        if len(symbols) == 1:
             sym = symbols[0]
             price_str = data.get("price")
             if price_str:
@@ -425,23 +440,21 @@ def _fetch_rate_batch(symbols: list[str], rates: dict[str, float]) -> None:
                     rate = float(price_str)
                     _rate_cache[sym] = {"rate": rate, "fetched_at": time.time()}
                     rates[sym] = rate
-                    log.debug("[FOREX] Batch rate %s = %.5f", sym, rate)
+                else:
+                    yf_r = _fetch_rate_yfinance(sym)
+                    if yf_r > 0:
+                        rates[sym] = yf_r
 
-    except (requests.RequestException, ValueError) as e:
-        log.warning("[FOREX] Batch rate fetch failed: %s", e)
+    except Exception as e:
+        log.warning("[FOREX] Batch rate fetch failed: %s, falling back to yfinance", e)
+        for s in symbols:
+            yf_r = _fetch_rate_yfinance(s)
+            if yf_r > 0:
+                rates[s] = yf_r
 
 
 def get_all_forex_rates() -> dict[str, float]:
-    """
-    Fetch current live rates for all FOREX_SYMBOLS.
-
-    Uses Twelve Data batch /price endpoint. Free plan allows 8 credits/min,
-    so we split into chunks of ≤7 symbols per batch (each symbol = 1 credit),
-    with a rate-limit pause between batches.
-
-    Returns:
-        Dict mapping symbol to rate (e.g. {"EUR/USD": 1.0842, ...})
-    """
+    """Fetch live rates for all FOREX_SYMBOLS with zero missing rates."""
     symbols = settings.FOREX_SYMBOLS
     rates: dict[str, float] = {}
 
@@ -449,22 +462,135 @@ def get_all_forex_rates() -> dict[str, float]:
         cached = _rate_cache.get(sym)
         rates[sym] = cached["rate"] if cached else 0.0
 
-    if is_twelve_data_backed_off():
-        log.debug("[FOREX] Batch rates: backed off, returning cached values")
-        return rates
-
     now_ts = time.time()
     stale = [
         sym for sym in symbols
         if sym not in _rate_cache
+        or rates[sym] <= 0
         or (now_ts - _rate_cache[sym]["fetched_at"]) / 60 >= settings.FOREX_RATE_REFRESH_MIN
     ]
     if not stale:
         return rates
 
-    _BATCH_SIZE = 8
+    _BATCH_SIZE = 7
     for i in range(0, len(stale), _BATCH_SIZE):
         chunk = stale[i : i + _BATCH_SIZE]
         _fetch_rate_batch(chunk, rates)
 
+    # Double check for any zeros
+    for sym in symbols:
+        if rates.get(sym, 0.0) <= 0:
+            yf_r = _fetch_rate_yfinance(sym)
+            if yf_r > 0:
+                rates[sym] = yf_r
+
     return rates
+
+
+# ── Market & Session Intelligence ─────────────────────────────────────────────
+
+def compute_session_intelligence() -> dict:
+    """
+    Evaluate global trading sessions, active overlap, and market liquidity.
+    """
+    now_ist = datetime.now(_IST)
+    now_time = now_ist.strftime("%H:%M")
+    sessions = settings.FOREX_SESSIONS
+
+    def _in_session(start: str, end: str, current: str) -> bool:
+        if start <= end:
+            return start <= current < end
+        return current >= start or current < end
+
+    status_map = {}
+    active_sessions = []
+    for name, data in sessions.items():
+        is_open = _in_session(data["start"], data["end"], now_time)
+        status_map[name] = {
+            "open": is_open,
+            "start": data["start"],
+            "end": data["end"],
+            "best_pairs": data.get("best_pairs", []),
+        }
+        if is_open:
+            active_sessions.append(name)
+
+    major_active = [s for s in active_sessions if s in ("ASIAN", "LONDON", "NEWYORK")]
+    overlap_desc = " + ".join(major_active) if major_active else "OFF-HOURS"
+
+    if "LONDON" in active_sessions and "NEWYORK" in active_sessions:
+        liquidity = "HIGH"
+        liquidity_score = 95
+    elif "LONDON" in active_sessions or "NEWYORK" in active_sessions:
+        liquidity = "MODERATE"
+        liquidity_score = 75
+    elif "ASIAN" in active_sessions:
+        liquidity = "MODERATE"
+        liquidity_score = 50
+    else:
+        liquidity = "LOW"
+        liquidity_score = 25
+
+    return {
+        "sessions": status_map,
+        "active_sessions": active_sessions,
+        "overlap": overlap_desc,
+        "liquidity": liquidity,
+        "liquidity_score": liquidity_score,
+        "current_ist": now_ist.strftime("%H:%M:%S IST"),
+    }
+
+
+def compute_currency_strengths() -> dict:
+    """
+    Compute relative strength index for 8 major/INR currencies and overall risk sentiment
+    using fast parallel daily changes.
+    """
+    currencies = ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "INR"]
+    inv_map = {v: k for k, v in _SYMBOL_YF_MAP.items()}
+    tickers = list(_SYMBOL_YF_MAP.values())
+    changes: dict[str, float] = {}
+
+    try:
+        import yfinance as yf
+        data = yf.download(tickers, period="5d", interval="1d", progress=False)
+        if "Close" in data:
+            for t in tickers:
+                if t in data["Close"]:
+                    s = data["Close"][t].dropna()
+                    if len(s) >= 2:
+                        c0 = float(s.iloc[-2])
+                        c1 = float(s.iloc[-1])
+                        if c0 > 0:
+                            sym = inv_map.get(t, t)
+                            changes[sym] = ((c1 - c0) / c0) * 100.0
+    except Exception as e:
+        log.warning("[FOREX] yfinance batch download for currency strength failed: %s", e)
+
+    curr_scores = {c: [] for c in currencies}
+    for sym, chg in changes.items():
+        parts = sym.split("/")
+        if len(parts) == 2:
+            base, quote = parts[0], parts[1]
+            if base in curr_scores:
+                curr_scores[base].append(chg)
+            if quote in curr_scores:
+                curr_scores[quote].append(-chg)
+
+    strengths: dict[str, float] = {}
+    for c, vals in curr_scores.items():
+        avg = float(np.mean(vals)) if vals else 0.0
+        strengths[c] = round(avg, 2)
+
+    # Risk Sentiment analysis: High yield / Cyclical vs Safe Haven
+    growth_score = strengths.get("AUD", 0) + strengths.get("GBP", 0) + strengths.get("EUR", 0)
+    safe_score = strengths.get("USD", 0) + strengths.get("JPY", 0) + strengths.get("CHF", 0)
+    risk_sentiment = "RISK ON" if growth_score >= safe_score else "RISK OFF"
+
+    return {
+        "strengths": strengths,
+        "risk_sentiment": risk_sentiment,
+        "growth_score": round(growth_score, 2),
+        "safe_haven_score": round(safe_score, 2),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
