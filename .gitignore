@@ -40,6 +40,8 @@ models/*
 !models/xgb_model.pkl
 !models/logistic_model.pkl
 !models/logistic_scaler.pkl
+!models/calibrator.pkl
+!models/meta_learner.pkl
 !models/model_meta.json
 !models/scaler_params.json
 

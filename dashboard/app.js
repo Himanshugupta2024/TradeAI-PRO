@@ -91,6 +91,7 @@ let _smartRefreshInterval = REFRESH_INTERVAL_MS;  // adapts based on market sess
 
 
 
+const escapeHtml = (s) => _escHtml(s);
 function _escHtml(s) {
 
     return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -12005,6 +12006,26 @@ async function loadForexData() {
 
     }
 
+    try {
+
+        const rResp = await fetchWithTimeout('/api/forex/rates');
+
+        if (rResp.ok) {
+
+            const rData = await rResp.json();
+
+            renderInrStrip(rData.rates || {});
+
+        }
+
+    } catch (e) {
+
+        console.warn('[loadForexData] rates fetch err:', e);
+
+        console.warn('[loadForexData] sessions fetch err:', e);
+
+    }
+
 
 
     if (grid) {
@@ -12040,6 +12061,29 @@ async function loadForexData() {
 }
 
 
+
+
+function renderInrStrip(rates) {
+    const row = document.getElementById('forexInrRow');
+    if (!row || !rates) return;
+
+    const inrPairs = ['USD/INR', 'EUR/INR', 'GBP/INR', 'JPY/INR'];
+
+    const renderPair = (sym) => {
+        const rate = Number(rates[sym] || 0);
+        if (rate <= 0) return '';
+        const decimals = sym.includes('JPY') ? 3 : 2;
+        return `
+            <div style="display:flex;flex-direction:column;gap:2px;">
+                <span style="font-size:0.75rem;font-weight:600;color:var(--text,#f8fafc);">${escapeHtml(sym)}</span>
+                <span style="font-family:monospace;font-size:0.85rem;color:var(--cyan,#38bdf8);font-weight:600;">₹${rate.toFixed(decimals)}</span>
+            </div>
+        `;
+    };
+
+    const inrHtml = inrPairs.map(renderPair).filter(Boolean).join('<div style="width:1px;background:rgba(255,255,255,0.08);margin:0 0.5rem;"></div>');
+    row.innerHTML = inrHtml || '<span style="color:var(--text-muted);font-size:0.82rem;">No INR rates available</span>';
+}
 
 function renderForexSessions(sessions, currentIst) {
 
