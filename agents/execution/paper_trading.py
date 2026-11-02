@@ -515,6 +515,53 @@ class PaperTradingEngine:
 
         return closed
 
+    def check_eod_squareoff(self, prices: dict[str, dict] = None) -> list[PaperTrade]:
+        """
+        Auto-square-off open intraday equity trades at or after 15:15 IST (Mon-Fri).
+        Prevents overnight gap-down risk for intraday setups.
+        Crypto pairs (containing '/') are exempt and run 24/7 with ATR trailing stops.
+        """
+        prices = prices or {}
+        closed = []
+        now_ist = datetime.now(tz=_IST)
+        ist_minutes = now_ist.hour * 60 + now_ist.minute
+        is_weekday = now_ist.weekday() < 5
+
+        # Check if current IST time is >= 15:15 and <= 16:30 on weekdays
+        if not (is_weekday and (15 * 60 + 15) <= ist_minutes <= (16 * 60 + 30)):
+            return closed
+
+        for trade in list(self.open_trades):
+            # Equities do not contain '/' (crypto is BTC/USDT, ETH/USDT; forex is EUR/USD)
+            if "/" in trade.symbol:
+                continue
+
+            # Swing trades held deliberately across days skip intraday squareoff
+            if str(getattr(trade, "signal_type", "")).upper() == "SWING":
+                continue
+
+            # Determine exit price from current bar, or fallback to entry price
+            p_info = prices.get(trade.symbol) or {}
+            exit_price = float(p_info.get("close") or trade.entry_price)
+            if not math.isfinite(exit_price) or exit_price <= 0:
+                exit_price = trade.entry_price
+
+            log.info(
+                "⏰ EOD Square-Off: Closing %s %s #%d @ %.2f (IST %02d:%02d)",
+                trade.direction,
+                trade.symbol,
+                trade.id,
+                exit_price,
+                now_ist.hour,
+                now_ist.minute,
+            )
+            self._close_trade(trade, exit_price, "CLOSED_EOD_SQUAREOFF")
+            closed.append(trade)
+
+        if closed:
+            self._save()
+        return closed
+
     def tick_cooldowns(self):
         """Decrement all cooldown timers by 1. Call once per candle."""
         for symbol in list(self._cooldowns):

@@ -2682,6 +2682,58 @@ async def close_paper_trade_endpoint(trade_id: int, payload: dict | None = None)
 
     return {"status": "closed", "trade": trade_dict, "stats": engine.get_stats()}
 
+# ── Autonomous Daemon & Decision Feed endpoints ──────────────────────────────
+
+@router.get("/api/autonomous/status")
+async def get_autonomous_status():
+    """Return operational status of the autonomous execution daemon."""
+    from agents.execution.autonomous_daemon import get_autonomous_daemon
+    daemon = get_autonomous_daemon()
+    engine = svc._get_engine()
+    return {"ok": True, "status": daemon.get_status(engine)}
+
+
+@router.get("/api/autonomous/feed")
+async def get_autonomous_feed(limit: int = 25):
+    """Return live stream of autonomous trading decisions and management actions."""
+    from agents.execution.autonomous_daemon import get_autonomous_daemon
+    daemon = get_autonomous_daemon()
+    return {"ok": True, "feed": daemon.get_decision_feed(limit=min(limit, 100))}
+
+
+@router.post("/api/autonomous/toggle", dependencies=[Depends(require_admin)])
+async def toggle_autonomous(payload: dict | None = None):
+    """Enable or disable autonomous trading mode."""
+    from agents.execution.autonomous_daemon import get_autonomous_daemon
+    daemon = get_autonomous_daemon()
+    payload = payload or {}
+    if "enabled" in payload:
+        daemon.enabled = bool(payload["enabled"])
+    else:
+        daemon.enabled = not daemon.enabled
+    engine = svc._get_engine()
+    return {"ok": True, "enabled": daemon.enabled, "status": daemon.get_status(engine)}
+
+
+@router.post("/api/autonomous/review-now", dependencies=[Depends(require_admin)])
+async def trigger_eod_review_now():
+    """Manually trigger immediate daily EOD self-learning review."""
+    from agents.analytics.feedback_loop import FeedbackAnalyser
+    from agents.execution.autonomous_daemon import get_autonomous_daemon
+    analyser = FeedbackAnalyser()
+    review = await asyncio.to_thread(analyser.run_daily_eod_review)
+    daemon = get_autonomous_daemon()
+    daemon.record_decision(
+        action="MANUAL_EOD_REVIEW",
+        symbol="ALL",
+        direction="NEUTRAL",
+        price=0.0,
+        reason=f"Manual EOD review triggered: {review.get('today_trade_count', 0)} trades today, win rate {review.get('today_win_rate', 0)}%",
+        pnl_pct=review.get("today_total_pnl_pct", 0.0),
+    )
+    return {"ok": True, "review": review}
+
+
 # ── Self-Learning Feedback Loop endpoints ─────────────────────────────────────
 
 @router.get("/api/learning/stats")

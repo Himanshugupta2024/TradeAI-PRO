@@ -53,7 +53,8 @@ except Exception:
 _WEIGHTS_PATH = Path("config/learned_weights.json")
 
 # ── Feedback trigger: analyse after every N closed trades ─────────────────────
-ANALYSE_EVERY_N_TRADES = 50
+import os
+ANALYSE_EVERY_N_TRADES = int(os.getenv("ANALYSE_EVERY_N_TRADES", "10"))
 
 # ── Learning stability knobs ───────────────────────────────────────────────────
 RECENCY_HALF_LIFE_TRADES = 120
@@ -357,6 +358,55 @@ class FeedbackAnalyser:
         except Exception as exc:
             log.error("FeedbackAnalyser.run failed: %s", exc)
             return _empty_insights()
+
+    def run_daily_eod_review(self, target_date_ist: Optional[str] = None) -> dict:
+        """
+        Run EOD learning review for trades closed today (or target_date_ist).
+        Adapts Bayesian weights and produces structured daily performance breakdown.
+        """
+        if not target_date_ist:
+            target_date_ist = datetime.now(tz=_IST).date().isoformat()
+
+        insights = self.run(lookback=500)
+        adapter = WeightAdapter()
+        new_weights = adapter.update_weights(insights)
+
+        today_trades = []
+        try:
+            with _get_conn() as conn:
+                rows = conn.execute("""
+                    SELECT id, symbol, direction, signal_type, regime,
+                           entry_price, exit_price, pnl_pct, result, exit_reason, closed_at
+                    FROM trade_outcomes
+                    WHERE closed_at LIKE ?
+                    ORDER BY id ASC
+                """, (f"{target_date_ist}%",)).fetchall()
+                today_trades = [dict(r) for r in rows]
+        except Exception as e:
+            log.warning("Could not query today trades for EOD review: %s", e)
+
+        today_count = len(today_trades)
+        today_wins = len([t for t in today_trades if t.get("result") == "WIN"])
+        today_wr = round(today_wins / today_count * 100, 1) if today_count > 0 else 0.0
+        today_pnl = round(sum(float(t.get("pnl_pct", 0.0)) for t in today_trades), 2)
+
+        review = {
+            "review_date": target_date_ist,
+            "today_trade_count": today_count,
+            "today_wins": today_wins,
+            "today_win_rate": today_wr,
+            "today_total_pnl_pct": today_pnl,
+            "best_signal_type": insights.get("best_signal_type", "NONE"),
+            "worst_signal_type": insights.get("worst_signal_type", "NONE"),
+            "updated_weights": new_weights,
+            "insights": insights,
+        }
+        log.info(
+            "📊 EOD Review [%s]: %d trades | WinRate: %.1f%% | PnL: %+.2f%% | Best: %s",
+            target_date_ist, today_count, today_wr, today_pnl, review["best_signal_type"]
+        )
+        return review
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

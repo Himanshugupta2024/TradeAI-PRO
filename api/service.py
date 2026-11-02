@@ -1398,6 +1398,45 @@ async def _refresh_market_data_inner():
         except Exception as e:
             logger.debug("Persisting signals snapshot failed: %s", e)
 
+        # ── Autonomous Paper Execution & Trade Management ──
+        try:
+            from agents.execution.autonomous_daemon import get_autonomous_daemon
+            daemon = get_autonomous_daemon()
+            engine = _get_engine()
+
+            prices = {}
+            for sym, d in _market_data.items():
+                if isinstance(d, pd.DataFrame) and not d.empty:
+                    last_row = d.iloc[-1]
+                    prices[sym] = {
+                        "high": float(last_row.get("high", last_row["close"])),
+                        "low": float(last_row.get("low", last_row["close"])),
+                        "close": float(last_row["close"]),
+                        "atr": float(last_row.get("ATR_14", 0.0)),
+                    }
+                elif isinstance(d, dict) and "close" in d:
+                    prices[sym] = {
+                        "high": float(d.get("high", d["close"])),
+                        "low": float(d.get("low", d["close"])),
+                        "close": float(d["close"]),
+                        "atr": float(d.get("atr", 0.0)),
+                    }
+
+            atr_lookup = {sym: p.get("atr", 0.0) for sym, p in prices.items()}
+
+            # 1. Manage open positions (SL/TP, Trailing stops, 15:15 IST EOD Square-off)
+            await asyncio.to_thread(daemon.manage_open_trades, engine, prices, atr_lookup)
+
+            # 2. Check and auto-execute top qualified setups
+            if current_signals:
+                await asyncio.to_thread(daemon.evaluate_signals, current_signals, prices, engine)
+
+            # 3. Check for 15:45 IST Daily Self-Learning Review
+            await asyncio.to_thread(daemon.check_daily_eod_review)
+
+        except Exception as auto_err:
+            logger.debug("[Service] Autonomous daemon cycle skipped: %s", auto_err)
+
         _last_refresh = datetime.now()
         refresh_tracker.set_meta("nse_loaded", len(TOP_NSE_SYMBOLS))
         refresh_tracker.set_meta("total_symbols", len(_market_data))
