@@ -4435,7 +4435,7 @@ async def get_edge_top_setups(
 
     ),
 
-    min_score: float = Query(50.0, description="Minimum EdgeScore threshold"),
+    min_score: float = Query(-100.0, description="Minimum EdgeScore threshold"),
 
     limit: int = Query(10, le=50, description="Maximum results to return"),
 

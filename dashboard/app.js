@@ -23265,7 +23265,7 @@ async function loadEdgeTopSetups(assetClass = null) {
 
 
 
-        const resp = await fetchWithTimeout(`/api/edge/top-setups${query}`);
+        const resp = await fetchWithTimeout(`/api/edge/top-setups${query}`, {}, 20000, 1);
 
 
 
@@ -23489,7 +23489,7 @@ async function loadEdgeMacroHeatmap() {
 
 
 
-        const resp = await fetchWithTimeout('/api/edge/macro-heatmap');
+        const resp = await fetchWithTimeout('/api/edge/macro-heatmap', {}, 20000, 1);
 
 
 

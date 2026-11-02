@@ -418,25 +418,37 @@ class EdgeScoreEngine:
         from config.settings import CRYPTO_SYMBOLS, NSE_SYMBOLS, FOREX_SYMBOLS
 
         if asset_class == "forex":
-            symbols = FOREX_SYMBOLS
+            # Prioritize top liquid majors & crosses to keep macro evaluation fast
+            symbols = [s for s in ["EUR/USD", "GBP/USD", "USD/JPY", "USD/INR", "EUR/INR", "AUD/USD", "USD/CAD", "GBP/INR"] if s in FOREX_SYMBOLS] or FOREX_SYMBOLS[:8]
         elif asset_class == "crypto":
-            symbols = CRYPTO_SYMBOLS
+            # Limit macro EdgeScore to top liquid majors to avoid long scrapers/timeouts on 30+ meme coins
+            symbols = [s for s in ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "DOGE/USDT"] if s in CRYPTO_SYMBOLS] or CRYPTO_SYMBOLS[:6]
         elif asset_class == "nse":
-            symbols = NSE_SYMBOLS
+            symbols = NSE_SYMBOLS[:10]
         else:
             logger.warning(f"Unknown asset class: {asset_class}")
             return []
 
-        # Calculate EdgeScore for each symbol
+        # Calculate EdgeScore in parallel to ensure sub-second response
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         results = []
-        for symbol in symbols:
+
+        def _calc_sym(sym: str):
             try:
-                breakdown = self.get_edge_score(symbol, asset_class)
+                breakdown = self.get_edge_score(sym, asset_class)
                 if breakdown.edge_score >= min_edge_score:
-                    results.append((symbol, breakdown.edge_score))
+                    return (sym, breakdown.edge_score)
             except Exception as e:
-                logger.error(f"Failed to get EdgeScore for {symbol}: {e}")
-                continue
+                logger.error(f"Failed to get EdgeScore for {sym}: {e}")
+            return None
+
+        with ThreadPoolExecutor(max_workers=min(len(symbols), 6)) as executor:
+            futs = [executor.submit(_calc_sym, sym) for sym in symbols]
+            for fut in as_completed(futs):
+                res = fut.result()
+                if res:
+                    results.append(res)
 
         # Sort by EdgeScore descending
         results.sort(key=lambda x: x[1], reverse=True)
