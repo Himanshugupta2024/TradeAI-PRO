@@ -248,6 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
     hydrateFromLocalStorageCache();
 
     loadOverviewFast();
+    loadAutonomousFeed();
 
     loadAllData({ background: false });
 
@@ -1199,6 +1200,103 @@ async function parseJsonResponse(res) {
 
 
 
+
+
+async function loadAutonomousFeed() {
+    try {
+        const [feedRes, statusRes] = await Promise.all([
+            fetchWithTimeout(`${API}/api/autonomous/feed?limit=15`, {}, 5000),
+            fetchWithTimeout(`${API}/api/autonomous/status`, {}, 5000),
+        ]);
+        const feedData = await parseJsonResponse(feedRes);
+        const statusData = await parseJsonResponse(statusRes);
+
+        if (statusData && statusData.status) {
+            const st = statusData.status;
+            const badge = document.getElementById('autonomousModeBadge');
+            const toggleBtn = document.getElementById('toggleAutonomousBtn');
+            const slotsBadge = document.getElementById('autonomousSlotsBadge');
+
+            if (badge) {
+                if (st.enabled) {
+                    badge.textContent = '100% Zero-Click Active';
+                    badge.style.background = 'rgba(16,185,129,0.15)';
+                    badge.style.color = '#10b981';
+                    badge.style.borderColor = 'rgba(16,185,129,0.3)';
+                } else {
+                    badge.textContent = 'Paused';
+                    badge.style.background = 'rgba(239,68,68,0.15)';
+                    badge.style.color = '#ef4444';
+                    badge.style.borderColor = 'rgba(239,68,68,0.3)';
+                }
+            }
+            if (toggleBtn) {
+                toggleBtn.textContent = st.enabled ? 'Pause Auto-Trade' : 'Resume Auto-Trade';
+            }
+            if (slotsBadge) {
+                slotsBadge.textContent = `Slots: ${st.open_positions || 0}/${st.max_positions || 5} Active`;
+            }
+        }
+
+        const listEl = document.getElementById('autonomousDecisionFeedList');
+        if (listEl && feedData && Array.isArray(feedData.feed)) {
+            if (feedData.feed.length === 0) {
+                listEl.innerHTML = '<div style="color:var(--text-muted,#94a3b8);font-size:12px;padding:0.5rem;">Autonomous engine active. Monitoring candles for qualified entries...</div>';
+                return;
+            }
+
+            listEl.innerHTML = feedData.feed.map(item => {
+                let badgeColor = '#38bdf8';
+                let bgBadge = 'rgba(56,189,248,0.15)';
+                if (item.action === 'AUTO_ENTER') {
+                    badgeColor = '#10b981';
+                    bgBadge = 'rgba(16,185,129,0.15)';
+                } else if (item.action.includes('TP') || item.action.includes('TARGET')) {
+                    badgeColor = '#10b981';
+                    bgBadge = 'rgba(16,185,129,0.15)';
+                } else if (item.action.includes('SL') || item.action.includes('STOP')) {
+                    badgeColor = '#f43f5e';
+                    bgBadge = 'rgba(244,63,94,0.15)';
+                } else if (item.action.includes('EOD') || item.action.includes('SQUAREOFF')) {
+                    badgeColor = '#f59e0b';
+                    bgBadge = 'rgba(245,158,11,0.15)';
+                }
+
+                const timeStr = item.timestamp ? new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+                const pnlText = (item.pnl_pct !== null && item.pnl_pct !== undefined) ? `<span style="color:${item.pnl_pct >= 0 ? '#10b981' : '#f43f5e'};font-weight:600;">(${item.pnl_pct >= 0 ? '+' : ''}${item.pnl_pct}%)</span>` : '';
+
+                return `
+                    <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:6px;padding:6px 10px;font-size:12px;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span style="font-family:monospace;font-size:10px;color:var(--text-muted,#94a3b8);">${timeStr}</span>
+                            <span style="background:${bgBadge};color:${badgeColor};border:1px solid ${badgeColor}33;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">${escapeHtml(item.action)}</span>
+                            <strong style="color:var(--text,#f8fafc);">${escapeHtml(item.symbol)}</strong>
+                            <span style="color:${item.direction === 'LONG' ? '#10b981' : '#f43f5e'};font-weight:600;font-size:11px;">${escapeHtml(item.direction)}</span>
+                            ${pnlText}
+                        </div>
+                        <div style="color:var(--text-muted,#94a3b8);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            ${escapeHtml(item.reason || '')}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+    } catch (e) {
+        console.debug('Failed to load autonomous feed:', e);
+    }
+}
+
+async function toggleAutonomousMode() {
+    try {
+        const res = await fetchWithTimeout(`${API}/api/autonomous/toggle`, { method: 'POST' }, 5000);
+        const data = await parseJsonResponse(res);
+        if (data && data.ok) {
+            loadAutonomousFeed();
+        }
+    } catch (e) {
+        console.error('Failed to toggle autonomous mode:', e);
+    }
+}
 
 async function loadOverviewFast() {
     try {

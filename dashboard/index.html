@@ -1248,6 +1248,27 @@
                 </div>
             </div>
 
+            <!-- ── Autonomous Decision Feed & Mode Indicator ── -->
+            <div id="overviewAutonomousFeedCard" class="terminal-positions-panel" style="margin-top: 1rem;">
+                <div class="terminal-panel-header">
+                    <div class="terminal-panel-title">
+                        <span class="panel-live-dot" style="background:#10b981;box-shadow:0 0 10px #10b981;"></span>
+                        <span>Autonomous Decision Feed</span>
+                        <span id="autonomousModeBadge" class="terminal-badge-counter" style="background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.3);">100% Zero-Click Active</span>
+                    </div>
+                    <div style="display:flex;gap:0.5rem;align-items:center;">
+                        <span id="autonomousSlotsBadge" style="font-size:11px;color:var(--text-muted,#94a3b8);">Slots: 0/5 Active</span>
+                        <button id="toggleAutonomousBtn" class="terminal-ghost-btn" onclick="toggleAutonomousMode()" type="button" style="font-size:11px;padding:3px 8px;">
+                            Pause Auto-Trade
+                        </button>
+                    </div>
+                </div>
+                <div id="autonomousDecisionFeedList" style="max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; padding: 0.5rem 0.25rem;">
+                    <div style="color: var(--text-muted, #94a3b8); font-size: 12px; padding: 0.5rem;">Autonomous engine initialized. Monitoring 5m/1d candles for high-conviction entries...</div>
+                </div>
+            </div>
+
+
             <!-- ── Consolidated Action & Signal Control Bar (Single-Ribbon Command) ── -->
             <div class="terminal-action-ribbon">
                 <!-- Left: Filter Segmented Control -->
