@@ -262,14 +262,14 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
 
         if os.path.exists("models/best_model.pt"):
             available_cols = [c for c in FEATURE_COLS if c in df.columns]
-            model = TradingLSTM(input_size=len(available_cols))
-            model.load_state_dict(torch.load("models/best_model.pt", map_location="cpu", weights_only=True))
-            model.eval()
-            # Use use_outcome_labels=False so we don't need label_generator during inference
-            X_seq, _, _ = prepare_sequences(df, seq_length=60, use_outcome_labels=False)
-            if len(X_seq) > 0:
-                with torch.no_grad():
-                    embeddings = model.get_embeddings(torch.FloatTensor(X_seq)).numpy()
+            from agents.ai_engine.lstm_model import get_lstm_model
+            model = get_lstm_model(input_size=len(available_cols), model_path="models/best_model.pt")
+            if model is not None:
+                # Use use_outcome_labels=False so we don't need label_generator during inference
+                X_seq, _, _ = prepare_sequences(df, seq_length=60, use_outcome_labels=False)
+                if len(X_seq) > 0:
+                    with torch.inference_mode():
+                        embeddings = model.get_embeddings(torch.FloatTensor(X_seq)).numpy()
 
                 # embeddings has shape (len(df) - 60, 128)
                 # Pad the first 60 rows with zeros

@@ -8,8 +8,14 @@ No external TA library needed. Calculates:
 
 import pandas as pd
 import numpy as np
+from collections import OrderedDict
+import threading
 
 from config import settings
+
+_INDICATOR_CACHE: OrderedDict[tuple, pd.DataFrame] = OrderedDict()
+_INDICATOR_CACHE_MAX_ENTRIES = 120
+_INDICATOR_LOCK = threading.Lock()
 
 
 def _ema(series: pd.Series, period: int) -> pd.Series:
@@ -196,8 +202,21 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
                  lower_wick_ratio, close_position_in_range,
                  breakout_from_range, candle_consecutive
     """
-    if df.empty:
+    if df.empty or len(df) < 5 or "close" not in df.columns:
         return df
+
+    # Fast candle signature cache lookup (avoids recomputing 45+ indicators for unchanged candle)
+    try:
+        last_ts = str(df["timestamp"].iloc[-1]) if "timestamp" in df.columns else str(df.index[-1])
+        c_last = float(df["close"].iloc[-1])
+        c_first = float(df["close"].iloc[0])
+        sig = (len(df), last_ts, round(c_last, 4), round(c_first, 4))
+        with _INDICATOR_LOCK:
+            if sig in _INDICATOR_CACHE:
+                _INDICATOR_CACHE.move_to_end(sig)
+                return _INDICATOR_CACHE[sig].copy()
+    except Exception:
+        sig = None
 
     result = df.copy()
 
@@ -293,7 +312,7 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
                 # Expanding mean within this hour group (min 2 samples needed)
                 tod_avg.loc[grp_idx] = grp_vol.expanding(min_periods=2).mean().shift(1)
             result["volume_ratio_tod"] = (result["volume"] / tod_avg.replace(0, np.nan)).clip(0, 10)
-            result.drop(columns=["_hour"], inplace=True)
+            result = result.drop(columns=["_hour"])
         except Exception:
             result["volume_ratio_tod"] = result["volume_ratio_20"]
     else:
@@ -347,5 +366,11 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     except Exception as _adv_err:
         import logging as _log
         _log.getLogger(__name__).debug("Advanced features skipped: %s", _adv_err)
+
+    if sig is not None:
+        with _INDICATOR_LOCK:
+            if len(_INDICATOR_CACHE) >= _INDICATOR_CACHE_MAX_ENTRIES:
+                _INDICATOR_CACHE.popitem(last=False)
+            _INDICATOR_CACHE[sig] = result.copy()
 
     return result

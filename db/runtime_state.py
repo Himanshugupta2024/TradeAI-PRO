@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm.exc import StaleDataError
 
 from db.connection import SessionLocal, init_db
 from db.models import RuntimeState
@@ -87,7 +88,19 @@ def set_runtime_state(key: str, value: Any) -> None:
         else:
             row.state_json = encoded
             row.updated_at = datetime.now(timezone.utc)
-        session.commit()
+        try:
+            session.commit()
+        except StaleDataError:
+            session.rollback()
+            # Retry with session.merge in case the row was deleted concurrently
+            session.merge(
+                RuntimeState(
+                    state_key=key,
+                    state_json=encoded,
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+            session.commit()
     except Exception as exc:
         session.rollback()
         logger.exception("Database error while writing runtime state for key '%s': %s", key, exc)

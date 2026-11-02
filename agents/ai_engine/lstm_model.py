@@ -78,7 +78,7 @@ if TORCH_AVAILABLE:
                 last_hidden: Tensor of shape (batch, hidden_size)
             """
             self.eval()
-            with torch.no_grad():
+            with torch.inference_mode():
                 lstm_out, _ = self.lstm(x)
                 last_hidden = lstm_out[:, -1, :]
                 return last_hidden
@@ -91,7 +91,7 @@ if TORCH_AVAILABLE:
                 dict: {"direction": "UP"/"DOWN", "confidence": 0-100}
             """
             self.eval()
-            with torch.no_grad():
+            with torch.inference_mode():
                 logits = self.forward(x)
                 probs = torch.softmax(logits, dim=1)
                 confidence, predicted = torch.max(probs, dim=1)
@@ -104,3 +104,42 @@ if TORCH_AVAILABLE:
                     "prob_down": round(probs[0, 1].item() * 100, 1),
                 }
 
+
+
+_LSTM_CACHE = {}
+_TORCH_CONFIGURED = False
+
+
+def get_lstm_model(input_size: int, model_path: str = "models/best_model.pt"):
+    """
+    Return a cached singleton instance of TradingLSTM with weights loaded once.
+    Enforces single-thread CPU execution for Render Free Tier constraint.
+    """
+    if not TORCH_AVAILABLE:
+        return None
+
+    global _TORCH_CONFIGURED
+    if not _TORCH_CONFIGURED:
+        try:
+            torch.set_num_threads(1)
+            torch.set_num_interop_threads(1)
+        except Exception:
+            pass
+        _TORCH_CONFIGURED = True
+
+    cache_key = (model_path, input_size)
+    if cache_key in _LSTM_CACHE:
+        return _LSTM_CACHE[cache_key]
+
+    if not os.path.exists(model_path):
+        return None
+
+    try:
+        model = TradingLSTM(input_size=input_size)
+        state = torch.load(model_path, map_location="cpu", weights_only=True)
+        model.load_state_dict(state)
+        model.eval()
+        _LSTM_CACHE[cache_key] = model
+        return model
+    except Exception:
+        return None

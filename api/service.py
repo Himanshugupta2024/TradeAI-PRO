@@ -589,6 +589,19 @@ def _get_feed_status() -> dict[str, object]:
     }
 
 
+def is_market_open() -> bool:
+    """Return True if current time is within NSE trading hours (09:15 - 15:30 IST, Mon-Fri)."""
+    try:
+        from zoneinfo import ZoneInfo
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+        if now_ist.weekday() >= 5:
+            return False
+        total_mins = now_ist.hour * 60 + now_ist.minute
+        return (9 * 60 + 15) <= total_mins <= (15 * 60 + 30)
+    except Exception:
+        return False
+
+
 def _stable_regime(symbol: str, new_regime: MarketRegime) -> MarketRegime:
     """Only switch regime after it's been detected N consecutive times."""
     state = _regime_hysteresis.get(symbol)
@@ -1125,6 +1138,8 @@ async def _fetch_nse_symbol(
             mtf_score=mtf_score,
             news_sentiment=sent_data,
         )
+        if len(df) > 300:
+            df = df.iloc[-300:].copy()
         _market_data[display_name] = df
         _signal_cache[display_name] = df
         _last_feed_update = datetime.now()
@@ -1136,7 +1151,35 @@ async def _fetch_nse_symbol(
         logger.error("Failed to fetch %s: %s", display_name, e)
 
 
+_refresh_task: asyncio.Task | None = None
+_refresh_task_lock: asyncio.Lock | None = None
+
+
+def _get_refresh_task_lock() -> asyncio.Lock:
+    global _refresh_task_lock
+    if _refresh_task_lock is None:
+        _refresh_task_lock = asyncio.Lock()
+    return _refresh_task_lock
+
+
 async def _refresh_market_data():
+    """
+    Single-flight entrypoint for market data refresh.
+    If a refresh cycle is already in-flight, reuses that task to avoid thundering-herd duplicate downloads.
+    """
+    global _refresh_task
+    async with _get_refresh_task_lock():
+        if _refresh_task is not None and not _refresh_task.done():
+            logger.info("[SingleFlight] Reusing existing in-flight market refresh task")
+            task = _refresh_task
+        else:
+            task = asyncio.create_task(_refresh_market_data_inner())
+            _refresh_task = task
+
+    return await asyncio.shield(task)
+
+
+async def _refresh_market_data_inner():
     """
     Fetch real market data from yFinance/Binance and generate signals.
 

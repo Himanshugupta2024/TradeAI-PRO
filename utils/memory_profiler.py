@@ -21,15 +21,25 @@ import sys
 log = logging.getLogger(__name__)
 
 
-def get_process_rss_mb() -> float:
+def get_process_rss_mb(collect_gc: bool = True) -> float:
     """
     Return current process Resident Set Size (RSS) in Megabytes (MB).
     """
+    if collect_gc:
+        import gc
+        gc.collect()
+
     system = platform.system()
 
     # 1. Windows implementation via pywin32
     if system == "Windows":
         try:
+            if collect_gc:
+                try:
+                    import ctypes
+                    ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())
+                except Exception:
+                    pass
             import win32process
             info = win32process.GetProcessMemoryInfo(win32process.GetCurrentProcess())
             rss_bytes = info.get("WorkingSetSize", 0)

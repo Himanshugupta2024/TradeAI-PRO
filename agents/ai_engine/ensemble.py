@@ -69,6 +69,11 @@ _MIN_ACTIVE_WEIGHT = 0.10
 _MAX_ACTIVE_WEIGHT = 0.60
 _MAX_WEIGHT_STEP = 0.20
 
+import threading
+_ENSEMBLE_PRED_CACHE: dict[str, dict] = {}
+_ENSEMBLE_CACHE_LOCK = threading.Lock()
+_ENSEMBLE_CACHE_MAX_ENTRIES = 200
+
 # ── Dynamic Weight Tracker ─────────────────────────────────────────────────────
 
 class _ModelPerformanceTracker:
@@ -297,29 +302,31 @@ def get_dynamic_weight_state() -> dict:
 
 # ── Main Ensemble Functions ────────────────────────────────────────────────────
 
-def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False) -> dict:
+def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, force_refresh: bool = False) -> dict:
     """
     Run the full 4-model ensemble on the latest bar of df.
 
     Args:
         df:     OHLCV + indicators DataFrame (≥60 rows recommended)
         symbol: e.g. "BTC/USDT"
-
-    Returns:
-        dict with keys:
-          direction          "UP" | "DOWN" | "NEUTRAL"
-          confidence         float 0-100
-          prob_up            float 0-100
-          prob_down          float 0-100
-          method             "ensemble_advanced"
-          model_votes        {model_name: {direction, confidence}}
-          sentiment          SentimentResult dict
-          ensemble_agreement int (0-4)
-          dynamic_weights    {model_name: effective_weight}
-          model_accuracy     {model_name: rolling_accuracy_%}
+        offline: if True, skips live external sentiment calls
+        force_refresh: if True, bypasses in-memory prediction cache
     """
     if df.empty or len(df) < 2:
         return _neutral("empty_df")
+
+    # Fast candle-keyed cache lookup to prevent redundant multi-model inference on identical bar
+    cache_key = None
+    if symbol and not force_refresh and not df.empty and "close" in df.columns:
+        try:
+            last_ts = str(df["timestamp"].iloc[-1]) if "timestamp" in df.columns else str(df.index[-1])
+            c_val = round(float(df["close"].iloc[-1]), 4)
+            cache_key = f"{symbol}:{last_ts}:{c_val}:ensemble-v2"
+            with _ENSEMBLE_CACHE_LOCK:
+                if cache_key in _ENSEMBLE_PRED_CACHE:
+                    return dict(_ENSEMBLE_PRED_CACHE[cache_key])
+        except Exception:
+            cache_key = None
 
     # ── 1. Statistical predictor ───────────────────────────────────────────
     stat_result = {"direction": "NEUTRAL", "confidence": 0.0}
@@ -375,12 +382,11 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False) 
                     norm = (window - mean) / std
                     # Shape: (1, seq_length, n_features)
                     x_tensor = torch.FloatTensor(norm[np.newaxis])
-                    model = TradingLSTM(input_size=len(available_cols))
-                    state = torch.load(model_path, map_location="cpu", weights_only=True)
-                    model.load_state_dict(state)
-                    model.eval()
-                    lstm_result = model.predict(x_tensor)
-                    lstm_fitted = True
+                    from agents.ai_engine.lstm_model import get_lstm_model
+                    model = get_lstm_model(input_size=len(available_cols), model_path=model_path)
+                    if model is not None:
+                        lstm_result = model.predict(x_tensor)
+                        lstm_fitted = True
     except Exception as exc:
         log.debug("[Ensemble] LSTM failed: %s", exc)
 
@@ -637,6 +643,12 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False) 
             get_shadow_evaluator().record_shadow_signal(symbol=symbol, v1_result=v1_mock, v2_result=result)
         except Exception:
             pass
+
+    if cache_key is not None:
+        with _ENSEMBLE_CACHE_LOCK:
+            if len(_ENSEMBLE_PRED_CACHE) >= _ENSEMBLE_CACHE_MAX_ENTRIES:
+                _ENSEMBLE_PRED_CACHE.pop(next(iter(_ENSEMBLE_PRED_CACHE)))
+            _ENSEMBLE_PRED_CACHE[cache_key] = dict(result)
 
     return result
 

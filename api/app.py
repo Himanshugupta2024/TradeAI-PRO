@@ -89,6 +89,13 @@ def _lifespan_context():
         except Exception as exc:
             svc.logger.warning("Signals cache hydration raised on startup: %s", exc)
 
+        # Warmup all ML models once at startup via ModelRegistry off the event loop
+        try:
+            from agents.ai_engine.model_registry import get_model_registry
+            await asyncio.to_thread(get_model_registry().warmup_all)
+        except Exception as exc:
+            svc.logger.warning("ModelRegistry warmup raised on startup: %s", exc)
+
         svc.logger.info("Starting server — market data will load in background...")
         if _env_flag("INITIAL_LOAD_ENABLED", True):
             _spawn_task(svc._initial_load(), name="initial_load")

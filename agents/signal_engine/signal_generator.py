@@ -56,7 +56,7 @@ def _get_tradeflow_signal_context() -> dict:
     if not getattr(settings, "TRADEFLOW_SIGNAL_INFLUENCE_ENABLED", True):
         return default_ctx
 
-    now_ts = float(pd.Timestamp.utcnow().timestamp())
+    now_ts = float(pd.Timestamp.now("UTC").timestamp())
     cached = _tradeflow_signal_cache.get("ctx")
     cached_at = float(_tradeflow_signal_cache.get("fetched_at", 0.0) or 0.0)
     if cached and (now_ts - cached_at) < _TRADEFLOW_SIGNAL_CACHE_TTL:
@@ -1104,7 +1104,7 @@ def generate_signals(
 
     # Preserve underlying direction for SKIP rows (needed for correct SL/Target)
     result["_raw_direction"] = result["_raw_signal"]
-    result.drop(columns=["_raw_signal"], inplace=True)
+    result = result.drop(columns=["_raw_signal"])
 
     # ── Stop Loss & Target (ATR-based) ────────────────────────────────────────
     atr = result[f"ATR_{settings.ATR_PERIOD}"]
@@ -1304,7 +1304,7 @@ def generate_signals(
 
     # Cleanup helper column used only during conflict penalty application.
     if "_conflict_penalty" in result.columns:
-        result.drop(columns=["_conflict_penalty"], inplace=True)
+        result = result.drop(columns=["_conflict_penalty"])
 
     long_mask  = result["signal"] == "LONG"
     short_mask = result["signal"] == "SHORT"

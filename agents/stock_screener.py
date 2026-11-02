@@ -3,7 +3,10 @@ from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
 try:
-    import pandas_ta as ta
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*mode.copy_on_write.*")
+        import pandas_ta as ta
 except Exception:  # pragma: no cover - runtime environment dependency guard
     ta = None
 import yfinance as yf
