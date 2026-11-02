@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm.exc import StaleDataError
+from sqlalchemy.orm.exc import StaleDataError, ObjectDeletedError
 
 from db.connection import SessionLocal, init_db
 from db.models import RuntimeState
@@ -90,8 +90,9 @@ def set_runtime_state(key: str, value: Any) -> None:
             row.updated_at = datetime.now(timezone.utc)
         try:
             session.commit()
-        except StaleDataError:
+        except (StaleDataError, ObjectDeletedError):
             session.rollback()
+            session.expunge_all()
             # Retry with session.merge in case the row was deleted concurrently
             session.merge(
                 RuntimeState(
