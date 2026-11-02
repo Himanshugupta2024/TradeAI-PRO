@@ -2243,7 +2243,11 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
 
 
-            if (ac.signal.aborted) throw err;
+            if (ac.signal.aborted) {
+                const timeoutErr = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+                timeoutErr.name = 'TimeoutError';
+                throw timeoutErr;
+            }
 
 
 
@@ -23261,7 +23265,7 @@ async function loadEdgeTopSetups(assetClass = null) {
 
 
 
-        const query = _currentEdgeAssetClass === 'all' ? '' : `?asset_class=${_currentEdgeAssetClass}`;
+        const query = `?asset_class=${_currentEdgeAssetClass || 'all'}`;
 
 
 
@@ -23405,7 +23409,11 @@ async function loadEdgeTopSetups(assetClass = null) {
 
 
 
-        body.innerHTML = `<tr><td colspan="10" class="empty-row" style="color:var(--red);">Failed to load edge setups (${_escHtml(err.message)})</td></tr>`;
+        const isAbort = err.name === 'AbortError' || err.name === 'TimeoutError' || (err.message && err.message.toLowerCase().includes('aborted'));
+        const userMsg = isAbort 
+            ? 'Background macro calculation in progress  <a href="javascript:void(0)" onclick="loadEdgeTopSetups()" style="color:var(--accent);text-decoration:underline;">click to retry</a>'
+            : `Failed to load edge setups (${_escHtml(err.message)})`;
+        body.innerHTML = `<tr><td colspan="10" class="empty-row" style="color:${isAbort ? 'var(--text-muted)' : 'var(--red)'};">${userMsg}</td></tr>`;
 
 
 

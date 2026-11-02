@@ -4431,7 +4431,7 @@ async def get_edge_top_setups(
 
     asset_class: str = Query(
 
-        "forex", description="Asset class: forex, crypto, nse, index"
+        "all", description="Asset class: all, forex, crypto, nse, index"
 
     ),
 

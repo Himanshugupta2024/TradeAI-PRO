@@ -18,6 +18,11 @@ Where:
 
 import json
 import logging
+import os
+import tempfile
+import threading
+
+_cache_lock = threading.RLock()
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -414,17 +419,34 @@ class EdgeScoreEngine:
         Returns:
             List of (symbol, edge_score) sorted by score descending
         """
-        # Get symbol list based on asset class
+        # Get symbol and asset class tuples based on requested asset class
         from config.settings import CRYPTO_SYMBOLS, NSE_SYMBOLS, FOREX_SYMBOLS
 
-        if asset_class == "forex":
-            # Prioritize top liquid majors & crosses to keep macro evaluation fast
-            symbols = [s for s in ["EUR/USD", "GBP/USD", "USD/JPY", "USD/INR", "EUR/INR", "AUD/USD", "USD/CAD", "GBP/INR"] if s in FOREX_SYMBOLS] or FOREX_SYMBOLS[:8]
-        elif asset_class == "crypto":
-            # Limit macro EdgeScore to top liquid majors to avoid long scrapers/timeouts on 30+ meme coins
-            symbols = [s for s in ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "DOGE/USDT"] if s in CRYPTO_SYMBOLS] or CRYPTO_SYMBOLS[:6]
-        elif asset_class == "nse":
-            symbols = NSE_SYMBOLS[:10]
+        ac_lower = (asset_class or "all").lower()
+
+        if ac_lower == "all":
+            # Curated cross-asset liquid shortlist for instant macro comparison
+            items = [
+                ("RELIANCE", "nse"),
+                ("TCS", "nse"),
+                ("INFY", "nse"),
+                ("HDFCBANK", "nse"),
+                ("BTC/USDT", "crypto"),
+                ("ETH/USDT", "crypto"),
+                ("SOL/USDT", "crypto"),
+                ("EUR/USD", "forex"),
+                ("USD/INR", "forex"),
+            ]
+        elif ac_lower == "crypto":
+            crypto_top = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "DOGE/USDT"]
+            items = [(s, "crypto") for s in crypto_top]
+        elif ac_lower == "nse":
+            items = [(s, "nse") for s in NSE_SYMBOLS[:10]]
+        elif ac_lower == "forex":
+            forex_top = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/INR", "EUR/INR", "AUD/USD"]
+            items = [(s, "forex") for s in forex_top]
+        elif ac_lower == "index":
+            items = [(s, "index") for s in ["NIFTY", "BANKNIFTY", "SPX"]]
         else:
             logger.warning(f"Unknown asset class: {asset_class}")
             return []
@@ -434,17 +456,18 @@ class EdgeScoreEngine:
 
         results = []
 
-        def _calc_sym(sym: str):
+        def _calc_item(item):
+            sym, a_cls = item
             try:
-                breakdown = self.get_edge_score(sym, asset_class)
+                breakdown = self.get_edge_score(sym, a_cls)
                 if breakdown.edge_score >= min_edge_score:
                     return (sym, breakdown.edge_score)
             except Exception as e:
                 logger.error(f"Failed to get EdgeScore for {sym}: {e}")
             return None
 
-        with ThreadPoolExecutor(max_workers=min(len(symbols), 6)) as executor:
-            futs = [executor.submit(_calc_sym, sym) for sym in symbols]
+        with ThreadPoolExecutor(max_workers=min(len(items), 8)) as executor:
+            futs = [executor.submit(_calc_item, it) for it in items]
             for fut in as_completed(futs):
                 res = fut.result()
                 if res:
@@ -480,50 +503,48 @@ class EdgeScoreEngine:
         )
 
     def _load_cache(self, symbol: str) -> Optional[EdgeScoreBreakdown]:
-        """Load EdgeScore from cache file"""
-        if not self.cache_file.exists():
-            return None
-
-        try:
-            with open(self.cache_file, "r") as f:
-                cache = json.load(f)
-
-            # Cache is a dict mapping symbol -> EdgeScoreBreakdown
-            if symbol not in cache:
+        """Load EdgeScore from cache file (thread-safe)"""
+        with _cache_lock:
+            if not self.cache_file.exists():
                 return None
 
-            return EdgeScoreBreakdown.from_dict(cache[symbol])
+            try:
+                with open(self.cache_file, "r", encoding="utf-8") as f:
+                    cache = json.load(f)
 
-        except Exception as e:
-            logger.error(f"Failed to load cache for {symbol}: {e}")
-            return None
+                if symbol not in cache:
+                    return None
+
+                return EdgeScoreBreakdown.from_dict(cache[symbol])
+
+            except Exception as e:
+                logger.error(f"Failed to load cache for {symbol}: {e}")
+                return None
 
     def _save_cache(self, symbol: str, breakdown: EdgeScoreBreakdown) -> None:
-        """Save EdgeScore to cache file"""
-        try:
-            # Load existing cache safely
-            cache = {}
-            if self.cache_file.exists():
-                try:
-                    with open(self.cache_file, "r") as f:
-                        cache = json.load(f)
-                except Exception:
-                    cache = {}
+        """Save EdgeScore to cache file (thread-safe and atomic)"""
+        with _cache_lock:
+            try:
+                cache = {}
+                if self.cache_file.exists():
+                    try:
+                        with open(self.cache_file, "r", encoding="utf-8") as f:
+                            cache = json.load(f)
+                    except Exception:
+                        cache = {}
 
-            # Update cache for this symbol
-            cache[symbol] = breakdown.to_dict()
+                cache[symbol] = breakdown.to_dict()
 
-            # Save cache atomically
-            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-            tmp_file = self.cache_file.with_suffix(".tmp")
-            with open(tmp_file, "w") as f:
-                json.dump(cache, f, indent=2)
-            tmp_file.replace(self.cache_file)
+                self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile("w", dir=self.cache_file.parent, delete=False, encoding="utf-8", suffix=".tmp") as tf:
+                    json.dump(cache, tf, indent=2)
+                    tmp_name = tf.name
+                os.replace(tmp_name, self.cache_file)
 
-            logger.info(f"Saved EdgeScore to cache for {symbol}")
+                logger.info(f"Saved EdgeScore to cache for {symbol}")
 
-        except Exception as e:
-            logger.error(f"Failed to save cache for {symbol}: {e}")
+            except Exception as e:
+                logger.error(f"Failed to save cache for {symbol}: {e}")
 
     def _is_cache_fresh(self, breakdown: EdgeScoreBreakdown) -> bool:
         """Check if cached EdgeScore is still fresh"""
