@@ -39,7 +39,7 @@ services:
       - key: CONTEXT_USE_PAID_APIS
         value: false
       - key: INITIAL_LOAD_ENABLED
-        value: false
+        value: "true"
       - key: BACKGROUND_REFRESH_ENABLED
         value: true
       - key: SCREENER_TASK_ENABLED

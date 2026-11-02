@@ -317,11 +317,17 @@ function connectPriceWebSocket() {
     }
 }
 
+let _wsConnected = false;
+
 function updateWsIndicator(connected) {
+    _wsConnected = Boolean(connected);
     const dot = document.getElementById('refreshDot');
     if (dot) {
-        dot.title = connected ? 'Live (WebSocket)' : 'Polling';
-        dot.style.background = connected ? 'var(--green)' : 'var(--text-muted)';
+        dot.title = connected ? 'Live WebSocket Connected' : 'Polling / Reconnecting';
+        dot.style.background = connected ? 'var(--green)' : '#f59e0b';
+    }
+    if (typeof updateDynamicMarketStatus === 'function') {
+        updateDynamicMarketStatus();
     }
 }
 
@@ -3901,14 +3907,50 @@ function renderModalInfo(data, symbol, interval) {
 }
 
 
-// ── Clock ───────────────────────────────────────────────
+// ── Clock & Dynamic Market Status ───────────────────────
+
+function updateDynamicMarketStatus() {
+    const el = document.getElementById('marketStatus');
+    if (!el) return;
+    const t = _getIstDate();
+    const jsDay = new Date(Date.UTC(t.year, t.month - 1, t.day)).getUTCDay();
+    const isWeekend = (jsDay === 0 || jsDay === 6);
+    const mins = t.hour * 60 + t.minute;
+    const isPreMarket = !isWeekend && (mins >= 9 * 60 && mins < 9 * 60 + 15);
+    const isOpen = !isWeekend && (mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30);
+
+    if (isOpen) {
+        if (_wsConnected) {
+            el.innerHTML = '<span class="status-dot live" style="background:#10b981;"></span><span style="color:#10b981;font-weight:700;letter-spacing:0.04em;">NSE OPEN · LIVE</span>';
+            el.title = 'Indian Market Open (09:15 - 15:30 IST) | Real-time WebSocket connected';
+        } else {
+            el.innerHTML = '<span class="status-dot" style="background:#f59e0b;box-shadow:0 0 6px rgba(245,158,11,0.6);"></span><span style="color:#f59e0b;font-weight:700;letter-spacing:0.04em;">NSE OPEN · SYNCING</span>';
+            el.title = 'Indian Market Open (09:15 - 15:30 IST) | Reconnecting to live feed';
+        }
+    } else if (isPreMarket) {
+        el.innerHTML = '<span class="status-dot" style="background:#eab308;"></span><span style="color:#eab308;font-weight:700;letter-spacing:0.04em;">NSE PRE-OPEN</span>';
+        el.title = 'Pre-market session active (09:00 - 09:15 IST)';
+    } else {
+        el.innerHTML = '<span class="status-dot" style="background:#ef4444;"></span><span style="color:#94a3b8;font-weight:600;letter-spacing:0.04em;">NSE CLOSED</span>';
+        el.title = `Market closed. Next session: ${typeof _nextNseOpenLabel === 'function' ? _nextNseOpenLabel() : '09:15 AM IST'}`;
+    }
+}
 
 function startClock() {
     const update = () => {
         const now = new Date();
-        document.getElementById('clock').textContent = now.toLocaleTimeString('en-IN', {
-            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        const timeStr = now.toLocaleTimeString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true,
         });
+        const clockEl = document.getElementById('clock');
+        if (clockEl) {
+            clockEl.textContent = `${timeStr} IST`;
+        }
+        updateDynamicMarketStatus();
     };
     update();
     setInterval(update, 1000);
