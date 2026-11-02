@@ -34,6 +34,29 @@ let _lastMorningFetchTs = 0;
 
 const API = '';  // Same origin
 
+// ── TradeAI-PRO Currency & Market Display Helpers ──────────────────────────
+function _symCurr(sym) {
+    if (!sym) return '₹';
+    const s = String(sym).toUpperCase();
+    if (s.includes('/USDT') || s.includes('/USD') || s.endsWith('USDT') || s.endsWith('USD')) return '$';
+    return '₹';
+}
+
+function _fmtMoney(v, sym = '₹') {
+    if (v == null || isNaN(v)) return '—';
+    const num = Number(v);
+    const sign = num < 0 ? '-' : '';
+    return `${sign}${sym}${Math.abs(num).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+}
+
+function _fmtSignedMoney(v, sym = '₹') {
+    if (v == null || isNaN(v)) return '—';
+    const num = Number(v);
+    const sign = num < 0 ? '-' : (num > 0 ? '+' : '');
+    return `${sign}${sym}${Math.abs(num).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+}
+
+
 
 
 
@@ -2615,59 +2638,49 @@ async function loadOverviewFast() {
         if (data && data.status === 'ok') {
 
             if (data.capital !== undefined) {
-
                 const capEl = document.getElementById('statCapital');
-
-                if (capEl) capEl.textContent = '₹' + Number(data.capital).toLocaleString('en-IN', { maximumFractionDigits: 0 });
-
+                if (capEl) capEl.textContent = _fmtMoney(data.capital);
             }
-
             if (data.initial_capital !== undefined) {
-
                 const seedEl = document.getElementById('statCapitalSeed');
-
-                if (seedEl) seedEl.textContent = 'Seed: ₹' + Number(data.initial_capital).toLocaleString('en-IN', { maximumFractionDigits: 0 });
-
+                if (seedEl) seedEl.textContent = 'Seed: ' + _fmtMoney(data.initial_capital);
             }
-
             if (data.unrealized_pnl !== undefined) {
-
                 const uEl = document.getElementById('statUnrealizedPnl');
-
                 if (uEl) {
-
                     const u = Number(data.unrealized_pnl);
-
-                    uEl.textContent = 'MTM: ' + (u >= 0 ? '+' : '') + '₹' + u.toLocaleString('en-IN', { maximumFractionDigits: 0 });
-
+                    uEl.textContent = 'MTM: ' + _fmtSignedMoney(u);
                     uEl.style.color = u > 0 ? '#10b981' : (u < 0 ? '#ef4444' : '#8b949e');
-
                 }
-
             }
-
             if (data.total_pnl !== undefined) {
-
                 const pnlEl = document.getElementById('statTotalPnl');
-
                 if (pnlEl) {
-
                     const p = Number(data.total_pnl);
-
-                    pnlEl.textContent = (p >= 0 ? '+' : '') + '₹' + p.toLocaleString('en-IN', { maximumFractionDigits: 0 });
-
+                    pnlEl.textContent = _fmtSignedMoney(p);
                     pnlEl.className = 'stat-value ' + (p >= 0 ? 'positive' : 'negative');
-
                 }
-
             }
-
+            const pSummary = data.portfolio_summary || data;
+            if (pSummary) {
+                const closedCount = Number(pSummary.total_trades ?? pSummary.closed_trades ?? 0);
+                const openCount = Number(pSummary.open_positions_count ?? (Array.isArray(data.positions) ? data.positions.length : 0));
+                const wrEl = document.getElementById('statWinRate');
+                if (wrEl) {
+                    wrEl.textContent = (closedCount > 0 && pSummary.win_rate != null) ? `${Number(pSummary.win_rate).toFixed(1)}%` : '—';
+                }
+                const subTradesEl = document.getElementById('statTradesSubDetail');
+                if (subTradesEl) {
+                    subTradesEl.textContent = `${closedCount} closed`;
+                }
+                const tradesEl = document.getElementById('statTrades');
+                if (tradesEl && openCount != null) {
+                    tradesEl.textContent = `${openCount}`;
+                }
+            }
             if (data.dominant_regime) {
-
                 const regEl = document.getElementById('statRegime') || document.getElementById('dominantRegimeBadge');
-
                 if (regEl) regEl.textContent = data.dominant_regime;
-
             }
 
         }
@@ -7763,6 +7776,7 @@ function renderOverviewActiveTrades(openTrades) {
             distText = distTp > 0 ? `Target ${distTp.toFixed(1)}% away` : 'Target reached';
         }
 
+        const currSym = _symCurr(t.symbol);
         return `
             <div class="pos-ticket ${sideClass}" data-symbol="${t.symbol}" data-id="${t.id}" data-entry="${entry}" data-qty="${qty}" data-dir="${t.direction}" data-tp="${tp}" data-sl="${sl}">
                 <div class="pos-ticket-top">
@@ -7777,15 +7791,15 @@ function renderOverviewActiveTrades(openTrades) {
                 <div class="pos-metrics-grid">
                     <div class="pos-metric-cell">
                         <span class="pos-metric-label">ENTRY</span>
-                        <span class="pos-metric-number">₹${entry.toFixed(2)}</span>
+                        <span class="pos-metric-number">${currSym}${entry.toFixed(2)}</span>
                     </div>
                     <div class="pos-metric-cell">
                         <span class="pos-metric-label">SL</span>
-                        <span class="pos-metric-number text-loss">₹${sl.toFixed(2)}</span>
+                        <span class="pos-metric-number text-loss">${currSym}${sl.toFixed(2)}</span>
                     </div>
                     <div class="pos-metric-cell">
                         <span class="pos-metric-label">TARGET</span>
-                        <span class="pos-metric-number text-profit">₹${tp.toFixed(2)}</span>
+                        <span class="pos-metric-number text-profit">${currSym}${tp.toFixed(2)}</span>
                     </div>
                     <div class="pos-metric-cell">
                         <span class="pos-metric-label">QTY</span>
@@ -7795,10 +7809,10 @@ function renderOverviewActiveTrades(openTrades) {
                 <div class="pos-live-bar">
                     <div class="pos-live-left">
                         <span class="pos-live-lbl">LTP</span>
-                        <span class="pos-live-price" id="posLtp-${t.id}">₹${ltp.toFixed(2)}</span>
+                        <span class="pos-live-price" id="posLtp-${t.id}">${currSym}${ltp.toFixed(2)}</span>
                     </div>
                     <div class="pos-pnl-pill ${pnlClass}" id="posPnlPill-${t.id}">
-                        <span id="posPnlVal-${t.id}">${pnlSign}₹${pnl.toFixed(2)}</span>
+                        <span id="posPnlVal-${t.id}">${pnlSign}${currSym}${Math.abs(pnl).toFixed(2)}</span>
                         <span class="pos-pnl-pct" id="posPnlPct-${t.id}">(${pnlPctSign}${pnlPct.toFixed(2)}%)</span>
                     </div>
                 </div>
@@ -7835,8 +7849,9 @@ function updateOverviewActiveTradesPrices(prices) {
         const pnlPct = entry > 0 ? ((price - entry) / entry) * 100 * mult : 0;
         totalUnrealized += pnl;
 
+        const currSym = _symCurr(sym);
         const ltpEl = document.getElementById(`posLtp-${id}`);
-        if (ltpEl) ltpEl.textContent = `₹${price.toFixed(2)}`;
+        if (ltpEl) ltpEl.textContent = `${currSym}${price.toFixed(2)}`;
 
         const pillEl = document.getElementById(`posPnlPill-${id}`);
         const valEl = document.getElementById(`posPnlVal-${id}`);
@@ -7845,8 +7860,9 @@ function updateOverviewActiveTradesPrices(prices) {
         if (pillEl && valEl && pctEl) {
             const isProfit = pnl > 0.01;
             const isLoss = pnl < -0.01;
+            const pnlSign = pnl < 0 ? '-' : (pnl > 0 ? '+' : '');
             pillEl.className = `pos-pnl-pill ${isProfit ? 'pnl-profit' : (isLoss ? 'pnl-loss' : 'pnl-neutral')}`;
-            valEl.textContent = `${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}`;
+            valEl.textContent = `${pnlSign}${currSym}${Math.abs(pnl).toFixed(2)}`;
             pctEl.textContent = `(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%)`;
         }
 
@@ -7873,10 +7889,7 @@ function updateOverviewActiveTradesPrices(prices) {
 
 
 function updateStatsStrip(stats) {
-
-
-
-    const fmt = (v) => (v != null && !isNaN(v)) ? `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '—';
+    const fmt = (v) => _fmtMoney(v);
 
 
 
@@ -7926,7 +7939,7 @@ function updateStatsStrip(stats) {
 
 
 
-        pnlEl.textContent = `${pnl >= 0 ? '+' : ''}${fmt(pnl)}`;
+        pnlEl.textContent = _fmtSignedMoney(pnl);
 
 
 
@@ -8378,54 +8391,22 @@ function _isNseMarketOpen() {
 
 
 function _nextNseOpenLabel() {
-
-
-
     const t = _getIstDate();
-
-
-
-    const nowUtc = new Date(Date.UTC(t.year, t.month - 1, t.day, t.hour, t.minute, t.second));
-
-
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const curDate = new Date(Date.UTC(t.year, t.month - 1, t.day));
+    const currentMins = t.hour * 60 + t.minute;
 
     for (let i = 0; i < 8; i++) {
+        const candidate = new Date(curDate.getTime() + i * 86400000);
+        const dayOfWeek = candidate.getUTCDay();
+        if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+        if (i === 0 && currentMins >= (9 * 60 + 15)) continue;
 
-
-
-        const d = new Date(nowUtc);
-
-
-
-        d.setUTCDate(d.getUTCDate() + i);
-
-
-
-        const day = d.getUTCDay();
-
-
-
-        if (day === 0 || day === 6) continue;
-
-
-
-        const open = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 9, 15, 0));
-
-
-
-        if (open > nowUtc) {
-
-
-
-            return open.toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short', hour12: true });
-
-
-
-        }
-
-
-
+        const dayNum = String(candidate.getUTCDate()).padStart(2, '0');
+        const monthName = months[candidate.getUTCMonth()];
+        return `${dayNum} ${monthName}, 09:15 am`;
     }
+    return '09:15 AM IST';
 
 
 
@@ -22925,37 +22906,20 @@ function updateMoodStripFromCache() {
 
 
     const pairs = [
-
-
-
-        { id: 'moodNifty', chgId: 'moodNiftyChg', sym: 'NIFTY_50' },
-
-
-
-        { id: 'moodSensex', chgId: 'moodSensexChg', sym: 'SENSEX' },
-
-
-
-        { id: 'moodBtc', chgId: 'moodBtcChg', sym: 'BTC/USDT' },
-
-
-
-        { id: 'moodBanknifty', chgId: 'moodBankniftyChg', sym: 'BANKNIFTY' },
-
-
-
+        { id: 'moodNifty', chgId: 'moodNiftyChg', syms: ['NIFTY 50', 'NIFTY', '^NSEI', 'NIFTY_50'] },
+        { id: 'moodSensex', chgId: 'moodSensexChg', syms: ['SENSEX', '^BSESN', 'BSE_SENSEX'] },
+        { id: 'moodBtc', chgId: 'moodBtcChg', syms: ['BTC/USDT', 'BTCUSDT', 'BTC', 'BTC/USD'] },
+        { id: 'moodBanknifty', chgId: 'moodBankniftyChg', syms: ['BANKNIFTY', '^NSEBANK', 'BANK_NIFTY'] },
     ];
 
-
-
-    pairs.forEach(({ id, chgId, sym }) => {
-
-
-
-        const tick = marketDataCache[sym];
-
-
-
+    pairs.forEach(({ id, chgId, syms }) => {
+        let tick = null;
+        for (const s of syms) {
+            if (marketDataCache && marketDataCache[s]) {
+                tick = marketDataCache[s];
+                break;
+            }
+        }
         if (!tick) return;
 
 
@@ -23221,13 +23185,8 @@ function updateMoodStripUI(data) {
 
 
     } else if (eventLabel) {
-
-
-
-        eventLabel.textContent = 'No upcoming events';
-
-
-
+        eventLabel.textContent = 'Calendar Clear';
+        eventLabel.style.color = '#10b981';
     }
 
 

@@ -566,6 +566,8 @@ async def get_dashboard_overview():
             "unrealized_pnl": stats.get("unrealized_pnl", 0.0),
             "total_pnl": stats.get("total_pnl", 0.0),
             "win_rate": stats.get("win_rate", 0.0),
+            "total_trades": stats.get("total_trades", 0),
+            "closed_trades": stats.get("total_trades", 0),
             "open_positions_count": len(positions),
         },
         "system_status": {
@@ -590,6 +592,8 @@ async def get_dashboard_overview():
         "total_pnl": stats.get("total_pnl", 0.0),
 
         "win_rate": stats.get("win_rate", 0.0),
+        "total_trades": stats.get("total_trades", 0),
+        "closed_trades": stats.get("total_trades", 0),
 
         "open_positions_count": len(positions),
 
