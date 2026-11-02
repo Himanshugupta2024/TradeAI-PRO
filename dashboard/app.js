@@ -3878,7 +3878,7 @@ function updateStatsStrip(stats) {
 
     document.getElementById('statWinRate').textContent = (closedTrades > 0 && stats.win_rate != null) ? `${Number(stats.win_rate).toFixed(1)}%` : '—';
 
-    document.getElementById('statTrades').textContent = openTrades > 0 ? `${closedTrades} (${openTrades} open)` : closedTrades;
+    document.getElementById('statTrades').textContent = openTrades > 0 ? (closedTrades > 0 ? `${openTrades} (${closedTrades} closed)` : `${openTrades}`) : (closedTrades > 0 ? `0 (${closedTrades} closed)` : '0');
 
 
 

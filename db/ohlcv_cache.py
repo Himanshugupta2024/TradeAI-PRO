@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -104,7 +104,7 @@ def upsert_ohlcv(
     rows = []
     for _, r in df.iterrows():
         ts = pd.to_datetime(r["timestamp"]).isoformat()
-        fetched_at = datetime.utcnow().isoformat()
+        fetched_at = datetime.now(timezone.utc).isoformat()
         rows.append(
             (
                 symbol,

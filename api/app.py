@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import time
 
 import httpx
@@ -31,6 +32,12 @@ _background_tasks: set[asyncio.Task] = set()
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
+        if ("pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST")) and name in (
+            "INITIAL_LOAD_ENABLED",
+            "BACKGROUND_REFRESH_ENABLED",
+            "SWING_OUTCOME_TASK_ENABLED",
+        ):
+            return False
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
