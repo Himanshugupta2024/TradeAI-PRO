@@ -186,6 +186,7 @@ def _finalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         # Remove timezone info for consistency
         if df["timestamp"].dt.tz is not None:
             df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+        df["timestamp"] = pd.to_datetime(df["timestamp"]).astype("datetime64[ns]")
 
         # Remove duplicates and sort
         df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)

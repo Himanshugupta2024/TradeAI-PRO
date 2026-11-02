@@ -68,3 +68,18 @@ class TestTrendClassifier:
         result = propagate_trend_to_ltf(ltf, htf)
         assert "htf_trend" in result.columns
         assert result["htf_trend"].notna().all()
+
+    def test_propagation_heterogeneous_datetime_resolutions(self):
+        """LTF microsecond [us] and HTF second [s] precision must merge without MergeError."""
+        htf = pd.DataFrame({
+            "timestamp": pd.date_range("2026-01-01", periods=10, freq="1D").astype("datetime64[s]"),
+            "htf_trend": [TrendDirection.BULLISH.value] * 10,
+        })
+        ltf = pd.DataFrame({
+            "timestamp": pd.date_range("2026-01-01 10:00:00", periods=50, freq="5min").astype("datetime64[us]"),
+            "close": [100.0] * 50,
+        })
+        result = propagate_trend_to_ltf(ltf, htf)
+        assert "htf_trend" in result.columns
+        assert result["htf_trend"].iloc[0] == TrendDirection.BULLISH.value
+        assert len(result) == 50

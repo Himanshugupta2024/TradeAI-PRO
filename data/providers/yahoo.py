@@ -235,6 +235,9 @@ class YahooProvider(MarketDataProvider):
                     except Exception:
                         sym_df["timestamp"] = sym_df["timestamp"].dt.tz_localize(None)
 
+                # Standardize to uniform datetime64[ns] resolution across daily and intraday
+                sym_df["timestamp"] = pd.to_datetime(sym_df["timestamp"]).astype("datetime64[ns]")
+
                 # Basic validation: must have at least 1 row and required columns
                 if len(sym_df) > 0 and "close" in sym_df.columns and "open" in sym_df.columns:
                     results[clean_sym] = sym_df

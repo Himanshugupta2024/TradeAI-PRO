@@ -304,6 +304,9 @@ def _normalise_df(df: pd.DataFrame) -> pd.DataFrame:
         from zoneinfo import ZoneInfo
         df["timestamp"] = df["timestamp"].dt.tz_convert(ZoneInfo("Asia/Kolkata")).dt.tz_localize(None)
 
+    # Standardize to uniform datetime64[ns] resolution
+    df["timestamp"] = pd.to_datetime(df["timestamp"]).astype("datetime64[ns]")
+
     df = df.dropna(subset=["close"]).reset_index(drop=True)
     return df
 

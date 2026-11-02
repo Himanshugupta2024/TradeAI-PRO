@@ -11,6 +11,13 @@ Implementation is split under `api/` (service state, routes, app factory).
 import os
 import sys
 import logging
+import warnings
+
+# Silence upstream third-party deprecation and unpickling noise on Python 3.12 / Pandas 3+
+warnings.filterwarnings("ignore", message=".*The inplace keyword in DataFrame.*")
+warnings.filterwarnings("ignore", message=".*mode.copy_on_write.*")
+warnings.filterwarnings("ignore", message=".*Trying to unpickle estimator.*")
+warnings.filterwarnings("ignore", message=".*If you are loading a serialized model.*")
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse

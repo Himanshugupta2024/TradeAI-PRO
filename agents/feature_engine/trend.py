@@ -132,9 +132,12 @@ def propagate_trend_to_ltf(
     ltf["timestamp"] = _to_naive_utc(ltf["timestamp"])
     htf["timestamp"] = _to_naive_utc(htf["timestamp"])
 
-    # Ensure both are the same datetime64 resolution
-    ltf["timestamp"] = pd.to_datetime(ltf["timestamp"])
-    htf["timestamp"] = pd.to_datetime(htf["timestamp"])
+    # Ensure both are the exact same datetime64 resolution (normalize to [ns]).
+    # pd.to_datetime on existing datetime preserves original unit (e.g. [us] vs [s]),
+    # which causes pandas merge_asof to fail with:
+    # "incompatible merge keys [0] dtype('<M8[us]') and dtype('<M8[s]'), must be the same type"
+    ltf["timestamp"] = pd.to_datetime(ltf["timestamp"]).astype("datetime64[ns]")
+    htf["timestamp"] = pd.to_datetime(htf["timestamp"]).astype("datetime64[ns]")
 
     merged = pd.merge_asof(
         ltf,
