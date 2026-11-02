@@ -19,6 +19,7 @@ def _engine() -> tuple[PaperTradingEngine, str]:
 def test_blocks_trade_when_portfolio_heat_exceeds_limit(monkeypatch):
     monkeypatch.setattr(settings, "MAX_PORTFOLIO_HEAT_PCT", 0.03)
     monkeypatch.setattr(settings, "MAX_POSITION_LEVERAGE", 5.0)
+    monkeypatch.setattr(settings, "MAX_PORTFOLIO_LEVERAGE", 5.0)
 
     engine, path = _engine()
     try:
@@ -39,6 +40,7 @@ def test_halves_position_size_for_correlated_open_trade(monkeypatch):
     monkeypatch.setattr(settings, "CORRELATION_GROUPS", [["BTCUSDT", "ETHUSDT"]])
     monkeypatch.setattr(settings, "MAX_PORTFOLIO_HEAT_PCT", 0.10)
     monkeypatch.setattr(settings, "MAX_POSITION_LEVERAGE", 5.0)
+    monkeypatch.setattr(settings, "MAX_PORTFOLIO_LEVERAGE", 5.0)
 
     engine, path = _engine()
     try:
