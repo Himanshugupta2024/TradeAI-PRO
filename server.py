@@ -15,10 +15,17 @@ import warnings
 
 # Silence upstream third-party deprecation and unpickling noise on Python 3.12 / Pandas 3+
 warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")
-warnings.filterwarnings("ignore", message=".*The inplace keyword in DataFrame.*")
+warnings.filterwarnings("ignore", message=".*The inplace keyword.*")
 warnings.filterwarnings("ignore", message=".*mode.copy_on_write.*")
 warnings.filterwarnings("ignore", message=".*Trying to unpickle estimator.*")
 warnings.filterwarnings("ignore", message=".*If you are loading a serialized model.*")
+try:
+    import pandas.errors as _pde
+    for _w_name in ("Pandas4Warning", "PandasDeprecationWarning", "PandasChangeWarning", "PandasFutureWarning"):
+        if hasattr(_pde, _w_name):
+            warnings.filterwarnings("ignore", category=getattr(_pde, _w_name))
+except Exception:
+    pass
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse

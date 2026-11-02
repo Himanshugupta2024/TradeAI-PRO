@@ -16,6 +16,7 @@ import logging
 import os
 import random
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -674,14 +675,16 @@ def fetch_nse_gainers_losers(mode: str = "gainers") -> list[dict]:
 
     try:
         logger.info("Batch downloading %d NSE stocks for screener...", len(tickers_list))
-        raw = yf.download(
-            tickers_list,
-            period="2d",
-            interval="1d",
-            progress=False,
-            auto_adjust=True,
-            group_by="ticker",   # gives MultiIndex: (field, ticker)
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            raw = yf.download(
+                tickers_list,
+                period="2d",
+                interval="1d",
+                progress=False,
+                auto_adjust=True,
+                group_by="ticker",   # gives MultiIndex: (field, ticker)
+            )
 
         if raw.empty:
             logger.warning("Batch screener download returned empty DataFrame")

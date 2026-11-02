@@ -10,6 +10,7 @@ import asyncio
 import logging
 import math
 import time
+import warnings
 from datetime import datetime, timezone
 from typing import Any
 
@@ -168,15 +169,17 @@ class YahooProvider(MarketDataProvider):
         t0 = time.perf_counter()
 
         def _fetch_sync():
-            return yf.download(
-                tickers=yf_tickers,
-                period=period,
-                interval=interval,
-                group_by="ticker",
-                threads=True,
-                timeout=self.timeout,
-                progress=False,
-            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return yf.download(
+                    tickers=yf_tickers,
+                    period=period,
+                    interval=interval,
+                    group_by="ticker",
+                    threads=True,
+                    timeout=self.timeout,
+                    progress=False,
+                )
 
         try:
             df = await asyncio.to_thread(_fetch_sync)
