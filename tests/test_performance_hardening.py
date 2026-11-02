@@ -51,26 +51,26 @@ class TestMemoryProfilingGuardrails:
 class TestDashboardCompositeOverviewAPI:
     def test_overview_endpoint_schema_and_speed(self):
         from server import app
-        with TestClient(app) as client:
-            # First call triggers test client initialization
-            resp0 = client.get("/api/dashboard/overview")
-            assert resp0.status_code == 200
+        client = TestClient(app)
+        # First call triggers test client initialization
+        resp0 = client.get("/api/dashboard/overview")
+        assert resp0.status_code == 200
 
-            t0 = time.perf_counter()
-            resp = client.get("/api/dashboard/overview")
-            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        t0 = time.perf_counter()
+        resp = client.get("/api/dashboard/overview")
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["status"] == "ok"
-            assert "market_status" in data
-            assert "capital" in data
-            assert "top_signals" in data
-            assert "dominant_regime" in data
-            assert "ai_engine" in data
-            assert "risk_state" in data
-            # Cached response should be served from memory cache in sub-100ms
-            assert elapsed_ms < 100.0, f"Overview endpoint took {elapsed_ms:.1f}ms, expected < 100ms"
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert "market_status" in data
+        assert "capital" in data
+        assert "top_signals" in data
+        assert "dominant_regime" in data
+        assert "ai_engine" in data
+        assert "risk_state" in data
+        # Cached response should be served from memory cache in sub-100ms
+        assert elapsed_ms < 100.0, f"Overview endpoint took {elapsed_ms:.1f}ms, expected < 100ms"
 
     def test_health_live_endpoint(self):
         from server import app
