@@ -1297,7 +1297,7 @@ PAPER_TRADING_FORWARD_DAYS = int(os.getenv("PAPER_TRADING_FORWARD_DAYS", "5"))
 PAPER_TRADING_MAX_OPEN = int(os.getenv("PAPER_TRADING_MAX_OPEN", "5"))
 
 # ── Position Sizing & Margin Bounds ──────────────────────────────────────────
-MAX_POSITION_LEVERAGE: float = float(os.getenv("MAX_POSITION_LEVERAGE", "1.0"))
+MAX_POSITION_LEVERAGE: float = float(os.getenv("MAX_POSITION_LEVERAGE", "0.25"))
 MAX_PORTFOLIO_LEVERAGE: float = float(os.getenv("MAX_PORTFOLIO_LEVERAGE", "1.0"))
 
 
