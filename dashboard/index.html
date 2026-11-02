@@ -1240,6 +1240,61 @@
             </div>
             <div id="statsHint" class="stats-hint-text" style="display:none;"></div>
 
+            <!-- ── Global Macro, Energy & News Radar Cockpit ── -->
+            <div id="overviewMacroCockpit" class="terminal-macro-cockpit" style="margin-bottom:1.1rem;">
+                <div class="macro-cockpit-header">
+                    <div class="macro-title-group">
+                        <span class="macro-live-dot"></span>
+                        <span class="macro-cockpit-title">Global Macro & Energy Radar</span>
+                        <span class="macro-cue-pill" id="macroCuePill">LOADING CUES...</span>
+                    </div>
+                    <span class="macro-timestamp" id="macroTimestamp">15m Refresh</span>
+                </div>
+                
+                <div class="macro-ticker-strip">
+                    <div class="macro-stat-card" id="macroBrentCard">
+                        <div class="macro-stat-label">BRENT CRUDE</div>
+                        <div class="macro-stat-val" id="macroBrentPrice">--</div>
+                        <div class="macro-stat-sub" id="macroBrentSub">-- • $/bbl</div>
+                    </div>
+                    <div class="macro-stat-card" id="macroWtiCard">
+                        <div class="macro-stat-label">WTI CRUDE</div>
+                        <div class="macro-stat-val" id="macroWtiPrice">--</div>
+                        <div class="macro-stat-sub" id="macroWtiSub">-- • $/bbl</div>
+                    </div>
+                    <div class="macro-stat-card" id="macroYieldCard">
+                        <div class="macro-stat-label">US 10Y YIELD</div>
+                        <div class="macro-stat-val" id="macroYieldPrice">--%</div>
+                        <div class="macro-stat-sub" id="macroYieldSub">Treasuries</div>
+                    </div>
+                    <div class="macro-stat-card" id="macroDxyCard">
+                        <div class="macro-stat-label">DOLLAR INDEX (DXY)</div>
+                        <div class="macro-stat-val" id="macroDxyPrice">--</div>
+                        <div class="macro-stat-sub" id="macroDxySub">USD Strength</div>
+                    </div>
+                    <div class="macro-stat-card" id="macroSp500Card">
+                        <div class="macro-stat-label">S&P 500 (US)</div>
+                        <div class="macro-stat-val" id="macroSp500Price">--</div>
+                        <div class="macro-stat-sub" id="macroSp500Sub">Wall Street</div>
+                    </div>
+                    <div class="macro-stat-card" id="macroGoldCard">
+                        <div class="macro-stat-label">GOLD</div>
+                        <div class="macro-stat-val" id="macroGoldPrice">--</div>
+                        <div class="macro-stat-sub" id="macroGoldSub">Safe Haven</div>
+                    </div>
+                </div>
+
+                <div class="macro-intel-footer">
+                    <div class="macro-summary-line" id="macroSummaryLine">
+                        <span class="macro-summary-tag">MACRO CUE</span>
+                        <span id="macroSummaryText">Tracking global energy, yields, and Wall Street overnight sentiment...</span>
+                    </div>
+                    <div class="macro-news-stream" id="macroNewsStream">
+                        <span style="font-size:0.65rem;color:var(--text-muted);">Scanning breaking energy & financial news...</span>
+                    </div>
+                </div>
+            </div>
+
             <!-- ── Active Open Trades Panel (Institutional Position Tickets) ── -->
             <div id="overviewActiveTradesCard" class="terminal-positions-panel" style="display:none;">
                 <div class="terminal-panel-header">

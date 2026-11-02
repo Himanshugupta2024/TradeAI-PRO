@@ -2465,3 +2465,165 @@ body::before {
         justify-content: space-between;
     }
 }
+/* ── Global Macro & Energy Cockpit ── */
+.terminal-macro-cockpit {
+    background: rgba(13, 17, 27, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 0.75rem 0.9rem;
+    backdrop-filter: blur(10px);
+}
+.macro-cockpit-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.6rem;
+}
+.macro-title-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.macro-live-dot {
+    width: 7px;
+    height: 7px;
+    background: #3B82F6;
+    border-radius: 50%;
+    box-shadow: 0 0 8px #3B82F6;
+    animation: pulse 2s infinite;
+}
+.macro-cockpit-title {
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #F8FAFC;
+}
+.macro-cue-pill {
+    font-size: 0.62rem;
+    font-weight: 800;
+    padding: 2px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.04em;
+    background: rgba(59, 130, 246, 0.15);
+    color: #60A5FA;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+.macro-cue-pill.cue-bullish {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10B981;
+    border-color: rgba(16, 185, 129, 0.35);
+}
+.macro-cue-pill.cue-bearish {
+    background: rgba(244, 63, 94, 0.15);
+    color: #F43F5E;
+    border-color: rgba(244, 63, 94, 0.35);
+}
+.macro-timestamp {
+    font-size: 0.65rem;
+    color: #64748B;
+    font-family: 'JetBrains Mono', monospace;
+}
+.macro-ticker-strip {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+}
+@media (max-width: 900px) {
+    .macro-ticker-strip {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+@media (max-width: 550px) {
+    .macro-ticker-strip {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+.macro-stat-card {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+    padding: 0.45rem 0.55rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.macro-stat-label {
+    font-size: 0.54rem;
+    font-weight: 700;
+    color: #64748B;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.macro-stat-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.88rem;
+    font-weight: 800;
+    color: #F1F5F9;
+}
+.macro-stat-sub {
+    font-size: 0.62rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: #94A3B8;
+}
+.macro-intel-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding-top: 0.45rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.macro-summary-line {
+    font-size: 0.72rem;
+    color: #CBD5E1;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+.macro-summary-tag {
+    font-weight: 800;
+    font-size: 0.64rem;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #94A3B8;
+}
+.macro-news-stream {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin-top: 2px;
+}
+.macro-news-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.65rem;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: #94A3B8;
+    max-width: 100%;
+}
+.macro-news-tag {
+    font-weight: 800;
+    font-size: 0.56rem;
+    padding: 1px 4px;
+    border-radius: 3px;
+    text-transform: uppercase;
+}
+.macro-news-tag.tag-crude {
+    background: rgba(245, 158, 11, 0.2);
+    color: #FBBF24;
+}
+.macro-news-tag.tag-us_fed {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60A5FA;
+}
+.macro-news-tag.tag-india_macro {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34D399;
+}

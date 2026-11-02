@@ -252,6 +252,17 @@ class PaperTradingEngine:
                         symbol, self._cooldowns[norm_sym])
             return None
 
+        # Macro Sector Risk Gate Check (Crude / Yield / Global headwinds)
+        try:
+            from agents.market_intelligence.global_macro_fetcher import get_global_macro_fetcher
+            macro_ok, macro_reason = get_global_macro_fetcher().evaluate_macro_sector_gate(symbol, direction)
+            if not macro_ok:
+                self.last_rejection_reason = macro_reason or "Macro Sector Risk Gate triggered"
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
+        except Exception as m_err:
+            log.debug("Macro sector gate check skipped: %s", m_err)
+
         # Normalize and validate direction
         if direction in ("LONG", "BUY"):
             direction = "LONG"

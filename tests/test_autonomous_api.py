@@ -2,6 +2,7 @@
 API integration tests for autonomous daemon endpoints.
 """
 
+import os
 import pytest
 from fastapi.testclient import TestClient
 from server import app
@@ -34,16 +35,21 @@ def test_get_autonomous_feed(client):
     assert isinstance(data["feed"], list)
 
 
-def test_toggle_autonomous_mode(client):
+def test_toggle_autonomous_mode(client, monkeypatch):
+    # Configure test admin key
+    test_key = "test-secret-admin-key-456"
+    monkeypatch.setenv("ADMIN_API_KEY", test_key)
+    headers = {"X-Admin-Key": test_key}
+
     # Test toggling off and on
-    res = client.post("/api/autonomous/toggle", json={"enabled": False})
+    res = client.post("/api/autonomous/toggle", json={"enabled": False}, headers=headers)
     assert res.status_code == 200
     data = res.json()
     assert data.get("ok") is True
     assert data.get("enabled") is False
 
     # Toggle back on
-    res2 = client.post("/api/autonomous/toggle", json={"enabled": True})
+    res2 = client.post("/api/autonomous/toggle", json={"enabled": True}, headers=headers)
     assert res2.status_code == 200
     data2 = res2.json()
     assert data2.get("ok") is True

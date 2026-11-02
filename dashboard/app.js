@@ -58,6 +58,8 @@ let allSignals = [];
 
 let marketDataCache = {};
 let _lastOpenTrades = [];
+let _lastMacroData = null;
+let _lastMacroFetchTs = 0;
 
 
 
@@ -2970,6 +2972,7 @@ async function loadAllData({ background = false } = {}) {
 
 
 
+    await loadMacroIntelligence();
     if (openTradesResult && openTradesResult.status === 'fulfilled' && openTradesResult.value) {
 
 
@@ -25710,4 +25713,145 @@ async function refreshPaperPositions() {
             }
         }
     } catch (_) {}
+}
+
+
+// ── Global Macro & Crude Intelligence ──────────────────────────
+async function loadMacroIntelligence(force = false) {
+    const now = Date.now();
+    if (!force && _lastMacroData && (now - _lastMacroFetchTs < 300000)) {
+        renderMacroIntelligence(_lastMacroData);
+        return;
+    }
+    try {
+        const res = await fetchWithTimeout(`${API}/api/macro/intelligence${force ? '?force_refresh=true' : ''}`, {}, 15000);
+        if (!res.ok) return;
+        const data = await parseJsonResponse(res);
+        if (data.status === 'ok' && data.macro) {
+            _lastMacroData = data.macro;
+            _lastMacroFetchTs = now;
+            renderMacroIntelligence(_lastMacroData);
+        }
+    } catch (err) {
+        console.warn('Macro intelligence load failed:', err);
+    }
+}
+
+function renderMacroIntelligence(macro) {
+    if (!macro) return;
+    const brent = macro.brent_crude;
+    const wti = macro.wti_crude;
+    const y10 = macro.us_10y_yield;
+    const dxy = macro.dxy_dollar_index;
+    const sp = macro.sp500;
+    const gold = macro.gold;
+
+    const fmtPct = (p) => `${p >= 0 ? '+' : ''}${Number(p || 0).toFixed(2)}%`;
+    const colorPct = (el, p, inverse = false) => {
+        if (!el) return;
+        const isBull = inverse ? p < 0 : p > 0;
+        const isBear = inverse ? p > 0 : p < 0;
+        el.style.color = isBull ? 'var(--green, #10b981)' : (isBear ? 'var(--red, #ef4444)' : 'var(--text-muted, #8b949e)');
+    };
+
+    // Brent Crude
+    const bPrice = document.getElementById('macroBrentPrice');
+    const bSub = document.getElementById('macroBrentSub');
+    if (bPrice && brent) {
+        bPrice.textContent = `$${Number(brent.price).toFixed(2)}`;
+        if (bSub) {
+            bSub.textContent = `${fmtPct(brent.change_pct)} • $/bbl`;
+            colorPct(bSub, brent.change_pct, true);
+        }
+    }
+
+    // WTI Crude
+    const wPrice = document.getElementById('macroWtiPrice');
+    const wSub = document.getElementById('macroWtiSub');
+    if (wPrice && wti) {
+        wPrice.textContent = `$${Number(wti.price).toFixed(2)}`;
+        if (wSub) {
+            wSub.textContent = `${fmtPct(wti.change_pct)} • $/bbl`;
+            colorPct(wSub, wti.change_pct, true);
+        }
+    }
+
+    // US 10Y Yield
+    const yPrice = document.getElementById('macroYieldPrice');
+    const ySub = document.getElementById('macroYieldSub');
+    if (yPrice && y10) {
+        yPrice.textContent = `${Number(y10.price).toFixed(2)}%`;
+        if (ySub) {
+            ySub.textContent = `${fmtPct(y10.change_pct)} • Treasuries`;
+            colorPct(ySub, y10.change_pct, true);
+        }
+    }
+
+    // Dollar Index DXY
+    const dPrice = document.getElementById('macroDxyPrice');
+    const dSub = document.getElementById('macroDxySub');
+    if (dPrice && dxy) {
+        dPrice.textContent = Number(dxy.price).toFixed(2);
+        if (dSub) {
+            dSub.textContent = `${fmtPct(dxy.change_pct)} • DXY`;
+            colorPct(dSub, dxy.change_pct, true);
+        }
+    }
+
+    // S&P 500
+    const sPrice = document.getElementById('macroSp500Price');
+    const sSub = document.getElementById('macroSp500Sub');
+    if (sPrice && sp) {
+        sPrice.textContent = Number(sp.price).toLocaleString('en-US', { maximumFractionDigits: 1 });
+        if (sSub) {
+            sSub.textContent = `${fmtPct(sp.change_pct)} • Wall St`;
+            colorPct(sSub, sp.change_pct, false);
+        }
+    }
+
+    // Gold
+    const gPrice = document.getElementById('macroGoldPrice');
+    const gSub = document.getElementById('macroGoldSub');
+    if (gPrice && gold) {
+        gPrice.textContent = `$${Number(gold.price).toFixed(1)}`;
+        if (gSub) gSub.textContent = `${fmtPct(gold.change_pct)} • $/oz`;
+    }
+
+    // Cue Pill
+    const cuePill = document.getElementById('macroCuePill');
+    if (cuePill) {
+        const regime = macro.macro_regime || 'NEUTRAL';
+        cuePill.textContent = regime.replace(/_/g, ' ');
+        if (regime === 'RISK_ON' || regime === 'LOW_CRUDE_BENEFIT') {
+            cuePill.className = 'macro-cue-pill cue-bullish';
+        } else if (regime === 'HIGH_CRUDE_RISK' || regime === 'RISK_OFF') {
+            cuePill.className = 'macro-cue-pill cue-bearish';
+        } else {
+            cuePill.className = 'macro-cue-pill';
+        }
+    }
+
+    // Macro Summary Text
+    const sumEl = document.getElementById('macroSummaryText');
+    if (sumEl && macro.macro_cue_summary) {
+        sumEl.textContent = macro.macro_cue_summary;
+    }
+
+    // Breaking News Stream
+    const newsEl = document.getElementById('macroNewsStream');
+    if (newsEl && Array.isArray(macro.breaking_news) && macro.breaking_news.length > 0) {
+        newsEl.innerHTML = macro.breaking_news.slice(0, 4).map(n => {
+            const cat = n.category || 'NEWS';
+            const tagClass = `tag-${cat.toLowerCase()}`;
+            const sentClass = n.sentiment === 'BULLISH' ? 'text-profit' : (n.sentiment === 'BEARISH' ? 'text-loss' : '');
+            const titleSafe = (n.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const shortTitle = titleSafe.length > 70 ? titleSafe.substring(0, 70) + '...' : titleSafe;
+            return `
+                <div class="macro-news-pill">
+                    <span class="macro-news-tag ${tagClass}">${cat.replace(/_/g, ' ')}</span>
+                    <span class="${sentClass}" title="${titleSafe}">${shortTitle}</span>
+                </div>
+            `;
+        }).join('');
+    }
 }
