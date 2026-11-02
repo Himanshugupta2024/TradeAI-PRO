@@ -7,6 +7,12 @@
         "serve"
       ],
       "type": "stdio"
+    },
+    "render": {
+      "url": "https://mcp.render.com/mcp",
+      "headers": {
+        "Authorization": "Bearer rnd_8xgdcbTeuCgtMiotElNd1PEITJsl"
+      }
     }
   }
 }

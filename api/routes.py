@@ -264,7 +264,7 @@ async def favicon():
 
     return Response(status_code=204)
 
-@router.get("/api/health")
+@router.api_route("/api/health", methods=["GET", "HEAD"])
 
 async def health_check():
 
@@ -328,7 +328,7 @@ async def health_check():
 
     }
 
-@router.get("/api/ready")
+@router.api_route("/api/ready", methods=["GET", "HEAD"])
 
 async def readiness_check():
 
@@ -7635,7 +7635,7 @@ async def get_forex_ohlcv_endpoint(
 
         return JSONResponse(status_code=503, content={"error": str(e), "candles": []})
 
-@router.get("/")
+@router.api_route("/", methods=["GET", "HEAD"])
 
 async def serve_dashboard():
 
@@ -7649,7 +7649,7 @@ async def serve_dashboard():
 
     return {"message": "Dashboard not found. Place files in /dashboard/"}
 
-@router.get("/landing")
+@router.api_route("/landing", methods=["GET", "HEAD"])
 
 async def serve_landing():
 
@@ -7667,9 +7667,9 @@ async def serve_landing():
 
     )
 
-@router.get("/crypto")
+@router.api_route("/crypto", methods=["GET", "HEAD"])
 
-@router.get("/crypto/")
+@router.api_route("/crypto/", methods=["GET", "HEAD"])
 
 async def serve_crypto():
 

@@ -217,6 +217,21 @@ SWING_OUTCOME_TASK_INTERVAL_SECONDS = max(
     int(getattr(settings, "SWING_OUTCOME_TASK_CHECK_SEC", 60) or 60),
 )
 
+
+def _force_free_memory() -> None:
+    """Force Python gc and Linux glibc malloc_trim to return unmapped heap pages to OS."""
+    try:
+        import gc
+        gc.collect()
+        if hasattr(sys, "platform") and sys.platform.startswith("linux"):
+            import ctypes
+            try:
+                ctypes.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 # ── Phase 3 / 4: delta tracking + opportunity timeline ───────────────────────
 # Snapshot of last intelligence payload for delta computation
 _last_intelligence_snapshot: dict = {
@@ -837,7 +852,18 @@ async def _background_refresh():
 
     try:
         while True:
-            await asyncio.sleep(REFRESH_INTERVAL_SECONDS)
+            # Smart cadence: during NSE off-hours or weekends, back off to avoid redundant allocations on Render free tier
+            sleep_time = REFRESH_INTERVAL_SECONDS
+            try:
+                from zoneinfo import ZoneInfo
+                _now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+                is_weekend = _now_ist.weekday() >= 5
+                is_off_hours = not (9 <= _now_ist.hour < 16) or (_now_ist.hour == 9 and _now_ist.minute < 15) or (_now_ist.hour == 15 and _now_ist.minute > 35)
+                if is_weekend or is_off_hours:
+                    sleep_time = max(REFRESH_INTERVAL_SECONDS * 3, 300)
+            except Exception:
+                sleep_time = REFRESH_INTERVAL_SECONDS
+            await asyncio.sleep(sleep_time)
             lock = _get_refresh_lock()
             if lock.locked():
                 logger.debug("Background refresh skipped — previous refresh still running")
@@ -1443,12 +1469,8 @@ async def _refresh_market_data_inner():
         refresh_tracker.finish()
         logger.info("Market data refreshed: %d symbols loaded", len(_market_data))
 
-        # Force garbage collection to keep Render free tier memory footprint strictly under 400 MB
-        try:
-            import gc
-            gc.collect()
-        except Exception:
-            pass
+        # Force garbage collection and Linux malloc_trim to keep Render free tier memory footprint strictly under 350 MB
+        _force_free_memory()
 
 
 # ── API Endpoints ────────────────────────────────────────

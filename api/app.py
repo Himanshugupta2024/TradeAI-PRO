@@ -116,6 +116,7 @@ def _lifespan_context():
             try:
                 from agents.ai_engine.model_registry import get_model_registry
                 await asyncio.to_thread(get_model_registry().warmup_all)
+                svc._force_free_memory()
             except Exception as exc:
                 svc.logger.warning("ModelRegistry warmup raised on startup: %s", exc)
 
