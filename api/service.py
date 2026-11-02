@@ -1056,7 +1056,7 @@ async def _fetch_nse_symbol(
             )
             return
 
-        df = calculate_indicators(df)
+        df = await asyncio.to_thread(calculate_indicators, df)
 
         # ── Real AI confidence from ensemble predictor ────────────────────
         ai_confidence = await asyncio.to_thread(predict_batch, df)
@@ -1066,12 +1066,12 @@ async def _fetch_nse_symbol(
         else:
             htf_df = await asyncio.to_thread(fetch_ohlcv, display_name, "60d", "1d")
         if htf_df is not None and not htf_df.empty and len(htf_df) >= 20:
-            htf_df = calculate_indicators(htf_df)
-            htf_df = classify_trend(htf_df)
-            df = propagate_trend_to_ltf(df, htf_df)
+            htf_df = await asyncio.to_thread(calculate_indicators, htf_df)
+            htf_df = await asyncio.to_thread(classify_trend, htf_df)
+            df = await asyncio.to_thread(propagate_trend_to_ltf, df, htf_df)
         else:
             htf_df = None
-            df = classify_trend(df)
+            df = await asyncio.to_thread(classify_trend, df)
 
         # ── MTF score from resampled timeframes ───────────────────────────
         mtf_data = {"5m": df}
@@ -1091,15 +1091,15 @@ async def _fetch_nse_symbol(
                 .reset_index()
             )
             if len(df_15m) >= 30:
-                df_15m = calculate_indicators(df_15m)
+                df_15m = await asyncio.to_thread(calculate_indicators, df_15m)
                 mtf_data["15m"] = df_15m
         except Exception as e:
             logger.debug("15m resample failed for %s: %s", display_name, e)
         if htf_df is not None and not htf_df.empty:
             mtf_data["1d"] = htf_df
-        mtf_score = calculate_mtf_score(mtf_data)
+        mtf_score = await asyncio.to_thread(calculate_mtf_score, mtf_data)
 
-        raw_regime = detect_regime(df)
+        raw_regime = await asyncio.to_thread(detect_regime, df)
         regime = _stable_regime(display_name, raw_regime)
         _regime_cache[display_name] = regime.value
 
@@ -1129,7 +1129,8 @@ async def _fetch_nse_symbol(
         except Exception as sent_err:
             logger.debug("[Service] Sentiment lookup failed for %s: %s", display_name, sent_err)
 
-        df = generate_signals(
+        df = await asyncio.to_thread(
+            generate_signals,
             df,
             ai_confidence=ai_confidence,
             regime=regime,
@@ -1192,6 +1193,8 @@ async def _refresh_market_data_inner():
     """
     global _last_refresh, _last_feed_update
     async with _get_refresh_lock():
+        from utils.profiler import PerfTracker
+        refresh_tracker = PerfTracker("market_refresh", slow_threshold_ms=3000.0)
         # ── V2: Fast Vectorized Batch Download via MarketDataRouter ──
         try:
             from data.router import get_default_router
@@ -1200,6 +1203,7 @@ async def _refresh_market_data_inner():
             dfs_5m = await router.get_batch_ohlcv(TOP_NSE_SYMBOLS, period="5d", interval="5m")
             dfs_1d = await router.get_batch_ohlcv(TOP_NSE_SYMBOLS, period="60d", interval="1d")
             elapsed_batch = time.perf_counter() - t_batch
+            refresh_tracker.record("batch_ohlcv", elapsed_batch * 1000.0)
             logger.info(
                 "[V2 Router] Batch download completed in %.2fs (5m: %d symbols, 1d: %d symbols)",
                 elapsed_batch,
@@ -1250,18 +1254,18 @@ async def _refresh_market_data_inner():
                         )
                         return
 
-                    df = calculate_indicators(df)
+                    df = await asyncio.to_thread(calculate_indicators, df)
 
                     htf_df = await asyncio.wait_for(
                         asyncio.to_thread(fetch_historical, symbol, "1d", 60),
                         timeout=10.0,
                     )
                     if htf_df is not None and not htf_df.empty and len(htf_df) >= 20:
-                        htf_df = calculate_indicators(htf_df)
-                        htf_df = classify_trend(htf_df)
-                        df = propagate_trend_to_ltf(df, htf_df)
+                        htf_df = await asyncio.to_thread(calculate_indicators, htf_df)
+                        htf_df = await asyncio.to_thread(classify_trend, htf_df)
+                        df = await asyncio.to_thread(propagate_trend_to_ltf, df, htf_df)
                     else:
-                        df = classify_trend(df)
+                        df = await asyncio.to_thread(classify_trend, df)
 
                     # ── A1: MTF confluence — fetch 4h trend independently.
                     try:
@@ -1278,8 +1282,8 @@ async def _refresh_market_data_inner():
                             and not htf4_df.empty
                             and len(htf4_df) >= 50
                         ):
-                            htf4_df = calculate_indicators(htf4_df)
-                            htf4_df = classify_trend(htf4_df)
+                            htf4_df = await asyncio.to_thread(calculate_indicators, htf4_df)
+                            htf4_df = await asyncio.to_thread(classify_trend, htf4_df)
                             trend_col = htf4_df.get("htf_trend")
                             if trend_col is not None and len(trend_col) > 0:
                                 last_trend = (
@@ -1294,12 +1298,16 @@ async def _refresh_market_data_inner():
                         logger.debug("4h MTF fetch failed for %s: %s", symbol, exc)
                         _crypto_htf4_trend[symbol] = None
 
-                    raw_regime = detect_regime(df)
+                    raw_regime = await asyncio.to_thread(detect_regime, df)
                     regime = _stable_regime(symbol, raw_regime)
                     _regime_cache[symbol] = regime.value
                     ai_conf_crypto = await asyncio.to_thread(predict_batch, df)
-                    df = generate_signals(
-                        df, ai_confidence=ai_conf_crypto, regime=regime, symbol=symbol
+                    df = await asyncio.to_thread(
+                        generate_signals,
+                        df,
+                        ai_confidence=ai_conf_crypto,
+                        regime=regime,
+                        symbol=symbol,
                     )
                     _market_data[symbol] = df
                     _signal_cache[symbol] = df
@@ -1391,6 +1399,9 @@ async def _refresh_market_data_inner():
             logger.debug("Persisting signals snapshot failed: %s", e)
 
         _last_refresh = datetime.now()
+        refresh_tracker.set_meta("nse_loaded", len(TOP_NSE_SYMBOLS))
+        refresh_tracker.set_meta("total_symbols", len(_market_data))
+        refresh_tracker.finish()
         logger.info("Market data refreshed: %d symbols loaded", len(_market_data))
 
         # Force garbage collection to keep Render free tier memory footprint strictly under 400 MB

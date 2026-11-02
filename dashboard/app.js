@@ -247,6 +247,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     hydrateFromLocalStorageCache();
 
+    loadOverviewFast();
+
     loadAllData({ background: false });
 
     connectPriceWebSocket();
@@ -380,37 +382,24 @@ function _scheduleSmartRefresh() {
     const isWarmingUp = !Array.isArray(allSignals) || allSignals.length === 0;
 
     const now = new Date();
+    const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+    const istMinutes = (utcMinutes + 330) % (24 * 60);
+    const istDayOffset = Math.floor((utcMinutes + 330) / (24 * 60));
+    const istDay = (now.getUTCDay() + istDayOffset) % 7;
 
-    const h = now.getHours(), m = now.getMinutes();
-
-    const totalMin = h * 60 + m;
-
-    // NSE: 9:15-15:30 IST (UTC+5:30 = UTC+330 min). Approximate via local time check.
-
-    // We check if we're within 9:00-15:35 as a generous window.
-
-    const inMarketHours = totalMin >= 9 * 60 && totalMin <= 15 * 60 + 35;
-
-    const isWeekday = now.getDay() >= 1 && now.getDay() <= 5;
-
+    // NSE: 09:15-15:30 IST
+    const inMarketHours = istMinutes >= (9 * 60 + 15) && istMinutes <= (15 * 60 + 35);
+    const isWeekday = istDay >= 1 && istDay <= 5;
     const isActive = inMarketHours && isWeekday;
 
-    _smartRefreshInterval = isWarmingUp ? 6000 : (isActive ? 30000 : 90000);
-
-
+    _smartRefreshInterval = isWarmingUp ? 6000 : (isActive ? 30000 : 120000);
 
     // Update the UI label
-
     const label = document.querySelector('.auto-refresh-label');
-
     if (label) {
-
         label.textContent = isWarmingUp
-
             ? 'Warming up cache (6s retry)...'
-
-            : `Auto-refresh ${isActive ? '30s' : '90s'}${isActive ? ' (market open)' : ' (market closed)'}`;
-
+            : `Auto-refresh ${isActive ? '30s' : '120s'}${isActive ? ' (market open)' : ' (market closed)'}`;
     }
 
 
@@ -1210,6 +1199,31 @@ async function parseJsonResponse(res) {
 
 
 
+
+async function loadOverviewFast() {
+    try {
+        const res = await fetchWithTimeout(`${API}/api/dashboard/overview`, {}, 6000);
+        const data = await parseJsonResponse(res);
+        if (data && data.status === 'ok') {
+            if (data.capital !== undefined) {
+                const capEl = document.getElementById('statCapital');
+                if (capEl) capEl.textContent = '₹' + Number(data.capital).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+            }
+            if (data.total_pnl !== undefined) {
+                const pnlEl = document.getElementById('statTotalPnl');
+                if (pnlEl) {
+                    const p = Number(data.total_pnl);
+                    pnlEl.textContent = (p >= 0 ? '+' : '') + '₹' + p.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+                    pnlEl.className = 'stat-value ' + (p >= 0 ? 'positive' : 'negative');
+                }
+            }
+            if (data.dominant_regime) {
+                const regEl = document.getElementById('statRegime') || document.getElementById('dominantRegimeBadge');
+                if (regEl) regEl.textContent = data.dominant_regime;
+            }
+        }
+    } catch (_) {}
+}
 
 async function loadAllData({ background = false } = {}) {
 

@@ -6,6 +6,14 @@ import logging
 import os
 import sys
 import time
+import warnings
+
+# Suppress known 3rd-party deprecation warnings (e.g. yfinance with pandas 3.x) in production
+warnings.filterwarnings("ignore", category=FutureWarning, module=r"yfinance(\..*)?")
+warnings.filterwarnings("ignore", message=r".*mode\.copy_on_write.*", category=FutureWarning)
+warnings.filterwarnings("ignore", message=r".*The inplace keyword in DataFrame.*", category=FutureWarning)
+warnings.filterwarnings("ignore", message=r".*Timestamp\.utcnow is deprecated.*", category=FutureWarning)
+warnings.filterwarnings("ignore", message=r".*If you are loading a serialized model.*", category=UserWarning, module=r"xgboost.*")
 
 import httpx
 from fastapi import FastAPI

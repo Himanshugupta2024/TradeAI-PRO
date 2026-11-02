@@ -93,14 +93,18 @@ def set_runtime_state(key: str, value: Any) -> None:
         except (StaleDataError, ObjectDeletedError):
             session.rollback()
             session.expunge_all()
-            # Retry with session.merge in case the row was deleted concurrently
-            session.merge(
-                RuntimeState(
-                    state_key=key,
-                    state_json=encoded,
-                    updated_at=datetime.now(timezone.utc),
+            existing = session.get(RuntimeState, key)
+            if existing is None:
+                session.add(
+                    RuntimeState(
+                        state_key=key,
+                        state_json=encoded,
+                        updated_at=datetime.now(timezone.utc),
+                    )
                 )
-            )
+            else:
+                existing.state_json = encoded
+                existing.updated_at = datetime.now(timezone.utc)
             session.commit()
     except Exception as exc:
         session.rollback()
