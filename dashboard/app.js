@@ -112,6 +112,7 @@ function hydrateFromLocalStorageCache() {
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initTabs();
+    initSidebarCollapse();
     initSignalControls();
     initCockpitFilters();
     initPhase5Cockpit();
@@ -458,7 +459,33 @@ function updateThemeIcon(theme) {
 }
 
 
-// ── Tab Navigation ──────────────────────────────────────
+// ── Tab Navigation & Sidebar ────────────────────────────
+
+function initSidebarCollapse() {
+    const btn = document.getElementById('sidebarCollapseBtn');
+    const sidebar = document.getElementById('sidebar');
+    const appMain = document.getElementById('appMain');
+    const icon = document.getElementById('sidebarCollapseIcon');
+    if (!btn || !sidebar || !appMain) return;
+
+    const isCollapsed = localStorage.getItem('tradeai_sidebar_collapsed') === 'true';
+    if (isCollapsed) {
+        sidebar.classList.add('collapsed');
+        appMain.classList.add('sidebar-collapsed');
+        if (icon) icon.innerHTML = '<polyline points="9 18 15 12 9 6"></polyline>';
+    }
+
+    btn.addEventListener('click', () => {
+        const collapsed = sidebar.classList.toggle('collapsed');
+        appMain.classList.toggle('sidebar-collapsed', collapsed);
+        localStorage.setItem('tradeai_sidebar_collapsed', collapsed ? 'true' : 'false');
+        if (icon) {
+            icon.innerHTML = collapsed
+                ? '<polyline points="9 18 15 12 9 6"></polyline>'
+                : '<polyline points="15 18 9 12 15 6"></polyline>';
+        }
+    });
+}
 
 function initTabs() {
     document.querySelectorAll('.tab-btn').forEach(btn => {

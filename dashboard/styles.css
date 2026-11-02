@@ -2369,20 +2369,22 @@ body::before {
     color: #F8FAFC !important;
 }
 .sidebar-item.active {
-    background: rgba(56, 189, 248, 0.08) !important;
+    background: rgba(56, 189, 248, 0.12) !important;
     color: #38BDF8 !important;
+    border: 1px solid rgba(56, 189, 248, 0.3) !important;
     font-weight: 600 !important;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.08) !important;
 }
 .sidebar-item.active::before {
-    content: '' !important;
-    position: absolute !important;
-    left: -0.5rem !important;
-    top: 4px !important;
-    bottom: 4px !important;
-    width: 3px !important;
-    background: #38BDF8 !important;
-    border-radius: 0 2px 2px 0 !important;
-    box-shadow: 0 0 8px rgba(56, 189, 248, 0.5) !important;
+    display: none !important;
+}
+
+/* Collapsed sidebar desktop support */
+.sidebar.collapsed {
+    width: 64px !important;
+}
+.app-main.sidebar-collapsed {
+    margin-left: 64px !important;
 }
 
 /* Responsive adjustments */

@@ -99,7 +99,11 @@
         .mood-search-input:focus { outline: none; border-color: var(--teal); }
         .mood-search-input::placeholder { color: var(--txt-muted); }
 
-        /* ── Vertical Sidebar ── */
+        /* ── Vertical Sidebar (V2 Terminal Navigation) ── */
+        :root {
+            --sidebar-w: 220px;
+            --sidebar-collapsed-w: 64px;
+        }
         .sidebar {
             position: fixed; top: var(--topbar-h); left: 0; bottom: 0; z-index: 100;
             width: var(--sidebar-w);
@@ -107,46 +111,163 @@
             border-right: 1px solid var(--bdr);
             display: flex; flex-direction: column;
             overflow-y: auto; overflow-x: hidden;
-            padding: 0.5rem 0;
+            padding: 0.5rem 0 0.8rem;
+            transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-w);
         }
         .sidebar::-webkit-scrollbar { width: 3px; }
         .sidebar::-webkit-scrollbar-thumb { background: var(--bdr); border-radius: 3px; }
-        .sidebar-group { margin-bottom: 0.25rem; }
+
+        .sidebar-header-action {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0.2rem 0.85rem 0.45rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            margin-bottom: 0.35rem;
+        }
+        .sidebar.collapsed .sidebar-header-action {
+            justify-content: center;
+            padding: 0.2rem 0 0.45rem;
+        }
+        .sidebar-collapse-btn {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--bdr);
+            color: var(--txt-muted);
+            border-radius: 5px;
+            width: 24px; height: 24px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .sidebar-collapse-btn:hover {
+            color: #f1f5f9;
+            background: var(--bg-raised);
+            border-color: rgba(56, 189, 248, 0.4);
+        }
+        .sidebar-group { margin-bottom: 0.35rem; }
         .sidebar-group-label {
-            font-size: 0.58rem; font-weight: 700; letter-spacing: 0.1em;
-            text-transform: uppercase; color: var(--txt-muted);
-            padding: 0.5rem 1rem 0.2rem;
+            font-size: 0.65rem; font-weight: 700; letter-spacing: 0.06em;
+            text-transform: uppercase; color: #64748b;
+            padding: 0.55rem 0.95rem 0.25rem;
+            transition: opacity 0.15s;
+        }
+        .sidebar.collapsed .sidebar-group-label {
+            display: none;
         }
         .sidebar-item {
-            display: flex; align-items: center; gap: 0.65rem;
-            padding: 0.48rem 1rem; margin: 0.08rem 0.4rem;
+            display: flex; align-items: center; gap: 0.7rem;
+            padding: 0.48rem 0.85rem; margin: 0.1rem 0.45rem;
             border-radius: 6px; cursor: pointer;
-            font-size: 0.82rem; font-weight: 500; color: var(--txt-muted);
-            background: transparent; border: none; width: calc(100% - 0.8rem);
+            font-size: 0.81rem; font-weight: 500; color: #94a3b8;
+            background: transparent; border: 1px solid transparent;
+            width: calc(100% - 0.9rem);
             text-align: left; text-decoration: none;
-            transition: color 0.12s, background 0.12s;
+            transition: color 0.12s, background 0.12s, border-color 0.12s;
             white-space: nowrap;
         }
-        .sidebar-item:hover {
-            color: var(--txt); background: var(--bg-raised);
+        .sidebar.collapsed .sidebar-item {
+            justify-content: center;
+            padding: 0.5rem 0;
+            margin: 0.12rem 0.4rem;
+            width: calc(100% - 0.8rem);
         }
+        .sidebar.collapsed .sidebar-label,
+        .sidebar.collapsed .sidebar-badge {
+            display: none;
+        }
+        .sidebar-item:hover {
+            color: #f8fafc; background: rgba(255, 255, 255, 0.04);
+            border-color: rgba(255, 255, 255, 0.06);
+        }
+        /* Active menu item - Soft cyan ambient pill with subtle border */
         .sidebar-item.active {
-            color: var(--teal); background: var(--teal-dim);
+            color: #38bdf8;
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.28);
+            font-weight: 600;
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.08);
+        }
+        /* Featured Top Setups item */
+        .sidebar-item.featured-setup {
+            color: #f59e0b;
+            background: rgba(245, 158, 11, 0.06);
+            border: 1px solid rgba(245, 158, 11, 0.22);
             font-weight: 600;
         }
-        .sidebar-icon { font-size: 0.9rem; flex-shrink: 0; width: 16px; text-align: center; }
+        .sidebar-item.featured-setup:hover {
+            background: rgba(245, 158, 11, 0.12);
+            border-color: rgba(245, 158, 11, 0.4);
+            color: #fbbf24;
+        }
+        .sidebar-item.featured-setup.active {
+            color: #fbbf24;
+            background: rgba(245, 158, 11, 0.16);
+            border: 1px solid rgba(245, 158, 11, 0.45);
+            box-shadow: 0 0 14px rgba(245, 158, 11, 0.15);
+        }
+        .sidebar-badge {
+            margin-left: auto;
+            font-size: 0.6rem;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 4px;
+            letter-spacing: 0.02em;
+        }
+        .sidebar-badge.gold {
+            background: rgba(245, 158, 11, 0.2);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.4);
+        }
+        .sidebar-icon {
+            display: flex; align-items: center; justify-content: center;
+            width: 16px; height: 16px; flex-shrink: 0;
+            color: currentColor;
+        }
+        .sidebar-icon svg {
+            width: 16px; height: 16px;
+            stroke-width: 1.8;
+            stroke: currentColor;
+            fill: none;
+        }
         .sidebar-spacer { flex: 1; }
-        .sidebar-bottom {
-            padding: 0.5rem 0.5rem; border-top: 1px solid var(--bdr);
-            display: flex; flex-direction: column; gap: 0.35rem;
+        .sidebar-status-box {
+            margin: 0.4rem 0.45rem 0.2rem;
+            padding: 0.5rem 0.7rem;
+            border-radius: 6px;
+            background: rgba(15, 23, 42, 0.65);
+            border: 1px solid var(--bdr);
+            display: flex; align-items: center; gap: 0.6rem;
+            transition: all 0.15s ease;
         }
-        .sidebar-bottom-item {
-            display: flex; align-items: center; gap: 0.55rem;
-            padding: 0.38rem 0.5rem; border-radius: 5px; cursor: pointer;
-            font-size: 0.75rem; color: var(--txt-muted); background: none; border: none;
-            text-decoration: none; width: 100%; text-align: left;
+        .sidebar.collapsed .sidebar-status-box {
+            padding: 0.5rem 0;
+            justify-content: center;
+            margin: 0.3rem 0.3rem;
         }
-        .sidebar-bottom-item:hover { color: var(--txt); background: var(--bg-raised); }
+        .sidebar.collapsed .sidebar-status-details {
+            display: none;
+        }
+        .status-dot-pulse {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: #10b981;
+            box-shadow: 0 0 8px #10b981;
+            flex-shrink: 0;
+            animation: pulseDot 2s infinite ease-in-out;
+        }
+        @keyframes pulseDot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.85); }
+        }
+        .sidebar-status-details {
+            display: flex; flex-direction: column; gap: 0.1rem;
+        }
+        .sidebar-status-title {
+            font-size: 0.72rem; font-weight: 600; color: #f1f5f9;
+        }
+        .sidebar-status-sub {
+            font-size: 0.64rem; font-weight: 500; color: #10b981; font-family: var(--font-mono);
+        }
 
         /* ── App Shell ── */
         .app-shell {
@@ -158,6 +279,10 @@
             flex: 1; overflow-y: auto; overflow-x: hidden;
             padding: 1.1rem 1.4rem 2rem;
             height: calc(100vh - var(--topbar-h));
+            transition: margin-left 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .app-main.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-w);
         }
         .app-main::-webkit-scrollbar { width: 5px; }
         .app-main::-webkit-scrollbar-thumb { background: var(--bdr); border-radius: 3px; }
@@ -933,77 +1058,144 @@
 
     <!-- ── Vertical Sidebar ── -->
     <nav class="sidebar" id="sidebar">
-        <div class="sidebar-group">
-            <div class="sidebar-group-label">Market</div>
-            <button class="sidebar-item active tab-btn" data-tab="overview" id="tabOverview">
-                <span class="sidebar-icon">◈</span> Overview
+        <!-- Sidebar Top Header & Collapse Toggle -->
+        <div class="sidebar-header-action">
+            <span class="sidebar-label" style="font-size: 0.65rem; font-weight: 700; color: #64748b; letter-spacing: 0.06em; text-transform: uppercase;">Menu</span>
+            <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" type="button" aria-label="Toggle Sidebar" title="Collapse / Expand sidebar">
+                <svg id="sidebarCollapseIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
             </button>
-            <button class="sidebar-item tab-btn" data-tab="market" id="tabMarket">
-                <span class="sidebar-icon">📈</span> Market
-            </button>
-            <button class="sidebar-item tab-btn" data-tab="tradeflow" id="tabTradeflow">
-                <span class="sidebar-icon">💰</span> Trade Flow
-            </button>
-            <a class="sidebar-item" href="/crypto" id="tabCryptoMain">
-                <span class="sidebar-icon">₿</span> Crypto
-            </a>
         </div>
+
+        <!-- Standalone Top Item: Overview -->
+        <button class="sidebar-item active tab-btn" data-tab="overview" id="tabOverview" title="Overview">
+            <span class="sidebar-icon">
+                <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect></svg>
+            </span>
+            <span class="sidebar-label">Overview</span>
+        </button>
+
+        <!-- Category 1: MARKETS -->
+        <div class="sidebar-group">
+            <div class="sidebar-group-label">Markets</div>
+            <button class="sidebar-item tab-btn" data-tab="market" id="tabMarket" title="Market">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>
+                </span>
+                <span class="sidebar-label">Market</span>
+            </button>
+            <a class="sidebar-item" href="/crypto" id="tabCryptoMain" title="Crypto">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M10 8h3a2 2 0 0 1 0 4h-3"></path><path d="M10 12h3.5a2 2 0 0 1 0 4H10"></path><line x1="10" y1="6" x2="10" y2="18"></line><line x1="12" y1="6" x2="12" y2="8"></line><line x1="12" y1="16" x2="12" y2="18"></line></svg>
+                </span>
+                <span class="sidebar-label">Crypto</span>
+            </a>
+            <button class="sidebar-item tab-btn" data-tab="forex" id="tabForex" title="Forex">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><path d="M7 10h14l-4-4"></path><path d="M17 14H3l4 4"></path></svg>
+                </span>
+                <span class="sidebar-label">Forex</span>
+            </button>
+        </div>
+
+        <!-- Category 2: TRADING -->
         <div class="sidebar-group">
             <div class="sidebar-group-label">Trading</div>
-            <button class="sidebar-item tab-btn" data-tab="portfolio" id="tabPortfolio">
-                <span class="sidebar-icon">💼</span> Portfolio
+            <button class="sidebar-item tab-btn" data-tab="tradeflow" id="tabTradeflow" title="Trade Flow">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>
+                </span>
+                <span class="sidebar-label">Trade Flow</span>
             </button>
-            <button class="sidebar-item tab-btn" data-tab="performance" id="tabPerformance">
-                <span class="sidebar-icon">🏆</span> Performance
+            <button class="sidebar-item tab-btn" data-tab="portfolio" id="tabPortfolio" title="Portfolio">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+                </span>
+                <span class="sidebar-label">Portfolio</span>
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="performance" id="tabPerformance" title="Performance">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                </span>
+                <span class="sidebar-label">Performance</span>
             </button>
         </div>
+
+        <!-- Category 3: SCANNERS -->
         <div class="sidebar-group">
-            <div class="sidebar-group-label">Analytics</div>
-            <button class="sidebar-item tab-btn" data-tab="scorecard" id="tabScorecard">
-                <span class="sidebar-icon">📋</span> Scorecard
+            <div class="sidebar-group-label">Scanners</div>
+            <button class="sidebar-item featured-setup tab-btn" data-tab="edge-top-setups" id="tabEdgeTopSetups" title="Top Setups">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24" fill="rgba(245, 158, 11, 0.25)"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                </span>
+                <span class="sidebar-label">Top Setups</span>
+                <span class="sidebar-badge gold">★ EDGE</span>
             </button>
-            <button class="sidebar-item tab-btn" data-tab="learning" id="tabLearning">
-                <span class="sidebar-icon">🧠</span> Learning
+            <button class="sidebar-item tab-btn" data-tab="intraday" id="tabIntraday" title="Intraday">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                </span>
+                <span class="sidebar-label">Intraday</span>
             </button>
-            <button class="sidebar-item tab-btn" data-tab="nseprediction" id="tabNsePrediction" style="display:none;">
-                <span class="sidebar-icon">📰</span> NSE Prediction
+            <button class="sidebar-item tab-btn" data-tab="swing" id="tabSwing" title="Swing">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                </span>
+                <span class="sidebar-label">Swing</span>
             </button>
-            <button class="sidebar-item tab-btn" data-tab="forex" id="tabForex">
-                <span class="sidebar-icon">💱</span> Forex
+            <button class="sidebar-item tab-btn" data-tab="breakouts" id="tabBreakouts" title="Breakouts">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                </span>
+                <span class="sidebar-label">Breakouts</span>
             </button>
-            <button class="sidebar-item tab-btn" data-tab="swing" id="tabSwing">
-                <span class="sidebar-icon">🔄</span> Swing
-            </button>
-            <button class="sidebar-item tab-btn" data-tab="intraday" id="tabIntraday">
-                <span class="sidebar-icon">⏱</span> Intraday
-            </button>
-            <button class="sidebar-item tab-btn" data-tab="indexmover" id="tabIndexMover">
-                <span class="sidebar-icon">🏗️</span> Index Mover
-            </button>
-            <button class="sidebar-item tab-btn" data-tab="breakouts" id="tabBreakouts">
-                <span class="sidebar-icon">🚀</span> Breakouts
+            <button class="sidebar-item tab-btn" data-tab="indexmover" id="tabIndexMover" title="Index Movers">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                </span>
+                <span class="sidebar-label">Index Movers</span>
             </button>
         </div>
+
+        <!-- Category 4: INTELLIGENCE -->
         <div class="sidebar-group">
-            <div class="sidebar-group-label">Edge Engine</div>
-            <button class="sidebar-item tab-btn" data-tab="edge-top-setups" id="tabEdgeTopSetups">
-                <span class="sidebar-icon">⭐</span> Top Setups
+            <div class="sidebar-group-label">Intelligence</div>
+            <button class="sidebar-item tab-btn" data-tab="scorecard" id="tabScorecard" title="Scorecard">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                </span>
+                <span class="sidebar-label">Scorecard</span>
             </button>
-            <button class="sidebar-item tab-btn" data-tab="edge-macro-heatmap" id="tabEdgeMacroHeatmap">
-                <span class="sidebar-icon">🗺️</span> Macro Heatmap
+            <button class="sidebar-item tab-btn" data-tab="learning" id="tabLearning" title="AI Learning">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+                </span>
+                <span class="sidebar-label">AI Learning</span>
             </button>
-            <button class="sidebar-item tab-btn" data-tab="edge-risk-gauge" id="tabEdgeRiskGauge">
-                <span class="sidebar-icon">🌡️</span> Risk Gauge
+            <button class="sidebar-item tab-btn" data-tab="edge-macro-heatmap" id="tabEdgeMacroHeatmap" title="Macro Heatmap">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                </span>
+                <span class="sidebar-label">Macro Heatmap</span>
+            </button>
+            <button class="sidebar-item tab-btn" data-tab="edge-risk-gauge" id="tabEdgeRiskGauge" title="Risk Gauge">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                </span>
+                <span class="sidebar-label">Risk Gauge</span>
             </button>
         </div>
+
         <div class="sidebar-spacer"></div>
-        <div class="sidebar-bottom">
-            <a class="sidebar-bottom-item" href="/crypto" id="tabCryptoBottom">
-                <span>₿</span> Crypto
-            </a>
-            <a class="sidebar-bottom-item" href="/landing" id="trialBadge" style="display:none;">
-                <span>🎉</span> Free Trial
-            </a>
+
+        <!-- Clean Footer Status Box (Zero duplicate Crypto!) -->
+        <div class="sidebar-status-box" id="sidebarStatusBox">
+            <div class="status-dot-pulse"></div>
+            <div class="sidebar-status-details">
+                <span class="sidebar-status-title">System Healthy</span>
+                <span class="sidebar-status-sub">Data: LIVE</span>
+            </div>
         </div>
     </nav>
 
