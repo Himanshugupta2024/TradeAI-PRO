@@ -146,3 +146,4 @@ async def get_india_vix(force_refresh: bool = False) -> dict[str, Any]:
             "source": "fallback",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+

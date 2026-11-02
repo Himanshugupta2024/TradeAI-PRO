@@ -132,3 +132,4 @@ async def get_derivatives_intelligence(index_symbol: str = "NIFTY", force_refres
             "stale": True,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+

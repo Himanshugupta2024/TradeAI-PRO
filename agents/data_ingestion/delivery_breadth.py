@@ -151,3 +151,4 @@ async def get_market_breadth() -> dict[str, Any]:
     }
     _last_breadth_ts = now
     return dict(_breadth_cache)
+

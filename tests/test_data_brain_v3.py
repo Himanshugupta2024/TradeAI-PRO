@@ -181,3 +181,4 @@ class TestCompositeDecisionSynthesizer:
         )
         assert res["signal"] == "SKIP"
         assert "Gated by Corporate Event Risk" in res["reasoning"]
+
