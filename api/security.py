@@ -48,6 +48,18 @@ def require_admin(
         logger.warning("ADMIN_API_KEY not set; allowing admin endpoint in development mode")
         return True
 
+    DEFAULT_DEV_PLACEHOLDER = "change_this_to_a_strong_random_secret_in_production"
+    if admin_key == DEFAULT_DEV_PLACEHOLDER:
+        if is_prod:
+            logger.error("Admin endpoint accessed but ADMIN_API_KEY is using insecure default placeholder in production")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Admin authentication misconfigured. Please set a custom ADMIN_API_KEY in production.",
+            )
+        # In local development, permit request without auth prompt
+        logger.warning("ADMIN_API_KEY is using default dev placeholder; permitting request in development mode")
+        return True
+
     provided_key = None
     if isinstance(x_admin_key, str) and x_admin_key.strip():
         provided_key = x_admin_key.strip()

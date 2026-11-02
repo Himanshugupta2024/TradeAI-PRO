@@ -43,3 +43,21 @@ def test_require_admin_configured_keys(monkeypatch):
     with pytest.raises(HTTPException) as exc_wrong:
         require_admin(x_admin_key="wrong-token")
     assert exc_wrong.value.status_code == 403
+
+
+def test_require_admin_default_placeholder_dev_vs_prod(monkeypatch):
+    """Default template placeholder allows in dev, but rejects with 503 in prod."""
+    placeholder = "change_this_to_a_strong_random_secret_in_production"
+    monkeypatch.setenv("ADMIN_API_KEY", placeholder)
+
+    # In Dev
+    monkeypatch.delenv("RENDER", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    assert require_admin() is True
+
+    # In Prod
+    monkeypatch.setenv("RENDER", "true")
+    with pytest.raises(HTTPException) as exc_prod:
+        require_admin()
+    assert exc_prod.value.status_code == 503
+    assert "set a custom ADMIN_API_KEY" in exc_prod.value.detail
