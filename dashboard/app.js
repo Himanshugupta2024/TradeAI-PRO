@@ -32,7 +32,9 @@ let _lastMorningFetchTs = 0;
 
 
 
-const API = '';  // Same origin
+const API = (typeof window !== 'undefined' && (window.location.port === '5500' || window.location.port === '3000' || window.location.port === '5173'))
+    ? 'http://127.0.0.1:8000'
+    : '';  // Same origin for production / direct port 8000
 
 // ── TradeAI-PRO Currency & Market Display Helpers ──────────────────────────
 function _symCurr(sym) {
@@ -25538,127 +25540,114 @@ window.closeSelfLearningModal = function() {
 
 
 window.applyNewCapital = async function() {
-
     const inp = document.getElementById('inputLearningCapital');
-
     const fb = document.getElementById('slModalFeedback');
-
     const cap = parseFloat(inp ? inp.value : 100000);
-
     if (isNaN(cap) || cap < 1000) {
-
         if (fb) fb.textContent = 'Please enter a valid amount (min ₹1,000)';
-
         return;
-
     }
-
     try {
-
         if (fb) fb.textContent = 'Updating capital...';
-
-        const res = await fetch(`${API}/api/paper/capital`, {
-
+        const res = await fetchWithTimeout(`${API}/api/paper/capital`, {
             method: 'POST',
-
-            headers: { 'Content-Type': 'application/json' },
-
+            headers: _getAuthHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ capital: cap, clear_trades: false })
+        }, 15000);
 
-        });
-
-        const data = await res.json();
-
-        if (data.status === 'ok') {
-
-            if (fb) fb.textContent = data.message;
-
-            loadOverviewFast();
-
-            setTimeout(closeSelfLearningModal, 1200);
-
-        } else {
-
-            if (fb) fb.textContent = data.error || 'Failed to update';
-
+        const text = await res.text();
+        let data = null;
+        try {
+            data = JSON.parse(text);
+        } catch (_) {
+            throw new Error(`Server returned HTTP ${res.status} (Backend unreachable or starting up)`);
         }
 
+        if (res.ok && data.status === 'ok') {
+            if (fb) fb.textContent = data.message || 'Capital updated';
+            loadOverviewFast();
+            setTimeout(closeSelfLearningModal, 1200);
+        } else {
+            if (fb) fb.textContent = data?.error || data?.detail || 'Failed to update';
+        }
     } catch (e) {
-
         if (fb) fb.textContent = 'Network error: ' + e.message;
-
     }
-
 };
 
 
 
 window.resetLearningAccount = async function() {
-
     if (!confirm('Are you sure you want to reset the Self-Learning paper account? This will clear open/closed trades and reset capital.')) return;
-
     const inp = document.getElementById('inputLearningCapital');
-
     const fb = document.getElementById('slModalFeedback');
-
     const cap = parseFloat(inp ? inp.value : 100000);
-
     try {
-
         if (fb) fb.textContent = 'Resetting paper account...';
+        const res = await fetchWithTimeout(`${API}/api/paper/reset?capital=${cap}`, {
+            method: 'POST',
+            headers: _getAuthHeaders(),
+        }, 15000);
 
-        const res = await fetch(`${API}/api/paper/reset?capital=${cap}`, { method: 'POST' });
-
-        const data = await res.json();
-
-        if (data.status === 'ok') {
-
-            if (fb) fb.textContent = data.message;
-
-            loadOverviewFast();
-
-            setTimeout(closeSelfLearningModal, 1200);
-
+        const text = await res.text();
+        let data = null;
+        try {
+            data = JSON.parse(text);
+        } catch (_) {
+            throw new Error(`Server returned HTTP ${res.status} (Backend unreachable or starting up)`);
         }
 
+        if (res.ok && data.status === 'ok') {
+            if (fb) fb.textContent = data.message || 'Account reset';
+            loadOverviewFast();
+            setTimeout(closeSelfLearningModal, 1200);
+        } else {
+            if (fb) fb.textContent = data?.error || data?.detail || 'Reset failed';
+        }
     } catch (e) {
-
         if (fb) fb.textContent = 'Reset failed: ' + e.message;
-
     }
-
 };
 
 
 
 window.triggerLearningCycleNow = async function() {
-
     const fb = document.getElementById('slModalFeedback');
-
     try {
-
         if (fb) fb.textContent = 'Triggering scan and autonomous trade evaluation...';
+        const res = await fetchWithTimeout(`${API}/api/autonomous/review-now`, {
+            method: 'POST',
+            headers: _getAuthHeaders({ 'Content-Type': 'application/json' }),
+        }, 30000);
 
-        const res = await fetch(`${API}/api/autonomous/review-now`, { method: 'POST' });
-
-        const data = await res.json();
-
-        if (data.ok) {
-
-            if (fb) fb.textContent = '⚡ Autonomous review completed!';
-
-            loadOverviewFast();
-
-            setTimeout(closeSelfLearningModal, 1500);
-
+        const text = await res.text();
+        let data = null;
+        try {
+            data = JSON.parse(text);
+        } catch (_) {
+            if (!res.ok) {
+                throw new Error(`Server returned HTTP ${res.status} (Backend is starting up or unreachable)`);
+            }
+            throw new Error(`Invalid response from server (HTTP ${res.status})`);
         }
 
+        if (!res.ok) {
+            throw new Error(data?.detail || data?.message || `HTTP ${res.status}`);
+        }
+
+        if (data && data.ok) {
+            const review = data.review || {};
+            const count = review.today_trade_count ?? 0;
+            const wr = review.today_win_rate != null ? `${review.today_win_rate}%` : '';
+            if (fb) fb.textContent = `⚡ Review completed! (${count} trades evaluated${wr ? ', Win Rate: ' + wr : ''})`;
+            loadOverviewFast();
+            setTimeout(closeSelfLearningModal, 1800);
+        } else {
+            if (fb) fb.textContent = data?.message || 'Review completed.';
+        }
     } catch (e) {
-
         if (fb) fb.textContent = 'Trigger failed: ' + e.message;
-
     }
-
 };
 async function refreshPaperPositions() {
     try {
