@@ -4426,78 +4426,69 @@ async def get_edge_score(
         return {"error": str(e), "symbol": symbol, "edge_score": None}
 
 @router.get("/api/edge/top-setups")
-
 async def get_edge_top_setups(
-
     asset_class: str = Query(
-
         "all", description="Asset class: all, forex, crypto, nse, index"
-
     ),
-
     min_score: float = Query(-100.0, description="Minimum EdgeScore threshold"),
-
-    limit: int = Query(10, le=50, description="Maximum results to return"),
-
+    limit: int = Query(35, le=100, description="Maximum results to return"),
     force_refresh: bool = Query(
-
         False, description="Bypass edge cache and compute fresh"
-
     ),
-
 ):
-
     """
-
     Get top-ranked symbols by EdgeScore.
-
     Returns symbols with the highest EdgeScore for the specified asset class.
-
     Useful for identifying the best macro setups across the market.
-
     """
-
     try:
-
         from agents.macro.edge_score_engine import EdgeScoreEngine
 
         def _compute_top():
-
             engine = (
-
                 EdgeScoreEngine(cache_ttl_seconds=0)
-
                 if force_refresh
-
                 else EdgeScoreEngine()
-
             )
-
             ranked = engine.get_top_setups(asset_class, min_score, limit)
-
             rows = []
-
             now_utc = datetime.now(timezone.utc)
-
+            mdata = getattr(svc, "_market_data", {})
             for symbol, score in ranked:
-
                 cached = engine._load_cache(symbol)
-
                 cache_age_seconds = None
-
                 if cached:
-
                     cache_age_seconds = max(
-
                         0, int((now_utc - cached.timestamp).total_seconds())
-
                     )
+
+                # Live price, change %, volume enrichment
+                ltp = None
+                change_pct = None
+                vol = None
+                clean_sym = symbol.replace(".NS", "").strip().upper()
+                df_sym = mdata.get(symbol) or mdata.get(clean_sym)
+                if isinstance(df_sym, pd.DataFrame) and not df_sym.empty and "close" in df_sym.columns:
+                    try:
+                        ltp = round(float(df_sym["close"].iloc[-1]), 2)
+                        if len(df_sym) >= 2 and float(df_sym["close"].iloc[-2]) > 0:
+                            change_pct = round(
+                                ((float(df_sym["close"].iloc[-1]) - float(df_sym["close"].iloc[-2]))
+                                 / float(df_sym["close"].iloc[-2])) * 100, 2
+                            )
+                        if "volume" in df_sym.columns:
+                            vol = float(df_sym["volume"].iloc[-1])
+                    except Exception:
+                        pass
 
                 rows.append(
                     {
                         "symbol": symbol,
                         "asset_class": getattr(cached, "asset_class", "forex"),
                         "edge_score": score,
+                        "ltp": ltp,
+                        "change_pct": change_pct,
+                        "volume": vol,
                         "factor_coverage_pct": getattr(cached, "factor_coverage_pct", 100.0),
                         "confidence": getattr(cached, "confidence", 1.0),
                         "rationale": getattr(cached, "rationale", ""),
