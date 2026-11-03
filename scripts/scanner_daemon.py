@@ -33,6 +33,7 @@ from config import settings
 from db.connection import engine, init_db, SessionLocal
 from db.runtime_state import set_runtime_state
 from agents.market_intelligence.nse_fetcher import fetch_ohlcv
+from agents.data_ingestion.binance_fetcher import fetch_historical
 from agents.execution.autonomous_daemon import get_autonomous_daemon
 from agents.execution.paper_trading import PaperTradingEngine
 from agents.feature_engine.indicators import calculate_indicators
@@ -89,15 +90,16 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
     candidate_signals: list[dict[str, Any]] = []
 
     # Bounded symbol universe for responsive worker cycles
-    symbols = (
-        list(settings.NSE_SYMBOLS.keys())[:15] +
-        list(settings.CRYPTO_SYMBOLS.keys())[:15]
-    )
+    nse_syms = list(settings.NSE_SYMBOLS.keys()) if isinstance(settings.NSE_SYMBOLS, dict) else list(settings.NSE_SYMBOLS)
+    crypto_syms = list(settings.CRYPTO_SYMBOLS.keys()) if isinstance(settings.CRYPTO_SYMBOLS, dict) else list(settings.CRYPTO_SYMBOLS)
+    symbols = nse_syms[:15] + crypto_syms[:15]
 
     for sym in symbols:
         try:
-            # 5-day 5-minute candles provide sufficient history for EMA_200/RSI/ATR
-            df = await asyncio.to_thread(fetch_ohlcv, sym, "5d", "5m")
+            if "/" in sym:
+                df = await asyncio.to_thread(fetch_historical, sym, "5m", 3)
+            else:
+                df = await asyncio.to_thread(fetch_ohlcv, sym, "5d", "5m")
             if df is None or df.empty or len(df) < 15:
                 continue
 
