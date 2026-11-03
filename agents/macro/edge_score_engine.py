@@ -973,5 +973,7 @@ class EdgeScoreEngine:
 
     def _is_cache_fresh(self, breakdown: EdgeScoreBreakdown) -> bool:
         """Check if cached EdgeScore is still fresh."""
+        if not getattr(breakdown, "factors", None):
+            return False
         age_seconds = (datetime.now(timezone.utc) - breakdown.timestamp).total_seconds()
         return age_seconds < self.cache_ttl_seconds

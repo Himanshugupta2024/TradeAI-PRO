@@ -132,7 +132,7 @@ INTRADAY_RISK_PER_TRADE_PCT = float(os.getenv("INTRADAY_RISK_PER_TRADE_PCT", "1.
 INTRADAY_ATR_SL_MULTIPLIER = float(os.getenv("INTRADAY_ATR_SL_MULTIPLIER", "1.5"))
 INTRADAY_TARGET_ATR_MULTIPLIER = float(os.getenv("INTRADAY_TARGET_ATR_MULTIPLIER", "3.0"))
 INTRADAY_MIN_RISK_REWARD = float(os.getenv("INTRADAY_MIN_RISK_REWARD", "1.5"))
-INTRADAY_MAX_OPEN_TRADES = int(os.getenv("INTRADAY_MAX_OPEN_TRADES", "4"))
+INTRADAY_MAX_OPEN_TRADES = int(os.getenv("INTRADAY_MAX_OPEN_TRADES", "6"))
 INTRADAY_MAX_DAILY_LOSS_PCT = float(os.getenv("INTRADAY_MAX_DAILY_LOSS_PCT", "0.02"))
 INTRADAY_MAX_SINGLE_TRADE_PCT = float(os.getenv("INTRADAY_MAX_SINGLE_TRADE_PCT", "0.20"))
 INTRADAY_SQUARE_OFF_HOUR_IST = int(os.getenv("INTRADAY_SQUARE_OFF_HOUR_IST", "15"))
@@ -205,7 +205,7 @@ MFI_OVERSOLD = float(os.getenv("MFI_OVERSOLD", "20"))
 MFI_OVERBOUGHT = float(os.getenv("MFI_OVERBOUGHT", "80"))
 DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "3.0"))
 ATR_SL_MULTIPLIER = 2.0  # SL = Entry ± (2.0 * ATR) — wider to avoid fake stop-outs
-RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "2.0"))
+RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "1.25"))
 
 # Trailing Stop-Loss
 TRAILING_ATR_MULTIPLIER = float(os.getenv("TRAILING_ATR_MULTIPLIER", "2.0"))
@@ -233,7 +233,7 @@ REGIME_TARGET_RANGE_MULT = float(os.getenv("REGIME_TARGET_RANGE_MULT", "0.7"))
 REGIME_TARGET_HIGH_VOL_MULT = float(os.getenv("REGIME_TARGET_HIGH_VOL_MULT", "0.7"))
 
 # Cooldown: prevent re-entry into same symbol for N candles after exit
-COOLDOWN_CANDLES = int(os.getenv("COOLDOWN_CANDLES", "3"))
+COOLDOWN_CANDLES = int(os.getenv("COOLDOWN_CANDLES", "1"))
 
 # ── Signal Thresholds ────────────────────────────────────
 AI_CONFIDENCE_THRESHOLD = 40  # Lowered from 50 — 40% is the new SKIP threshold
@@ -589,7 +589,7 @@ SWING_ATR_SL_MULTIPLIER = float(os.getenv("SWING_ATR_SL_MULTIPLIER", "2.0"))
 SWING_ATR_TARGET_MULTIPLIER = float(os.getenv("SWING_ATR_TARGET_MULTIPLIER", "3.0"))
 # Overnight/portfolio guardrails.
 SWING_MAX_CAPITAL_PER_TRADE = float(os.getenv("SWING_MAX_CAPITAL_PER_TRADE", "0.25"))
-SWING_MAX_OPEN_POSITIONS = int(os.getenv("SWING_MAX_OPEN_POSITIONS", "5"))
+SWING_MAX_OPEN_POSITIONS = int(os.getenv("SWING_MAX_OPEN_POSITIONS", "8"))
 SWING_MAX_SECTOR_CONCENTRATION = int(os.getenv("SWING_MAX_SECTOR_CONCENTRATION", "2"))
 SWING_MAX_PORTFOLIO_RISK_PCT = float(os.getenv("SWING_MAX_PORTFOLIO_RISK_PCT", "0.06"))
 
@@ -1344,7 +1344,13 @@ PAPER_TRADING_UNLOCK_MIN_WR_PCT = float(os.getenv("PAPER_TRADING_UNLOCK_MIN_WR_P
 PAPER_TRADING_FORWARD_DAYS = int(os.getenv("PAPER_TRADING_FORWARD_DAYS", "5"))
 
 # Max open paper trades at once (prevents over-crowding)
-PAPER_TRADING_MAX_OPEN = int(os.getenv("PAPER_TRADING_MAX_OPEN", "5"))
+PAPER_TRADING_MAX_OPEN = int(os.getenv("PAPER_TRADING_MAX_OPEN", "8"))
+
+# ── Autonomous Self-Learning Execution Daemon ─────────────────────────────────
+AUTONOMOUS_TRADING_ENABLED = os.getenv("AUTONOMOUS_TRADING_ENABLED", "true").lower() in ("1", "true", "yes")
+AUTONOMOUS_MAX_POSITIONS = int(os.getenv("AUTONOMOUS_MAX_POSITIONS", "8"))
+AUTONOMOUS_MIN_QS_SCORE = float(os.getenv("AUTONOMOUS_MIN_QS_SCORE", "50.0"))
+AUTONOMOUS_MIN_AI_CONFIDENCE = float(os.getenv("AUTONOMOUS_MIN_AI_CONFIDENCE", "40.0"))
 
 # ── Position Sizing & Margin Bounds ──────────────────────────────────────────
 MAX_POSITION_LEVERAGE: float = float(os.getenv("MAX_POSITION_LEVERAGE", "0.25"))

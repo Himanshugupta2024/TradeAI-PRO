@@ -4467,7 +4467,9 @@ async def get_edge_top_setups(
                 change_pct = None
                 vol = None
                 clean_sym = symbol.replace(".NS", "").strip().upper()
-                df_sym = mdata.get(symbol) or mdata.get(clean_sym)
+                df_sym = mdata.get(symbol)
+                if df_sym is None:
+                    df_sym = mdata.get(clean_sym)
                 if isinstance(df_sym, pd.DataFrame) and not df_sym.empty and "close" in df_sym.columns:
                     try:
                         ltp = round(float(df_sym["close"].iloc[-1]), 2)

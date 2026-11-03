@@ -45,9 +45,9 @@ class AutonomousExecutionDaemon:
 
     def __init__(
         self,
-        max_positions: int = 5,
-        min_qs_score: float = 60.0,
-        min_ai_confidence: float = 50.0,
+        max_positions: int = 8,
+        min_qs_score: float = 50.0,
+        min_ai_confidence: float = 40.0,
         max_portfolio_heat: float = 0.15,
     ) -> None:
         self.enabled: bool = os.getenv("AUTONOMOUS_TRADING_ENABLED", "true").lower() in ("1", "true", "yes")
@@ -101,9 +101,9 @@ class AutonomousExecutionDaemon:
         """
         Evaluate candidate signals and auto-execute top qualified setups.
         Enforces:
-          - Max 5 concurrent positions across equity & crypto
-          - QS Score >= 60.0
-          - AI Model Confidence >= 50.0%
+          - Max 8 concurrent positions across equity & crypto
+          - QS Score >= 50.0
+          - AI Model Confidence >= 40.0%
           - Cooldown & correlation checks
         """
         self._last_scan_time = _now_ist().isoformat()
