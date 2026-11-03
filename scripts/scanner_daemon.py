@@ -32,7 +32,7 @@ from sqlalchemy import text
 from config import settings
 from db.connection import engine, init_db, SessionLocal
 from db.runtime_state import set_runtime_state
-from agents.data_ingestion.market_data import fetch_ohlcv
+from agents.market_intelligence.nse_fetcher import fetch_ohlcv
 from agents.execution.autonomous_daemon import get_autonomous_daemon
 from agents.execution.paper_trading import PaperTradingEngine
 from agents.feature_engine.indicators import calculate_indicators
