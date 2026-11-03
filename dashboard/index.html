@@ -3445,7 +3445,73 @@
         </div>
     </div>
 
-        <!-- ── Self-Learning & Capital Management Modal ── -->
+        <!-- ── Active Position Detail Modal ────────────── -->
+
+    <div class="modal-backdrop" id="positionDetailModalBackdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(10px);z-index:9999;align-items:center;justify-content:center;" onclick="if(event.target===this)closePositionDetailModal()">
+
+        <div class="modal" id="positionDetailModal" style="max-width:560px;width:92%;background:#0e131f;border:1px solid rgba(255,255,255,0.14);border-radius:12px;padding:22px;box-shadow:0 24px 48px rgba(0,0,0,0.7);max-height:90vh;overflow-y:auto;">
+
+            <!-- Header -->
+
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid rgba(255,255,255,0.08);padding-bottom:14px;margin-bottom:16px;">
+
+                <div>
+
+                    <div style="display:flex;align-items:center;gap:8px;">
+
+                        <span id="posModalDirBadge" class="pos-dir-pill dir-long" style="font-size:0.75rem;padding:2px 8px;">LONG</span>
+
+                        <h2 id="posModalTitle" style="margin:0;font-size:1.3rem;font-weight:800;color:#f0f6fc;letter-spacing:0.02em;">SYMBOL</h2>
+
+                        <span id="posModalIdBadge" style="font-size:0.75rem;color:var(--text-muted);font-family:var(--font-mono);">#0</span>
+
+                    </div>
+
+                    <div id="posModalSubMeta" style="font-size:0.72rem;color:#8b949e;margin-top:4px;">
+
+                        Autonomous AI · Trending Regime · Time in Trade: 0m
+
+                    </div>
+
+                </div>
+
+                <div style="display:flex;align-items:center;gap:10px;">
+
+                    <span id="posModalStatusPulse" class="pos-status-pulse" style="font-size:0.75rem;">● RUNNING</span>
+
+                    <button onclick="closePositionDetailModal()" style="background:none;border:none;color:#8b949e;font-size:1.4rem;cursor:pointer;line-height:1;padding:0;" title="Close">✕</button>
+
+                </div>
+
+            </div>
+
+            <!-- Body Content -->
+
+            <div id="posModalBody"></div>
+
+            <!-- Footer Action Buttons -->
+
+            <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08);">
+
+                <button type="button" id="posModalViewChartBtn" class="terminal-ghost-btn" style="padding:7px 14px;font-size:0.8rem;border-radius:6px;cursor:pointer;">
+
+                    📈 View Live Chart
+
+                </button>
+
+                <button type="button" id="posModalExitBtn" style="padding:7px 16px;font-size:0.8rem;font-weight:700;border-radius:6px;cursor:pointer;background:rgba(239,68,68,0.18);border:1px solid var(--red);color:var(--red);">
+
+                    🛑 Exit Position
+
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+<!-- ── Self-Learning & Capital Management Modal ── -->
     <div class="modal-backdrop" id="selfLearningModalBackdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;" onclick="if(event.target===this)closeSelfLearningModal()">
         <div class="modal" id="selfLearningModal" style="max-width:480px;width:90%;background:#0d1117;border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:20px;box-shadow:0 20px 40px rgba(0,0,0,0.6);">
             <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.08);padding-bottom:12px;margin-bottom:16px;">

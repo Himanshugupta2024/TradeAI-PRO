@@ -7830,13 +7830,13 @@ function renderOverviewActiveTrades(openTrades) {
 
         const currSym = _symCurr(t.symbol);
         return `
-            <div class="pos-ticket ${sideClass}" data-symbol="${t.symbol}" data-id="${t.id}" data-entry="${entry}" data-qty="${qty}" data-dir="${t.direction}" data-tp="${tp}" data-sl="${sl}">
+            <div class="pos-ticket ${sideClass}" data-symbol="${t.symbol}" data-id="${t.id}" data-entry="${entry}" data-qty="${qty}" data-dir="${t.direction}" data-tp="${tp}" data-sl="${sl}" onclick="openPositionDetail(${t.id})" style="cursor:pointer;" title="Click to view full position details">
                 <div class="pos-ticket-top">
                     <div class="pos-symbol-group">
                         <span class="pos-dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${t.direction}</span>
                         <span class="pos-symbol-name">${t.symbol}</span>
                     </div>
-                    <button class="pos-exit-btn" onclick="closePaperTrade(${t.id}, ${ltp})" type="button">
+                    <button class="pos-exit-btn" onclick="event.stopPropagation(); closePaperTrade(${t.id}, ${ltp})" type="button">
                         Exit
                     </button>
                 </div>
@@ -7938,6 +7938,217 @@ function updateOverviewActiveTradesPrices(prices) {
 
 
 
+
+
+// ── Open Position Detail Modal ───────────────────────────────
+async function openPositionDetail(tradeId) {
+    if (!tradeId) return;
+
+    let trade = null;
+    // 1. Try local caches first for instant render
+    if (Array.isArray(window._lastOpenTrades)) {
+        trade = window._lastOpenTrades.find(t => Number(t.id) === Number(tradeId));
+    }
+    if (!trade && Array.isArray(window._cachedOpenPositions)) {
+        trade = window._cachedOpenPositions.find(t => Number(t.id) === Number(tradeId));
+    }
+
+    // 2. Fetch fresh open positions if missing
+    if (!trade) {
+        try {
+            const res = await fetchWithTimeout(`${API}/api/paper/open`, {}, 10000);
+            const data = await parseJsonResponse(res);
+            const openTrades = data.open_trades || [];
+            trade = openTrades.find(t => Number(t.id) === Number(tradeId));
+            if (openTrades.length) window._lastOpenTrades = openTrades;
+        } catch (e) {
+            console.warn('Failed to fetch open trades for detail:', e);
+        }
+    }
+
+    if (!trade) {
+        if (typeof showToast === 'function') {
+            showToast('Position detail not found or trade already closed.', 'warning');
+        } else {
+            alert('Position detail not found or trade already closed.');
+        }
+        return;
+    }
+
+    const modalBackdrop = document.getElementById('positionDetailModalBackdrop');
+    if (!modalBackdrop) return;
+
+    const sym = trade.symbol || '';
+    const currSym = _symCurr(sym);
+    const isLong = trade.direction === 'LONG' || trade.direction === 'BUY';
+    const sideClass = isLong ? 'dir-long' : 'dir-short';
+    const sideText = isLong ? 'LONG' : 'SHORT';
+    const entry = Number(trade.entry_price || 0);
+    const sl = Number(trade.stop_loss || 0);
+    const tp = Number(trade.target || 0);
+    const qty = Number(trade.quantity || 1);
+    const initQty = Number(trade.initial_quantity || qty);
+
+    // Current price / LTP
+    const cachedTick = (typeof marketDataCache === 'object' && marketDataCache) ? marketDataCache[sym] : null;
+    const cachedPrice = typeof cachedTick === 'object' && cachedTick ? (cachedTick.close ?? cachedTick.price ?? cachedTick.ltp) : cachedTick;
+    const ltp = Number(trade.current_price ?? cachedPrice ?? entry);
+
+    const mult = isLong ? 1 : -1;
+    const pnl = (ltp - entry) * qty * mult;
+    const pnlPct = entry > 0 ? ((ltp - entry) / entry) * 100 * mult : 0;
+    const pnlSign = pnl >= 0 ? '+' : '';
+    const pnlBg = pnl >= 0 ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)';
+    const pnlBorder = pnl >= 0 ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)';
+    const pnlColor = pnl >= 0 ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
+
+    // Distances
+    const slDistPct = entry > 0 ? Math.abs((ltp - sl) / ltp * 100) : 0;
+    const tpDistPct = ltp > 0 && tp > 0 ? (isLong ? ((tp - ltp) / ltp * 100) : ((ltp - tp) / ltp * 100)) : 0;
+
+    // Duration
+    const duration = trade.time_in_trade_human || _fmtDuration(trade.entry_time, new Date().toISOString());
+
+    // Update Header
+    const titleEl = document.getElementById('posModalTitle');
+    if (titleEl) titleEl.textContent = sym;
+    const dirBadge = document.getElementById('posModalDirBadge');
+    if (dirBadge) {
+        dirBadge.className = `pos-dir-pill ${sideClass}`;
+        dirBadge.textContent = sideText;
+    }
+    const idBadge = document.getElementById('posModalIdBadge');
+    if (idBadge) idBadge.textContent = `#${trade.id}`;
+
+    const subMeta = document.getElementById('posModalSubMeta');
+    if (subMeta) {
+        subMeta.textContent = `${trade.signal_type || 'AUTONOMOUS'} · ${trade.regime || 'MARKET'} Regime · Duration: ${duration}`;
+    }
+
+    // Render Rich Body
+    const bodyEl = document.getElementById('posModalBody');
+    if (bodyEl) {
+        bodyEl.innerHTML = `
+            <!-- Live P&L Card -->
+            <div style="background:${pnlBg};border:1px solid ${pnlBorder};border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Floating Unrealized P&amp;L</div>
+                    <div style="font-size:1.5rem;font-weight:800;font-family:var(--font-mono);line-height:1.2;margin-top:2px;color:${pnlColor};">
+                        ${pnlSign}${currSym}${Math.abs(pnl).toFixed(2)}
+                        <span style="font-size:0.95rem;font-weight:600;margin-left:6px;">(${pnlSign}${pnlPct.toFixed(2)}%)</span>
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Status</div>
+                    <div style="font-size:0.9rem;font-weight:700;color:var(--green);margin-top:4px;">● ACTIVE RUNNING</div>
+                </div>
+            </div>
+
+            <!-- Key Price Levels -->
+            <div style="font-size:0.75rem;font-weight:700;color:#c9d1d9;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">
+                Price Targets &amp; Risk Protection
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:16px;">
+                <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
+                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Entry Price</div>
+                    <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#f0f6fc;margin-top:2px;">${currSym}${entry.toFixed(2)}</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">Filled</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
+                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Live Market LTP</div>
+                    <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#38bdf8;margin-top:2px;">${currSym}${ltp.toFixed(2)}</div>
+                    <div style="font-size:0.65rem;color:#38bdf8;margin-top:2px;">Real-Time</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
+                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss (SL)</div>
+                    <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:var(--red);margin-top:2px;">${currSym}${sl.toFixed(2)}</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">${slDistPct.toFixed(1)}% away</div>
+                </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:16px;">
+                <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
+                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Full Target (TP)</div>
+                    <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:var(--green);margin-top:2px;">${currSym}${tp.toFixed(2)}</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">${tpDistPct > 0 ? tpDistPct.toFixed(1) + '% away' : 'Target Reached'}</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
+                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Partial Target</div>
+                    <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#f59e0b;margin-top:2px;">${trade.partial_target > 0 ? currSym + Number(trade.partial_target).toFixed(2) : '—'}</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">${trade.partial_taken ? '✅ Booked 50%' : 'Pending Scale-out'}</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
+                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Trailing SL</div>
+                    <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#c084fc;margin-top:2px;">📐 Active</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">Dynamic Lock</div>
+                </div>
+            </div>
+
+            <!-- Execution & Quant Metadata -->
+            <div style="font-size:0.75rem;font-weight:700;color:#c9d1d9;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">
+                Execution &amp; Sizing Intelligence
+            </div>
+            <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:0.8rem;">
+                <div>
+                    <span style="color:var(--text-muted);">Position Quantity:</span>
+                    <b style="color:#f0f6fc;font-family:var(--font-mono);margin-left:6px;">${qty}</b>
+                    ${initQty !== qty ? `<span style="font-size:0.7rem;color:var(--text-muted);"> (init: ${initQty})</span>` : ''}
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);">Entry Time:</span>
+                    <b style="color:#f0f6fc;margin-left:6px;">${trade.entry_time ? new Date(trade.entry_time).toLocaleString('en-IN', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'}) : '—'}</b>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);">Strategy / Engine:</span>
+                    <b style="color:#38bdf8;margin-left:6px;">${trade.signal_type || 'AUTONOMOUS'}</b>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);">Market Regime:</span>
+                    <b style="color:#f0f6fc;margin-left:6px;">${trade.regime || 'UNKNOWN'}</b>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);">AI Confidence:</span>
+                    <b style="color:#10b981;margin-left:6px;">${trade.confidence ? Number(trade.confidence).toFixed(0) + '%' : '—'}</b>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);">RSI at Entry:</span>
+                    <b style="color:#f0f6fc;margin-left:6px;">${trade.rsi_at_entry ? Number(trade.rsi_at_entry).toFixed(1) : '—'}</b>
+                </div>
+            </div>
+        `;
+    }
+
+    // Wire action buttons
+    const viewChartBtn = document.getElementById('posModalViewChartBtn');
+    if (viewChartBtn) {
+        viewChartBtn.onclick = () => {
+            closePositionDetailModal();
+            if (typeof openSymbolModal === 'function') {
+                openSymbolModal(sym);
+            }
+        };
+    }
+
+    const exitBtn = document.getElementById('posModalExitBtn');
+    if (exitBtn) {
+        exitBtn.onclick = () => {
+            closePositionDetailModal();
+            if (typeof closePaperTrade === 'function') {
+                closePaperTrade(trade.id, ltp);
+            }
+        };
+    }
+
+    modalBackdrop.style.display = 'flex';
+}
+
+function closePositionDetailModal() {
+    const modalBackdrop = document.getElementById('positionDetailModalBackdrop');
+    if (modalBackdrop) modalBackdrop.style.display = 'none';
+}
+
+window.openPositionDetail = openPositionDetail;
+window.closePositionDetailModal = closePositionDetailModal;
 
 
 function updateStatsStrip(stats) {
@@ -10799,6 +11010,7 @@ async function loadPortfolio() {
 
 
         const openPos = portfolio.open_positions || [];
+        window._cachedOpenPositions = openPos;
 
 
 
@@ -10870,66 +11082,23 @@ async function loadPortfolio() {
 
 
 
+                    const currSym = _symCurr(p.symbol);
+                    const pnlSign = pnl >= 0 ? '+' : '';
                     return `
-
-
-
-                        <tr>
-
-
-
+                        <tr onclick="openPositionDetail(${p.id})" style="cursor:pointer;" title="Click to view detailed position analytics">
                             <td><b>${p.symbol}</b></td>
-
-
-
                             <td><span class="${sideClass}">${sideText}</span></td>
-
-
-
-                            <td>₹${Number(p.entry_price || 0).toFixed(2)}</td>
-
-
-
-                            <td>₹${currentPx.toFixed(2)}</td>
-
-
-
-                            <td class="${pnlClass}"><b>₹${pnl.toFixed(2)}</b></td>
-
-
-
+                            <td>${currSym}${Number(p.entry_price || 0).toFixed(2)}</td>
+                            <td>${currSym}${currentPx.toFixed(2)}</td>
+                            <td class="${pnlClass}"><b>${pnlSign}${currSym}${Math.abs(pnl).toFixed(2)}</b></td>
                             <td class="${rClass}">${rMult.toFixed(2)}R</td>
-
-
-
                             <td>${heat.toFixed(1)}%</td>
-
-
-
                             <td>${timeInTrade}</td>
-
-
-
                             <td>${slDist.toFixed(1)}%</td>
-
-
-
                             <td>
-
-
-
-                                <button class="btn-exit-trade" onclick="closePaperTrade(${p.id}, ${currentPx})" style="padding:2px 8px;font-size:0.7rem;background:rgba(239,68,68,0.15);border:1px solid var(--red);color:var(--red);border-radius:4px;cursor:pointer;">Exit</button>
-
-
-
+                                <button class="btn-exit-trade" onclick="event.stopPropagation(); closePaperTrade(${p.id}, ${currentPx})" style="padding:2px 8px;font-size:0.7rem;background:rgba(239,68,68,0.15);border:1px solid var(--red);color:var(--red);border-radius:4px;cursor:pointer;">Exit</button>
                             </td>
-
-
-
                         </tr>
-
-
-
                     `;
 
 
