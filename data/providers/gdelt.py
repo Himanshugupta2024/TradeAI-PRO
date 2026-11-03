@@ -78,6 +78,94 @@ class GDELTProvider:
         # Targeted query combining symbol/company and financial context
         return f'("{comp_name}" OR "{clean_sym}") (stock OR shares OR profit OR quarterly OR market)'
 
+    def get_sentiment_sync(self, symbol: str) -> dict[str, Any]:
+        """Synchronously fetch sentiment for a single symbol (cache-first)."""
+        clean_sym = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
+        now = time.time()
+
+        cached = self._cache.get(clean_sym)
+        if cached and (now - cached[0] < self.cache_ttl):
+            return cached[1]
+
+        res = self._query_gdelt_sync(clean_sym)
+        if not res or res.get("article_count", 0) == 0:
+            res = self._query_google_rss_sync(clean_sym)
+
+        if res:
+            self._cache[clean_sym] = (now, res)
+            return res
+
+        neutral = {
+            "symbol": clean_sym,
+            "sentiment": "NEUTRAL",
+            "tone_score": 0.0,
+            "confidence": 0.5,
+            "article_count": 0,
+            "top_headlines": [],
+            "source": "FALLBACK_NEUTRAL",
+        }
+        self._cache[clean_sym] = (now, neutral)
+        return neutral
+
+    def _query_gdelt_sync(self, clean_sym: str) -> dict[str, Any] | None:
+        """Synchronous query to GDELT 2.0 API."""
+        query = self._get_search_query(clean_sym)
+        params = {
+            "query": query,
+            "mode": "artlist",
+            "maxrecords": "5",
+            "format": "json",
+            "timespan": "7d",
+            "sort": "DateDesc",
+        }
+        try:
+            headers = {"User-Agent": "TradeAI-PRO-Targeted-Sentiment/2.0"}
+            resp = requests.get(self.GDELT_URL, params=params, headers=headers, timeout=self.timeout)
+            if resp.status_code == 200:
+                data = resp.json()
+                articles = data.get("articles", [])
+                if articles:
+                    titles = [a.get("title", "") for a in articles if a.get("title")]
+                    tone_score, sentiment, conf = self._analyze_headlines(titles)
+                    return {
+                        "symbol": clean_sym,
+                        "sentiment": sentiment,
+                        "tone_score": tone_score,
+                        "confidence": conf,
+                        "article_count": len(articles),
+                        "top_headlines": titles[:3],
+                        "source": "GDELT_2.0",
+                    }
+        except Exception as exc:
+            logger.debug("[GDELT] Sync API query failed for %s: %s", clean_sym, exc)
+        return None
+
+    def _query_google_rss_sync(self, clean_sym: str) -> dict[str, Any] | None:
+        """Synchronous fallback to Google News RSS query."""
+        import xml.etree.ElementTree as ET
+        query_str = urllib.parse.quote_plus(self._get_search_query(clean_sym))
+        url = self.GOOGLE_NEWS_RSS_URL.format(query=query_str)
+        try:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(url, headers=headers, timeout=self.timeout)
+            if resp.status_code == 200:
+                root = ET.fromstring(resp.content)
+                titles = [item.findtext("title", "") for item in root.findall(".//item")][:5]
+                if titles:
+                    tone_score, sentiment, conf = self._analyze_headlines(titles)
+                    return {
+                        "symbol": clean_sym,
+                        "sentiment": sentiment,
+                        "tone_score": tone_score,
+                        "confidence": conf,
+                        "article_count": len(titles),
+                        "top_headlines": titles[:3],
+                        "source": "GOOGLE_NEWS_RSS",
+                    }
+        except Exception as exc:
+            logger.debug("[GDELT] Sync Google RSS fallback failed for %s: %s", clean_sym, exc)
+        return None
+
     async def get_sentiment(self, symbol: str) -> dict[str, Any]:
         """Fetch sentiment for a single symbol (cache-first)."""
         clean_sym = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
@@ -88,19 +176,15 @@ class GDELTProvider:
         if cached and (now - cached[0] < self.cache_ttl):
             return cached[1]
 
-        # 2. Query GDELT 2.0 Doc API
-        res = await self._query_gdelt(clean_sym)
-
-        # 3. Fall back to Google News RSS if GDELT returns 0 articles or fails
+        # 2. Query in worker thread to prevent blocking
+        res = await asyncio.to_thread(self._query_gdelt_sync, clean_sym)
         if not res or res.get("article_count", 0) == 0:
-            res = await self._query_google_rss(clean_sym)
+            res = await asyncio.to_thread(self._query_google_rss_sync, clean_sym)
 
-        # 4. Save to cache
         if res:
             self._cache[clean_sym] = (now, res)
             return res
 
-        # Default Neutral payload on total failure
         neutral = {
             "symbol": clean_sym,
             "sentiment": "NEUTRAL",

@@ -4494,70 +4494,88 @@ async def get_edge_top_setups(
                     )
 
                 rows.append(
-
                     {
-
                         "symbol": symbol,
-
+                        "asset_class": getattr(cached, "asset_class", "forex"),
                         "edge_score": score,
-
+                        "factor_coverage_pct": getattr(cached, "factor_coverage_pct", 100.0),
+                        "confidence": getattr(cached, "confidence", 1.0),
+                        "rationale": getattr(cached, "rationale", ""),
+                        "factors": getattr(cached, "factors", {}),
                         "macro": getattr(cached, "macro_score", None),
-
                         "cot": getattr(cached, "cot_score", None),
-
                         "sentiment": getattr(cached, "sentiment_score", None),
-
                         "risk": getattr(cached, "risk_score", None),
-
                         "momentum": getattr(cached, "momentum_score", None),
-
                         "seasonal": getattr(cached, "seasonal_bonus", None),
-
                         "carry": getattr(cached, "carry_bonus", None),
-
                         "cache_age_seconds": cache_age_seconds,
-
                     }
-
                 )
-
             return rows
 
         setups = await asyncio.wait_for(asyncio.to_thread(_compute_top), timeout=30.0)
-
         return {
-
             "asset_class": asset_class,
-
             "min_score": min_score,
-
             "count": len(setups),
-
             "setups": setups,
-
             "force_refresh": force_refresh,
-
             "timestamp": datetime.now(timezone.utc).isoformat(),
-
         }
-
     except asyncio.TimeoutError:
-
         return {
-
             "error": "Top setups timed out",
-
             "asset_class": asset_class,
-
             "setups": [],
-
         }
-
     except Exception as e:
-
         logger.error("Failed to get top EdgeScore setups: %s", e)
-
         return {"error": str(e), "asset_class": asset_class, "setups": []}
+
+
+@router.get("/api/edge/research/{symbol}")
+async def get_edge_research_detail(symbol: str, asset_class: str | None = None):
+    """
+    Get deep-dive research intelligence for an individual asset.
+    Returns institutional factor decomposition, news headlines, and transparency rationale.
+    """
+    try:
+        from agents.macro.edge_score_engine import EdgeScoreEngine
+        engine = EdgeScoreEngine()
+        if not asset_class:
+            sym_u = symbol.upper()
+            if "/" in sym_u or sym_u.endswith("USDT"):
+                asset_class = "crypto" if any(k in sym_u for k in ("USDT", "BTC", "ETH", "SOL", "BNB")) else "forex"
+            elif any(c.isalpha() for c in sym_u):
+                asset_class = "nse"
+            else:
+                asset_class = "forex"
+
+        breakdown = await asyncio.to_thread(engine.get_edge_score, symbol, asset_class)
+        return {
+            "status": "ok",
+            "symbol": symbol,
+            "asset_class": getattr(breakdown, "asset_class", asset_class),
+            "edge_score": breakdown.edge_score,
+            "factor_coverage_pct": getattr(breakdown, "factor_coverage_pct", 100.0),
+            "confidence": getattr(breakdown, "confidence", 1.0),
+            "rationale": getattr(breakdown, "rationale", ""),
+            "factors": getattr(breakdown, "factors", {}),
+            "legacy_breakdown": {
+                "macro": breakdown.macro_score,
+                "cot": breakdown.cot_score,
+                "sentiment": breakdown.sentiment_score,
+                "risk": breakdown.risk_score,
+                "momentum": breakdown.momentum_score,
+                "seasonal": breakdown.seasonal_bonus,
+                "carry": breakdown.carry_bonus,
+            },
+            "timestamp": breakdown.timestamp.isoformat(),
+        }
+    except Exception as exc:
+        logger.error("Failed to fetch research detail for %s: %s", symbol, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 @router.get("/api/edge/macro-heatmap")
 
@@ -6324,15 +6342,17 @@ async def websocket_prices(websocket: WebSocket):
             stats = engine.get_stats()
 
             update["stats"] = {
-
                 "capital": stats.get("capital", 100000),
-
-        "open_trades": stats.get("open_trades", len(engine.get_open_trades())),
-
-                "total_pnl": stats.get("total_pnl", 0),
-
+                "total_equity": stats.get("total_equity", stats.get("capital", 100000)),
+                "initial_capital": stats.get("initial_capital", 100000),
+                "unrealized_pnl": stats.get("unrealized_pnl", 0.0),
+                "total_pnl": stats.get("total_pnl", 0.0),
+                "total_trades": stats.get("total_trades", 0),
+                "closed_trades": stats.get("total_trades", 0),
+                "winning_trades": stats.get("winning_trades", 0),
+                "losing_trades": stats.get("losing_trades", 0),
+                "win_rate": stats.get("win_rate"),
                 "open_trades": len(engine.get_open_trades()),
-
             }
 
             # Mood computation can be CPU-heavy; keep it off the event loop so HTTP

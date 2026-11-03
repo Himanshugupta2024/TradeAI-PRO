@@ -23257,146 +23257,79 @@ async function loadEdgeTopSetups(assetClass = null) {
 
 
 
-    body.innerHTML = '<tr><td colspan="10" class="empty-row"><div class="loader" style="margin:0.5rem auto;"></div>Loading top setups...</td></tr>';
-
-
+    body.innerHTML = '<tr><td colspan="11" class="empty-row"><div class="loader" style="margin:0.5rem auto;"></div>Loading top setups...</td></tr>';
 
     try {
-
-
-
         const query = `?asset_class=${_currentEdgeAssetClass || 'all'}`;
-
-
-
         const resp = await fetchWithTimeout(`/api/edge/top-setups${query}`, {}, 20000, 1);
-
-
-
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
-
-
         const data = await resp.json();
-
-
-
         const setups = data.setups || [];
 
-
-
         if (!setups.length) {
-
-
-
-            body.innerHTML = '<tr><td colspan="10" class="empty-row">No active edge setups found for current filter.</td></tr>';
-
-
-
+            body.innerHTML = '<tr><td colspan="11" class="empty-row">No active edge setups found for current filter.</td></tr>';
             return;
-
-
-
         }
 
-
-
         body.innerHTML = setups.map((s, idx) => {
-
-
-
             const score = Number(s.edge_score || 0);
-
-
-
-            const scoreColor = score >= 70 ? 'var(--green)' : score >= 50 ? 'var(--amber)' : 'var(--text-muted)';
-
-
-
+            const scoreColor = score >= 50 ? 'var(--green)' : score >= 20 ? '#60a5fa' : score >= 0 ? 'var(--amber)' : 'var(--red)';
             const sym = _escHtml(s.symbol || '—');
-
-
-
             const rank = idx + 1;
+            const cls = _escHtml((s.asset_class || (_currentEdgeAssetClass === 'all' ? 'nse' : _currentEdgeAssetClass)).toLowerCase());
+            
+            // Format Momentum
+            const momVal = s.momentum != null ? Number(s.momentum) : null;
+            const momHtml = momVal != null ? `<span style="font-family:var(--font-mono);color:${momVal >= 0 ? 'var(--green)' : 'var(--red)'};">${momVal >= 0 ? '+' : ''}${momVal.toFixed(1)}</span>` : '—';
 
+            // Format Sector RS / Macro
+            let sectorHtml = '<span class="badge-na">N/A</span>';
+            if (s.factors && s.factors.sector_rs) {
+                const f = s.factors.sector_rs;
+                if (f.status === 'NOT_APPLICABLE') sectorHtml = '<span class="badge-na">N/A</span>';
+                else if (f.value != null) sectorHtml = `<span style="font-family:var(--font-mono);color:${f.value >= 0 ? 'var(--green)' : 'var(--red)'};">${f.value >= 0 ? '+' : ''}${f.value.toFixed(1)}</span>`;
+            } else if (s.macro != null && cls === 'forex') {
+                sectorHtml = `<span style="font-family:var(--font-mono);">${Number(s.macro).toFixed(1)}</span>`;
+            }
 
+            // Format Sentiment
+            let sentHtml = '<span class="badge-na">N/A</span>';
+            if (s.factors && s.factors.sentiment && s.factors.sentiment.status === 'NOT_APPLICABLE') {
+                sentHtml = '<span class="badge-na">N/A</span>';
+            } else if (s.sentiment != null) {
+                const sVal = Number(s.sentiment);
+                sentHtml = `<span style="font-family:var(--font-mono);color:${sVal > 0 ? 'var(--green)' : sVal < 0 ? 'var(--red)' : 'var(--text-muted)'};">${sVal > 0 ? '+' : ''}${sVal.toFixed(1)}</span>`;
+            }
 
-            const macro = s.macro != null ? Number(s.macro).toFixed(1) : '—';
+            // Format Risk
+            const riskHtml = s.risk != null ? `<span style="font-family:var(--font-mono);">${Number(s.risk).toFixed(1)}</span>` : '—';
 
+            // Format COT (CFTC US futures only)
+            let cotHtml = '<span class="badge-na" title="Not Applicable for ' + cls.toUpperCase() + '">N/A</span>';
+            if (cls === 'forex' && s.cot != null && !(s.factors && s.factors.cot && s.factors.cot.status === 'NOT_APPLICABLE')) {
+                cotHtml = `<span style="font-family:var(--font-mono);">${Number(s.cot).toFixed(1)}</span>`;
+            }
 
-
-            const cot = s.cot != null ? Number(s.cot).toFixed(1) : '—';
-
-
-
-            const sent = s.sentiment != null ? Number(s.sentiment).toFixed(1) : '—';
-
-
-
-            const risk = s.risk != null ? Number(s.risk).toFixed(1) : '—';
-
-
-
-            const mom = s.momentum != null ? Number(s.momentum).toFixed(1) : '—';
-
-
-
-            const seas = s.seasonal != null ? Number(s.seasonal).toFixed(1) : '—';
-
-
-
-            const carry = s.carry != null ? Number(s.carry).toFixed(1) : '—';
-
-
+            // Format Carry (FX only)
+            let carryHtml = '<span class="badge-na" title="Not Applicable for ' + cls.toUpperCase() + '">N/A</span>';
+            if (cls === 'forex' && s.carry != null && !(s.factors && s.factors.carry && s.factors.carry.status === 'NOT_APPLICABLE')) {
+                carryHtml = `<span style="font-family:var(--font-mono);">${Number(s.carry).toFixed(1)}</span>`;
+            }
 
             return `<tr>
-
-
-
                 <td style="font-family:var(--font-mono);font-weight:700;">#${rank}</td>
-
-
-
                 <td><strong style="color:var(--text-primary);">${sym}</strong></td>
-
-
-
+                <td><span class="asset-class-badge asset-class-${cls}">${cls.toUpperCase()}</span></td>
                 <td style="font-family:var(--font-mono);font-weight:800;color:${scoreColor};">${score.toFixed(1)}</td>
-
-
-
-                <td style="font-family:var(--font-mono);">${macro}</td>
-
-
-
-                <td style="font-family:var(--font-mono);">${cot}</td>
-
-
-
-                <td style="font-family:var(--font-mono);">${sent}</td>
-
-
-
-                <td style="font-family:var(--font-mono);">${risk}</td>
-
-
-
-                <td style="font-family:var(--font-mono);">${mom}</td>
-
-
-
-                <td style="font-family:var(--font-mono);">${seas}</td>
-
-
-
-                <td style="font-family:var(--font-mono);">${carry}</td>
-
-
-
+                <td>${momHtml}</td>
+                <td>${sectorHtml}</td>
+                <td>${sentHtml}</td>
+                <td>${riskHtml}</td>
+                <td>${cotHtml}</td>
+                <td>${carryHtml}</td>
+                <td><button class="btn-research-inspect" onclick="openEdgeResearchDrawer('${sym}', '${cls}')">🔬 Inspect</button></td>
             </tr>`;
-
-
-
         }).join('');
 
 
@@ -25810,4 +25743,78 @@ function renderMacroIntelligence(macro) {
             `;
         }).join('');
     }
+}
+
+async function openEdgeResearchDrawer(symbol, assetClass) {
+    const drawer = document.getElementById('edgeResearchDrawer');
+    if (!drawer) return;
+    drawer.style.display = 'flex';
+
+    document.getElementById('researchSymbol').textContent = symbol;
+    const clsEl = document.getElementById('researchAssetClass');
+    if (clsEl) {
+        clsEl.textContent = (assetClass || 'NSE').toUpperCase();
+        clsEl.className = `asset-class-badge asset-class-${(assetClass || 'nse').toLowerCase()}`;
+    }
+    document.getElementById('researchRationale').textContent = 'Fetching multi-factor research telemetry...';
+    document.getElementById('researchFactorsList').innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">Decomposing factor matrix...</div>';
+    document.getElementById('researchHeadlinesList').innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;">Scanning verified GDELT/Google News RSS feeds...</div>';
+
+    try {
+        const resp = await fetchWithTimeout(`/api/edge/research/${encodeURIComponent(symbol)}?asset_class=${assetClass || ''}`, {}, 15000);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        // Update score badge
+        const scoreBadge = document.getElementById('researchScoreBadge');
+        if (scoreBadge) {
+            const sc = Number(data.edge_score || 0);
+            scoreBadge.textContent = `${sc >= 0 ? '+' : ''}${sc.toFixed(1)}`;
+            scoreBadge.style.color = sc >= 50 ? 'var(--green)' : sc >= 20 ? '#60a5fa' : sc >= 0 ? 'var(--amber)' : 'var(--red)';
+        }
+
+        // Update Rationale
+        document.getElementById('researchRationale').textContent = data.rationale || 'Institutional quantitative setup.';
+
+        // Update Factors
+        const fList = document.getElementById('researchFactorsList');
+        if (fList && data.factors) {
+            const items = Object.values(data.factors);
+            fList.innerHTML = items.map(f => {
+                const statusBadge = f.status === 'LIVE' ? '<span class="badge-live">LIVE</span>' : (f.status === 'NOT_APPLICABLE' ? '<span class="badge-na">N/A</span>' : `<span class="badge-delayed">${f.status}</span>`);
+                const valStr = f.value != null ? `${Number(f.value) >= 0 ? '+' : ''}${Number(f.value).toFixed(1)}` : 'N/A';
+                const effWeightStr = f.effective_weight != null ? `${(Number(f.effective_weight) * 100).toFixed(0)}% weight` : '';
+                return `
+                <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);padding:0.5rem 0.75rem;border-radius:6px;border:1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex;align-items:center;gap:0.5rem;">
+                        ${statusBadge}
+                        <strong style="font-size:0.82rem;color:#f0f6fc;">${_escHtml(f.label || f.name)}</strong>
+                        <span style="font-size:0.7rem;color:var(--text-muted);">${effWeightStr}</span>
+                    </div>
+                    <div style="text-align:right;">
+                        <span style="font-family:var(--font-mono);font-weight:700;font-size:0.88rem;color:${f.value > 0 ? 'var(--green)' : (f.value < 0 ? 'var(--red)' : '#8b949e')};">${valStr}</span>
+                        <div style="font-size:0.7rem;color:var(--text-muted);max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_escHtml(f.detail || '')}</div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // Update News Headlines
+        const hList = document.getElementById('researchHeadlinesList');
+        if (hList) {
+            const sentObj = data.factors && data.factors.sentiment;
+            const detailStr = sentObj ? sentObj.detail : '';
+            hList.innerHTML = `
+                <div style="font-size:0.78rem;color:#8b949e;margin-bottom:4px;">Source: ${sentObj ? sentObj.source : 'GDELT / Google News RSS'}</div>
+                <div style="font-size:0.82rem;color:#e6edf3;line-height:1.4;">${_escHtml(detailStr || 'No negative anomalies detected in public feeds.')}</div>
+            `;
+        }
+    } catch (e) {
+        document.getElementById('researchRationale').textContent = `Failed to load detailed telemetry: ${e.message}`;
+    }
+}
+
+function closeEdgeResearchDrawer() {
+    const drawer = document.getElementById('edgeResearchDrawer');
+    if (drawer) drawer.style.display = 'none';
 }
