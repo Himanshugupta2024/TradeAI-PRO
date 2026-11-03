@@ -6302,7 +6302,7 @@ async def websocket_prices(websocket: WebSocket, token: str | None = None):
     origin = websocket.headers.get("origin")
     approved_origins_raw = os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://localhost:5173,https://tradeai-pro.pages.dev",
+        "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://localhost:5173,https://tradeai-pro.pages.dev,https://tradeai-pro.tradingpro.workers.dev",
     )
     approved_origins = {o.strip().rstrip("/") for o in approved_origins_raw.split(",") if o.strip()}
     if origin:

@@ -351,7 +351,7 @@ def create_app() -> FastAPI:
 
         "CORS_ALLOWED_ORIGINS",
 
-        "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://localhost:5173,https://tradeai-pro.pages.dev",
+        "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://localhost:5173,https://tradeai-pro.pages.dev,https://tradeai-pro.tradingpro.workers.dev",
 
     )
 
