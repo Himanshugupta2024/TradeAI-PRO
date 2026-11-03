@@ -13,6 +13,7 @@
     );
 
     const isCloudflarePages = window.location.hostname.endsWith('pages.dev');
+    const isCloudflareWorkers = window.location.hostname.endsWith('workers.dev');
     const isVercel = window.location.hostname.endsWith('vercel.app');
 
     let apiBase = '';
@@ -22,7 +23,7 @@
     if (isLocalhost && (window.location.port === '5500' || window.location.port === '3000' || window.location.port === '5173')) {
         apiBase = 'http://127.0.0.1:8000';
         wsBase = '127.0.0.1:8000';
-    } else if (isCloudflarePages || isVercel) {
+    } else if (isCloudflarePages || isCloudflareWorkers || isVercel) {
         apiBase = 'https://trading-api-n1wt.onrender.com';
         wsBase = 'trading-api-n1wt.onrender.com';
         wsProto = 'wss:';

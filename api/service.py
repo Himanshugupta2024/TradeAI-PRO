@@ -1449,6 +1449,41 @@ async def _refresh_market_data_inner():
                         "atr": float(d.get("atr", 0.0)),
                     }
 
+            # Ensure every open trade symbol has live prices (priority resolution)
+            for t in list(engine.open_trades):
+                if t.symbol not in prices:
+                    try:
+                        if "/" in t.symbol:
+                            from agents.data_ingestion.binance_fetcher import fetch_historical
+                            cdf = await asyncio.wait_for(
+                                asyncio.to_thread(fetch_historical, t.symbol, "1h", 2),
+                                timeout=5.0,
+                            )
+                            if cdf is not None and not cdf.empty:
+                                lr = cdf.iloc[-1]
+                                prices[t.symbol] = {
+                                    "high": float(lr["high"]),
+                                    "low": float(lr["low"]),
+                                    "close": float(lr["close"]),
+                                    "atr": 0.0,
+                                }
+                        else:
+                            from agents.market_intelligence.nse_fetcher import fetch_ohlcv
+                            edf = await asyncio.wait_for(
+                                asyncio.to_thread(fetch_ohlcv, t.symbol, "5d", "1d"),
+                                timeout=5.0,
+                            )
+                            if edf is not None and not edf.empty:
+                                lr = edf.iloc[-1]
+                                prices[t.symbol] = {
+                                    "high": float(lr["high"]),
+                                    "low": float(lr["low"]),
+                                    "close": float(lr["close"]),
+                                    "atr": 0.0,
+                                }
+                    except Exception as p_err:
+                        logger.debug("Open trade priority fetch failed for %s: %s", t.symbol, p_err)
+
             atr_lookup = {sym: p.get("atr", 0.0) for sym, p in prices.items()}
 
             # 1. Manage open positions (SL/TP, Trailing stops, 15:15 IST EOD Square-off)

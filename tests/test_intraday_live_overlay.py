@@ -27,7 +27,7 @@ _IST = ZoneInfo("Asia/Kolkata")
 
 
 def _sample_df() -> pd.DataFrame:
-    base = datetime.now(_IST).replace(second=0, microsecond=0) - timedelta(minutes=5 * 25)
+    base = datetime.now(_IST).replace(hour=10, minute=0, second=0, microsecond=0)
     rows = []
     price = 100.0
     for i in range(25):

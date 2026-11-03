@@ -2637,18 +2637,51 @@ async def place_paper_trade_endpoint(payload: dict):
     }
 
 @router.get("/api/paper/open")
-
 async def get_open_paper_trades_endpoint():
-
-    """Get all currently open paper trades."""
-
+    """Get all currently open paper trades with live pricing and auto-exit evaluation."""
     engine = svc._get_engine()
     prices = {}
     for sym, d in svc._market_data.items():
         if isinstance(d, pd.DataFrame) and not d.empty and "close" in d.columns:
-            prices[sym] = {"close": float(d["close"].iloc[-1])}
+            last_r = d.iloc[-1]
+            prices[sym] = {
+                "high": float(last_r.get("high", last_r["close"])),
+                "low": float(last_r.get("low", last_r["close"])),
+                "close": float(last_r["close"]),
+            }
         elif isinstance(d, dict) and "close" in d:
-            prices[sym] = {"close": float(d["close"])}
+            prices[sym] = {
+                "high": float(d.get("high", d["close"])),
+                "low": float(d.get("low", d["close"])),
+                "close": float(d["close"]),
+            }
+
+    # Ensure every open trade symbol has live pricing (crypto/equity fallback)
+    for t in list(engine.open_trades):
+        if t.symbol not in prices:
+            try:
+                if "/" in t.symbol:
+                    from agents.data_ingestion.binance_fetcher import fetch_historical
+                    cdf = await asyncio.to_thread(fetch_historical, t.symbol, "1h", 2)
+                    if cdf is not None and not cdf.empty:
+                        lr = cdf.iloc[-1]
+                        prices[t.symbol] = {
+                            "high": float(lr["high"]),
+                            "low": float(lr["low"]),
+                            "close": float(lr["close"]),
+                        }
+                else:
+                    from agents.market_intelligence.nse_fetcher import fetch_ohlcv
+                    edf = await asyncio.to_thread(fetch_ohlcv, t.symbol, "5d", "1d")
+                    if edf is not None and not edf.empty:
+                        lr = edf.iloc[-1]
+                        prices[t.symbol] = {
+                            "high": float(lr["high"]),
+                            "low": float(lr["low"]),
+                            "close": float(lr["close"]),
+                        }
+            except Exception as p_err:
+                svc.logger.debug("Live price lookup failed for open trade %s: %s", t.symbol, p_err)
 
     return {"open_trades": engine.get_open_trades(current_prices=prices)}
 
