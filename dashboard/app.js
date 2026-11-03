@@ -2187,7 +2187,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
 
 
-        return _inFlightRequests.get(url);
+        return _inFlightRequests.get(url).then(r => r.clone());
 
 
 
@@ -2339,7 +2339,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
 
 
-    return fetchPromise;
+    return fetchPromise.then(r => r.clone());
 
 
 
@@ -21853,7 +21853,7 @@ function _updateIntradayKpis(sigs) {
 
 
 
-    const aEl = document.getElementById("idKpiAvgScore");
+    const aEl = document.getElementById("idKpiAvgScore") || document.getElementById("idKpiScore");
 
 
 
