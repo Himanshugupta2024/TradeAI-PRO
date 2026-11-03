@@ -6,6 +6,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 from server import app
+from config import settings
 
 
 @pytest.fixture
@@ -23,7 +24,7 @@ def test_get_autonomous_status(client):
     st = data["status"]
     assert "enabled" in st
     assert st.get("mode") == "100% Autonomous Zero-Click"
-    assert st.get("max_positions") == 5
+    assert st.get("max_positions") == settings.AUTONOMOUS_MAX_POSITIONS
 
 
 def test_get_autonomous_feed(client):
@@ -44,13 +45,10 @@ def test_toggle_autonomous_mode(client, monkeypatch):
     # Test toggling off and on
     res = client.post("/api/autonomous/toggle", json={"enabled": False}, headers=headers)
     assert res.status_code == 200
-    data = res.json()
-    assert data.get("ok") is True
-    assert data.get("enabled") is False
+    assert res.json().get("ok") is True
+    assert res.json()["status"]["enabled"] is False
 
-    # Toggle back on
-    res2 = client.post("/api/autonomous/toggle", json={"enabled": True}, headers=headers)
-    assert res2.status_code == 200
-    data2 = res2.json()
-    assert data2.get("ok") is True
-    assert data2.get("enabled") is True
+    res = client.post("/api/autonomous/toggle", json={"enabled": True}, headers=headers)
+    assert res.status_code == 200
+    assert res.json().get("ok") is True
+    assert res.json()["status"]["enabled"] is True

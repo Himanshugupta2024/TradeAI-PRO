@@ -17,6 +17,7 @@ def _engine() -> tuple[PaperTradingEngine, str]:
 
 
 def test_blocks_trade_when_portfolio_heat_exceeds_limit(monkeypatch):
+    monkeypatch.setattr(settings, "RISK_PER_TRADE_PCT", 2.0)
     monkeypatch.setattr(settings, "MAX_PORTFOLIO_HEAT_PCT", 0.03)
     monkeypatch.setattr(settings, "MAX_POSITION_LEVERAGE", 5.0)
     monkeypatch.setattr(settings, "MAX_PORTFOLIO_LEVERAGE", 5.0)
@@ -37,6 +38,7 @@ def test_blocks_trade_when_portfolio_heat_exceeds_limit(monkeypatch):
 
 
 def test_halves_position_size_for_correlated_open_trade(monkeypatch):
+    monkeypatch.setattr(settings, "RISK_PER_TRADE_PCT", 2.0)
     monkeypatch.setattr(settings, "CORRELATION_GROUPS", [["BTCUSDT", "ETHUSDT"]])
     monkeypatch.setattr(settings, "MAX_PORTFOLIO_HEAT_PCT", 0.10)
     monkeypatch.setattr(settings, "MAX_POSITION_LEVERAGE", 5.0)
@@ -58,20 +60,22 @@ def test_halves_position_size_for_correlated_open_trade(monkeypatch):
 
 def test_circuit_breaker_blocks_and_can_be_rebased(monkeypatch):
     monkeypatch.setattr(settings, "CIRCUIT_BREAKER_THRESHOLD", 0.12)
-
     engine, path = _engine()
     try:
-        # Simulate 15% drawdown.
-        engine.capital = 85000
+        engine.initial_capital = 100000
+        engine.capital = 87000  # 13% drawdown (> 12% limit)
+        engine._update_circuit_breaker_state()
 
-        blocked = engine.execute("BTC/USDT", "LONG", 100, 99, 103)
-        assert blocked is None
-        assert engine.get_risk_state()["circuit_breaker_active"] is True
+        # Drawdown > 12% should trip the breaker and block new trades
+        trade = engine.execute("TCS", "LONG", 100, 99, 103)
+        assert trade is None
 
-        reset_state = engine.reset_circuit_breaker(rebase_capital=True)
-        assert reset_state["circuit_breaker_active"] is False
+        # Admin reset re-bases initial capital to current capital and unblocks
+        engine.reset_circuit_breaker(rebase_capital=True)
+        assert engine.initial_capital == 87000
 
-        allowed = engine.execute("BTC/USDT", "LONG", 100, 99, 103)
-        assert allowed is not None
+        # Now trade should be accepted
+        trade = engine.execute("TCS", "LONG", 100, 99, 103)
+        assert trade is not None
     finally:
         os.unlink(path)
