@@ -4974,15 +4974,21 @@ async def get_swing_shortlist():
     try:
         from db import swing_store
         latest = await asyncio.to_thread(swing_store.load_latest_scan)
-        if latest and latest.get("setups"):
+        if latest is not None and "setups" in latest:
+            setups = latest.get("setups") or []
+            msg = (
+                f"{len(setups)} setups loaded from central database ({latest.get('scan_date', 'unknown')})"
+                if setups
+                else f"Database scan ({latest.get('scan_date', 'today')}): 0 setups passed strict R:R/regime filters."
+            )
             return {
-                "setups": latest["setups"],
+                "setups": setups,
                 "scan_date": latest.get("scan_date"),
-                "generated_at": latest.get("created_at"),
+                "generated_at": latest.get("scan_time") or latest.get("created_at"),
                 "symbols_scanned": latest.get("symbols_scanned", 0),
-                "setups_found": len(latest["setups"]),
+                "setups_found": len(setups),
                 "grade_summary": latest.get("grade_summary", {}),
-                "message": f"{len(latest['setups'])} setups loaded from central database ({latest.get('scan_date', 'unknown')})",
+                "message": msg,
             }
     except Exception as db_exc:
         logger.debug("Database swing scan lookup skipped: %s", db_exc)
