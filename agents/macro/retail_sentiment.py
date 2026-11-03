@@ -149,12 +149,17 @@ class SentimentScorer:
             logger.info(f"Using fresh sentiment data from cache for {symbol}")
             return cached
 
+        # Retail sentiment scrapers only support major forex pairs
+        clean_sym = symbol.upper().replace("/", "").replace(" ", "")
+        forex_pairs = {"EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "USDINR", "EURINR", "GBPINR"}
+        if clean_sym not in forex_pairs:
+            return None
+
         # Cache miss or stale — fetch from API
         sentiment = None
 
         # Try Myfxbook first (forex pairs)
-        if "/" in symbol or symbol.upper() in ["EURUSD", "GBPUSD", "USDJPY"]:
-            sentiment = self.fetch_myfxbook_sentiment(symbol)
+        sentiment = self.fetch_myfxbook_sentiment(symbol)
 
         # Fallback to Dukascopy if Myfxbook fails
         if not sentiment:
@@ -197,7 +202,7 @@ class SentimentScorer:
             logger.info(f"Fetching Myfxbook sentiment for {symbol}")
 
             # Make request with timeout
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=2.5)
             response.raise_for_status()
 
             # Parse JSON response
@@ -256,7 +261,7 @@ class SentimentScorer:
             url = "https://www.dukascopy.com/swiss/english/marketwatch/sentiment/"
 
             # Make request with timeout
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=2.5)
             response.raise_for_status()
 
             # Parse HTML

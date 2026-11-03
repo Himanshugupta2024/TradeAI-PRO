@@ -185,10 +185,14 @@ class EdgeScoreEngine:
         Returns:
             EdgeScoreBreakdown
         """
-        # Fetch all component scores
+        # Fetch all component scores with asset-class intelligence
+        is_equity = asset_class in ("nse", "index")
+        is_crypto = asset_class == "crypto"
+
         macro_score = self.macro_scorer.get_macro_score()
-        cot_score = self.cot_scorer.get_cot_score(symbol)
-        sentiment_score = self.sentiment_scorer.get_sentiment_score(symbol)
+        # COT positioning and foreign forex retail scrapers are only meaningful for forex pairs
+        cot_score = 0.0 if (is_equity or is_crypto) else self.cot_scorer.get_cot_score(symbol)
+        sentiment_score = 0.0 if (is_equity or is_crypto) else self.sentiment_scorer.get_sentiment_score(symbol)
         risk_score = self.risk_gauge.get_risk_score()
 
         # Momentum score from live market data (asset-class aware)
@@ -209,7 +213,8 @@ class EdgeScoreEngine:
 
         # Calculate bonuses
         seasonal_bonus = self.seasonal_scorer.get_seasonal_score(symbol)
-        carry_bonus = self.carry_scanner.get_carry_score(symbol, risk_regime)
+        # Interest rate carry trade only applies to forex currency pairs
+        carry_bonus = 0.0 if (is_equity or is_crypto) else self.carry_scanner.get_carry_score(symbol, risk_regime)
 
         # Calculate final EdgeScore
         edge_score = base_score + seasonal_bonus + carry_bonus
