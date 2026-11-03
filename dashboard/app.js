@@ -70,6 +70,28 @@ function _fmtSignedMoney(v, sym = '₹') {
     return `${sign}${sym}${Math.abs(num).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 }
 
+function _fmtDuration(entryTime, exitTime) {
+    if (!entryTime || !exitTime) return '—';
+    try {
+        const start = new Date(entryTime).getTime();
+        const end = new Date(exitTime).getTime();
+        if (isNaN(start) || isNaN(end) || end < start) return '—';
+        const diffSecs = Math.floor((end - start) / 1000);
+        if (diffSecs < 60) return `${diffSecs}s`;
+        const diffMins = Math.floor(diffSecs / 60);
+        if (diffMins < 60) return `${diffMins}m`;
+        const diffHours = Math.floor(diffMins / 60);
+        const remMins = diffMins % 60;
+        if (diffHours < 24) return remMins > 0 ? `${diffHours}h ${remMins}m` : `${diffHours}h`;
+        const diffDays = Math.floor(diffHours / 24);
+        const remHours = diffHours % 24;
+        return remHours > 0 ? `${diffDays}d ${remHours}h` : `${diffDays}d`;
+    } catch {
+        return '—';
+    }
+}
+
+
 
 
 
@@ -10928,183 +10950,83 @@ async function loadPortfolio() {
 
 
 
-        // Trade history table
-
-
-
+        // Trade history table (Newest First, Asset-Aware Currency, Complete 11 Columns)
         const hBody = document.getElementById('historyBody');
-
-
-
+        const hCount = document.getElementById('historyTradeCount');
         const rawTrades = trades.trades || [];
-
-
-
         const closedTrades = rawTrades.filter(t => t.status !== 'OPEN');
 
-
-
-        if (hBody) {
-
-
-
-            if (closedTrades.length === 0) {
-
-
-
-                hBody.innerHTML = '<tr><td colspan="7" class="empty-row">No trade history</td></tr>';
-
-
-
-            } else {
-
-
-
-                hBody.innerHTML = closedTrades.slice(0, 25).map(t => {
-
-
-
-                    const pnlVal = Number(t.total_pnl != null ? t.total_pnl : (t.pnl || 0));
-
-
-
-                    const pnlClass = pnlVal >= 0 ? 'pnl-positive' : 'pnl-negative';
-
-
-
-                    const isLong = t.direction === 'BUY' || t.direction === 'LONG';
-
-
-
-                    const sideClass = isLong ? 'badge-buy' : 'badge-sell';
-
-
-
-                    const sideText = isLong ? 'LONG' : 'SHORT';
-
-
-
-                    const timeRaw = t.exit_time || t.entry_time || t.timestamp;
-
-
-
-                    const time = timeRaw ? new Date(timeRaw).toLocaleString('en-IN', {
-
-
-
-                        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
-
-
-
-                    }) : '—';
-
-
-
-                    const rawReason = t.exit_reason || t.status || '';
-
-
-
-                    const reason = {
-
-
-
-                        'CLOSED_TP': '🎯 Target',
-
-
-
-                        'TARGET': '🎯 Target',
-
-
-
-                        'CLOSED_SL': '🛑 Stop Loss',
-
-
-
-                        'STOP_LOSS': '🛑 Stop Loss',
-
-
-
-                        'CLOSED_TRAIL': '📐 Trailing SL',
-
-
-
-                        'TRAILING_STOP': '📐 Trailing SL',
-
-
-
-                        'CLOSED_MANUAL': '✋ Manual',
-
-
-
-                    }[rawReason] || rawReason || '—';
-
-
-
-                    const pnlPct = Number(t.pnl_pct || 0);
-
-
-
-
-
-
-
-                    return `
-
-
-
-                        <tr>
-
-
-
-                            <td style="font-family: var(--font-body)">${time}</td>
-
-
-
-                            <td><b>${t.symbol}</b></td>
-
-
-
-                            <td><span class="${sideClass}">${sideText}</span></td>
-
-
-
-                            <td>₹${Number(t.entry_price || 0).toFixed(2)}</td>
-
-
-
-                            <td>₹${Number(t.exit_price || 0).toFixed(2)}</td>
-
-
-
-                            <td class="${pnlClass}">₹${pnlVal.toFixed(2)} (${pnlPct.toFixed(2)}%)</td>
-
-
-
-                            <td style="font-family: var(--font-body)">${reason}</td>
-
-
-
-                        </tr>
-
-
-
-                    `;
-
-
-
-                }).join('');
-
-
-
-            }
-
-
-
+        if (hCount) {
+            hCount.textContent = `${closedTrades.length} trades`;
         }
 
+        if (hBody) {
+            if (closedTrades.length === 0) {
+                hBody.innerHTML = '<tr><td colspan="11" class="empty-row">No trade history</td></tr>';
+            } else {
+                // Ensure newest trades come first (by exit_time / timestamp DESC, then ID DESC)
+                const sortedTrades = [...closedTrades].sort((a, b) => {
+                    const timeA = new Date(a.exit_time || a.timestamp || 0).getTime();
+                    const timeB = new Date(b.exit_time || b.timestamp || 0).getTime();
+                    if (timeA !== timeB) return timeB - timeA;
+                    return (Number(b.id) || 0) - (Number(a.id) || 0);
+                });
 
+                hBody.innerHTML = sortedTrades.slice(0, 50).map(t => {
+                    const qty = Number(t.initial_quantity || t.quantity || 1);
+                    const pnlVal = Number(t.total_pnl != null ? t.total_pnl : ((t.pnl || 0) * qty));
+                    const pnlClass = pnlVal >= 0 ? 'pnl-positive' : 'pnl-negative';
+                    const isLong = t.direction === 'BUY' || t.direction === 'LONG';
+                    const sideClass = isLong ? 'badge-buy' : 'badge-sell';
+                    const sideText = isLong ? 'LONG' : 'SHORT';
+                    const currSym = _symCurr(t.symbol);
+                    const qtyFormatted = Number.isInteger(qty) ? qty.toString() : qty.toFixed(qty < 1 ? 4 : 2);
 
-    } catch (err) {
+                    const timeRaw = t.exit_time || t.timestamp;
+                    const time = timeRaw ? new Date(timeRaw).toLocaleString('en-IN', {
+                        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+                    }) : '—';
+
+                    const duration = t.duration_human || _fmtDuration(t.entry_time, t.exit_time);
+
+                    const rawReason = t.exit_reason || t.status || '';
+                    const reason = {
+                        'CLOSED_TP': '🎯 Target',
+                        'TARGET': '🎯 Target',
+                        'CLOSED_SL': '🛑 Stop Loss',
+                        'STOP_LOSS': '🛑 Stop Loss',
+                        'CLOSED_TRAIL': '📐 Trailing SL',
+                        'TRAILING_STOP': '📐 Trailing SL',
+                        'CLOSED_MANUAL': '✋ Manual',
+                    }[rawReason] || rawReason || '—';
+
+                    const pnlPct = Number(t.pnl_pct || 0);
+                    const sign = pnlVal >= 0 ? '+' : '';
+                    const pctSign = pnlPct >= 0 ? '+' : '';
+                    const signalBadge = t.signal_type ? `<div style="font-size:0.65rem;color:var(--text-muted);letter-spacing:0.04em;">${t.signal_type}</div>` : '';
+
+                    return `
+                        <tr>
+                            <td class="perf-td-id" style="font-family: var(--font-mono); color: var(--text-muted);">#${t.id || '—'}</td>
+                            <td style="font-family: var(--font-body); white-space: nowrap;">${time}</td>
+                            <td>
+                                <b>${t.symbol}</b>
+                                ${signalBadge}
+                            </td>
+                            <td><span class="${sideClass}">${sideText}</span></td>
+                            <td style="font-family: var(--font-mono);">${qtyFormatted}</td>
+                            <td style="font-family: var(--font-mono);">${currSym}${Number(t.entry_price || 0).toFixed(2)}</td>
+                            <td style="font-family: var(--font-mono);">${currSym}${Number(t.exit_price || 0).toFixed(2)}</td>
+                            <td class="${pnlClass}" style="font-family: var(--font-mono); font-weight: 600;">${sign}${currSym}${Math.abs(pnlVal).toFixed(2)}</td>
+                            <td class="${pnlClass}" style="font-family: var(--font-mono);">${pctSign}${pnlPct.toFixed(2)}%</td>
+                            <td style="font-family: var(--font-mono); color: var(--text-muted); font-size: 0.8rem;">${duration}</td>
+                            <td style="font-family: var(--font-body);">${reason}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+        }
+        } catch (err) {
 
 
 
@@ -13274,85 +13196,32 @@ function _renderTradeHistory(trades) {
 
 
     tbody.innerHTML = trades.map(t => {
-
-
-
-        const pnl = t.pnl || 0;
-
-
-
+        const qty = Number(t.initial_quantity || t.quantity || 1);
+        const pnl = Number(t.total_pnl != null ? t.total_pnl : ((t.pnl || 0) * qty));
         const pnlCls = pnl >= 0 ? 'positive' : 'negative';
-
-
-
-        const dirCls = t.direction === 'BUY' ? 'buy' : 'sell';
-
-
-
+        const isLong = t.direction === 'BUY' || t.direction === 'LONG';
+        const dirCls = isLong ? 'buy' : 'sell';
+        const currSym = _symCurr(t.symbol);
         const dt = t.exit_time ? new Date(t.exit_time).toLocaleString('en-IN', {
-
-
-
             day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'
-
-
-
         }) : '—';
-
-
-
+        const duration = t.duration_human || _fmtDuration(t.entry_time, t.exit_time);
+        const durHtml = duration && duration !== '—' ? `<br><small style="color:var(--text-muted);font-size:0.68rem;">⏱ ${duration}</small>` : '';
         const sign = pnl >= 0 ? '+' : '';
-
-
+        const qtyDisplay = Number.isInteger(qty) ? qty.toString() : qty.toFixed(qty < 1 ? 4 : 2);
 
         return `<tr>
-
-
-
-            <td class="perf-td-id">#${t.id}</td>
-
-
-
-            <td class="perf-td-sym">${t.symbol}</td>
-
-
-
+            <td class="perf-td-id">#${t.id || '—'}</td>
+            <td class="perf-td-sym"><b>${t.symbol}</b></td>
             <td><span class="perf-dir-badge ${dirCls}">${t.direction}</span></td>
-
-
-
-            <td class="mono">₹${(t.entry_price || 0).toFixed(2)}</td>
-
-
-
-            <td class="mono">₹${(t.exit_price  || 0).toFixed(2)}</td>
-
-
-
-            <td class="mono">${(t.quantity || 1).toFixed(2)}</td>
-
-
-
-            <td class="mono ${pnlCls}">${sign}₹${Math.abs(pnl).toFixed(2)}</td>
-
-
-
+            <td class="mono">${currSym}${(t.entry_price || 0).toFixed(2)}</td>
+            <td class="mono">${currSym}${(t.exit_price  || 0).toFixed(2)}</td>
+            <td class="mono">${qtyDisplay}</td>
+            <td class="mono ${pnlCls}">${sign}${currSym}${Math.abs(pnl).toFixed(2)}</td>
             <td class="mono ${pnlCls}">${sign}${(t.pnl_pct || 0).toFixed(2)}%</td>
-
-
-
             <td><span class="perf-exit-badge">${exitIcon[t.status] || ''} ${exitLabel[t.status] || t.status || '—'}</span></td>
-
-
-
-            <td class="perf-td-time">${dt}</td>
-
-
-
+            <td class="perf-td-time">${dt}${durHtml}</td>
         </tr>`;
-
-
-
     }).join('');
 
 

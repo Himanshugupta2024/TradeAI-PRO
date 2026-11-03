@@ -2257,28 +2257,44 @@ async def get_current_signal(symbol: str):
     return result
 
 @router.get("/api/trades")
-
-async def get_trades(limit: int = Query(20, le=100)):
-
-    """Get recent trade history from real paper trading engine."""
-
+async def get_trades(limit: int = Query(50, le=100)):
+    """Get recent trade history from real paper trading engine (newest first)."""
     engine = svc._get_engine()
-
     raw_history = engine.get_history(limit=limit)
-
     enriched = []
-
     for t in raw_history:
-
         d = dict(t)
-
-        d.setdefault("timestamp", d.get("exit_time") or d.get("entry_time") or "")
-
+        exit_t = d.get("exit_time")
+        entry_t = d.get("entry_time")
+        d.setdefault("timestamp", exit_t or entry_t or "")
         d.setdefault("exit_reason", d.get("status") or "")
 
+        # Calculate human-readable duration
+        duration_human = "—"
+        if entry_t and exit_t:
+            try:
+                t0 = datetime.fromisoformat(str(entry_t).replace("Z", "+00:00"))
+                t1 = datetime.fromisoformat(str(exit_t).replace("Z", "+00:00"))
+                diff_sec = max(0.0, (t1 - t0).total_seconds())
+                if diff_sec < 60:
+                    duration_human = f"{int(diff_sec)}s"
+                elif diff_sec < 3600:
+                    duration_human = f"{int(diff_sec // 60)}m"
+                elif diff_sec < 86400:
+                    h = int(diff_sec // 3600)
+                    m = int((diff_sec % 3600) // 60)
+                    duration_human = f"{h}h {m}m" if m > 0 else f"{h}h"
+                else:
+                    days = int(diff_sec // 86400)
+                    h = int((diff_sec % 86400) // 3600)
+                    duration_human = f"{days}d {h}h" if h > 0 else f"{days}d"
+            except Exception:
+                duration_human = "—"
+        d["duration_human"] = duration_human
         enriched.append(d)
 
-    return {"trades": enriched}
+    # Return newest trades first
+    return {"trades": list(reversed(enriched))}
 
 @router.get("/api/risk/state")
 
