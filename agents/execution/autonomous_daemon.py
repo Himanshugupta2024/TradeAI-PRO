@@ -55,8 +55,12 @@ class AutonomousExecutionDaemon:
         self.min_qs_score: float = float(os.getenv("AUTONOMOUS_MIN_QS_SCORE", str(min_qs_score)))
         self.min_ai_confidence: float = float(os.getenv("AUTONOMOUS_MIN_AI_CONFIDENCE", str(min_ai_confidence)))
         self.max_portfolio_heat: float = max_portfolio_heat
-        self.decision_log: list[dict[str, Any]] = []
         self._max_log_entries: int = 100
+        try:
+            from db.runtime_state import get_runtime_state
+            self.decision_log: list[dict[str, Any]] = get_runtime_state("autonomous_feed:v1", []) or []
+        except Exception:
+            self.decision_log: list[dict[str, Any]] = []
         self.last_eod_review_date: Optional[str] = None
         self._last_scan_time: Optional[str] = None
 
@@ -90,6 +94,11 @@ class AutonomousExecutionDaemon:
         self.decision_log.insert(0, entry)
         if len(self.decision_log) > self._max_log_entries:
             self.decision_log = self.decision_log[: self._max_log_entries]
+        try:
+            from db.runtime_state import set_runtime_state
+            set_runtime_state("autonomous_feed:v1", self.decision_log)
+        except Exception as exc:
+            log.debug("Autonomous feed runtime state persist failed: %s", exc)
         return entry
 
     def evaluate_signals(

@@ -100,6 +100,25 @@ class _ModelPerformanceTracker:
 
     def _restore_history_from_db(self):
         try:
+            from db.connection import SessionLocal
+            from db.models import ModelPerformance
+            with SessionLocal() as session:
+                rows = (
+                    session.query(ModelPerformance)
+                    .order_by(ModelPerformance.id.desc())
+                    .limit(50)
+                    .all()
+                )
+                if rows:
+                    for r in reversed(rows):
+                        is_win = 1 if r.actual == r.predicted else 0
+                        if r.model_name in self._history:
+                            self._history[r.model_name].append(is_win)
+                    return
+        except Exception as e:
+            log.debug("SQLAlchemy model performance history restore failed, falling back: %s", e)
+
+        try:
             import sqlite3
             conn = sqlite3.connect("trading.db")
             c = conn.cursor()
@@ -237,7 +256,22 @@ def _ensure_model_performance_table() -> None:
         conn.commit()
 
 
-def _persist_prediction_outcome(model_name: str, predicted_direction: str, actual_direction: str) -> None:
+def _persist_prediction_outcome(model_name: str, predicted_direction: str, actual_direction: str, symbol: str | None = None) -> None:
+    try:
+        from db.connection import SessionLocal
+        from db.models import ModelPerformance
+        with SessionLocal() as session:
+            session.add(ModelPerformance(
+                model_name=model_name,
+                predicted=predicted_direction,
+                actual=actual_direction,
+                symbol=symbol,
+            ))
+            session.commit()
+            return
+    except Exception as exc:
+        log.debug("[Ensemble] SQLAlchemy model_performance persist failed, falling back: %s", exc)
+
     try:
         with sqlite3.connect(str(_db_path())) as conn:
             conn.execute(
@@ -249,10 +283,33 @@ def _persist_prediction_outcome(model_name: str, predicted_direction: str, actua
             )
             conn.commit()
     except Exception as exc:
-        log.debug("[Ensemble] model_performance persist failed: %s", exc)
+        log.debug("[Ensemble] SQLite model_performance persist failed: %s", exc)
 
 
 def _warm_start_tracker() -> None:
+    try:
+        from db.connection import SessionLocal
+        from db.models import ModelPerformance
+        with SessionLocal() as session:
+            rows = (
+                session.query(ModelPerformance)
+                .order_by(ModelPerformance.id.desc())
+                .limit(400)
+                .all()
+            )
+            for row in reversed(rows):
+                model_name = str(row.model_name)
+                predicted = str(row.predicted)
+                actual = str(row.actual)
+                if model_name not in _tracker._history:
+                    continue
+                if predicted not in ("UP", "DOWN") or actual not in ("UP", "DOWN"):
+                    continue
+                _tracker.record(model_name, predicted == "UP", actual == "UP")
+            return
+    except Exception as exc:
+        log.debug("[Ensemble] SQLAlchemy model_performance warm start failed, falling back: %s", exc)
+
     _ensure_model_performance_table()
     try:
         with sqlite3.connect(str(_db_path())) as conn:
@@ -276,7 +333,7 @@ def _warm_start_tracker() -> None:
                 continue
             _tracker.record(model_name, predicted == "UP", actual == "UP")
     except Exception as exc:
-        log.debug("[Ensemble] warm-start load failed: %s", exc)
+        log.debug("[Ensemble] SQLite model_performance warm start failed: %s", exc)
 
 
 _warm_start_tracker()

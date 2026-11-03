@@ -491,12 +491,24 @@ class WeightAdapter:
             log.error("WeightAdapter.update_weights write failed: %s", exc)
 
         return new_weights
+        try:
+            from db.runtime_state import set_runtime_state
+            set_runtime_state("learned_weights:v1", new_weights)
+        except Exception as exc:
+            log.debug("WeightAdapter DB backup failed: %s", exc)
 
     def _load(self) -> dict:
         try:
             if _WEIGHTS_PATH.exists():
                 with open(_WEIGHTS_PATH) as f:
                     return json.load(f)
+        except Exception:
+            pass
+        try:
+            from db.runtime_state import get_runtime_state
+            db_weights = get_runtime_state("learned_weights:v1")
+            if db_weights and isinstance(db_weights, dict):
+                return db_weights
         except Exception:
             pass
         return dict(DEFAULT_WEIGHTS)

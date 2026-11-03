@@ -109,6 +109,8 @@ NSE_TICKER_MAP = {
     "TATAMOTORS": "TATAMOTORS.NS",
     "SUNPHARMA": "SUNPHARMA.NS",
     "ADANIENT": "ADANIENT.NS",
+    "RAILVIKAS": "RVNL.NS",
+    "RVNL": "RVNL.NS",
 }
 
 # ── Timeframes ───────────────────────────────────────────

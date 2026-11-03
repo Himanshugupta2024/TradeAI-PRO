@@ -34,12 +34,14 @@ class ModelRegistry:
         log.info("[ModelRegistry] Beginning AI Model warmup sequence...")
 
         # 1. Thread settings for CPU-only deployment (Render Free Tier)
-        try:
-            import torch
-            torch.set_num_threads(1)
-            torch.set_num_interop_threads(1)
-        except Exception:
-            pass
+        enable_torch = os.getenv("ENABLE_PYTORCH_MODELS", "false").lower() in ("true", "1")
+        if enable_torch:
+            try:
+                import torch
+                torch.set_num_threads(1)
+                torch.set_num_interop_threads(1)
+            except Exception:
+                pass
 
         summary: dict[str, Any] = {
             "xgboost": False,
@@ -76,12 +78,15 @@ class ModelRegistry:
             log.debug("[ModelRegistry] Logistic warmup skipped: %s", exc)
 
         # 5. Trading LSTM Model
-        try:
-            from agents.ai_engine.lstm_model import get_lstm_model
-            lstm = get_lstm_model(input_size=10)
-            summary["lstm"] = lstm is not None
-        except Exception as exc:
-            log.debug("[ModelRegistry] LSTM warmup skipped: %s", exc)
+        if enable_torch:
+            try:
+                from agents.ai_engine.lstm_model import get_lstm_model
+                lstm = get_lstm_model(input_size=10)
+                summary["lstm"] = lstm is not None
+            except Exception as exc:
+                log.debug("[ModelRegistry] LSTM warmup skipped: %s", exc)
+        else:
+            log.debug("[ModelRegistry] PyTorch LSTM warmup skipped to conserve memory (<512MB)")
 
         # 6. Market Anomaly Detector
         try:

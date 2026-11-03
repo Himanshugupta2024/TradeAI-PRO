@@ -415,6 +415,8 @@ def generate_signals(
         return df
 
     result = df.copy()
+    if "htf_trend" not in result.columns:
+        result["htf_trend"] = TrendDirection.NEUTRAL.value
 
     # ── Edge Engine Integration ──────────────────────────────────────────────
     # Fetch EdgeScore from macro intelligence layer if not provided
