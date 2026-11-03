@@ -1,0 +1,16 @@
+[Unit]
+Description=TradeAI PRO Autonomous Scanner & Execution Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/trading
+EnvironmentFile=/home/ubuntu/trading/.env
+ExecStart=/home/ubuntu/trading/.venv/bin/python scripts/scanner_daemon.py
+Restart=always
+RestartSec=15
+MemoryMax=8G
+
+[Install]
+WantedBy=multi-user.target

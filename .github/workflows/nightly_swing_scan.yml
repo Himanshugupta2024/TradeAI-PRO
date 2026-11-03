@@ -1,0 +1,57 @@
+name: Nightly SwingSpectrum Scan
+
+on:
+  schedule:
+    # 10:30 UTC = 16:00 IST (Mon-Fri) — After NSE Market Close
+    - cron: '30 10 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      universe:
+        description: 'Stock Universe to scan'
+        required: true
+        default: 'nifty500'
+        type: choice
+        options:
+          - nifty500
+          - nifty200
+          - nifty100
+          - local
+      ignore_holiday:
+        description: 'Ignore holiday check and force scan'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  swing-scan:
+    name: Execute EOD Swing Scan & Outcome Evaluation
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Nightly Scan to Database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          EXTRA_ARGS=""
+          if [ "${{ github.event.inputs.ignore_holiday }}" = "true" ]; then
+            EXTRA_ARGS="--ignore-holiday"
+          fi
+          UNIVERSE="${{ github.event.inputs.universe || 'nifty500' }}"
+          python scripts/nightly_swing_scan.py --telegram --universe "$UNIVERSE" $EXTRA_ARGS

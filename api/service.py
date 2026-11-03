@@ -10,7 +10,8 @@ import time
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT_DIR)
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -3614,3 +3615,128 @@ def _train_xgboost_sync(
         "symbol_stats": symbol_stats,
         "top_features": dict(sorted(fi.items(), key=lambda x: -x[1])[:5]),
     }
+
+
+
+# ── Shared WebSocket Snapshot Broadcaster (Single-Reader Fan-Out) ──────────────
+class SnapshotBroadcaster:
+    """
+    Singleton broadcaster for real-time WebSocket clients.
+    Runs a single background loop that polls the latest market snapshot from
+    DB or in-memory cache, serializes the payload ONCE, and fans out to all active clients.
+    Prevents N-client polling storm and keeps memory/compute footprint minimal.
+    """
+
+    def __init__(self) -> None:
+        self._clients: set[WebSocket] = set()
+        self._cached_payload: dict[str, Any] | None = None
+        self._cached_json: str | None = None
+        self._last_snapshot_version: Any = None
+
+    def register(self, ws: WebSocket) -> None:
+        self._clients.add(ws)
+        logger.info("[Broadcaster] Client registered (%d active)", len(self._clients))
+
+    def unregister(self, ws: WebSocket) -> None:
+        self._clients.discard(ws)
+        logger.info("[Broadcaster] Client unregistered (%d remaining)", len(self._clients))
+
+    async def get_initial_payload(self) -> dict[str, Any]:
+        if self._cached_payload:
+            return self._cached_payload
+        return await self._build_payload()
+
+    async def _build_payload(self) -> dict[str, Any]:
+        snapshot = None
+        try:
+            from db.runtime_state import get_runtime_state
+            snapshot = await asyncio.to_thread(get_runtime_state, "latest_market_snapshot")
+        except Exception as exc:
+            logger.debug("[Broadcaster] DB snapshot read skipped: %s", exc)
+
+        prices: dict[str, Any] = {}
+        feed_status = "EOD"
+        source = "CACHE"
+        updated_at = datetime.now(timezone.utc).isoformat()
+
+        if snapshot and isinstance(snapshot, dict) and "prices" in snapshot:
+            prices = snapshot.get("prices", {})
+            feed_status = str(snapshot.get("feed_status", "LIVE"))
+            source = str(snapshot.get("source", "WORKER_DB"))
+            updated_at = str(snapshot.get("timestamp", updated_at))
+        else:
+            # Fallback to local in-memory _market_data (monolithic / local dev mode)
+            for sym, df in _market_data.items():
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    last = df.iloc[-1]
+                    prices[sym] = {
+                        "close": round(float(last["close"]), 2),
+                        "high": round(float(last["high"]), 2),
+                        "low": round(float(last["low"]), 2),
+                        "rsi": round(float(last["RSI_14"]), 1) if pd.notna(last.get("RSI_14")) else None,
+                        "signal": str(last.get("signal", "HOLD")),
+                        "regime": _regime_cache.get(sym, "RANGING"),
+                        "data_status": "LIVE" if "/" in sym else "DELAYED",
+                    }
+            feed_status = _get_feed_status().get("status", "EOD")
+            source = "IN_PROCESS"
+
+        engine = _get_engine()
+        stats = engine.get_stats()
+        mood = await asyncio.to_thread(_compute_market_mood)
+
+        return {
+            "type": "price_update",
+            "timestamp": updated_at,
+            "source": source,
+            "feed_status": feed_status,
+            "prices": prices,
+            "market_mood": mood,
+            "stats": {
+                "capital": stats.get("capital", 100000),
+                "total_equity": stats.get("total_equity", stats.get("capital", 100000)),
+                "initial_capital": stats.get("initial_capital", 100000),
+                "unrealized_pnl": stats.get("unrealized_pnl", 0.0),
+                "total_pnl": stats.get("total_pnl", 0.0),
+                "total_trades": stats.get("total_trades", 0),
+                "closed_trades": stats.get("closed_trades", stats.get("total_trades", 0)),
+                "winning_trades": stats.get("winning_trades", 0),
+                "losing_trades": stats.get("losing_trades", 0),
+                "win_rate": stats.get("win_rate"),
+                "open_trades": len(engine.get_open_trades()),
+            },
+        }
+
+    async def broadcast_loop(self) -> None:
+        logger.info("[Broadcaster] Shared broadcast loop initialized.")
+        while True:
+            try:
+                await asyncio.sleep(5)
+                if not self._clients:
+                    continue
+
+                payload = await self._build_payload()
+                self._cached_payload = payload
+                json_str = json.dumps(payload, ensure_ascii=False)
+                self._cached_json = json_str
+
+                # Fan-out to all connected clients concurrently
+                dead: set[WebSocket] = set()
+                for client in list(self._clients):
+                    try:
+                        await client.send_text(json_str)
+                    except Exception:
+                        dead.add(client)
+                if dead:
+                    self._clients.difference_update(dead)
+                    logger.debug("[Broadcaster] Pruned %d dead WebSocket client(s)", len(dead))
+
+            except asyncio.CancelledError:
+                logger.info("[Broadcaster] Loop cancelled.")
+                break
+            except Exception as exc:
+                logger.warning("[Broadcaster] Error during broadcast cycle: %s", exc)
+                await asyncio.sleep(5)
+
+
+broadcaster = SnapshotBroadcaster()

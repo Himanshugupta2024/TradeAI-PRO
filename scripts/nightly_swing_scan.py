@@ -57,6 +57,24 @@ RATE_LIMIT_SLEEP = 1.2      # yFinance throttle se bachne ke liye (seconds)
 # Index symbols skip karein — yeh scanner ke liye relevant nahi
 SKIP_SYMBOLS = {"NIFTY 50", "BANKNIFTY", "SENSEX", "NIFTY IT"}
 
+# NSE Gazetted Trading Holidays 2026
+NSE_HOLIDAYS_2026 = {
+    "2026-01-26", "2026-02-17", "2026-03-03", "2026-03-20", "2026-04-03",
+    "2026-04-14", "2026-04-26", "2026-05-01", "2026-05-27", "2026-06-25",
+    "2026-08-15", "2026-08-25", "2026-10-02", "2026-10-20", "2026-11-08",
+    "2026-11-24", "2026-12-25"
+}
+
+def is_nse_trading_day(target_date: date | None = None) -> bool:
+    """Check if given date is an active NSE trading day (not weekend or gazetted holiday)."""
+    if target_date is None:
+        target_date = date.today()
+    if target_date.weekday() >= 5:  # Saturday or Sunday
+        return False
+    if target_date.isoformat() in NSE_HOLIDAYS_2026:
+        return False
+    return True
+
 # NSE public CSV URLs for index constituents
 _NSE_INDEX_URLS = {
     "nifty500": "https://archives.nseindia.com/content/indices/ind_nifty500list.csv",
@@ -509,7 +527,15 @@ def main() -> None:
         choices=["nifty500", "nifty200", "nifty100", "local"],
         help="Stock universe: nifty500 (default, ~500 stocks), nifty200, nifty100, or local (115 hardcoded)"
     )
+    parser.add_argument(
+        "--ignore-holiday", action="store_true",
+        help="Bypass NSE weekend/holiday check and execute scan immediately"
+    )
     args = parser.parse_args()
+
+    if not args.ignore_holiday and not is_nse_trading_day():
+        logger.info("Today (%s) is an NSE weekend or gazetted holiday. Skipping scan to conserve runner compute.", date.today().isoformat())
+        sys.exit(0)
 
     if args.quiet:
         logging.getLogger().setLevel(logging.WARNING)

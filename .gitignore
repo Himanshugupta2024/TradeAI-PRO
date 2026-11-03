@@ -71,3 +71,4 @@ data/*.json
 data/swing_history/
 data/intraday_scorecard.csv
 scratch/
+backups/

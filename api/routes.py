@@ -658,7 +658,8 @@ async def get_all_signals():
 
     # trigger one background refresh so the dashboard does not stay blank.
 
-    if not svc._signal_cache and not svc._lazy_bootstrap_started:
+    refresh_allowed = getattr(svc, "BACKGROUND_REFRESH_ENABLED", True) and not (os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes"))
+    if not svc._signal_cache and not svc._lazy_bootstrap_started and refresh_allowed:
 
         lock = svc._get_refresh_lock()
 
@@ -4970,6 +4971,22 @@ async def get_swing_shortlist():
 
             return {"setups": [], "error": str(e)}
 
+    try:
+        from db import swing_store
+        latest = await asyncio.to_thread(swing_store.load_latest_scan)
+        if latest and latest.get("setups"):
+            return {
+                "setups": latest["setups"],
+                "scan_date": latest.get("scan_date"),
+                "generated_at": latest.get("created_at"),
+                "symbols_scanned": latest.get("symbols_scanned", 0),
+                "setups_found": len(latest["setups"]),
+                "grade_summary": latest.get("grade_summary", {}),
+                "message": f"{len(latest['setups'])} setups loaded from central database ({latest.get('scan_date', 'unknown')})",
+            }
+    except Exception as db_exc:
+        logger.debug("Database swing scan lookup skipped: %s", db_exc)
+
     return {
 
         "setups": [],
@@ -6237,148 +6254,60 @@ async def get_breakouts(
 # ── WebSocket Endpoint for Real-time Updates ──────────────
 
 @router.websocket("/ws/prices")
-
-async def websocket_prices(websocket: WebSocket):
-
+async def websocket_prices(websocket: WebSocket, token: str | None = None):
     """
-
     WebSocket endpoint for real-time price and signal updates.
-
-    Sends payload under key "prices" to match the frontend handler:
-
-      if (data.prices) { updateLivePrices(data.prices) }
-
-    Pushes price updates every 5 seconds and a lightweight ping every 20 seconds
-
-    to keep the connection alive through proxies and Render's load balancer.
-
+    Enforces origin verification and utilizes a single shared in-process broadcaster
+    to eliminate N-client database polling storms.
     """
+    origin = websocket.headers.get("origin")
+    approved_origins_raw = os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://localhost:5173,https://tradeai-pro.pages.dev",
+    )
+    approved_origins = {o.strip().rstrip("/") for o in approved_origins_raw.split(",") if o.strip()}
+    if origin:
+        clean_origin = origin.strip().rstrip("/")
+        if clean_origin not in approved_origins:
+            logger.warning("Rejected WebSocket connection from unauthorized origin: %s", origin)
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
 
     await websocket.accept()
+    svc.broadcaster.register(websocket)
 
-    svc._ws_clients.append(websocket)
-
-    logger.info("WebSocket client connected (%d total)", len(svc._ws_clients))
-
-    last_ping_at = time.time()
-
-    # Slightly aggressive ping helps some proxies / Render LB paths that idle-out WS.
-
-    _PING_INTERVAL = 15  # seconds between server-side pings
-
+    # Immediately push current cached snapshot on connection
     try:
-
-        while True:
-
-            now_ts = time.time()
-
-            # Server-side ping to keep connection alive through proxies / Render LB.
-
-            if now_ts - last_ping_at >= _PING_INTERVAL:
-
-                try:
-
-                    await websocket.send_json(
-
-                        {"type": "ping", "ts": datetime.now().isoformat()}
-
-                    )
-
-                    last_ping_at = now_ts
-
-                except Exception:
-
-                    break  # Connection gone — exit loop cleanly
-
-            update = {
-
-                "type": "price_update",
-
-                "timestamp": datetime.now().isoformat(),
-
-                "prices": {},
-
-            }
-
-            for symbol in svc._market_data:
-
-                df = svc._market_data[symbol]
-
-                if df.empty:
-
-                    continue
-
-                last = df.iloc[-1]
-
-                update["prices"][symbol] = {
-
-                    "close": round(float(last["close"]), 2),
-
-                    "high": round(float(last["high"]), 2),
-
-                    "low": round(float(last["low"]), 2),
-
-                    "rsi": round(float(last["RSI_14"]), 1)
-
-                    if pd.notna(last.get("RSI_14"))
-
-                    else None,
-
-                    "signal": str(last.get("signal", "HOLD")),
-
-                    "regime": svc._regime_cache.get(symbol, "RANGING"),
-
-                }
-
-            engine = svc._get_engine()
-
-            stats = engine.get_stats()
-
-            update["stats"] = {
-                "capital": stats.get("capital", 100000),
-                "total_equity": stats.get("total_equity", stats.get("capital", 100000)),
-                "initial_capital": stats.get("initial_capital", 100000),
-                "unrealized_pnl": stats.get("unrealized_pnl", 0.0),
-                "total_pnl": stats.get("total_pnl", 0.0),
-                "total_trades": stats.get("total_trades", 0),
-                "closed_trades": stats.get("total_trades", 0),
-                "winning_trades": stats.get("winning_trades", 0),
-                "losing_trades": stats.get("losing_trades", 0),
-                "win_rate": stats.get("win_rate"),
-                "open_trades": len(engine.get_open_trades()),
-            }
-
-            # Mood computation can be CPU-heavy; keep it off the event loop so HTTP
-
-            # health checks and other clients stay responsive on small Render instances.
-
-            update["market_mood"] = await asyncio.to_thread(svc._compute_market_mood)
-
-            update["feed_status"] = svc._get_feed_status()
-
-            await websocket.send_json(update)
-
-            await asyncio.sleep(5)
-
-    except WebSocketDisconnect:
-
+        init_payload = await svc.broadcaster.get_initial_payload()
+        await websocket.send_json(init_payload)
+    except Exception:
         pass
 
+    last_ping_at = time.time()
+    _PING_INTERVAL = 15
+
+    try:
+        while True:
+            # Server-side heartbeat ping to keep intermediate reverse proxies alive
+            now_ts = time.time()
+            if now_ts - last_ping_at >= _PING_INTERVAL:
+                try:
+                    await websocket.send_json({"type": "ping", "ts": datetime.now().isoformat()})
+                    last_ping_at = now_ts
+                except Exception:
+                    break
+
+            try:
+                # Wait for optional client ping or close frame with short timeout
+                await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+            except asyncio.TimeoutError:
+                pass
+    except WebSocketDisconnect:
+        pass
     except Exception as e:
-
-        logger.error("WebSocket error: %s", e)
-
+        logger.debug("WebSocket client exited: %s", e)
     finally:
-
-        if websocket in svc._ws_clients:
-
-            svc._ws_clients.remove(websocket)
-
-        logger.info(
-
-            "WebSocket client disconnected (%d remaining)", len(svc._ws_clients)
-
-        )
+        svc.broadcaster.unregister(websocket)
 
 @router.post("/api/refresh", dependencies=[Depends(require_admin)])
 

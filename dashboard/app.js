@@ -32,9 +32,21 @@ let _lastMorningFetchTs = 0;
 
 
 
-const API = (typeof window !== 'undefined' && (window.location.port === '5500' || window.location.port === '3000' || window.location.port === '5173'))
-    ? 'http://127.0.0.1:8000'
-    : '';  // Same origin for production / direct port 8000
+const API = (() => {
+    if (typeof window === 'undefined') return '';
+    if (window.__TRADEAI_CONFIG__ && typeof window.__TRADEAI_CONFIG__.API_BASE_URL === 'string') {
+        return window.__TRADEAI_CONFIG__.API_BASE_URL;
+    }
+    const port = window.location.port;
+    if (port === '5500' || port === '3000' || port === '5173') {
+        return 'http://127.0.0.1:8000';
+    }
+    const host = window.location.hostname;
+    if (host.endsWith('pages.dev') || host.endsWith('vercel.app')) {
+        return 'https://trading-api-n1wt.onrender.com';
+    }
+    return '';
+})();
 
 // ── TradeAI-PRO Currency & Market Display Helpers ──────────────────────────
 function _symCurr(sym) {
@@ -1030,7 +1042,19 @@ function connectPriceWebSocket() {
 
 
 
-    const wsUrl = `${wsProto}//${location.host}/ws/prices`;
+    let wsUrl = `${wsProto}//${location.host}/ws/prices`;
+    if (window.__TRADEAI_CONFIG__ && window.__TRADEAI_CONFIG__.WS_URL) {
+        wsUrl = window.__TRADEAI_CONFIG__.WS_URL;
+    } else if (API && API.startsWith('http')) {
+        try {
+            const parsed = new URL(API);
+            const resolvedHost = parsed.host;
+            const resolvedProto = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+            wsUrl = `${resolvedProto}//${resolvedHost}/ws/prices`;
+        } catch (e) {
+            console.warn('[WS] Could not parse API for WebSocket URL:', e);
+        }
+    }
 
 
 
