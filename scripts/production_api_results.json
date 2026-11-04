@@ -1,0 +1,1625 @@
+{
+  "tested_at": "2026-11-04T22:41:40.233901",
+  "base_url": "https://trading-api-n1wt.onrender.com",
+  "total_tested": 81,
+  "passed": 77,
+  "failed": 4,
+  "results": [
+    {
+      "path": "/api/health",
+      "status": 200,
+      "latency_ms": 803.2,
+      "keys": [
+        "status",
+        "healthy",
+        "database",
+        "loading",
+        "feed",
+        "symbols_loaded",
+        "signals_cached",
+        "ai_engine",
+        "providers",
+        "last_refresh",
+        "uptime_seconds",
+        "server_time"
+      ],
+      "sample": {
+        "status": "starting",
+        "healthy": true,
+        "database": "<dict>",
+        "loading": "<dict>",
+        "feed": "<dict>",
+        "symbols_loaded": 0
+      },
+      "error": null
+    },
+    {
+      "path": "/api/health/live",
+      "status": 200,
+      "latency_ms": 314.2,
+      "keys": [
+        "status",
+        "uptime_seconds",
+        "timestamp"
+      ],
+      "sample": {
+        "status": "alive",
+        "uptime_seconds": 230.08,
+        "timestamp": "2026-11-04T17:07:04.640176+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/health/ready",
+      "status": 503,
+      "latency_ms": 765.6,
+      "keys": [
+        "ready",
+        "status",
+        "reasons",
+        "symbols_loaded",
+        "db_connected"
+      ],
+      "sample": {
+        "ready": false,
+        "status": "warming_up",
+        "reasons": "<list len=1>",
+        "symbols_loaded": 0,
+        "db_connected": true
+      },
+      "error": null
+    },
+    {
+      "path": "/api/health/providers",
+      "status": 200,
+      "latency_ms": 296.8,
+      "keys": [
+        "providers",
+        "timestamp"
+      ],
+      "sample": {
+        "providers": "<dict>",
+        "timestamp": "2026-11-04T17:07:06.500787+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/ready",
+      "status": 503,
+      "latency_ms": 767.6,
+      "keys": [
+        "ready",
+        "status",
+        "reasons",
+        "symbols_loaded",
+        "db_connected"
+      ],
+      "sample": {
+        "ready": false,
+        "status": "warming_up",
+        "reasons": "<list len=1>",
+        "symbols_loaded": 0,
+        "db_connected": true
+      },
+      "error": null
+    },
+    {
+      "path": "/api/stats",
+      "status": 200,
+      "latency_ms": 341.2,
+      "keys": [
+        "total_trades",
+        "winning_trades",
+        "win_rate",
+        "total_pnl",
+        "unrealized_pnl",
+        "avg_pnl",
+        "best_trade",
+        "worst_trade",
+        "capital",
+        "cash_capital",
+        "initial_capital",
+        "deployed_margin",
+        "free_cash",
+        "open_trades"
+      ],
+      "sample": {
+        "total_trades": 9,
+        "winning_trades": 5,
+        "win_rate": 55.6,
+        "total_pnl": 521.18,
+        "unrealized_pnl": 0.0,
+        "avg_pnl": 57.91
+      },
+      "error": null
+    },
+    {
+      "path": "/api/dashboard/overview",
+      "status": 200,
+      "latency_ms": 394.8,
+      "keys": [
+        "status",
+        "market",
+        "portfolio_summary",
+        "system_status",
+        "market_open",
+        "market_status",
+        "capital",
+        "cash_capital",
+        "initial_capital",
+        "unrealized_pnl",
+        "total_pnl",
+        "win_rate",
+        "total_trades",
+        "closed_trades",
+        "open_positions_count",
+        "positions",
+        "top_signals",
+        "dominant_regime",
+        "ai_engine",
+        "risk_state",
+        "last_refresh",
+        "updated_at"
+      ],
+      "sample": {
+        "status": "ok",
+        "market": "<dict>",
+        "portfolio_summary": "<dict>",
+        "system_status": "<dict>",
+        "market_open": false,
+        "market_status": "CLOSED"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/overview/intelligence",
+      "status": 200,
+      "latency_ms": 1036.1,
+      "keys": [
+        "top_setups",
+        "avoid_list",
+        "ranking_meta",
+        "market_guardrails",
+        "system_state",
+        "learning_overlay",
+        "delta",
+        "sector_rotation",
+        "index_leadership",
+        "portfolio_caution",
+        "updated_at"
+      ],
+      "sample": {
+        "top_setups": "<list len=0>",
+        "avoid_list": "<list len=0>",
+        "ranking_meta": "<dict>",
+        "market_guardrails": "<dict>",
+        "system_state": "<dict>",
+        "learning_overlay": null
+      },
+      "error": null
+    },
+    {
+      "path": "/api/symbols",
+      "status": 200,
+      "latency_ms": 301.9,
+      "keys": [
+        "symbols"
+      ],
+      "sample": {
+        "symbols": "<list len=0>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/sectors",
+      "status": 200,
+      "latency_ms": 3204.5,
+      "keys": [
+        "sectors",
+        "real_data",
+        "updated_at"
+      ],
+      "sample": {
+        "sectors": "<list len=10>",
+        "real_data": true,
+        "updated_at": "2026-11-04T17:07:14.959348"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/nse/dashboard",
+      "status": 200,
+      "latency_ms": 342.9,
+      "keys": [
+        "timestamp",
+        "last_refresh",
+        "loading",
+        "mood",
+        "ai_summary",
+        "movers"
+      ],
+      "sample": {
+        "timestamp": "2026-11-04T17:07:15.674134",
+        "last_refresh": null,
+        "loading": "<dict>",
+        "mood": "<dict>",
+        "ai_summary": "<dict>",
+        "movers": "<dict>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/nse/news",
+      "status": 200,
+      "latency_ms": 2180.0,
+      "keys": [
+        "items",
+        "sources_ok",
+        "failed_sources",
+        "updated_at"
+      ],
+      "sample": {
+        "items": "<list len=12>",
+        "sources_ok": "<list len=4>",
+        "failed_sources": "<list len=0>",
+        "updated_at": "2026-11-04T17:07:18.282321+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/nse/prediction",
+      "status": 200,
+      "latency_ms": 1186.1,
+      "keys": [
+        "prediction",
+        "signals",
+        "news",
+        "prediction_history",
+        "accuracy_tracker",
+        "calculated_at",
+        "real_data"
+      ],
+      "sample": {
+        "prediction": "<dict>",
+        "signals": "<dict>",
+        "news": "<dict>",
+        "prediction_history": "<list len=1>",
+        "accuracy_tracker": "<dict>",
+        "calculated_at": "2026-11-04T17:07:19.846344+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/market/mood",
+      "status": 200,
+      "latency_ms": 298.8,
+      "keys": [
+        "mood",
+        "score",
+        "mood_label",
+        "mood_score",
+        "breadth",
+        "signals",
+        "breadth_signal_split",
+        "regimes",
+        "sector_avg_pct",
+        "updated_at"
+      ],
+      "sample": {
+        "mood": "CAUTIOUS",
+        "score": 50.0,
+        "mood_label": "CAUTIOUS",
+        "mood_score": 50.0,
+        "breadth": "<dict>",
+        "signals": "<dict>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/market/RELIANCE",
+      "status": 200,
+      "latency_ms": 2038.5,
+      "keys": [
+        "symbol",
+        "data",
+        "interval"
+      ],
+      "sample": {
+        "symbol": "RELIANCE",
+        "data": "<list len=100>",
+        "interval": "5m"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/search/symbols?q=TCS",
+      "status": 200,
+      "latency_ms": 306.8,
+      "keys": [
+        "results",
+        "query"
+      ],
+      "sample": {
+        "results": "<list len=50>",
+        "query": ""
+      },
+      "error": null
+    },
+    {
+      "path": "/api/search/quote/TCS",
+      "status": 200,
+      "latency_ms": 14653.6,
+      "keys": [
+        "symbol",
+        "close",
+        "high",
+        "low",
+        "rsi",
+        "macd_hist",
+        "regime",
+        "signal",
+        "chart"
+      ],
+      "sample": {
+        "symbol": "TCS",
+        "close": 2436.0,
+        "high": 2436.0,
+        "low": 2436.0,
+        "rsi": 52.2,
+        "macd_hist": 0.4965
+      },
+      "error": null
+    },
+    {
+      "path": "/api/crypto/intelligence",
+      "status": 200,
+      "latency_ms": 878.7,
+      "keys": [
+        "top_setups",
+        "avoid_list",
+        "market_guardrails",
+        "futures_context",
+        "theme_leadership",
+        "ranking_meta",
+        "updated_at"
+      ],
+      "sample": {
+        "top_setups": "<list len=0>",
+        "avoid_list": "<list len=0>",
+        "market_guardrails": "<dict>",
+        "futures_context": "<dict>",
+        "theme_leadership": "<list len=0>",
+        "ranking_meta": "<dict>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/crypto/news",
+      "status": 200,
+      "latency_ms": 1335.1,
+      "keys": [
+        "items",
+        "sources_ok",
+        "failed_sources",
+        "updated_at"
+      ],
+      "sample": {
+        "items": "<list len=12>",
+        "sources_ok": "<list len=6>",
+        "failed_sources": "<list len=0>",
+        "updated_at": "2026-11-04T17:07:41.714761+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/crypto/prediction",
+      "status": 200,
+      "latency_ms": 363.2,
+      "keys": [
+        "prediction",
+        "signals",
+        "prediction_history",
+        "accuracy_tracker",
+        "sources",
+        "calculated_at",
+        "real_data",
+        "error"
+      ],
+      "sample": {
+        "prediction": "<dict>",
+        "signals": "<list len=0>",
+        "prediction_history": "<list len=0>",
+        "accuracy_tracker": "<dict>",
+        "sources": "<dict>",
+        "calculated_at": "2026-11-04T17:07:42.523782+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/crypto/meme",
+      "status": 200,
+      "latency_ms": 24345.2,
+      "keys": [
+        "meme_coins",
+        "total",
+        "static_universe",
+        "discovered_universe",
+        "dynamic_discovery_enabled",
+        "buy_count",
+        "sell_count",
+        "hold_count",
+        "skip_count",
+        "hot_count",
+        "updated_at"
+      ],
+      "sample": {
+        "meme_coins": "<list len=0>",
+        "total": 0,
+        "static_universe": 32,
+        "discovered_universe": 0,
+        "dynamic_discovery_enabled": true,
+        "buy_count": 0
+      },
+      "error": null
+    },
+    {
+      "path": "/api/forex/intelligence",
+      "status": 200,
+      "latency_ms": 3703.0,
+      "keys": [
+        "session_intelligence",
+        "currency_strengths",
+        "risk_sentiment",
+        "growth_score",
+        "safe_haven_score",
+        "updated_at"
+      ],
+      "sample": {
+        "session_intelligence": "<dict>",
+        "currency_strengths": "<dict>",
+        "risk_sentiment": "RISK ON",
+        "growth_score": 0.97,
+        "safe_haven_score": -0.47,
+        "updated_at": "2026-11-04T17:08:11.386209"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/forex/rates",
+      "status": 200,
+      "latency_ms": 16860.1,
+      "keys": [
+        "rates",
+        "updated_at",
+        "source"
+      ],
+      "sample": {
+        "rates": "<dict>",
+        "updated_at": "2026-11-04T17:08:28.647153",
+        "source": "twelve_data"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/forex/sessions",
+      "status": 200,
+      "latency_ms": 500.7,
+      "keys": [
+        "sessions",
+        "current_ist",
+        "updated_at"
+      ],
+      "sample": {
+        "sessions": "<dict>",
+        "current_ist": "22:38",
+        "updated_at": "2026-11-04T22:38:29.546853+05:30"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/forex/signals",
+      "status": 200,
+      "latency_ms": 363.9,
+      "keys": [
+        "setups",
+        "qualified_setups",
+        "top_setups",
+        "skipped_setups",
+        "count",
+        "qualified_count",
+        "scanning_in_background",
+        "updated_at"
+      ],
+      "sample": {
+        "setups": "<list len=0>",
+        "qualified_setups": "<list len=0>",
+        "top_setups": "<list len=0>",
+        "skipped_setups": "<list len=0>",
+        "count": 0,
+        "qualified_count": 0
+      },
+      "error": null
+    },
+    {
+      "path": "/api/forex/signal/EUR_USD",
+      "status": 200,
+      "latency_ms": 950.8,
+      "keys": [
+        "symbol",
+        "setup",
+        "message"
+      ],
+      "sample": {
+        "symbol": "EUR/USD",
+        "setup": null,
+        "message": "No valid setup found"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/forex/ohlcv/EUR_USD?timeframe=1h",
+      "status": 200,
+      "latency_ms": 703.5,
+      "keys": [
+        "symbol",
+        "interval",
+        "candles",
+        "count"
+      ],
+      "sample": {
+        "symbol": "EUR/USD",
+        "interval": "4h",
+        "candles": "<list len=150>",
+        "count": 150
+      },
+      "error": null
+    },
+    {
+      "path": "/api/tradeflow",
+      "status": 200,
+      "latency_ms": 2185.1,
+      "keys": [
+        "flows",
+        "date",
+        "sentiment",
+        "fii_magnitude",
+        "fii_5d_trend",
+        "dii_context",
+        "fo_flow",
+        "true_intent",
+        "true_intent_score",
+        "fii_exit_context",
+        "usdinr_change_pct",
+        "combined_net",
+        "history",
+        "source",
+        "real_data",
+        "stale",
+        "age_minutes",
+        "age_hours",
+        "fetched_at",
+        "updated_at"
+      ],
+      "sample": {
+        "flows": "<list len=3>",
+        "date": "04-Nov-2026",
+        "sentiment": "FII_STRONG_BUY",
+        "fii_magnitude": "FII_STRONG_BUY",
+        "fii_5d_trend": "<dict>",
+        "dii_context": "DII_PROFIT_BOOKING_WHILE_FII_BUYS"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/paper/open",
+      "status": 200,
+      "latency_ms": 819.2,
+      "keys": [
+        "open_trades"
+      ],
+      "sample": {
+        "open_trades": "<list len=0>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/portfolio",
+      "status": 200,
+      "latency_ms": 375.6,
+      "keys": [
+        "open_positions",
+        "total_open",
+        "total_unrealized_pnl",
+        "total_portfolio_value",
+        "total_open_risk",
+        "total_closed",
+        "risk_metrics",
+        "drawdown",
+        "concentration_warnings",
+        "concentration_by_sector",
+        "portfolio_caution",
+        "pnl_attribution"
+      ],
+      "sample": {
+        "open_positions": "<list len=0>",
+        "total_open": 0,
+        "total_unrealized_pnl": 0,
+        "total_portfolio_value": 100119.0,
+        "total_open_risk": 0.0,
+        "total_closed": 9
+      },
+      "error": null
+    },
+    {
+      "path": "/api/trades?limit=50",
+      "status": 200,
+      "latency_ms": 439.7,
+      "keys": [
+        "trades"
+      ],
+      "sample": {
+        "trades": "<list len=9>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/performance",
+      "status": 200,
+      "latency_ms": 327.7,
+      "keys": [
+        "metrics",
+        "status",
+        "equity_curve",
+        "trade_distribution",
+        "monthly_pnl",
+        "exit_reasons",
+        "symbol_breakdown",
+        "recent_trades"
+      ],
+      "sample": {
+        "metrics": "<dict>",
+        "status": "<dict>",
+        "equity_curve": "<list len=23>",
+        "trade_distribution": "<dict>",
+        "monthly_pnl": "<list len=1>",
+        "exit_reasons": "<list len=3>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/paper/scorecard",
+      "status": 200,
+      "latency_ms": 357.6,
+      "keys": [
+        "enabled",
+        "total_trades",
+        "open_trades",
+        "win_rate_pct",
+        "unlock_level",
+        "unlock_message",
+        "validated",
+        "capital",
+        "total_pnl"
+      ],
+      "sample": {
+        "enabled": true,
+        "total_trades": 9,
+        "open_trades": 0,
+        "win_rate_pct": 55.6,
+        "unlock_level": "grey",
+        "unlock_message": "Building sample (9/30 paper trades)"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/risk/state",
+      "status": 200,
+      "latency_ms": 381.4,
+      "keys": [
+        "circuit_breaker_active",
+        "circuit_breaker_reason",
+        "drawdown_pct",
+        "drawdown_threshold",
+        "portfolio_heat_pct",
+        "portfolio_heat_max",
+        "consecutive_losses",
+        "max_consecutive_losses",
+        "daily_loss_pct",
+        "daily_loss_limit_pct"
+      ],
+      "sample": {
+        "circuit_breaker_active": false,
+        "circuit_breaker_reason": "",
+        "drawdown_pct": 0.0,
+        "drawdown_threshold": 0.12,
+        "portfolio_heat_pct": 0.0,
+        "portfolio_heat_max": 0.06
+      },
+      "error": null
+    },
+    {
+      "path": "/api/autonomous/status",
+      "status": 200,
+      "latency_ms": 1596.6,
+      "keys": [
+        "ok",
+        "status"
+      ],
+      "sample": {
+        "ok": true,
+        "status": "<dict>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/autonomous/feed",
+      "status": 200,
+      "latency_ms": 424.7,
+      "keys": [
+        "ok",
+        "feed"
+      ],
+      "sample": {
+        "ok": true,
+        "feed": "<list len=0>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/edge/top-setups",
+      "status": 200,
+      "latency_ms": 14677.8,
+      "keys": [
+        "asset_class",
+        "min_score",
+        "count",
+        "setups",
+        "force_refresh",
+        "timestamp"
+      ],
+      "sample": {
+        "asset_class": "all",
+        "min_score": -100.0,
+        "count": 9,
+        "setups": "<list len=9>",
+        "force_refresh": false,
+        "timestamp": "2026-11-04T17:08:58.352794+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/edge/score/RELIANCE",
+      "status": 200,
+      "latency_ms": 430.7,
+      "keys": [
+        "symbol",
+        "asset_class",
+        "edge_score",
+        "macro_score",
+        "cot_score",
+        "sentiment_score",
+        "risk_score",
+        "momentum_score",
+        "seasonal_bonus",
+        "carry_bonus",
+        "timestamp",
+        "cache_hit",
+        "cache_age_seconds",
+        "force_refresh"
+      ],
+      "sample": {
+        "symbol": "RELIANCE",
+        "asset_class": "nse",
+        "edge_score": 66.3,
+        "macro_score": 100.0,
+        "cot_score": 0.0,
+        "sentiment_score": 50.0
+      },
+      "error": null
+    },
+    {
+      "path": "/api/edge/score/ETH/USDT",
+      "status": 200,
+      "latency_ms": 332.8,
+      "keys": [
+        "symbol",
+        "asset_class",
+        "edge_score",
+        "macro_score",
+        "cot_score",
+        "sentiment_score",
+        "risk_score",
+        "momentum_score",
+        "seasonal_bonus",
+        "carry_bonus",
+        "timestamp",
+        "cache_hit",
+        "cache_age_seconds",
+        "force_refresh"
+      ],
+      "sample": {
+        "symbol": "ETH/USDT",
+        "asset_class": "crypto",
+        "edge_score": 66.8,
+        "macro_score": 54.2,
+        "cot_score": 0.0,
+        "sentiment_score": 100.0
+      },
+      "error": null
+    },
+    {
+      "path": "/api/edge/research/RELIANCE",
+      "status": 200,
+      "latency_ms": 803.8,
+      "keys": [
+        "status",
+        "symbol",
+        "asset_class",
+        "edge_score",
+        "factor_coverage_pct",
+        "confidence",
+        "rationale",
+        "factors",
+        "legacy_breakdown",
+        "timestamp"
+      ],
+      "sample": {
+        "status": "ok",
+        "symbol": "RELIANCE",
+        "asset_class": "nse",
+        "edge_score": 66.3,
+        "factor_coverage_pct": 100.0,
+        "confidence": 0.95
+      },
+      "error": null
+    },
+    {
+      "path": "/api/screener/opportunities",
+      "status": 200,
+      "latency_ms": 304.2,
+      "keys": [
+        "opportunities"
+      ],
+      "sample": {
+        "opportunities": "<list len=0>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/screener/gainers",
+      "status": 200,
+      "latency_ms": 5624.6,
+      "keys": [
+        "data",
+        "real_data",
+        "updated_at"
+      ],
+      "sample": {
+        "data": "<list len=0>",
+        "real_data": false,
+        "updated_at": "2026-11-04T17:09:07.849510"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/screener/losers",
+      "status": 200,
+      "latency_ms": 605.1,
+      "keys": [
+        "data",
+        "real_data",
+        "source",
+        "updated_at"
+      ],
+      "sample": {
+        "data": "<list len=1>",
+        "real_data": true,
+        "source": "cache",
+        "updated_at": "2026-11-04T17:09:08.848426"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/intraday/latest",
+      "status": 200,
+      "latency_ms": 13513.4,
+      "keys": [
+        "id",
+        "scan_time",
+        "trigger",
+        "symbols_scanned",
+        "signal_count",
+        "signals",
+        "nifty_market_context",
+        "should_square_off"
+      ],
+      "sample": {
+        "id": 2,
+        "scan_time": "2026-11-02T14:39:17.816059",
+        "trigger": "api",
+        "symbols_scanned": 10,
+        "signal_count": 0,
+        "signals": "<list len=0>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/intraday/stats",
+      "status": 200,
+      "latency_ms": 2382.9,
+      "keys": [
+        "window_days",
+        "scan_count",
+        "last_scan_time",
+        "last_signal_count"
+      ],
+      "sample": {
+        "window_days": 14,
+        "scan_count": 2,
+        "last_scan_time": "2026-11-02T14:39:17.816059",
+        "last_signal_count": 0
+      },
+      "error": null
+    },
+    {
+      "path": "/api/intraday/live-quote/RELIANCE",
+      "status": 200,
+      "latency_ms": 6656.1,
+      "keys": [
+        "symbol",
+        "ltp",
+        "change_pct",
+        "open",
+        "high",
+        "low",
+        "previous_close",
+        "vwap",
+        "total_volume",
+        "delivery_pct",
+        "rvol",
+        "source",
+        "timestamp_ist"
+      ],
+      "sample": {
+        "symbol": "RELIANCE",
+        "ltp": 1311.0,
+        "change_pct": 0.24,
+        "open": 1301.9,
+        "high": 1318.9,
+        "low": 1296.0
+      },
+      "error": null
+    },
+    {
+      "path": "/api/morning-scan",
+      "status": 200,
+      "latency_ms": 834.8,
+      "keys": [
+        "scan_time",
+        "count",
+        "results"
+      ],
+      "sample": {
+        "scan_time": null,
+        "count": 0,
+        "results": "<list len=0>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/swing-scanner",
+      "status": 200,
+      "latency_ms": 1056.3,
+      "keys": [
+        "setups",
+        "total_found",
+        "symbols_scanned",
+        "real_data",
+        "updated_at",
+        "market_context"
+      ],
+      "sample": {
+        "setups": "<list len=30>",
+        "total_found": 30,
+        "symbols_scanned": 220,
+        "real_data": true,
+        "updated_at": "2026-11-03T17:21:52.016769",
+        "market_context": null
+      },
+      "error": null
+    },
+    {
+      "path": "/api/swing/shortlist",
+      "status": 200,
+      "latency_ms": 1294.4,
+      "keys": [
+        "setups",
+        "scan_date",
+        "generated_at",
+        "symbols_scanned",
+        "setups_found",
+        "grade_summary",
+        "message"
+      ],
+      "sample": {
+        "setups": "<list len=30>",
+        "scan_date": "2026-11-03",
+        "generated_at": "2026-11-03T17:21:52.016769",
+        "symbols_scanned": 220,
+        "setups_found": 30,
+        "grade_summary": "<dict>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/swing/stats",
+      "status": 200,
+      "latency_ms": 7383.7,
+      "keys": [
+        "stats",
+        "updated_at"
+      ],
+      "sample": {
+        "stats": "<dict>",
+        "updated_at": "2026-11-04T17:09:44.786999"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/swing/history",
+      "status": 200,
+      "latency_ms": 1065.8,
+      "keys": [
+        "scans",
+        "updated_at"
+      ],
+      "sample": {
+        "scans": "<list len=7>",
+        "updated_at": "2026-11-04T17:09:46.237960"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/swing/symbol/RELIANCE",
+      "status": 200,
+      "latency_ms": 2596.9,
+      "keys": [
+        "symbol",
+        "setups",
+        "total_found",
+        "symbols_scanned",
+        "real_data",
+        "lookup",
+        "updated_at",
+        "market_context",
+        "message",
+        "swing_scan",
+        "tech_summary",
+        "active_symbols"
+      ],
+      "sample": {
+        "symbol": "RELIANCE",
+        "setups": "<list len=1>",
+        "total_found": 1,
+        "symbols_scanned": 1,
+        "real_data": true,
+        "lookup": true
+      },
+      "error": null
+    },
+    {
+      "path": "/api/swing-debug",
+      "status": 200,
+      "latency_ms": 437.1,
+      "keys": [
+        "market_context",
+        "symbols_checked",
+        "total_raw_setups",
+        "total_after_gate",
+        "settings",
+        "results"
+      ],
+      "sample": {
+        "market_context": "<dict>",
+        "symbols_checked": 0,
+        "total_raw_setups": 0,
+        "total_after_gate": 0,
+        "settings": "<dict>",
+        "results": "<list len=0>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/breakouts",
+      "status": 200,
+      "latency_ms": 801.5,
+      "keys": [
+        "all",
+        "message",
+        "real_data",
+        "updated_at"
+      ],
+      "sample": {
+        "all": "<list len=0>",
+        "message": "Daily data not yet loaded.",
+        "real_data": false,
+        "updated_at": "2026-11-04T17:09:51.072201"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/index-mover/NIFTY",
+      "status": 200,
+      "latency_ms": 5476.1,
+      "keys": [
+        "index",
+        "index_level",
+        "index_change_pts",
+        "index_pct",
+        "movers",
+        "top_gainers",
+        "top_draggers",
+        "total_points_up",
+        "total_points_down",
+        "stocks_up",
+        "stocks_down",
+        "real_data",
+        "timestamp"
+      ],
+      "sample": {
+        "index": "NIFTY 50",
+        "index_level": 23960.6,
+        "index_change_pts": 149.8,
+        "index_pct": 0.63,
+        "movers": "<list len=30>",
+        "top_gainers": "<list len=5>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/analytics/scorecard",
+      "status": 200,
+      "latency_ms": 659.0,
+      "keys": [
+        "total_signals",
+        "overall_win_rate",
+        "wins",
+        "losses",
+        "timeouts",
+        "by_regime",
+        "by_symbol",
+        "by_hour",
+        "by_confidence",
+        "by_quality_grade",
+        "false_signal_reasons",
+        "pending_count",
+        "generated_at",
+        "message"
+      ],
+      "sample": {
+        "total_signals": 0,
+        "overall_win_rate": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "timeouts": 0,
+        "by_regime": "<dict>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/analytics/signals",
+      "status": 200,
+      "latency_ms": 329.7,
+      "keys": [
+        "signals",
+        "total"
+      ],
+      "sample": {
+        "signals": "<list len=0>",
+        "total": 0
+      },
+      "error": null
+    },
+    {
+      "path": "/api/learning/stats",
+      "status": 200,
+      "latency_ms": 798.6,
+      "keys": [
+        "insights",
+        "weights",
+        "health",
+        "db_path"
+      ],
+      "sample": {
+        "insights": "<dict>",
+        "weights": "<dict>",
+        "health": "<dict>",
+        "db_path": "/opt/render/project/src/trading.db"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/learning/outcomes",
+      "status": 200,
+      "latency_ms": 525.2,
+      "keys": [
+        "outcomes"
+      ],
+      "sample": {
+        "outcomes": "<list len=0>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/ai/ensemble/status",
+      "status": 200,
+      "latency_ms": 312.9,
+      "keys": [
+        "status",
+        "ai_engine",
+        "dynamic_weights",
+        "active_regimes",
+        "timestamp"
+      ],
+      "sample": {
+        "status": "ok",
+        "ai_engine": "<dict>",
+        "dynamic_weights": "<dict>",
+        "active_regimes": "<dict>",
+        "timestamp": "2026-11-04T17:10:01.791203+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/ensemble/status",
+      "status": 200,
+      "latency_ms": 809.9,
+      "keys": [
+        "ensemble_active",
+        "active_model_count",
+        "models",
+        "timestamp"
+      ],
+      "sample": {
+        "ensemble_active": true,
+        "active_model_count": 4,
+        "models": "<dict>",
+        "timestamp": "2026-11-04T17:10:02.920205+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/ensemble/validate",
+      "status": 408,
+      "latency_ms": 30004.9,
+      "keys": [],
+      "sample": null,
+      "error": "Request timed out (>30s)"
+    },
+    {
+      "path": "/api/ai/weights",
+      "status": 200,
+      "latency_ms": 653.4,
+      "keys": [
+        "effective_weights",
+        "multipliers",
+        "accuracy",
+        "guardrails"
+      ],
+      "sample": {
+        "effective_weights": "<dict>",
+        "multipliers": "<dict>",
+        "accuracy": "<dict>",
+        "guardrails": "<dict>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/retrain/status",
+      "status": 200,
+      "latency_ms": 483.5,
+      "keys": [
+        "jobs"
+      ],
+      "sample": {
+        "jobs": "<dict>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/edge/macro-heatmap",
+      "status": 200,
+      "latency_ms": 14622.2,
+      "keys": [
+        "heatmap",
+        "force_refresh",
+        "timestamp"
+      ],
+      "sample": {
+        "heatmap": "<dict>",
+        "force_refresh": false,
+        "timestamp": "2026-11-04T17:10:50.355334+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/macro/intelligence",
+      "status": 200,
+      "latency_ms": 7489.4,
+      "keys": [
+        "status",
+        "macro"
+      ],
+      "sample": {
+        "status": "ok",
+        "macro": "<dict>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/macro/sector-impact",
+      "status": 422,
+      "latency_ms": 2797.8,
+      "keys": [
+        "detail"
+      ],
+      "sample": {
+        "detail": "<list len=1>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/edge/risk-gauge",
+      "status": 200,
+      "latency_ms": 1791.4,
+      "keys": [
+        "risk_score",
+        "regime",
+        "indicators",
+        "updated_at",
+        "cache_age_seconds",
+        "force_refresh",
+        "risk_regime",
+        "vix_level",
+        "vix_trend",
+        "btc_trend",
+        "nifty_trend",
+        "usdjpy_trend",
+        "gold_trend",
+        "timestamp"
+      ],
+      "sample": {
+        "risk_score": 54.2,
+        "regime": "NEUTRAL",
+        "indicators": "<dict>",
+        "updated_at": "2026-11-04T17:08:50.349877+00:00",
+        "cache_age_seconds": 133,
+        "force_refresh": false
+      },
+      "error": null
+    },
+    {
+      "path": "/api/signals/all",
+      "status": 200,
+      "latency_ms": 2517.5,
+      "keys": [
+        "signals",
+        "updated_at"
+      ],
+      "sample": {
+        "signals": "<list len=1>",
+        "updated_at": "2026-11-04T17:11:06.561600"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/signals/leaderboard",
+      "status": 200,
+      "latency_ms": 2187.2,
+      "keys": [
+        "leaderboard",
+        "updated_at"
+      ],
+      "sample": {
+        "leaderboard": "<list len=0>",
+        "updated_at": "2026-11-04T17:11:09.151525"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/signals/winrate",
+      "status": 200,
+      "latency_ms": 2628.1,
+      "keys": [
+        "symbol",
+        "total_signals",
+        "win_rate_pct",
+        "avg_outcome_pct",
+        "message"
+      ],
+      "sample": {
+        "symbol": "ALL",
+        "total_signals": 0,
+        "win_rate_pct": null,
+        "avg_outcome_pct": null,
+        "message": "Not enough data yet \u2014 needs 24h of live signals"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/signal/RELIANCE",
+      "status": 200,
+      "latency_ms": 1375.5,
+      "keys": [
+        "error"
+      ],
+      "sample": {
+        "error": "Symbol RELIANCE not found"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/regime/all",
+      "status": 200,
+      "latency_ms": 2088.5,
+      "keys": [
+        "regimes",
+        "two_axis",
+        "updated_at"
+      ],
+      "sample": {
+        "regimes": "<dict>",
+        "two_axis": "<dict>",
+        "updated_at": "2026-11-04T17:11:16.449799"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/regime/RELIANCE",
+      "status": 200,
+      "latency_ms": 2501.9,
+      "keys": [
+        "error"
+      ],
+      "sample": {
+        "error": "Symbol RELIANCE not found"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/context/market-mood",
+      "status": 200,
+      "latency_ms": 1912.3,
+      "keys": [
+        "crypto_mood",
+        "btc_dominance",
+        "btc_dominance_source",
+        "btc_24hr_change",
+        "nifty_24hr_change",
+        "avg_news_sentiment",
+        "active_event_risk",
+        "next_event"
+      ],
+      "sample": {
+        "crypto_mood": "NEUTRAL",
+        "btc_dominance": null,
+        "btc_dominance_source": "warming_up",
+        "btc_24hr_change": 0.0,
+        "nifty_24hr_change": 0.0,
+        "avg_news_sentiment": 0.0
+      },
+      "error": null
+    },
+    {
+      "path": "/api/context/events",
+      "status": 200,
+      "latency_ms": 4615.2,
+      "keys": [
+        "events"
+      ],
+      "sample": {
+        "events": "<list len=0>"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/context/v3",
+      "status": 200,
+      "latency_ms": 2182.3,
+      "keys": [
+        "status",
+        "india_vix",
+        "fii_dii_flow",
+        "market_breadth",
+        "derivatives_oi",
+        "updated_at"
+      ],
+      "sample": {
+        "status": "ok",
+        "india_vix": "<dict>",
+        "fii_dii_flow": "<dict>",
+        "market_breadth": "<dict>",
+        "derivatives_oi": "<dict>",
+        "updated_at": "2026-11-04T17:11:29.248649+00:00"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/context/RELIANCE",
+      "status": 200,
+      "latency_ms": 9300.6,
+      "keys": [
+        "symbol",
+        "timestamp_utc",
+        "price_change_24hr_pct",
+        "volume_change_24hr_pct",
+        "news_sentiment_24hr",
+        "news_sentiment_7d",
+        "news_volume_spike",
+        "weekly_trend_bias",
+        "oi_change_7d_pct",
+        "btc_dominance_7d_trend",
+        "days_to_next_event",
+        "event_risk_active",
+        "context_score"
+      ],
+      "sample": {
+        "symbol": "RELIANCE",
+        "timestamp_utc": "2026-11-04T17:11:31.359108+00:00",
+        "price_change_24hr_pct": 0.24,
+        "volume_change_24hr_pct": -100.0,
+        "news_sentiment_24hr": 0.0,
+        "news_sentiment_7d": 0.16666666666666666
+      },
+      "error": null
+    },
+    {
+      "path": "/api/nlp/summary",
+      "status": 200,
+      "latency_ms": 488.7,
+      "keys": [
+        "lines",
+        "summary",
+        "generated_at"
+      ],
+      "sample": {
+        "lines": "<list len=3>",
+        "summary": "Market mood is BEARISH with score 0.0/100. Breadth: 0 gainers vs 1 losers; signal bias -100.0%. Top movers: NA (+0.00%) and NA (+0.00%).",
+        "generated_at": "2026-11-04T17:11:39.853043"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/telegram/status",
+      "status": 200,
+      "latency_ms": 431.9,
+      "keys": [
+        "configured",
+        "enabled",
+        "token_set",
+        "chat_id_set",
+        "setup_guide"
+      ],
+      "sample": {
+        "configured": false,
+        "enabled": false,
+        "token_set": false,
+        "chat_id_set": false,
+        "setup_guide": "Add TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID + TELEGRAM_ALERTS_ENABLED=true to your .env file"
+      },
+      "error": null
+    },
+    {
+      "path": "/api/backtest/RELIANCE",
+      "status": 200,
+      "latency_ms": 389.7,
+      "keys": [
+        "error"
+      ],
+      "sample": {
+        "error": "Symbol RELIANCE not found"
+      },
+      "error": null
+    }
+  ]
+}

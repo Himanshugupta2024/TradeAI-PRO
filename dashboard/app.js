@@ -7952,6 +7952,9 @@ async function openPositionDetail(tradeId) {
     if (!trade && Array.isArray(window._cachedOpenPositions)) {
         trade = window._cachedOpenPositions.find(t => Number(t.id) === Number(tradeId));
     }
+    if (!trade && Array.isArray(window._cachedTradeHistory)) {
+        trade = window._cachedTradeHistory.find(t => Number(t.id) === Number(tradeId));
+    }
 
     // 2. Fetch fresh open positions if missing
     if (!trade) {
@@ -7966,11 +7969,24 @@ async function openPositionDetail(tradeId) {
         }
     }
 
+    // 3. Fallback to trade history if not open
+    if (!trade) {
+        try {
+            const res = await fetchWithTimeout(`${API}/api/trades?limit=50`, {}, 10000);
+            const data = await parseJsonResponse(res);
+            const histTrades = data.trades || [];
+            trade = histTrades.find(t => Number(t.id) === Number(tradeId));
+            if (histTrades.length) window._cachedTradeHistory = histTrades;
+        } catch (e) {
+            console.warn('Failed to fetch trade history for detail:', e);
+        }
+    }
+
     if (!trade) {
         if (typeof showToast === 'function') {
-            showToast('Position detail not found or trade already closed.', 'warning');
+            showToast('Trade #' + tradeId + ' details not found.', 'warning');
         } else {
-            alert('Position detail not found or trade already closed.');
+            alert('Trade #' + tradeId + ' details not found.');
         }
         return;
     }
@@ -7994,20 +8010,27 @@ async function openPositionDetail(tradeId) {
     const cachedPrice = typeof cachedTick === 'object' && cachedTick ? (cachedTick.close ?? cachedTick.price ?? cachedTick.ltp) : cachedTick;
     const ltp = Number(trade.current_price ?? cachedPrice ?? entry);
 
+    const isClosed = trade.status && trade.status !== 'OPEN';
+    const exitPx = Number(trade.exit_price || ltp);
     const mult = isLong ? 1 : -1;
-    const pnl = (ltp - entry) * qty * mult;
-    const pnlPct = entry > 0 ? ((ltp - entry) / entry) * 100 * mult : 0;
+    const pnl = isClosed
+        ? Number(trade.total_pnl != null ? trade.total_pnl : ((trade.pnl || 0) * qty))
+        : (ltp - entry) * qty * mult;
+    const pnlPct = isClosed
+        ? Number(trade.pnl_pct || (entry > 0 ? ((exitPx - entry) / entry * 100 * mult) : 0))
+        : (entry > 0 ? ((ltp - entry) / entry) * 100 * mult : 0);
     const pnlSign = pnl >= 0 ? '+' : '';
     const pnlBg = pnl >= 0 ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)';
     const pnlBorder = pnl >= 0 ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)';
     const pnlColor = pnl >= 0 ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
 
     // Distances
-    const slDistPct = entry > 0 ? Math.abs((ltp - sl) / ltp * 100) : 0;
-    const tpDistPct = ltp > 0 && tp > 0 ? (isLong ? ((tp - ltp) / ltp * 100) : ((ltp - tp) / ltp * 100)) : 0;
+    const comparePx = isClosed ? exitPx : ltp;
+    const slDistPct = entry > 0 ? Math.abs((comparePx - sl) / comparePx * 100) : 0;
+    const tpDistPct = comparePx > 0 && tp > 0 ? (isLong ? ((tp - comparePx) / comparePx * 100) : ((comparePx - tp) / comparePx * 100)) : 0;
 
     // Duration
-    const duration = trade.time_in_trade_human || _fmtDuration(trade.entry_time, new Date().toISOString());
+    const duration = trade.duration_human || trade.time_in_trade_human || _fmtDuration(trade.entry_time, trade.exit_time || new Date().toISOString());
 
     // Update Header
     const titleEl = document.getElementById('posModalTitle');
@@ -8022,8 +8045,14 @@ async function openPositionDetail(tradeId) {
 
     const subMeta = document.getElementById('posModalSubMeta');
     if (subMeta) {
-        subMeta.textContent = `${trade.signal_type || 'AUTONOMOUS'} · ${trade.regime || 'MARKET'} Regime · Duration: ${duration}`;
+        const exitNote = isClosed ? ` · Status: ${trade.exit_reason || trade.status}` : '';
+        subMeta.textContent = `${trade.signal_type || 'AUTONOMOUS'} · ${trade.regime || 'MARKET'} Regime · Duration: ${duration}${exitNote}`;
     }
+
+    // Status rendering
+    const statusText = isClosed ? `● ${trade.status || 'CLOSED'}` : '● ACTIVE RUNNING';
+    const statusColor = isClosed ? pnlColor : 'var(--green)';
+    const pnlTitle = isClosed ? 'Final Realized P&amp;L' : 'Floating Unrealized P&amp;L';
 
     // Render Rich Body
     const bodyEl = document.getElementById('posModalBody');
@@ -8032,7 +8061,7 @@ async function openPositionDetail(tradeId) {
             <!-- Live P&L Card -->
             <div style="background:${pnlBg};border:1px solid ${pnlBorder};border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
                 <div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Floating Unrealized P&amp;L</div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">${pnlTitle}</div>
                     <div style="font-size:1.5rem;font-weight:800;font-family:var(--font-mono);line-height:1.2;margin-top:2px;color:${pnlColor};">
                         ${pnlSign}${currSym}${Math.abs(pnl).toFixed(2)}
                         <span style="font-size:0.95rem;font-weight:600;margin-left:6px;">(${pnlSign}${pnlPct.toFixed(2)}%)</span>
@@ -8040,7 +8069,7 @@ async function openPositionDetail(tradeId) {
                 </div>
                 <div style="text-align:right;">
                     <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Status</div>
-                    <div style="font-size:0.9rem;font-weight:700;color:var(--green);margin-top:4px;">● ACTIVE RUNNING</div>
+                    <div style="font-size:0.9rem;font-weight:700;color:${statusColor};margin-top:4px;">${statusText}</div>
                 </div>
             </div>
 
@@ -8055,9 +8084,9 @@ async function openPositionDetail(tradeId) {
                     <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">Filled</div>
                 </div>
                 <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
-                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Live Market LTP</div>
-                    <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#38bdf8;margin-top:2px;">${currSym}${ltp.toFixed(2)}</div>
-                    <div style="font-size:0.65rem;color:#38bdf8;margin-top:2px;">Real-Time</div>
+                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">${isClosed ? 'Exit Price' : 'Live Market LTP'}</div>
+                    <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#38bdf8;margin-top:2px;">${currSym}${isClosed ? exitPx.toFixed(2) : ltp.toFixed(2)}</div>
+                    <div style="font-size:0.65rem;color:${isClosed ? 'var(--text-muted)' : '#38bdf8'};margin-top:2px;">${isClosed ? (trade.exit_time ? 'Closed ' + new Date(trade.exit_time).toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'}) : 'Closed') : 'Real-Time'}</div>
                 </div>
                 <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
                     <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss (SL)</div>
@@ -8131,12 +8160,17 @@ async function openPositionDetail(tradeId) {
 
     const exitBtn = document.getElementById('posModalExitBtn');
     if (exitBtn) {
-        exitBtn.onclick = () => {
-            closePositionDetailModal();
-            if (typeof closePaperTrade === 'function') {
-                closePaperTrade(trade.id, ltp);
-            }
-        };
+        if (isClosed) {
+            exitBtn.style.display = 'none';
+        } else {
+            exitBtn.style.display = 'inline-block';
+            exitBtn.onclick = () => {
+                closePositionDetailModal();
+                if (typeof closePaperTrade === 'function') {
+                    closePaperTrade(trade.id, ltp);
+                }
+            };
+        }
     }
 
     modalBackdrop.style.display = 'flex';
@@ -11123,6 +11157,7 @@ async function loadPortfolio() {
         const hBody = document.getElementById('historyBody');
         const hCount = document.getElementById('historyTradeCount');
         const rawTrades = trades.trades || [];
+        window._cachedTradeHistory = rawTrades;
         const closedTrades = rawTrades.filter(t => t.status !== 'OPEN');
 
         if (hCount) {
@@ -11175,7 +11210,7 @@ async function loadPortfolio() {
                     const signalBadge = t.signal_type ? `<div style="font-size:0.65rem;color:var(--text-muted);letter-spacing:0.04em;">${t.signal_type}</div>` : '';
 
                     return `
-                        <tr>
+                        <tr onclick="openPositionDetail(${t.id})" style="cursor:pointer;" title="Click to view complete trade analytics and execution details">
                             <td class="perf-td-id" style="font-family: var(--font-mono); color: var(--text-muted);">#${t.id || '—'}</td>
                             <td style="font-family: var(--font-body); white-space: nowrap;">${time}</td>
                             <td>
@@ -13379,7 +13414,7 @@ function _renderTradeHistory(trades) {
         const sign = pnl >= 0 ? '+' : '';
         const qtyDisplay = Number.isInteger(qty) ? qty.toString() : qty.toFixed(qty < 1 ? 4 : 2);
 
-        return `<tr>
+        return `<tr onclick="openPositionDetail(${t.id})" style="cursor:pointer;" title="Click to view complete trade analytics and execution details">
             <td class="perf-td-id">#${t.id || '—'}</td>
             <td class="perf-td-sym"><b>${t.symbol}</b></td>
             <td><span class="perf-dir-badge ${dirCls}">${t.direction}</span></td>
