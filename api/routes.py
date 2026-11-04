@@ -16,6 +16,8 @@ from dataclasses import asdict
 
 from datetime import datetime, timedelta, timezone
 
+from typing import Any, Dict, List, Optional
+
 from urllib.request import Request, urlopen
 
 from xml.etree import ElementTree as ET
@@ -7012,23 +7014,33 @@ async def search_quote(symbol: str):
 
         if df is None:
 
-            # 1st attempt: raw symbol (handles known tickers, AAPL, etc.)
+            from agents.market_intelligence.nse_fetcher import NSE_SYMBOLS
 
-            df = await asyncio.to_thread(fetch_arbitrary_symbol, clean)
+            is_known_nse = clean_base in NSE_SYMBOLS or clean_base in settings.NSE_TICKER_MAP
 
-            # 2nd attempt: try as NSE stock with .NS suffix (e.g. PRECWIRE → PRECWIRE.NS)
+            target_first = NSE_SYMBOLS.get(clean_base, f"{clean_base}.NS") if is_known_nse else clean
+
+            # 1st attempt: targeted symbol (NSE ticker for Indian stocks, raw symbol for global)
+
+            df = await asyncio.to_thread(fetch_arbitrary_symbol, target_first)
+
+            if df is not None and not df.empty and is_known_nse:
+
+                clean = clean_base
+
+            # 2nd attempt: fallback if 1st attempt failed
 
             if (df is None or df.empty) and "/" not in clean:
 
-                nse_ticker = f"{clean_base}.NS"
+                fallback_ticker = clean if is_known_nse else f"{clean_base}.NS"
 
-                logger.info("Trying NSE suffix: %s", nse_ticker)
+                logger.info("Trying fallback ticker: %s", fallback_ticker)
 
-                df = await asyncio.to_thread(fetch_arbitrary_symbol, nse_ticker)
+                df = await asyncio.to_thread(fetch_arbitrary_symbol, fallback_ticker)
 
                 if df is not None and not df.empty:
 
-                    clean = clean_base  # Use clean display name for cache key
+                    clean = clean_base
 
             if df is None or df.empty:
 
@@ -7190,81 +7202,90 @@ async def search_quote(symbol: str):
 
 # ── AI / Ensemble Endpoints ──────────────────────────────
 
+_ensemble_validation_job: dict[str, Any] = {
+    "status": "IDLE",
+    "symbol": "BTC/USDT",
+    "timeframe": "4h",
+    "started_at": None,
+    "completed_at": None,
+    "result": None,
+    "error": None,
+}
+_ensemble_validation_lock = asyncio.Lock()
+
+
+async def _run_ensemble_validation_task(symbol: str, timeframe: str, days: int, n_folds: int):
+    global _ensemble_validation_job
+    async with _ensemble_validation_lock:
+        _ensemble_validation_job["status"] = "RUNNING"
+        _ensemble_validation_job["started_at"] = datetime.now(timezone.utc).isoformat()
+        _ensemble_validation_job["symbol"] = symbol
+        _ensemble_validation_job["timeframe"] = timeframe
+        _ensemble_validation_job["error"] = None
+        try:
+            loop = asyncio.get_event_loop()
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                from agents.backtester.ensemble_validator import (
+                    result_to_dict,
+                    run_walk_forward_validation,
+                )
+                result = await loop.run_in_executor(
+                    ex,
+                    lambda: run_walk_forward_validation(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        days=days,
+                        n_folds=n_folds,
+                    ),
+                )
+            _ensemble_validation_job["result"] = result_to_dict(result)
+            _ensemble_validation_job["status"] = "COMPLETE"
+            _ensemble_validation_job["completed_at"] = datetime.now(timezone.utc).isoformat()
+            logger.info("Ensemble validation background task completed successfully.")
+        except Exception as exc:
+            logger.error("Ensemble validation background task failed: %s", exc)
+            _ensemble_validation_job["status"] = "FAILED"
+            _ensemble_validation_job["error"] = str(exc)
+            _ensemble_validation_job["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+
 @router.get("/api/ensemble/validate")
-
 async def ensemble_validate(
-
     symbol: str = Query(default="BTC/USDT"),
-
     timeframe: str = Query(default="4h"),
-
     days: int = Query(default=365),
-
     n_folds: int = Query(default=5),
-
+    run: bool = Query(default=False, description="Trigger new background run"),
 ):
-
     """
-
-    Run walk-forward validation of the ensemble predictor.
-
-    Tests prediction accuracy on historical data without lookahead bias.
-
-    Each fold trains on older data and tests on newer data.
-
-    Returns per-fold accuracy, precision, high-confidence accuracy,
-
-    estimated profit factor, and calibration score.
-
-    Note: Takes 2-5 minutes depending on dataset size.
-
+    Asynchronous walk-forward validation endpoint.
+    Returns status (QUEUED / RUNNING / COMPLETE / FAILED / IDLE) and cached results instantly.
+    Pass run=true to trigger a new validation run in the background without blocking the HTTP request.
     """
+    global _ensemble_validation_job
+    if run:
+        if _ensemble_validation_job.get("status") == "RUNNING":
+            return {
+                "status": "RUNNING",
+                "message": "Validation is currently running in the background",
+                "job": _ensemble_validation_job,
+            }
+        _ensemble_validation_job["status"] = "QUEUED"
+        _ensemble_validation_job["symbol"] = symbol
+        _ensemble_validation_job["timeframe"] = timeframe
+        asyncio.create_task(_run_ensemble_validation_task(symbol, timeframe, days, n_folds))
+        return {
+            "status": "QUEUED",
+            "message": "Validation job successfully queued in background",
+            "job": _ensemble_validation_job,
+        }
 
-    import asyncio
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    async def _run():
-
-        loop = asyncio.get_event_loop()
-
-        with ThreadPoolExecutor(max_workers=1) as ex:
-
-            from agents.backtester.ensemble_validator import (
-
-                result_to_dict,
-
-                run_walk_forward_validation,
-
-            )
-
-            result = await loop.run_in_executor(
-
-                ex,
-
-                lambda: run_walk_forward_validation(
-
-                    symbol=symbol,
-
-                    timeframe=timeframe,
-
-                    days=days,
-
-                    n_folds=n_folds,
-
-                ),
-
-            )
-
-        return result_to_dict(result)
-
-    try:
-
-        return await _run()
-
-    except Exception as e:
-
-        return JSONResponse(status_code=500, content={"error": str(e)})
+    return {
+        "status": _ensemble_validation_job.get("status", "IDLE"),
+        "job": _ensemble_validation_job,
+        "result": _ensemble_validation_job.get("result"),
+    }
 
 @router.get("/api/ensemble/status")
 

@@ -16,6 +16,7 @@ Execution Flow:
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 from zoneinfo import ZoneInfo
@@ -100,8 +101,16 @@ def _init_portfolio_state(portfolio_state: Optional[dict]) -> dict:
     return state
 
 
+_nifty_context_cache: Dict[str, Any] = {"data": None, "timestamp": 0.0}
+_NIFTY_CONTEXT_TTL = 60.0  # 60 seconds cache
+
 def get_nifty_market_context() -> Dict[str, Any]:
-    """Fetch live NIFTY 50 quote and evaluate intraday market regime."""
+    """Fetch live NIFTY 50 quote and evaluate intraday market regime with 60s bounded cache."""
+    now_ts = time.time()
+    cached = _nifty_context_cache.get("data")
+    if cached is not None and (now_ts - _nifty_context_cache.get("timestamp", 0.0)) < _NIFTY_CONTEXT_TTL:
+        return cached
+
     try:
         from agents.data_ingestion.nse_live_quote import get_nse_live_quote
 
@@ -127,7 +136,7 @@ def get_nifty_market_context() -> Dict[str, Any]:
             )
         )
 
-        return {
+        res = {
             "symbol": "NIFTY 50",
             "ltp": quote.ltp,
             "vwap": quote.vwap,
@@ -137,6 +146,9 @@ def get_nifty_market_context() -> Dict[str, Any]:
             "source": quote.source,
             "rvol": quote.rvol,
         }
+        _nifty_context_cache["data"] = res
+        _nifty_context_cache["timestamp"] = now_ts
+        return res
     except Exception as exc:
         logger.debug("Failed to get NIFTY market context: %s", exc)
         return {

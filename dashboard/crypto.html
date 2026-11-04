@@ -1423,13 +1423,13 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
     <div class="meme-section-hd">
       <div>
         <div class="meme-title-row">
-          <h2>🐸 Meme Coin Tracker — Live Signals</h2>
-          <span class="meme-viral-badge">⚡ HIGH VOLATILITY</span>
+          <h2>⚡ High-Volatility Crypto Radar — Market Data & Risk Analytics</h2>
+          <span class="meme-viral-badge">HIGH VOLATILITY</span>
         </div>
         <div class="meme-stats-row" id="memeStatsRow" style="margin-top:0.3rem">
-          <span class="meme-stat-buy" id="memeBuyCount">— BUY</span>
+          <span class="meme-stat-buy" id="memeBuyCount">— LONG</span>
           <span class="meme-stat-sep">·</span>
-          <span class="meme-stat-sell" id="memeSellCount">— SELL</span>
+          <span class="meme-stat-sell" id="memeSellCount">— SHORT</span>
           <span class="meme-stat-sep">·</span>
           <span class="meme-stat-hold" id="memeHoldCount">— HOLD</span>
           <span class="meme-stat-sep">·</span>
@@ -1438,8 +1438,8 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
       </div>
       <div class="meme-filters" id="memeFilters">
         <button class="meme-filter-btn active" data-filter="ALL">ALL</button>
-        <button class="meme-filter-btn" data-filter="BUY">✅ BUY</button>
-        <button class="meme-filter-btn" data-filter="SELL">🔴 SELL</button>
+        <button class="meme-filter-btn" data-filter="LONG">🟢 LONG</button>
+        <button class="meme-filter-btn" data-filter="SHORT">🔴 SHORT</button>
         <button class="meme-filter-btn" data-filter="HOLD">⏸ HOLD</button>
         <button class="meme-filter-btn hot-btn" data-filter="HOT">🔥 TRENDING</button>
       </div>
@@ -3168,8 +3168,8 @@ async function fetchMemeCoins() {
 
     // Update stats counters
     const el = (id) => document.getElementById(id);
-    if (el('memeBuyCount'))  el('memeBuyCount').textContent  = `${data.buy_count  || 0} BUY`;
-    if (el('memeSellCount')) el('memeSellCount').textContent = `${data.sell_count || 0} SELL`;
+    if (el('memeBuyCount'))  el('memeBuyCount').textContent  = `${data.buy_count  || 0} LONG`;
+    if (el('memeSellCount')) el('memeSellCount').textContent = `${data.sell_count || 0} SHORT`;
     if (el('memeHoldCount')) el('memeHoldCount').textContent = `${data.hold_count || 0} HOLD`;
     if (el('memeHotCount'))  el('memeHotCount').textContent  = `${data.hot_count  || 0} 🔥 HOT`;
 
@@ -3184,7 +3184,12 @@ async function fetchMemeCoins() {
 function getVisibleMemeCoins() {
   if (_memeFilter === 'ALL')  return _memeAllCoins;
   if (_memeFilter === 'HOT')  return _memeAllCoins.filter(c => c.is_hot);
-  return _memeAllCoins.filter(c => c.signal === _memeFilter);
+  return _memeAllCoins.filter(c => {
+    const sig = (c.signal || '').toUpperCase();
+    if (_memeFilter === 'LONG' || _memeFilter === 'BUY') return sig === 'LONG' || sig === 'BUY';
+    if (_memeFilter === 'SHORT' || _memeFilter === 'SELL') return sig === 'SHORT' || sig === 'SELL';
+    return sig === _memeFilter;
+  });
 }
 
 function renderMemeGrid() {

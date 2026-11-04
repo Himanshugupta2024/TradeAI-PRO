@@ -39,6 +39,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from utils.atomic_io import atomic_write_json
 from typing import Optional
+from config.settings import PAPER_TRADING_UNLOCK_MIN_TRADES
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ _WEIGHTS_PATH = Path("config/learned_weights.json")
 
 # ── Feedback trigger: analyse after every N closed trades ─────────────────────
 import os
-ANALYSE_EVERY_N_TRADES = int(os.getenv("ANALYSE_EVERY_N_TRADES", "10"))
+ANALYSE_EVERY_N_TRADES = int(os.getenv("ANALYSE_EVERY_N_TRADES", str(PAPER_TRADING_UNLOCK_MIN_TRADES)))
 
 # ── Learning stability knobs ───────────────────────────────────────────────────
 RECENCY_HALF_LIFE_TRADES = 120
@@ -183,6 +184,13 @@ class TradeOutcomeLogger:
         # Normalise signal_type
         signal_type = _normalise_signal_type(signal_type)
 
+        # Quarantine test / mock / demo trades from adaptive learning
+        sym_upper = (symbol or "").upper()
+        if sym_upper.startswith(("TEST", "MOCK", "DEMO", "SIM_")) or "PYTEST_CURRENT_TEST" in os.environ:
+            log.debug("Quarantined test trade %s from production trade_outcomes", symbol)
+            return
+
+
         try:
             with _get_conn() as conn:
                 conn.execute("""
@@ -256,6 +264,7 @@ class FeedbackAnalyser:
                     SELECT signal_type, regime, rsi_at_entry, volume_above_avg,
                            pnl_pct, result, confidence
                     FROM trade_outcomes
+                    WHERE symbol NOT LIKE 'TEST%' AND symbol NOT LIKE 'MOCK%' AND symbol NOT LIKE 'DEMO%' AND symbol NOT LIKE 'SIM_%'
                     ORDER BY id DESC
                     LIMIT ?
                 """, (lookback,)).fetchall()
@@ -484,31 +493,33 @@ class WeightAdapter:
         new_weights["_learning_version"] = 2
 
         try:
+            from db.runtime_state import set_runtime_state
+            set_runtime_state("learned_weights:v1", new_weights)
+            log.info("Persisted learned weights to DB runtime_state")
+        except Exception as exc:
+            log.debug("WeightAdapter DB backup failed: %s", exc)
+
+        try:
             _WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_json(_WEIGHTS_PATH, new_weights, indent=2)
-            log.info("✅ Learned weights updated → %s", _WEIGHTS_PATH)
+            log.info("Learned weights updated -> %s", _WEIGHTS_PATH)
         except Exception as exc:
             log.error("WeightAdapter.update_weights write failed: %s", exc)
 
         return new_weights
-        try:
-            from db.runtime_state import set_runtime_state
-            set_runtime_state("learned_weights:v1", new_weights)
-        except Exception as exc:
-            log.debug("WeightAdapter DB backup failed: %s", exc)
 
     def _load(self) -> dict:
+        try:
+            from db.runtime_state import get_runtime_state
+            db_weights = get_runtime_state("learned_weights:v1")
+            if db_weights and isinstance(db_weights, dict) and len(db_weights) > 0:
+                return db_weights
+        except Exception:
+            pass
         try:
             if _WEIGHTS_PATH.exists():
                 with open(_WEIGHTS_PATH) as f:
                     return json.load(f)
-        except Exception:
-            pass
-        try:
-            from db.runtime_state import get_runtime_state
-            db_weights = get_runtime_state("learned_weights:v1")
-            if db_weights and isinstance(db_weights, dict):
-                return db_weights
         except Exception:
             pass
         return dict(DEFAULT_WEIGHTS)
@@ -538,6 +549,7 @@ def get_learning_stats() -> dict:
         "analyse_every_n_trades": ANALYSE_EVERY_N_TRADES,
         "trades_until_recalibration": to_next_recalibration,
         "state": _learning_state_label(total_trades),
+        "canonical_sample_requirement": PAPER_TRADING_UNLOCK_MIN_TRADES,
     }
 
     return {
@@ -558,6 +570,7 @@ def get_recent_outcomes(limit: int = 100) -> list[dict]:
                        rsi_at_entry, volume_above_avg, pnl_pct, result,
                        closed_at, confidence, exit_reason
                 FROM trade_outcomes
+                WHERE symbol NOT LIKE 'TEST%' AND symbol NOT LIKE 'MOCK%' AND symbol NOT LIKE 'DEMO%' AND symbol NOT LIKE 'SIM_%'
                 ORDER BY id DESC
                 LIMIT ?
             """, (limit,)).fetchall()

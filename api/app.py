@@ -218,6 +218,11 @@ def _lifespan_context():
             else:
                 svc.logger.info("LIGHTWEIGHT_API_MODE=true -> skipping ML model warmup to preserve RAM.")
 
+            if not _env_flag("INITIAL_LOAD_ENABLED", True):
+                svc._loading_status["ready"] = True
+                svc._loading_status["phase"] = "ready_on_demand"
+                svc.logger.info("Service initialized in on-demand mode. Readiness probe READY.")
+
         _spawn_task(_async_warmup_and_hydrate(), name="warmup_and_hydrate")
         _spawn_task(svc.broadcaster.broadcast_loop(), name="snapshot_broadcaster")
 

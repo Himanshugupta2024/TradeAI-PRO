@@ -3507,7 +3507,7 @@
 
                 <span class="sidebar-status-title">System Healthy</span>
 
-                <span class="sidebar-status-sub">Data: LIVE</span>
+                <span class="sidebar-status-sub" title="Market quotes delayed ~15m via Yahoo Finance feed">Data: 15m Delayed</span>
 
             </div>
 
@@ -3570,6 +3570,8 @@
                     <span class="hero-metric-lbl">Model Win Rate</span>
 
                     <span class="hero-metric-val" id="statWinRate">0%</span>
+
+                    <span class="hero-metric-sub" id="statWinRateSub" style="font-size:0.65rem;color:var(--text-muted);display:block;margin-top:2px;">—</span>
 
                 </div>
 
@@ -4407,7 +4409,7 @@
 
                             <h2 class="section-title">Market Wise</h2>
 
-                            <div class="live-pill"><span class="status-dot live"></span> LIVE</div>
+                            <div class="live-pill" title="Sector momentum based on 15m delayed market quotes"><span class="status-dot" style="background:#f59e0b;"></span> 15m Delayed</div>
 
                         </div>
 
@@ -4487,7 +4489,7 @@
 
                         <h2 class="section-title">Sector Heatmap</h2>
 
-                        <div class="live-pill"><span class="status-dot live"></span> LIVE</div>
+                        <div class="live-pill" title="Sector momentum based on 15m delayed market quotes"><span class="status-dot" style="background:#f59e0b;"></span> 15m Delayed</div>
 
                     </div>
 
@@ -5065,7 +5067,7 @@
 
                 <h2 class="section-title">Self-Learning AI Insights</h2>
 
-                <span class="auto-refresh-label" id="learningUpdated">Updating every 50 trades</span>
+                <span class="auto-refresh-label" id="learningUpdated">Updating every 30 trades</span>
 
             </div>
 
@@ -5095,7 +5097,7 @@
 
                         <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Next Auto Recalibration</div>
 
-                        <div id="lsHealthNextUpdate" style="font-size:0.83rem;font-weight:700;color:var(--text-primary);margin-top:0.22rem;">50 trades remaining</div>
+                        <div id="lsHealthNextUpdate" style="font-size:0.83rem;font-weight:700;color:var(--text-primary);margin-top:0.22rem;">30 trades remaining</div>
 
                     </div>
 
@@ -5463,7 +5465,7 @@
 
                 <div class="nse-chart-card">
 
-                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">Signal Breadth (BUY/SELL/HOLD)</div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">Signal Breadth (LONG / SHORT / HOLD)</div>
 
                     <canvas id="nseBreadthChart" height="140" style="width:100%;"></canvas>
 
@@ -6247,7 +6249,7 @@
 
                 </div>
 
-                <div class="live-pill"><span class="status-dot live"></span> LIVE</div>
+                <div class="live-pill" title="Consolidation breakout scanner on daily/15m bars"><span class="status-dot" style="background:#f59e0b;"></span> 15m Delayed / EOD</div>
 
             </div>
 
@@ -6347,7 +6349,7 @@
 
                                 <span class="status-dot live" style="width:6px;height:6px;"></span>
 
-                                <span id="eeMarketStateText">NSE OPEN · LIVE</span>
+                                <span id="eeMarketStateText">NSE OPEN · 15m Delayed</span>
 
                             </div>
 

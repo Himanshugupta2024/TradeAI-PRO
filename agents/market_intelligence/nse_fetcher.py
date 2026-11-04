@@ -15,6 +15,7 @@ Fetches real OHLCV data for Indian markets:
 import logging
 import os
 import random
+import threading
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -167,9 +168,11 @@ NSE_SYMBOLS = {
     # ── Swing Trading Watchlist (Small/Mid-Cap High-Volatility) ──────────────
     # These are specifically added for the SwingSpectrum scanner.
     "CUPID":       "CUPID.NS",         # Small-cap medical devices — high %move
-    "PRECWIRE":    "PRECWIRE.NS",      # Precision wires — small-cap
+    "PRECWIRE":    "PRECWIRE.NS",
+    "PREMIERENE":  "PREMIERENE.NS",    # Premier Energies — solar / renewables
     "TATASTEEL":   "TATASTEEL.NS",     # Large-cap metals — strong swing mover
-    "WELSPUNIND":  "WELSPUNIND.NS",    # Textiles mid-cap
+    "WELSPUNIND":  "WELSPUNLIV.NS",    # Welspun Living (formerly Welspun India)
+    "WELSPUNLIV":  "WELSPUNLIV.NS",    # Welspun Living mid-cap
     "RAILVIKAS":   "RVNL.NS",          # Rail Vikas Nigam — PSU infra
     "IRFC":        "IRFC.NS",          # Indian Railway Finance
     # SWIGGY already mapped above (line 82) — no duplicate entry here
@@ -526,6 +529,18 @@ def _crypto_search_rank(display_name: str, q: str) -> tuple[int, int]:
     return (99, len(display_name))
 
 
+
+# Common company name aliases mapped to NSE ticker symbols
+COMPANY_ALIASES: dict[str, str] = {
+    "PREMIER ENERGIES": "PREMIERENE",
+    "PREMIER": "PREMIERENE",
+    "PREMIER ENERGY": "PREMIERENE",
+    "RELIANCE INDUSTRIES": "RELIANCE",
+    "TATA MOTORS": "TATAMOTORS",
+    "STATE BANK OF INDIA": "SBIN",
+    "ZOMATO": "ZOMATO",
+}
+
 def search_symbols(query: str) -> list[dict]:
     """
     Search NSE_SYMBOLS + CRYPTO_SEARCH_SYMBOLS by display name/ticker.
@@ -548,6 +563,14 @@ def search_symbols(query: str) -> list[dict]:
     for display_name, ticker in NSE_SYMBOLS.items():
         if q in display_name.upper() or q in ticker.upper():
             nse_rows.append({"symbol": display_name, "ticker": ticker, "type": "NSE"})
+
+    # Check company aliases (e.g. "PREMIER ENERGIES" -> "PREMIERENE")
+    for alias_name, target_sym in COMPANY_ALIASES.items():
+        if q in alias_name or alias_name in q:
+            ticker = NSE_SYMBOLS.get(target_sym, f"{target_sym}.NS")
+            if not any(r["symbol"] == target_sym for r in nse_rows):
+                nse_rows.insert(0, {"symbol": target_sym, "ticker": ticker, "type": "NSE"})
+
     nse_rows.sort(
         key=lambda r: _nse_search_rank(r["symbol"], r["ticker"], q),
     )
@@ -648,111 +671,159 @@ def fetch_arbitrary_symbol(ticker_or_name: str, period: str = "5d", interval: st
         return None
 
 
-def fetch_nse_gainers_losers(mode: str = "gainers") -> list[dict]:
+_screener_lock = threading.Lock()
+_screener_cache: dict[str, dict] = {"gainers": [], "losers": [], "fetched_at": 0}
+
+
+def fetch_nse_gainers_losers(mode: str = "gainers", force_refresh: bool = False) -> list[dict]:
     """
-    Fetch real intraday % change using a BATCH yf.download() call.
+    Fetch real intraday % change using a single BATCH yf.download() call.
 
-    Instead of fetching each symbol one-by-one (slow — causes timeouts),
-    we download all stock tickers in a single batch request,
-    then parse each ticker's column from the resulting wide DataFrame.
-    This reduces ~100 sequential HTTP calls to 1–2 batch calls.
+    Simultaneously computes and caches BOTH gainers and losers.
+    Persists results to DB runtime_state for durable offline/off-hours fallback.
     """
-    # Only stocks (no indices)
-    stock_symbols = {
-        k: v for k, v in NSE_SYMBOLS.items()
-        if not k.startswith(("NIFTY", "BANKNIFTY", "SENSEX"))
-    }
+    mode = (mode or "gainers").lower()
+    BATCH_TTL = 180  # 3-minute in-memory cache for screener
 
-    results = []
-    tickers_list = list(stock_symbols.values())   # e.g. ["RELIANCE.NS", "TCS.NS", ...]
-    display_map  = {v: k for k, v in stock_symbols.items()}  # ticker → display name
+    # Quick cache check outside lock
+    now = time.time()
+    if not force_refresh and (now - _screener_cache.get("fetched_at", 0)) < BATCH_TTL:
+        cached = _screener_cache.get(mode, [])
+        if cached:
+            return list(cached)
 
-    batch_cache_key = f"_batch_gainers_{mode}"
-    BATCH_TTL = 120  # 2-minute cache for gain/loss data
+    with _screener_lock:
+        # Re-check inside lock
+        now = time.time()
+        if not force_refresh and (now - _screener_cache.get("fetched_at", 0)) < BATCH_TTL:
+            cached = _screener_cache.get(mode, [])
+            if cached:
+                return list(cached)
 
-    if batch_cache_key in _cache and (time.time() - _cache[batch_cache_key]["fetched_at"]) < BATCH_TTL:
-        return _cache[batch_cache_key]["df"]
+        # Only stocks (no indices)
+        stock_symbols = {
+            k: v for k, v in NSE_SYMBOLS.items()
+            if not k.startswith(("NIFTY", "BANKNIFTY", "SENSEX"))
+        }
+        tickers_list = list(stock_symbols.values())   # e.g. ["RELIANCE.NS", "TCS.NS", ...]
+        display_map  = {v: k for k, v in stock_symbols.items()}  # ticker → display name
 
-    try:
-        logger.info("Batch downloading %d NSE stocks for screener...", len(tickers_list))
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            raw = yf.download(
-                tickers_list,
-                period="2d",
-                interval="1d",
-                progress=False,
-                auto_adjust=True,
-                group_by="ticker",   # gives MultiIndex: (field, ticker)
-            )
+        all_gainers = []
+        all_losers = []
 
-        if raw.empty:
-            logger.warning("Batch screener download returned empty DataFrame")
-            return []
+        try:
+            logger.info("Batch downloading %d NSE stocks for dual screener (gainers + losers)...", len(tickers_list))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                raw = yf.download(
+                    tickers_list,
+                    period="2d",
+                    interval="1d",
+                    progress=False,
+                    auto_adjust=True,
+                    group_by="ticker",   # gives MultiIndex: (ticker, field) or (field, ticker)
+                )
 
-        for ticker, display in display_map.items():
-            try:
-                # Extract per-ticker slice from MultiIndex
-                if isinstance(raw.columns, pd.MultiIndex):
-                    if ticker not in raw.columns.get_level_values(1):
+            if raw is not None and not raw.empty:
+                for ticker, display in display_map.items():
+                    try:
+                        # Extract per-ticker slice from MultiIndex
+                        if isinstance(raw.columns, pd.MultiIndex):
+                            if ticker in raw.columns.get_level_values(0):
+                                sub = raw.xs(ticker, axis=1, level=0)
+                            elif ticker in raw.columns.get_level_values(1):
+                                sub = raw.xs(ticker, axis=1, level=1)
+                            else:
+                                continue
+                        else:
+                            sub = raw  # single-ticker fallback
+
+                        sub = sub.dropna(subset=["Close"])
+                        if len(sub) < 2:
+                            continue
+
+                        last_close = float(sub["Close"].iloc[-1])
+                        prev_close = float(sub["Close"].iloc[-2])
+
+                        if prev_close <= 0:
+                            continue
+
+                        pct_change = round((last_close - prev_close) / prev_close * 100, 2)
+                        volume = float(sub["Volume"].iloc[-1]) if "Volume" in sub.columns else 0
+                        volume_cr = round(volume * last_close / 1e7, 1)
+
+                        stock_entry = {
+                            "symbol":     display,
+                            "company":    display,
+                            "sector":     _get_sector(display),
+                            "ltp":        round(last_close, 2),
+                            "pct_change": pct_change,
+                            "x_factor":   1.0,   # recalculated below
+                            "volume_cr":  max(volume_cr, 0.1),
+                            "oi_change":  None,
+                        }
+
+                        if pct_change > 0:
+                            all_gainers.append(stock_entry)
+                        elif pct_change < 0:
+                            all_losers.append(stock_entry)
+
+                    except Exception as exc:
+                        logger.debug("Skipped %s in screener: %s", display, exc)
                         continue
-                    sub = raw.xs(ticker, axis=1, level=1)  # columns: Open, High, Low, Close, Volume
-                else:
-                    sub = raw  # single-ticker fallback
 
-                sub = sub.dropna(subset=["Close"])
-                if len(sub) < 2:
-                    continue
+                # Compute X-Factor for gainers
+                if all_gainers:
+                    avg_gain = np.mean([abs(r["pct_change"]) for r in all_gainers]) or 1.0
+                    for r in all_gainers:
+                        r["x_factor"] = round(abs(r["pct_change"]) / avg_gain, 2)
+                    all_gainers.sort(key=lambda x: x["pct_change"], reverse=True)
 
-                last_close = float(sub["Close"].iloc[-1])
-                prev_close = float(sub["Close"].iloc[-2])
+                # Compute X-Factor for losers
+                if all_losers:
+                    avg_loss = np.mean([abs(r["pct_change"]) for r in all_losers]) or 1.0
+                    for r in all_losers:
+                        r["x_factor"] = round(abs(r["pct_change"]) / avg_loss, 2)
+                    all_losers.sort(key=lambda x: x["pct_change"])  # most negative first
 
-                if prev_close == 0:
-                    continue
+                top_gainers = all_gainers[:25]
+                top_losers = all_losers[:25]
 
-                pct_change = round((last_close - prev_close) / prev_close * 100, 2)
+                # Update in-memory dual cache
+                _screener_cache["gainers"] = top_gainers
+                _screener_cache["losers"] = top_losers
+                _screener_cache["fetched_at"] = time.time()
+                _cache["_batch_gainers_gainers"] = {"df": top_gainers, "fetched_at": time.time()}
+                _cache["_batch_gainers_losers"] = {"df": top_losers, "fetched_at": time.time()}
 
-                if mode == "gainers" and pct_change <= 0:
-                    continue
-                if mode == "losers" and pct_change >= 0:
-                    continue
+                # Persist to DB runtime_state for cross-worker durable fallback
+                try:
+                    from db.runtime_state import set_runtime_state
+                    set_runtime_state("screener_gainers", top_gainers)
+                    set_runtime_state("screener_losers", top_losers)
+                except Exception as exc:
+                    logger.debug("Failed to persist screener to runtime_state: %s", exc)
 
-                volume = float(sub["Volume"].iloc[-1]) if "Volume" in sub.columns else 0
-                volume_cr = round(volume * last_close / 1e7, 1)
+                return top_gainers if mode == "gainers" else top_losers
 
-                results.append({
-                    "symbol":     display,
-                    "company":    display,
-                    "sector":     _get_sector(display),
-                    "ltp":        round(last_close, 2),
-                    "pct_change": pct_change,
-                    "x_factor":   1.0,   # recalculated below
-                    "volume_cr":  max(volume_cr, 0.1),
-                    "oi_change":  None,
-                })
+            else:
+                logger.warning("Batch screener download returned empty DataFrame")
 
-            except Exception as exc:
-                logger.debug("Skipped %s in screener: %s", display, exc)
-                continue
+        except Exception as exc:
+            logger.error("Batch screener download failed: %s", exc)
 
-    except Exception as exc:
-        logger.error("Batch screener download failed: %s", exc)
-        return []
+        # Fallback to DB runtime_state if network failed or returned empty
+        try:
+            from db.runtime_state import get_runtime_state
+            saved = get_runtime_state(f"screener_{mode}")
+            if saved and isinstance(saved, list) and len(saved) > 0:
+                logger.info("Serving screener %s from DB runtime_state fallback (%d items)", mode, len(saved))
+                _screener_cache[mode] = saved
+                return list(saved)
+        except Exception as exc:
+            logger.debug("Failed to read screener fallback from runtime_state: %s", exc)
 
-    if not results:
-        return []
-
-    # Normalise X-Factor relative to avg % change in this group
-    avg_abs_move = np.mean([abs(r["pct_change"]) for r in results]) or 1.0
-    for r in results:
-        r["x_factor"] = round(abs(r["pct_change"]) / avg_abs_move, 2)
-
-    results.sort(key=lambda x: abs(x["pct_change"]), reverse=True)
-    top = results[:20]
-
-    # Cache the result to avoid re-fetching within 2 minutes
-    _cache[batch_cache_key] = {"df": top, "fetched_at": time.time()}
-    return top
+        return _screener_cache.get(mode, [])
 
 
 def fetch_sector_performance() -> list[dict]:
@@ -828,6 +899,18 @@ def _get_sector(symbol: str) -> str:
         "ITC": "FMCG", "AXISBANK": "Finance", "HINDUNILVR": "FMCG",
         "BAJFINANCE": "Finance", "MARUTI": "Auto", "TITAN": "Consumer",
         "WIPRO": "IT", "TATAMOTORS": "Auto", "SUNPHARMA": "Pharma",
-        "ULTRACEMCO": "Infra", "ADANIENT": "Conglomerate",
+        "ULTRACEMCO": "Infra", "ADANIENT": "Conglomerate", "ADANIPORTS": "Infra",
+        "TATASTEEL": "Metals", "JSWSTEEL": "Metals", "HINDALCO": "Metals",
+        "COALINDIA": "Energy", "NTPC": "Energy", "POWERGRID": "Energy",
+        "ONGC": "Energy", "BPCL": "Energy", "IOC": "Energy",
+        "HEROMOTOCO": "Auto", "BAJAJ-AUTO": "Auto", "EICHERMOT": "Auto",
+        "DRREDDY": "Pharma", "CIPLA": "Pharma", "APOLLOHOSP": "Healthcare",
+        "DIVISLAB": "Pharma", "LTIM": "IT", "TECHM": "IT", "HCLTECH": "IT",
+        "ZOMATO": "Tech/Consumer", "SWIGGY": "Tech/Consumer", "PAYTM": "Fintech",
+        "PREMIERENE": "Renewables", "CUPID": "Healthcare", "PRECWIRE": "Industrial",
+        "WELSPUNIND": "Textiles", "WELSPUNLIV": "Textiles", "RAILVIKAS": "Infra/Rail",
+        "RVNL": "Infra/Rail", "IRFC": "Finance/Rail", "MAZDOCK": "Defence",
+        "COCHINSHIP": "Defence", "NATIONALUM": "Metals", "JINDALSAW": "Metals/Pipes",
+        "BEL": "Defence", "HAL": "Defence", "BDL": "Defence",
     }
-    return SECTOR_MAP.get(symbol, "Others")
+    return SECTOR_MAP.get(symbol, "General")

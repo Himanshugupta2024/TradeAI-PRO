@@ -1,3 +1,4 @@
+const _tabLastFetched = {};
 let _lastOppsFetchTs = 0;
 
 let _lastCryptoFetchTs = 0;
@@ -2130,63 +2131,25 @@ function switchTab(tab) {
 
 
 
-    if (tab === 'portfolio') loadPortfolio();
-
-
-
-    if (tab === 'performance') loadPerformance();
-
-
-
-    if (tab === 'market') loadMarket();
-
-
-
-    if (tab === 'tradeflow') loadTradeFlow();
-
-
-
-    if (tab === 'scorecard') loadScorecard();
-
-
-
-    if (tab === 'swing') loadSwingScanner();
-
-
-
-    if (tab === 'intraday') loadIntradayLatest();
-
-
-
-    if (tab === 'indexmover') loadIndexMover();
-
-
-
-    if (tab === 'learning') loadLearningStats();
-
-
-
+        const _now = Date.now();
+    if (!_tabLastFetched[tab] || (_now - _tabLastFetched[tab] > 10000)) {
+        _tabLastFetched[tab] = _now;
+        if (tab === 'portfolio') loadPortfolio();
+        if (tab === 'performance') loadPerformance();
+        if (tab === 'market') loadMarket();
+        if (tab === 'tradeflow') loadTradeFlow();
+        if (tab === 'scorecard') loadScorecard();
+        if (tab === 'swing') loadSwingScanner();
+        if (tab === 'intraday') loadIntradayLatest();
+        if (tab === 'indexmover') loadIndexMover();
+        if (tab === 'learning') loadLearningStats();
         if (tab === 'breakouts') loadBreakouts();
-
-
-
-    if (tab === 'nseprediction') loadNsePredictionTab();
-
-
-
-    if (tab === 'forex') loadForexData();
-
-
-
-    if (tab === 'edge-top-setups') loadEdgeTopSetups();
-
-
-
-    if (tab === 'edge-macro-heatmap') loadEdgeMacroHeatmap();
-
-
-
-    if (tab === 'edge-risk-gauge') loadEdgeRiskGauge();
+        if (tab === 'nseprediction') loadNsePredictionTab();
+        if (tab === 'forex') loadForexData();
+        if (tab === 'edge-top-setups') loadEdgeTopSetups();
+        if (tab === 'edge-macro-heatmap') loadEdgeMacroHeatmap();
+        if (tab === 'edge-risk-gauge') loadEdgeRiskGauge();
+    }
 
 
 
@@ -2725,6 +2688,20 @@ async function loadOverviewFast() {
                 const wrEl = document.getElementById('statWinRate');
                 if (wrEl) {
                     wrEl.textContent = (closedCount > 0 && pSummary.win_rate != null) ? `${Number(pSummary.win_rate).toFixed(1)}%` : '—';
+                }
+                const wrSub = document.getElementById('statWinRateSub');
+                if (wrSub) {
+                    const wins = Number(pSummary.winning_trades ?? 0);
+                    const losses = Number(pSummary.losing_trades ?? Math.max(0, closedCount - wins));
+                    if (closedCount > 0 && closedCount < 30) {
+                        wrSub.textContent = `${wins}W / ${losses}L • ${closedCount} trades • Small Sample`;
+                        wrSub.title = 'Sample size too small (< 30 trades) for statistically reliable accuracy';
+                    } else if (closedCount >= 30) {
+                        wrSub.textContent = `${wins}W / ${losses}L • ${closedCount} trades`;
+                        wrSub.title = 'Validated sample size';
+                    } else {
+                        wrSub.textContent = '0 closed trades';
+                    }
                 }
                 const subTradesEl = document.getElementById('statTradesSubDetail');
                 if (subTradesEl) {
@@ -11446,6 +11423,39 @@ async function loadLearningStats() {
 
         document.getElementById('lsBestRegimeVal').textContent = data.insights?.best_regime || '—';
 
+        // Populate Learning Health & Thresholds
+        const h = data.health || {};
+        const reqTrades = h.canonical_sample_requirement || 30;
+        const totalClosed = o.total_trades || 0;
+        const badgeEl = document.getElementById('lsHealthStatusBadge');
+        if (badgeEl) {
+            const stateStr = (h.state || 'COLD_START').replace(/_/g, ' ');
+            badgeEl.textContent = `${stateStr} (${totalClosed}/${reqTrades} trades)`;
+            badgeEl.style.color = totalClosed >= reqTrades ? 'var(--green)' : 'var(--yellow)';
+            badgeEl.style.borderColor = totalClosed >= reqTrades ? 'var(--green)' : 'var(--border-color)';
+        }
+        const dataStatusEl = document.getElementById('lsHealthDataStatus');
+        if (dataStatusEl) {
+            dataStatusEl.textContent = totalClosed >= reqTrades ? 'Sample Ready (Adaptive Active)' : `Building sample (${totalClosed}/${reqTrades} trades)`;
+        }
+        const nextUpEl = document.getElementById('lsHealthNextUpdate');
+        if (nextUpEl) {
+            const rem = h.trades_until_recalibration != null ? h.trades_until_recalibration : Math.max(0, reqTrades - totalClosed);
+            nextUpEl.textContent = `${rem} trades remaining`;
+        }
+        const learnUpEl = document.getElementById('learningUpdated');
+        if (learnUpEl) {
+            learnUpEl.textContent = `Updating every ${h.analyse_every_n_trades || reqTrades} trades`;
+        }
+        const lastInEl = document.getElementById('lsHealthLastInsight');
+        if (lastInEl) {
+            lastInEl.textContent = data.insights?.insights_at ? new Date(data.insights.insights_at).toLocaleTimeString() : 'Live';
+        }
+        const lastWtEl = document.getElementById('lsHealthLastWeightUpdate');
+        if (lastWtEl) {
+            lastWtEl.textContent = data.weights?._updated_at ? new Date(data.weights._updated_at).toLocaleTimeString() : 'Default Priors';
+        }
+
 
 
 
@@ -14599,7 +14609,25 @@ function initModal() {
 
 
 
-        if (e.key === 'Escape') closeModal();
+        if (e.key === 'Escape') {
+            closeModal();
+            if (typeof closeIntradayDrawer === 'function') closeIntradayDrawer();
+            if (typeof closePositionModal === 'function') closePositionModal();
+            if (typeof closeTradeDetailModal === 'function') closeTradeDetailModal();
+            if (typeof closeEdgeDrawer === 'function') closeEdgeDrawer();
+        }
+        if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+            const activeTab = document.querySelector('.tab-content.active')?.id;
+            let targetInput = null;
+            if (activeTab === 'intradayTab') targetInput = document.getElementById('idSearchInput');
+            else if (activeTab === 'swingTab') targetInput = document.getElementById('swingSymbolSearch') || document.getElementById('swingSearchInput');
+            else if (activeTab === 'edgeTab') targetInput = document.getElementById('edgeScannerSearch');
+            if (targetInput) {
+                e.preventDefault();
+                targetInput.focus();
+                targetInput.select();
+            }
+        }
 
 
 
@@ -16155,7 +16183,7 @@ function updateDynamicMarketStatus() {
 
 
 
-            el.innerHTML = '<span class="status-dot live" style="background:#10b981;"></span><span style="color:#10b981;font-weight:700;letter-spacing:0.04em;">NSE OPEN · LIVE</span>';
+            el.innerHTML = '<span class="status-dot live" style="background:#10b981;"></span><span style="color:#10b981;font-weight:700;letter-spacing:0.04em;">NSE OPEN · 15m DELAYED</span>';
 
 
 
@@ -18624,6 +18652,23 @@ function initGlobalSearch() {
 
 
     });
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const q = input.value.trim();
+            if (!q) return;
+            clearTimeout(searchTimeout);
+            const firstResult = dropdown?.querySelector('.search-item[onclick]:not(.search-item-fetch)');
+            closeSearchDropdown();
+            if (firstResult) {
+                firstResult.click();
+            } else {
+                fetchAndShowQuote(q);
+            }
+        }
+    });
+
 
 
 
