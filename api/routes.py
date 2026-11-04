@@ -19,6 +19,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from urllib.request import Request, urlopen
+from urllib.parse import quote_plus
+from email.utils import parsedate_to_datetime
+import hashlib
+import re
 
 from xml.etree import ElementTree as ET
 
@@ -3978,127 +3982,275 @@ async def get_stats():
 
     }
 
+_backtest_cache: dict[str, tuple[float, dict]] = {}
+_BACKTEST_CACHE_TTL = 300  # 5 minutes
+_backtest_locks: dict[str, asyncio.Lock] = {}
+_symbol_news_cache: dict[str, tuple[float, dict]] = {}
+_SYMBOL_NEWS_CACHE_TTL = 600  # 10 minutes
+
 @router.get("/api/backtest/{symbol}")
-
 async def run_backtest(
-
     symbol: str,
-
     days: int = Query(
-
         default=5, ge=5, le=30, description="Backtest window in days (5-30)"
-
     ),
-
 ):
-
-    """Run backtest for a symbol with a selectable 5-30 day window."""
-
+    """
+    Run realistic on-demand backtest for a symbol with selectable 5-30 day window.
+    Features single-flight locking, bounded TTL cache, next-bar fill modeling,
+    NSE transaction cost modeling, and statistical sample-size gating.
+    """
     clean_sym = symbol.replace("-", "/").strip()
-
     clean_base = clean_sym.upper().replace(".NS", "").strip()
+    cache_key = f"{clean_base}_{days}"
+    now_ts = time.time()
 
-    df = svc._signal_cache.get(clean_sym)
+    # 1. Bounded TTL Cache Check
+    cached = _backtest_cache.get(cache_key)
+    if cached and (now_ts - cached[0]) < _BACKTEST_CACHE_TTL:
+        res = dict(cached[1])
+        res["cache_status"] = "HIT"
+        return res
 
-    if df is None or df.empty:
+    # 2. Single-flight request deduplication lock per symbol+window
+    if cache_key not in _backtest_locks:
+        _backtest_locks[cache_key] = asyncio.Lock()
+    lock = _backtest_locks[cache_key]
 
-        df = svc._signal_cache.get(clean_base)
+    async with lock:
+        # Re-check cache after lock acquisition
+        cached = _backtest_cache.get(cache_key)
+        if cached and (time.time() - cached[0]) < _BACKTEST_CACHE_TTL:
+            res = dict(cached[1])
+            res["cache_status"] = "HIT"
+            return res
 
-    # On-demand historical OHLCV fetch if not in cache or cache is short
+        provider = "Binance / CCXT" if "/" in clean_sym else "NSE / yFinance"
+        interval_str = "15m" if days <= 10 else "1h"
 
-    if df is None or df.empty or len(df) < 50 or days > 5:
+        df = svc._signal_cache.get(clean_sym)
+        if df is None or df.empty:
+            df = svc._signal_cache.get(clean_base)
 
-        try:
+        if df is None or df.empty or len(df) < 50 or days > 5:
+            try:
+                if "/" in clean_sym:
+                    from agents.data_ingestion.binance_fetcher import fetch_historical
+                    ext_df = await asyncio.wait_for(
+                        asyncio.to_thread(fetch_historical, clean_sym, "1h", since_days=max(days, 15)),
+                        timeout=8.0
+                    )
+                else:
+                    from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol, NSE_SYMBOLS
+                    target = NSE_SYMBOLS.get(clean_base, f"{clean_base}.NS")
+                    period_str = "1mo" if days <= 25 else "60d"
+                    ext_df = await asyncio.wait_for(
+                        asyncio.to_thread(fetch_arbitrary_symbol, target, period_str, interval_str),
+                        timeout=8.0
+                    )
+                    if ext_df is None or ext_df.empty:
+                        ext_df = await asyncio.wait_for(
+                            asyncio.to_thread(fetch_arbitrary_symbol, f"{clean_base}.NS", period_str, interval_str),
+                            timeout=8.0
+                        )
 
-            if "/" in clean_sym:
+                if ext_df is not None and not ext_df.empty and len(ext_df) >= 20:
+                    ext_df = calculate_indicators(ext_df)
+                    ext_df = classify_trend(ext_df)
+                    regime = detect_regime(ext_df)
+                    df = generate_signals(ext_df, regime=regime, symbol=clean_sym)
+                    svc._signal_cache[clean_sym] = df
+            except Exception as exc:
+                logger.error("Backtest on-demand fetch failed for %s (%sd): %s", clean_sym, days, exc)
 
-                from agents.data_ingestion.binance_fetcher import fetch_historical
+        if df is None or df.empty:
+            return {"error": f"Symbol {symbol} not found or no historical data available"}
 
-                ext_df = await asyncio.to_thread(fetch_historical, clean_sym, "1h", since_days=max(days, 15))
+        if "timestamp" in df.columns:
+            cutoff = datetime.now() - timedelta(days=days)
+            ts = pd.to_datetime(df["timestamp"], errors="coerce")
+            df_window = df.loc[ts >= cutoff].copy()
+            if not df_window.empty and len(df_window) >= 10:
+                df = df_window
 
-            else:
+        if df.empty or len(df) < 5:
+            return {"error": f"No backtest data available for last {days} days"}
 
-                from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol, NSE_SYMBOLS
+        start_at = str(df["timestamp"].iloc[0]) if "timestamp" in df.columns else ""
+        end_at = str(df["timestamp"].iloc[-1]) if "timestamp" in df.columns else ""
 
-                target = NSE_SYMBOLS.get(clean_base, f"{clean_base}.NS")
+        bt = Backtester(initial_capital=100000, slippage_pct=0.05, cost_bps=10.0, min_sample_size=30)
+        result = bt.run(df)
 
-                period_str = "1mo" if days <= 25 else "60d"
+        payload = {
+            "symbol": symbol,
+            "provider": provider,
+            "timeframe": interval_str,
+            "start_at": start_at,
+            "end_at": end_at,
+            "bars": int(len(df)),
+            "trade_count": result.total_trades,
+            "win_count": result.winning_trades,
+            "loss_count": result.losing_trades,
+            "win_rate": round(result.win_rate, 1),
+            "gross_return": round(result.gross_return_pct, 2),
+            "estimated_costs": round(result.estimated_costs_pct, 2),
+            "net_return": round(result.net_return_pct, 2),
+            "points_pnl": round(result.points_pnl, 2),
+            "net_pnl_inr": round(result.net_pnl_inr, 2),
+            "profit_factor": round(result.profit_factor, 2),
+            "expectancy": round(result.expectancy_pct, 2),
+            "max_drawdown": round(result.max_drawdown_pct, 1),
+            "sharpe": round(result.sharpe_ratio, 2),
+            "sample_status": result.sample_status,
+            "sample_badge": result.sample_badge,
+            "cost_assumptions": result.cost_assumptions,
+            "cache_status": "MISS",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            # Legacy backward-compatible fields
+            "window_days": days,
+            "bars_used": int(len(df)),
+            "total_trades": result.total_trades,
+            "total_pnl": round(result.points_pnl, 2),
+            "max_drawdown_pct": round(result.max_drawdown_pct, 1),
+            "sharpe_ratio": round(result.sharpe_ratio, 2),
+        }
 
-                interval_str = "15m" if days <= 10 else "1h"
+        # Cache with bounded memory (max 100 entries)
+        if len(_backtest_cache) > 100:
+            oldest_k = next(iter(_backtest_cache))
+            _backtest_cache.pop(oldest_k, None)
+        _backtest_cache[cache_key] = (time.time(), payload)
 
-                ext_df = await asyncio.to_thread(fetch_arbitrary_symbol, target, period_str, interval_str)
+        return payload
 
-                if ext_df is None or ext_df.empty:
 
-                    ext_df = await asyncio.to_thread(fetch_arbitrary_symbol, f"{clean_base}.NS", period_str, interval_str)
+@router.get("/api/news/{symbol}")
+async def get_symbol_news(symbol: str, limit: int = Query(10, ge=1, le=30)):
+    """
+    Fetch deduplicated, relevance-classified, freshness-tagged news for a specific stock.
+    Classifications: COMPANY_SPECIFIC, SECTOR_RELATED, MACRO_RELATED.
+    """
+    clean_sym = symbol.replace("-", "/").strip().upper().replace(".NS", "")
+    now_ts = time.time()
+    cached = _symbol_news_cache.get(clean_sym)
+    if cached and (now_ts - cached[0]) < _SYMBOL_NEWS_CACHE_TTL:
+        return cached[1]
 
-            if ext_df is not None and not ext_df.empty and len(ext_df) >= 20:
-
-                ext_df = calculate_indicators(ext_df)
-
-                ext_df = classify_trend(ext_df)
-
-                regime = detect_regime(ext_df)
-
-                df = generate_signals(ext_df, regime=regime, symbol=clean_sym)
-
-                svc._signal_cache[clean_sym] = df
-
-        except Exception as exc:
-
-            logger.error(
-
-                "Backtest on-demand fetch failed for %s (%sd): %s", clean_sym, days, exc
-
-            )
-
-    if df is None or df.empty:
-
-        return {"error": f"Symbol {symbol} not found or no historical data available"}
-
-    if "timestamp" in df.columns:
-
-        cutoff = datetime.now() - timedelta(days=days)
-
-        ts = pd.to_datetime(df["timestamp"], errors="coerce")
-
-        df_window = df.loc[ts >= cutoff].copy()
-
-        if not df_window.empty and len(df_window) >= 10:
-
-            df = df_window
-
-    if df.empty or len(df) < 5:
-
-        return {"error": f"No backtest data available for last {days} days"}
-
-    bt = Backtester(initial_capital=100000, slippage_pct=0.05)
-
-    result = bt.run(df)
-
-    return {
-
-        "symbol": symbol,
-
-        "window_days": days,
-
-        "bars_used": int(len(df)),
-
-        "total_trades": result.total_trades,
-
-        "win_rate": round(result.win_rate, 1),
-
-        "total_pnl": round(result.total_pnl, 2),
-
-        "max_drawdown": round(result.max_drawdown, 2),
-
-        "max_drawdown_pct": round(result.max_drawdown_pct, 1),
-
-        "profit_factor": round(result.profit_factor, 2),
-
-        "sharpe_ratio": round(result.sharpe_ratio, 2),
-
+    # Map symbol to company name and sector keywords
+    COMPANY_NAMES = {
+        "VEDL": ("Vedanta", ["metal", "mining", "aluminum", "zinc", "copper", "steel", "natural resources"]),
+        "RELIANCE": ("Reliance", ["telecom", "jio", "oil", "retail", "refinery", "petrochem", "energy"]),
+        "TCS": ("Tata Consultancy Services", ["it", "software", "tech", "ai", "consulting", "deal win"]),
+        "HDFCBANK": ("HDFC Bank", ["banking", "nifty bank", "loans", "rbi", "npa", "deposits", "credit"]),
+        "SBIN": ("State Bank of India", ["psu bank", "banking", "nifty bank", "rbi", "loans", "deposits"]),
+        "INFY": ("Infosys", ["it", "software", "tech", "guidance"]),
+        "ICICIBANK": ("ICICI Bank", ["banking", "loans", "nifty bank"]),
+        "TATAMOTORS": ("Tata Motors", ["auto", "ev", "jlr", "vehicles"]),
     }
+    
+    comp_info = COMPANY_NAMES.get(clean_sym, (clean_sym, ["stock", "markets"]))
+    company_name = comp_info[0]
+    sector_keywords = comp_info[1]
+
+    query = quote_plus(f"{company_name} {clean_sym} India share stock")
+    url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
+    
+    def _fetch_rss():
+        req = Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0"})
+        with urlopen(req, timeout=8) as resp:
+            return resp.read()
+
+    try:
+        xml_data = await asyncio.to_thread(_fetch_rss)
+        root = ET.fromstring(xml_data)
+        items = root.findall(".//item")
+    except Exception as exc:
+        logger.warning("Failed to fetch news for %s: %s", clean_sym, exc)
+        return {"symbol": clean_sym, "items": [], "total": 0, "status": "ERROR"}
+
+    parsed_items = []
+    seen_titles = []
+    seen_urls = set()
+
+    now_dt = datetime.now(timezone.utc)
+
+    for it in items:
+        title = (it.findtext("title") or "").strip()
+        link = (it.findtext("link") or "").strip()
+        pub_str = (it.findtext("pubDate") or "").strip()
+        source = (it.findtext("source") or "News").strip()
+
+        if not title or not link or link in seen_urls:
+            continue
+        seen_urls.add(link)
+
+        # Parse publication date & compute relative age
+        pub_dt = None
+        age_str = "Recent"
+        if pub_str:
+            try:
+                pub_dt = parsedate_to_datetime(pub_str)
+                if pub_dt.tzinfo is None:
+                    pub_dt = pub_dt.replace(tzinfo=timezone.utc)
+                else:
+                    pub_dt = pub_dt.astimezone(timezone.utc)
+                diff_sec = max(0, (now_dt - pub_dt).total_seconds())
+                if diff_sec < 3600:
+                    age_str = f"{int(diff_sec // 60)}m ago"
+                elif diff_sec < 86400:
+                    age_str = f"{int(diff_sec // 3600)}h ago"
+                else:
+                    age_str = f"{int(diff_sec // 86400)}d ago"
+            except Exception:
+                age_str = "Recent"
+
+        # Deduplication by normalized title tokens
+        norm_title = re.sub(r"[^a-zA-Z0-9\s]", "", title.lower())
+        tokens = set(norm_title.split())
+        is_dup = False
+        for prev_tokens in seen_titles:
+            overlap = len(tokens.intersection(prev_tokens)) / max(len(tokens), len(prev_tokens), 1)
+            if overlap > 0.65:
+                is_dup = True
+                break
+        if is_dup:
+            continue
+        seen_titles.append(tokens)
+
+        # Relevance Classification
+        title_lower = title.lower()
+        sym_lower = clean_sym.lower()
+        comp_lower = company_name.lower()
+        
+        if sym_lower in title_lower or comp_lower in title_lower:
+            relevance = "COMPANY_SPECIFIC"
+        elif any(k in title_lower for k in sector_keywords):
+            relevance = "SECTOR_RELATED"
+        else:
+            relevance = "MACRO_RELATED"
+
+        parsed_items.append({
+            "headline": title,
+            "source": source,
+            "publication_timestamp": pub_dt.isoformat() if pub_dt else None,
+            "url": link,
+            "symbol_relevance": relevance,
+            "age": age_str,
+            "dedup_key": hashlib.md5(norm_title.encode("utf-8")).hexdigest()[:12]
+        })
+        if len(parsed_items) >= limit:
+            break
+
+    result_payload = {
+        "symbol": clean_sym,
+        "company_name": company_name,
+        "items": parsed_items,
+        "total": len(parsed_items),
+        "updated_at": now_dt.isoformat()
+    }
+    _symbol_news_cache[clean_sym] = (now_ts, result_payload)
+    return result_payload
 
 # ── Market Intelligence Endpoints ───────────────────────
 

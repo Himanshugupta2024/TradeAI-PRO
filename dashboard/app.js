@@ -14824,6 +14824,7 @@ async function _loadModalChart(symbol, interval) {
 
 
             loadModalBacktest(symbol);
+    loadModalNews(symbol);
 
 
 
@@ -15012,212 +15013,137 @@ function closeModal() {
 
 
 async function loadModalBacktest(symbol) {
-
-
-
     const section = document.getElementById('modalBacktestSection');
-
-
-
     if (!section) return;
 
-
-
-
-
-
-
-    section.innerHTML = '<p style="color:var(--text-muted);font-size:0.8rem">Running backtest...</p>';
-
-
-
-
-
-
+    section.innerHTML = '<p style="color:var(--text-muted);font-size:0.8rem">Running backtest engine...</p>';
 
     try {
-
-
-
         const encodedSymbol = symbol.replace('/', '-');
-
-
-
         const res = await fetch(`${API}/api/backtest/${encodedSymbol}`);
-
-
-
         const data = await res.json();
 
-
-
-
-
-
-
         if (data.error) {
-
-
-
-            section.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem">${data.error}</p>`;
-
-
-
+            section.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem">${_escHtml(data.error)}</p>`;
             return;
-
-
-
         }
 
-
-
-
-
-
-
         const pfColor = data.profit_factor >= 1.5 ? 'var(--green)' : data.profit_factor >= 1 ? 'var(--yellow)' : 'var(--red)';
-
-
-
         const wrColor = data.win_rate >= 55 ? 'var(--green)' : data.win_rate >= 45 ? 'var(--yellow)' : 'var(--red)';
+        const netColor = (data.net_return || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+        const ptsColor = (data.points_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
 
+        const tradeCount = data.trade_count ?? data.total_trades ?? 0;
+        const isExploratory = data.sample_status === 'INSUFFICIENT_SAMPLE' || tradeCount < 30;
+        const sampleBadge = isExploratory 
+            ? `<span style="font-size:0.65rem;color:var(--yellow);background:rgba(245,158,11,0.12);padding:2px 8px;border-radius:10px;font-weight:700;">⚠️ ${data.sample_badge || `${tradeCount} trades • Exploratory only`}</span>`
+            : `<span style="font-size:0.65rem;color:var(--green);background:rgba(16,185,129,0.12);padding:2px 8px;border-radius:10px;font-weight:700;">✓ ${data.sample_badge || 'Statistically valid'}</span>`;
 
-
-
-
-
+        const dataWindow = `Data: ${data.bars || data.bars_used || 0} bars (${data.timeframe || '15m'}) · ${data.window_days || 5}d`;
 
         section.innerHTML = `
-
-
-
-            <div class="backtest-grid">
-
-
-
-                <div class="bt-metric">
-
-
-
-                    <span class="bt-val" style="color:${wrColor}">${data.win_rate}%</span>
-
-
-
-                    <span class="bt-label">Win Rate</span>
-
-
-
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;flex-wrap:wrap;gap:6px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Strategy Backtest</span>
+                    ${sampleBadge}
                 </div>
-
-
-
-                <div class="bt-metric">
-
-
-
-                    <span class="bt-val">${data.total_trades}</span>
-
-
-
-                    <span class="bt-label">Trades</span>
-
-
-
-                </div>
-
-
-
-                <div class="bt-metric">
-
-
-
-                    <span class="bt-val" style="color:${data.total_pnl >= 0 ? 'var(--green)' : 'var(--red)'}">₹${data.total_pnl >= 0 ? '+' : ''}${data.total_pnl.toLocaleString('en-IN', {maximumFractionDigits:0})}</span>
-
-
-
-                    <span class="bt-label">Total PnL</span>
-
-
-
-                </div>
-
-
-
-                <div class="bt-metric">
-
-
-
-                    <span class="bt-val" style="color:${pfColor}">${data.profit_factor}</span>
-
-
-
-                    <span class="bt-label">Profit Factor</span>
-
-
-
-                </div>
-
-
-
-                <div class="bt-metric">
-
-
-
-                    <span class="bt-val" style="color:var(--red)">${data.max_drawdown_pct}%</span>
-
-
-
-                    <span class="bt-label">Max DD</span>
-
-
-
-                </div>
-
-
-
-                <div class="bt-metric">
-
-
-
-                    <span class="bt-val">${data.sharpe_ratio}</span>
-
-
-
-                    <span class="bt-label">Sharpe</span>
-
-
-
-                </div>
-
-
-
+                <div style="font-size:0.65rem;color:#64748b;font-family:var(--font-mono);">${dataWindow}</div>
             </div>
-
-
-
+            <div class="backtest-grid">
+                <div class="bt-metric">
+                    <span class="bt-val" style="color:${wrColor}">${data.win_rate}%</span>
+                    <span class="bt-label">Win Rate</span>
+                </div>
+                <div class="bt-metric">
+                    <span class="bt-val">${tradeCount}</span>
+                    <span class="bt-label">Trades</span>
+                </div>
+                <div class="bt-metric">
+                    <span class="bt-val" style="color:${ptsColor}">${(data.points_pnl || 0) >= 0 ? '+' : ''}${data.points_pnl || 0} pts</span>
+                    <span class="bt-label">Points PnL</span>
+                </div>
+                <div class="bt-metric">
+                    <span class="bt-val" style="color:${netColor}">${(data.net_return || 0) >= 0 ? '+' : ''}${data.net_return || 0}%</span>
+                    <span class="bt-label">Net Return</span>
+                </div>
+                <div class="bt-metric">
+                    <span class="bt-val" style="color:${pfColor}">${data.profit_factor}</span>
+                    <span class="bt-label">Profit Factor</span>
+                </div>
+                <div class="bt-metric">
+                    <span class="bt-val" style="color:var(--red)">${data.max_drawdown ?? data.max_drawdown_pct}%</span>
+                    <span class="bt-label">Max DD</span>
+                </div>
+                <div class="bt-metric">
+                    <span class="bt-val">${data.sharpe ?? data.sharpe_ratio}</span>
+                    <span class="bt-label">Sharpe</span>
+                </div>
+                <div class="bt-metric">
+                    <span class="bt-val" style="color:${(data.net_pnl_inr || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">₹${(data.net_pnl_inr || 0) >= 0 ? '+' : ''}${Math.round(data.net_pnl_inr || 0).toLocaleString('en-IN')}</span>
+                    <span class="bt-label">Net Cash (₹100k)</span>
+                </div>
+            </div>
+            <div style="font-size:0.63rem;color:#64748b;margin-top:0.4rem;display:flex;justify-content:space-between;">
+                <span>Costs: ${data.estimated_costs || 0}% (Gross: ${data.gross_return || 0}%)</span>
+                <span>${data.cache_status === 'HIT' ? '⚡ Instant (Cache)' : 'Live Model Computed'}</span>
+            </div>
         `;
-
-
-
     } catch (err) {
-
-
-
         section.innerHTML = '<p style="color:var(--text-muted);font-size:0.8rem">Backtest unavailable</p>';
-
-
-
     }
-
-
-
 }
 
+async function loadModalNews(symbol) {
+    const list = document.getElementById('modalNewsList');
+    const freshEl = document.getElementById('modalNewsFreshness');
+    if (!list) return;
 
+    list.innerHTML = '<p style="color:var(--text-muted);font-size:0.75rem;">Loading verified company news...</p>';
 
+    try {
+        const encodedSymbol = symbol.replace('/', '-');
+        const res = await fetch(`${API}/api/news/${encodedSymbol}?limit=6`);
+        const data = await res.json();
 
+        if (!data || !data.items || data.items.length === 0) {
+            list.innerHTML = '<p style="color:var(--text-muted);font-size:0.75rem;">No recent company-specific announcements.</p>';
+            if (freshEl) freshEl.textContent = 'Up to date';
+            return;
+        }
 
+        if (freshEl) freshEl.textContent = `${data.items.length} verified stories`;
 
+        list.innerHTML = data.items.map(item => {
+            const titleSafe = _escHtml(item.headline || item.title || '');
+            const srcSafe = _escHtml(item.source || 'News');
+            const ageSafe = _escHtml(item.age || 'Recent');
+            const rel = item.symbol_relevance || 'COMPANY_SPECIFIC';
+            
+            const relBadge = rel === 'COMPANY_SPECIFIC'
+                ? '<span style="font-size:0.58rem;background:rgba(16,185,129,0.15);color:var(--green);padding:1px 5px;border-radius:4px;font-weight:700;">COMPANY</span>'
+                : rel === 'SECTOR_RELATED'
+                ? '<span style="font-size:0.58rem;background:rgba(56,189,248,0.15);color:var(--cyan);padding:1px 5px;border-radius:4px;font-weight:700;">SECTOR</span>'
+                : '<span style="font-size:0.58rem;background:rgba(148,163,184,0.15);color:#94a3b8;padding:1px 5px;border-radius:4px;font-weight:700;">MACRO</span>';
+
+            return `
+            <div style="background:rgba(255,255,255,0.02);padding:0.4rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.05);display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <div style="display:flex;align-items:center;gap:6px;flex:1;overflow:hidden;">
+                    ${relBadge}
+                    <a href="${item.url || '#'}" target="_blank" rel="noopener noreferrer" style="color:#e2e8f0;text-decoration:none;font-size:0.75rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${titleSafe}">
+                        ${titleSafe}
+                    </a>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;font-size:0.65rem;color:#64748b;white-space:nowrap;">
+                    <span>${srcSafe}</span>
+                    <span>•</span>
+                    <span style="color:#94a3b8;">${ageSafe}</span>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (err) {
+        list.innerHTML = '<p style="color:var(--text-muted);font-size:0.75rem;">News feed temporarily offline.</p>';
+    }
+}
 
 function drawModalChart(data, interval) {
 
@@ -19560,6 +19486,7 @@ async function fetchAndShowQuote(symbol) {
 
 
         loadModalBacktest(symbol);
+    loadModalNews(symbol);
 
 
 
