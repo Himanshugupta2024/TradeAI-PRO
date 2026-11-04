@@ -3994,51 +3994,67 @@ async def run_backtest(
 
     """Run backtest for a symbol with a selectable 5-30 day window."""
 
-    symbol = symbol.replace("-", "/")
+    clean_sym = symbol.replace("-", "/").strip()
 
-    if symbol not in svc._signal_cache:
+    clean_base = clean_sym.upper().replace(".NS", "").strip()
 
-        return {"error": f"Symbol {symbol} not found"}
+    df = svc._signal_cache.get(clean_sym)
 
-    df = svc._signal_cache[symbol].copy()
+    if df is None or df.empty:
 
-    # Extended windows need fresh historical fetch because live cache is intraday-short.
+        df = svc._signal_cache.get(clean_base)
 
-    if days > 5:
+    # On-demand historical OHLCV fetch if not in cache or cache is short
+
+    if df is None or df.empty or len(df) < 50 or days > 5:
 
         try:
 
-            if "/" in symbol:
+            if "/" in clean_sym:
 
                 from agents.data_ingestion.binance_fetcher import fetch_historical
 
-                ext_df = await asyncio.to_thread(fetch_historical, symbol, "1h", days)
+                ext_df = await asyncio.to_thread(fetch_historical, clean_sym, "1h", since_days=max(days, 15))
 
             else:
 
-                ext_df = await asyncio.to_thread(fetch_ohlcv, symbol, "1mo", "5m")
+                from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol, NSE_SYMBOLS
 
-            if ext_df is None or ext_df.empty:
+                target = NSE_SYMBOLS.get(clean_base, f"{clean_base}.NS")
 
-                return {"error": f"Unable to load {days}-day history for {symbol}"}
+                period_str = "1mo" if days <= 25 else "60d"
 
-            ext_df = calculate_indicators(ext_df)
+                interval_str = "15m" if days <= 10 else "1h"
 
-            ext_df = classify_trend(ext_df)
+                ext_df = await asyncio.to_thread(fetch_arbitrary_symbol, target, period_str, interval_str)
 
-            regime = detect_regime(ext_df)
+                if ext_df is None or ext_df.empty:
 
-            df = generate_signals(ext_df, regime=regime, symbol=symbol)
+                    ext_df = await asyncio.to_thread(fetch_arbitrary_symbol, f"{clean_base}.NS", period_str, interval_str)
+
+            if ext_df is not None and not ext_df.empty and len(ext_df) >= 20:
+
+                ext_df = calculate_indicators(ext_df)
+
+                ext_df = classify_trend(ext_df)
+
+                regime = detect_regime(ext_df)
+
+                df = generate_signals(ext_df, regime=regime, symbol=clean_sym)
+
+                svc._signal_cache[clean_sym] = df
 
         except Exception as exc:
 
             logger.error(
 
-                "Backtest extended fetch failed for %s (%sd): %s", symbol, days, exc
+                "Backtest on-demand fetch failed for %s (%sd): %s", clean_sym, days, exc
 
             )
 
-            return {"error": f"Extended backtest unavailable for {symbol} right now"}
+    if df is None or df.empty:
+
+        return {"error": f"Symbol {symbol} not found or no historical data available"}
 
     if "timestamp" in df.columns:
 
@@ -4046,9 +4062,13 @@ async def run_backtest(
 
         ts = pd.to_datetime(df["timestamp"], errors="coerce")
 
-        df = df.loc[ts >= cutoff].copy()
+        df_window = df.loc[ts >= cutoff].copy()
 
-    if df.empty:
+        if not df_window.empty and len(df_window) >= 10:
+
+            df = df_window
+
+    if df.empty or len(df) < 5:
 
         return {"error": f"No backtest data available for last {days} days"}
 

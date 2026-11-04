@@ -1565,9 +1565,16 @@ def _get_signal_for_symbol(symbol: str) -> dict:
     signals = recent[recent["signal"] != "HOLD"]
 
     if signals.empty:
+        local_trend = "NEUTRAL"
+        if pd.notna(last.get("EMA_20")) and pd.notna(last.get("EMA_50")):
+            local_trend = "BULLISH" if float(last["EMA_20"]) >= float(last["EMA_50"]) else "BEARISH"
         return {
             "symbol": symbol,
             "signal": "HOLD",
+            "direction": "HOLD",
+            "signal_status": "NO_SIGNAL",
+            "local_trend": local_trend,
+            "current_bar_signal": "HOLD",
             "confidence": current_conf,
             "entry": current_close,
             "close": current_close,
@@ -1661,10 +1668,43 @@ def _get_signal_for_symbol(symbol: str) -> dict:
                 2,
             )
 
+    # Local trend calculation on the LTF bars
+    local_trend = "NEUTRAL"
+    if pd.notna(last.get("EMA_20")) and pd.notna(last.get("EMA_50")):
+        e20 = float(last["EMA_20"])
+        e50 = float(last["EMA_50"])
+        c = float(last["close"])
+        if e20 > e50 and c >= e20:
+            local_trend = "BULLISH"
+        elif e20 < e50 and c <= e20:
+            local_trend = "BEARISH"
+        elif e20 > e50:
+            local_trend = "BULLISH"
+        else:
+            local_trend = "BEARISH"
+    else:
+        local_trend = current_trend
+
+    # Determine trade status relative to current price
+    signal_status = "ACTIVE"
+    if tp is not None and effective_dir == "LONG" and current_close >= tp:
+        signal_status = "TARGET_HIT"
+    elif tp is not None and effective_dir == "SHORT" and current_close <= tp:
+        signal_status = "TARGET_HIT"
+    elif sl is not None and effective_dir == "LONG" and current_close <= sl:
+        signal_status = "STOPPED_OUT"
+    elif sl is not None and effective_dir == "SHORT" and current_close >= sl:
+        signal_status = "STOPPED_OUT"
+    elif stale:
+        signal_status = "STALE"
+
     return {
         "symbol": symbol,
         "signal": sig_label,  # LONG / SHORT / SKIP / HOLD
         "direction": effective_dir,  # Underlying direction for SKIPs
+        "signal_status": signal_status,
+        "local_trend": local_trend,
+        "current_bar_signal": str(last.get("signal", "HOLD")),
         "confidence": _cap_confidence(
             last_signal.get("confidence", last_signal.get("ai_confidence", 0))
         ),
