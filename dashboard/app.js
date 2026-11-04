@@ -2669,7 +2669,6 @@ async function runAutonomousCycleNow() {
         }
     }
 }
-}
 
 async function toggleAutonomousMode() {
     try {
