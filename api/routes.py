@@ -4058,7 +4058,7 @@ async def run_backtest(
                     ext_df = calculate_indicators(ext_df)
                     ext_df = classify_trend(ext_df)
                     regime = detect_regime(ext_df)
-                    df = generate_signals(ext_df, regime=regime, symbol=clean_sym)
+                    df = generate_signals(ext_df, regime=regime, symbol=clean_sym, offline=True)
                     svc._signal_cache[clean_sym] = df
             except Exception as exc:
                 logger.error("Backtest on-demand fetch failed for %s (%sd): %s", clean_sym, days, exc)
