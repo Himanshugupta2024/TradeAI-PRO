@@ -411,10 +411,6 @@ body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     transition: all 0.3s ease;
-    opacity: 0;
-    transform: translateY(20px);
-}
-.highlight-card.visible {
     opacity: 1;
     transform: translateY(0);
 }
@@ -456,13 +452,9 @@ body {
     grid-template-columns: 1fr 1fr;
     gap: 4rem;
     align-items: center;
-    opacity: 0;
-    transform: translateY(20px);
-    transition: all 0.5s ease;
-}
-.showcase-row.visible {
     opacity: 1;
     transform: translateY(0);
+    transition: all 0.5s ease;
 }
 .showcase-row.reverse { direction: rtl; }
 .showcase-row.reverse > * { direction: ltr; }
@@ -833,10 +825,6 @@ body {
     border-radius: var(--radius-lg);
     text-align: center;
     transition: all 0.3s ease;
-    opacity: 0;
-    transform: translateY(20px);
-}
-.product-card.visible {
     opacity: 1;
     transform: translateY(0);
 }
@@ -896,10 +884,6 @@ body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     transition: all 0.3s ease;
-    opacity: 0;
-    transform: translateY(20px);
-}
-.stat-block.visible {
     opacity: 1;
     transform: translateY(0);
 }
@@ -1014,27 +998,63 @@ body {
     .mobile-menu-btn { display: flex; align-items: center; justify-content: center; }
     .mobile-menu { display: flex; }
 
-    .hero { min-height: 90vh; padding: 5rem 1.5rem 3rem; }
-    .hero-title { font-size: 2rem; }
-    .hero-subtitle { font-size: 0.95rem; }
-    .hero-actions { flex-direction: column; align-items: center; }
+    .hero { min-height: 85vh; padding: 4.5rem 1.25rem 2.5rem; }
+    .hero-title { font-size: 2rem; line-height: 1.25; }
+    .hero-subtitle { font-size: 0.95rem; margin-bottom: 2rem; }
+    .hero-actions { flex-direction: column; width: 100%; align-items: stretch; gap: 0.75rem; }
+    .hero-actions .btn-primary, .hero-actions .btn-secondary { width: 100%; text-align: center; justify-content: center; min-height: 48px; }
 
-    .trial-inner { flex-direction: column; text-align: center; padding: 1.5rem; }
+    .trial-banner { padding: 0 1rem; }
+    .trial-inner { flex-direction: column; text-align: center; padding: 1.25rem; gap: 1rem; }
+    .trial-cta { width: 100%; text-align: center; }
 
-    .highlights-grid { grid-template-columns: 1fr; }
+    .highlights-grid { grid-template-columns: 1fr; gap: 1.25rem; }
+    .highlight-card { padding: 1.5rem 1.25rem; }
     .showcase-row { grid-template-columns: 1fr; gap: 2rem; }
     .showcase-row.reverse { direction: ltr; }
-    .showcase-title { font-size: 1.4rem; }
+    .showcase-title { font-size: 1.35rem; }
 
-    .products-grid { grid-template-columns: 1fr; }
-    .stats-grid { grid-template-columns: repeat(2, 1fr); }
-    .section-heading { font-size: 1.5rem; }
-    .cta-title { font-size: 1.5rem; }
+    .products-grid { grid-template-columns: 1fr; gap: 1rem; }
+    .stats-grid { grid-template-columns: 1fr; gap: 1rem; }
+    .section-heading { font-size: 1.45rem; }
+    .cta-title { font-size: 1.45rem; }
+    .final-cta .btn-primary { width: 100%; max-width: 340px; justify-content: center; min-height: 48px; }
 }
 
 @media (max-width: 480px) {
-    .hero-title { font-size: 1.7rem; }
-    .stats-grid { grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-    .stat-number { font-size: 2rem; }
-    .stat-block { padding: 1.5rem 1rem; }
+    .hero-title { font-size: 1.65rem; }
+    .stats-grid { grid-template-columns: 1fr; gap: 0.75rem; }
+    .stat-number { font-size: 1.85rem; }
+    .stat-block { padding: 1.25rem 1rem; }
+    .landing-nav { padding: 0.5rem 0.85rem; }
+}
+
+.platform-status-strip {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1.5rem;
+    margin-top: 2.2rem;
+    flex-wrap: wrap;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    background: rgba(15, 23, 42, 0.75);
+    padding: 0.65rem 1.4rem;
+    border-radius: 30px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(12px);
+}
+@media (max-width: 600px) {
+    .platform-status-strip {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 0.55rem !important;
+        padding: 0.85rem 1rem !important;
+        border-radius: 14px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    .platform-status-strip .status-divider {
+        display: none !important;
+    }
 }

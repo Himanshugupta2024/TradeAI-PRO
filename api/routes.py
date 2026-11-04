@@ -2897,6 +2897,22 @@ async def get_autonomous_feed(limit: int = 25):
     if not feed and daemon.decision_log:
         feed = daemon.decision_log
 
+    # Priority 4: If still empty, provide system standby event so feed is never blank
+    if not feed:
+        from datetime import datetime, timezone
+        feed = [{
+            "id": f"standby-{int(datetime.now(timezone.utc).timestamp())}",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "action": "SYSTEM_STANDBY",
+            "symbol": "SYSTEM",
+            "direction": "NEUTRAL",
+            "price": 0.0,
+            "qs_score": 0.0,
+            "ai_confidence": 0.0,
+            "reason": "Autonomous worker initialized and standing by for scheduled market cycle.",
+            "asset_class": "SYSTEM",
+        }]
+
     return {"ok": True, "feed": feed[:min(limit, 100)], "count": len(feed[:min(limit, 100)])}
 
 
@@ -5662,13 +5678,22 @@ async def intraday_latest():
     if not row:
         return {
             "signals": [],
+            "active_signals": [],
             "signal_count": 0,
+            "qualified_setups": 0,
             "scan_time": None,
+            "last_scan_at": None,
+            "source_candle_at": None,
+            "scan_age_seconds": None,
+            "data_age_seconds": None,
+            "freshness_status": "UNAVAILABLE",
+            "provider": "yfinance",
+            "provider_freshness": "15m Delayed",
             "session": session.to_dict(),
             "nifty_market_context": nifty_ctx,
             "should_square_off": sq_off,
-            "stats": {"total_signals": 0, "long_count": 0, "short_count": 0, "avg_score": 0.0, "symbols_scanned": 20},
-            "data_status": "DELAYED (5m)",
+            "stats": {"total_signals": 0, "long_count": 0, "short_count": 0, "avg_score": 0.0, "symbols_scanned": 20, "qualified_setups": 0},
+            "data_status": "DELAYED (15m)",
         }
 
     raw_sigs = row.get("signals") or []
@@ -5683,26 +5708,47 @@ async def intraday_latest():
         except Exception:
             pass
 
+    # Expire signals if market inactive or past valid_until
+    active_sigs = []
     for s in raw_sigs:
+        valid_until_str = s.get("valid_until")
+        is_expired = False
+        if valid_until_str:
+            try:
+                vu_dt = datetime.fromisoformat(valid_until_str)
+                if vu_dt.tzinfo is None:
+                    vu_dt = vu_dt.replace(tzinfo=_IST)
+                if now_ist > vu_dt:
+                    is_expired = True
+            except Exception:
+                pass
         if not is_today or not session.is_trading_active:
-            s["is_expired"] = True
+            is_expired = True
+        s["is_expired"] = is_expired
+        if not is_expired:
+            active_sigs.append(s)
 
     long_count = sum(1 for s in raw_sigs if s.get("direction") == "LONG")
     short_count = sum(1 for s in raw_sigs if s.get("direction") == "SHORT")
     scores = [float(s.get("confluence_score") or s.get("score") or 0) for s in raw_sigs]
     avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+    qualified_count = sum(1 for s in active_sigs if float(s.get("confluence_score") or s.get("score") or 0) >= 50.0)
 
     row["session"] = session.to_dict()
     row["nifty_market_context"] = nifty_ctx
     row["should_square_off"] = sq_off
+    row["active_signals"] = active_sigs
+    row["qualified_setups"] = qualified_count
     row["stats"] = {
         "total_signals": len(raw_sigs),
+        "active_signals_count": len(active_sigs),
         "long_count": long_count,
         "short_count": short_count,
         "avg_score": avg_score,
         "symbols_scanned": row.get("symbols_scanned") or 20,
+        "qualified_setups": qualified_count,
     }
-    row["data_status"] = "DELAYED (5m)" if is_today else "EOD / HISTORICAL"
+    row["data_status"] = "DELAYED (15m)" if is_today else "EOD / HISTORICAL"
     return row
 
 
@@ -7335,12 +7381,18 @@ async def ensemble_validate(
             "status": "QUEUED",
             "message": "Validation job successfully queued in background",
             "job": _ensemble_validation_job,
+            "durable": False,
+            "recommended_runner": "github_actions",
+            "runner_note": "Render container restarts/sleep terminate in-memory jobs; run intensive ML validation via GitHub Actions workflow_dispatch for durable persistence.",
         }
 
     return {
         "status": _ensemble_validation_job.get("status", "IDLE"),
         "job": _ensemble_validation_job,
         "result": _ensemble_validation_job.get("result"),
+        "durable": False,
+        "recommended_runner": "github_actions",
+        "runner_note": "Render container restarts/sleep terminate in-memory jobs; run intensive ML validation via GitHub Actions workflow_dispatch for durable persistence.",
     }
 
 @router.get("/api/ensemble/status")

@@ -62,10 +62,59 @@ engine = _create_engine()
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
+
+def _migrate_schema():
+    """Add any missing columns to existing tables for backwards compatibility."""
+    try:
+        with engine.connect() as conn:
+            # Check intraday_scans columns
+            cols_to_add = [
+                ("scan_id", "VARCHAR(64)"),
+                ("started_at", "TIMESTAMP"),
+                ("completed_at", "TIMESTAMP"),
+                ("source_last_candle_at", "TIMESTAMP"),
+                ("market_session_date", "DATE"),
+                ("provider", "VARCHAR(32) DEFAULT 'yfinance'"),
+                ("provider_freshness", "VARCHAR(32) DEFAULT '15m Delayed'"),
+                ("symbols_attempted", "INTEGER DEFAULT 0"),
+                ("symbols_successful", "INTEGER DEFAULT 0"),
+                ("symbols_failed", "INTEGER DEFAULT 0"),
+                ("scanner_version", "VARCHAR(16) DEFAULT '2.0.0'"),
+                ("scan_duration_ms", "INTEGER DEFAULT 0"),
+                ("meta_json", "TEXT"),
+            ]
+            
+            # Check existing columns
+            existing = set()
+            try:
+                if "sqlite" in str(engine.url):
+                    res = conn.execute(text("PRAGMA table_info(intraday_scans)")).fetchall()
+                    existing = {r[1] for r in res}
+                else:
+                    res = conn.execute(text(
+                        "SELECT column_name FROM information_schema.columns WHERE table_name = 'intraday_scans'"
+                    )).fetchall()
+                    existing = {r[0] for r in res}
+            except Exception:
+                pass
+
+            for col_name, col_type in cols_to_add:
+                if existing and col_name not in existing:
+                    try:
+                        conn.execute(text(f"ALTER TABLE intraday_scans ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
+                        logger.info("Migrated intraday_scans: added column %s", col_name)
+                    except Exception as e:
+                        logger.debug("Could not add column %s: %s", col_name, e)
+    except Exception as exc:
+        logger.debug("Schema migration check skipped: %s", exc)
+
+
 def init_db():
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist and run auto-migrations."""
     try:
         Base.metadata.create_all(bind=engine)
+        _migrate_schema()
     except Exception as exc:
         logger.exception("Failed to initialize database schema: %s", exc)
         if IS_PRODUCTION:

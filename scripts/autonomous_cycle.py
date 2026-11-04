@@ -443,17 +443,25 @@ async def run_single_autonomous_cycle(
 
         # 9. If no trades executed and no signals matched, record NO_TRADE summary
         if summary["trades_executed"] == 0 and summary["decisions_recorded"] == 0:
+            no_trade_msg = f"Scan complete ({summary['symbols_scanned']} symbols scanned, {summary['signals_generated']} raw signals, 0 qualified entries)"
             record_autonomous_decision_to_db(
                 signal_id=f"nt-{today_str}-{int(time.time())}",
                 run_id=run_id,
                 symbol="CYCLE",
                 action="NO_TRADE",
                 direction="NEUTRAL",
-                reason=f"Scan cycle complete ({summary['symbols_scanned']} symbols scanned, {summary['signals_generated']} raw signals, 0 qualified entries)",
+                reason=no_trade_msg,
+            )
+            daemon.record_decision(
+                action="NO_TRADE",
+                symbol="CYCLE",
+                direction="NEUTRAL",
+                price=0.0,
+                reason=no_trade_msg,
             )
             summary["decisions_recorded"] += 1
 
-        # 10. Persist Market Snapshots to PostgreSQL runtime_state
+        # 10. Persist Market Snapshots & IntradayScan to database
         elapsed = time.perf_counter() - t0
         summary["duration_sec"] = round(elapsed, 2)
         summary["open_positions"] = len(engine_inst.open_trades)
@@ -469,6 +477,31 @@ async def run_single_autonomous_cycle(
             "regimes": regimes,
         }
         await asyncio.to_thread(set_runtime_state, "latest_market_snapshot", snapshot_payload)
+
+        # 10b. Persist IntradayScan with Scan Freshness Contract for dashboard
+        try:
+            from db import intraday_store
+            scan_duration_ms = int(elapsed * 1000)
+            await asyncio.to_thread(
+                intraday_store.save_scan,
+                candidate_signals,
+                symbols_scanned=summary["symbols_scanned"],
+                trigger="autonomous_cycle",
+                scan_id=f"iscan-{run_id}",
+                started_at=datetime.fromisoformat(now_iso.replace("Z", "+00:00")),
+                completed_at=datetime.now(timezone.utc),
+                market_session_date=now_ist.date(),
+                provider="yfinance" if any("/" not in s for s in active_symbols) else "binance",
+                provider_freshness="15m Delayed",
+                symbols_attempted=len(active_symbols),
+                symbols_successful=summary["symbols_scanned"],
+                symbols_failed=len(summary["errors"]),
+                scanner_version="2.0.0",
+                scan_duration_ms=scan_duration_ms,
+            )
+            logger.info("💾 [AutonomousWorker] Persisted IntradayScan to database (%d candidate signals)", len(candidate_signals))
+        except Exception as scan_err:
+            logger.warning("[AutonomousWorker] Could not persist IntradayScan: %s", scan_err)
 
         # Persist latest worker cycle status for watchdog
         status_payload = {

@@ -1058,11 +1058,13 @@ class PaperTradingEngine:
             log.info("⚪ #%d %s @ %.2f | Breakeven PnL: +0.00 (+0.00%%) | Qty: %.4f",
                      trade.id, status, exit_price, initial_qty)
 
-        # ── Self-learning: log outcome to SQLite ──────────────────────────
+        # ── Self-learning: log outcome to PostgreSQL (trade_outcomes_pg) ──
         try:
             from agents.analytics.feedback_loop import TradeOutcomeLogger
             logger = _get_outcome_logger()
+            asset_class = "CRYPTO" if "/" in trade.symbol else ("FOREX" if any(fx in trade.symbol for fx in ("INR", "USD", "EUR", "GBP", "JPY")) and "/" in trade.symbol else "EQUITY")
             logger.log_closed_trade(
+                trade_id=f"pt-{trade.id}",
                 symbol=trade.symbol,
                 direction=trade.direction,
                 signal_type=getattr(trade, "signal_type", "COMBINED"),
@@ -1074,6 +1076,14 @@ class PaperTradingEngine:
                 pnl_pct=trade.pnl_pct,
                 exit_reason=status,
                 confidence=getattr(trade, "confidence", 0.0),
+                asset_class=asset_class,
+                entry_time=trade.entry_time,
+                exit_time=trade.exit_time,
+                stop_loss=trade.stop_loss,
+                target=trade.target,
+                pnl=trade.total_pnl,
+                quantity=getattr(trade, "initial_quantity", trade.quantity),
+                environment="PAPER_FORWARD",
             )
         except Exception as _fb_err:
             log.debug("Feedback logger skipped: %s", _fb_err)

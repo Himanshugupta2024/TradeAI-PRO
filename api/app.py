@@ -207,6 +207,26 @@ def _lifespan_context():
             except Exception as exc:
                 svc.logger.warning("Signals cache hydration raised on startup: %s", exc)
 
+            try:
+                from agents.analytics.feedback_loop import backfill_closed_paper_trades
+                from db.runtime_state import get_runtime_state
+                from db.connection import SessionLocal
+                from db.models import TradeOutcome
+
+                def _check_and_backfill():
+                    with SessionLocal() as s:
+                        count = s.query(TradeOutcome).count()
+                    if count == 0:
+                        data = get_runtime_state("paper_trading_state:v1")
+                        if data and isinstance(data, dict):
+                            trades = data.get("trades", [])
+                            if trades:
+                                res = backfill_closed_paper_trades(trades)
+                                svc.logger.info("Auto-backfilled paper trade outcomes on startup: %s", res)
+                await asyncio.to_thread(_check_and_backfill)
+            except Exception as bf_err:
+                svc.logger.debug("Paper trade outcomes startup backfill skipped: %s", bf_err)
+
             is_lightweight = _env_flag("LIGHTWEIGHT_API_MODE", False) or not _env_flag("BACKGROUND_REFRESH_ENABLED", True)
             if not is_lightweight:
                 try:

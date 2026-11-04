@@ -14,7 +14,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/static/landing.css">
+    <link rel="stylesheet" href="/static/landing.css?v=v2_pro">
 </head>
 
 <body>
@@ -73,17 +73,17 @@
             </div>
 
             <!-- Live Platform Status Strip -->
-            <div style="display:flex; justify-content:center; gap:1.5rem; margin-top:2.5rem; flex-wrap:wrap; font-size:0.75rem; color:var(--text-secondary); background:rgba(15,23,42,0.6); padding:0.6rem 1.2rem; border-radius:30px; border:1px solid rgba(255,255,255,0.08); backdrop-filter:blur(10px);">
+            <div class="platform-status-strip">
                 <span style="display:inline-flex; align-items:center; gap:6px;">
                     <span style="width:7px; height:7px; border-radius:50%; background:var(--green); display:inline-block;"></span>
                     <strong>NSE Cash:</strong> 09:15 – 15:30 IST
                 </span>
-                <span style="color:rgba(255,255,255,0.2);">|</span>
+                <span class="status-divider" style="color:rgba(255,255,255,0.2);">|</span>
                 <span style="display:inline-flex; align-items:center; gap:6px;">
                     <span style="width:7px; height:7px; border-radius:50%; background:#38bdf8; display:inline-block;"></span>
                     <strong>Execution:</strong> 100% Simulated Paper Trading
                 </span>
-                <span style="color:rgba(255,255,255,0.2);">|</span>
+                <span class="status-divider" style="color:rgba(255,255,255,0.2);">|</span>
                 <span style="display:inline-flex; align-items:center; gap:6px;">
                     <span style="width:7px; height:7px; border-radius:50%; background:#f59e0b; display:inline-block;"></span>
                     <strong>Auto Square-Off:</strong> 15:15 IST Mandate

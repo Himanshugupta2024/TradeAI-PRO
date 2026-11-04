@@ -3,8 +3,9 @@ Self-Learning Feedback Loop for TradeAI PRO.
 
 Architecture
 ───────────
-1. TradeOutcomeLogger  — writes one row per closed trade to `trade_outcomes` table in SQLite.
-2. FeedbackAnalyser    — every 50 trades, queries the table and computes:
+1. TradeOutcomeLogger  — writes one row per closed trade to `trade_outcomes_pg`
+   table in PostgreSQL (persistent across Render restarts).
+2. FeedbackAnalyser    — every N trades, queries the table and computes:
      - Win rate by signal_type    (RSI / MACD / BREAKOUT / EMA_CROSS / DIVERGENCE / OTHER)
      - Win rate by market_regime  (TRENDING / RANGING / HIGH_VOLATILITY)
      - Optimal RSI zone           (< 30 / 30-50 / 50-70 / > 70)
@@ -13,20 +14,11 @@ Architecture
    The signal_generator reads this file at startup (or every N minutes) to re-weight
    individual signal components without code changes.
 
-DB schema (trade_outcomes):
-  id              INTEGER PRIMARY KEY
-  symbol          TEXT
-  direction       TEXT            -- LONG / SHORT
-  signal_type     TEXT            -- RSI_BOUNCE / MACD_CROSS / BREAKOUT / EMA_CROSS / DIVERGENCE / COMBINED
-  regime          TEXT            -- TRENDING / RANGING / HIGH_VOLATILITY / UNKNOWN
-  rsi_at_entry    REAL
-  volume_above_avg INTEGER        -- 1 = yes, 0 = no
-  entry_price     REAL
-  exit_price      REAL
-  pnl_pct         REAL
-  result          TEXT            -- WIN / LOSS
-  closed_at       TEXT            -- ISO timestamp (IST)
-  confidence      REAL            -- model confidence 0-100 at signal time
+Statistical Integrity:
+- Only genuine PAPER_FORWARD trades are eligible for learning.
+- Synthetic / mock / test trades are strictly quarantined.
+- Trades with missing metadata are marked LEGACY_INCOMPLETE and excluded from learning.
+- Sample < 100 trades is constrained to conservative bounds [0.75, 1.25].
 """
 
 from __future__ import annotations
@@ -34,11 +26,11 @@ from __future__ import annotations
 import json
 import logging
 import math
-import sqlite3
+import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from utils.atomic_io import atomic_write_json
-from typing import Optional
+from typing import Optional, Any
 from config.settings import PAPER_TRADING_UNLOCK_MIN_TRADES
 
 log = logging.getLogger(__name__)
@@ -46,22 +38,16 @@ log = logging.getLogger(__name__)
 _IST = timezone(timedelta(hours=5, minutes=30))
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-try:
-    from db.connection import get_sqlite_path
-    _DB_PATH = Path(get_sqlite_path())
-except Exception:
-    _DB_PATH = Path("trading.db")
 _WEIGHTS_PATH = Path("config/learned_weights.json")
 
 # ── Feedback trigger: analyse after every N closed trades ─────────────────────
-import os
 ANALYSE_EVERY_N_TRADES = int(os.getenv("ANALYSE_EVERY_N_TRADES", str(PAPER_TRADING_UNLOCK_MIN_TRADES)))
 
 # ── Learning stability knobs ───────────────────────────────────────────────────
 RECENCY_HALF_LIFE_TRADES = 120
 WEIGHT_PRIOR_STRENGTH = 12.0
 WEIGHT_MIN_SAMPLE_TRADES = 5
-WEIGHT_MAX_STEP_PER_UPDATE = 0.20
+WEIGHT_MAX_STEP_PER_UPDATE = 0.15
 
 # ── Default signal weights (match signal_generator.py component labels) ───────
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -75,49 +61,17 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DB bootstrapper
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_DB_PATH))
-    conn.row_factory = sqlite3.Row
-    return conn
+def _get_pg_session():
+    """Return a new SQLAlchemy session bound to the main database engine."""
+    from db.connection import SessionLocal
+    return SessionLocal()
 
 
-def bootstrap_db():
-    """Create `trade_outcomes` table if it doesn't exist. Safe to call at startup."""
-    with _get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS trade_outcomes (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol          TEXT    NOT NULL,
-                direction       TEXT    NOT NULL,
-                signal_type     TEXT    NOT NULL DEFAULT 'COMBINED',
-                regime          TEXT    NOT NULL DEFAULT 'UNKNOWN',
-                rsi_at_entry    REAL,
-                volume_above_avg INTEGER NOT NULL DEFAULT 0,
-                entry_price     REAL    NOT NULL,
-                exit_price      REAL    NOT NULL,
-                pnl_pct         REAL    NOT NULL,
-                result          TEXT    NOT NULL,   -- WIN or LOSS
-                closed_at       TEXT    NOT NULL,
-                confidence      REAL    DEFAULT 0.0,
-                exit_reason     TEXT    DEFAULT ''
-            )
-        """)
-        # Index for fast aggregation queries
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_to_signal_type ON trade_outcomes(signal_type)
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_to_regime ON trade_outcomes(regime)
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_to_result ON trade_outcomes(result)
-        """)
-        conn.commit()
-    log.debug("trade_outcomes table bootstrapped")
+def _is_using_postgres() -> bool:
+    """Check if the database is PostgreSQL (vs. local SQLite dev)."""
+    from config.settings import DATABASE_URL
+    url = DATABASE_URL or ""
+    return "postgres" in url.lower()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,22 +80,29 @@ def bootstrap_db():
 
 class TradeOutcomeLogger:
     """
-    Logs each closed paper trade to the `trade_outcomes` SQLite table.
-
-    Call `log_closed_trade()` from PaperTradingEngine._close_trade().
-    After every ANALYSE_EVERY_N_TRADES trade, auto-triggers FeedbackAnalyser.
+    Logs each closed paper trade to the `trade_outcomes_pg` PostgreSQL table.
+    Ensures strict idempotency via unique trade_id.
     """
 
     def __init__(self):
-        bootstrap_db()
         self._trade_count = self._get_logged_count()
-        log.info("TradeOutcomeLogger ready — %d trades already logged", self._trade_count)
+        log.info("TradeOutcomeLogger ready — %d genuine outcomes logged", self._trade_count)
 
     def _get_logged_count(self) -> int:
         try:
-            with _get_conn() as conn:
-                row = conn.execute("SELECT COUNT(*) as c FROM trade_outcomes").fetchone()
-                return int(row["c"])
+            session = _get_pg_session()
+            try:
+                from db.models import TradeOutcome
+                count = session.query(TradeOutcome).filter(
+                    TradeOutcome.environment == "PAPER_FORWARD",
+                    ~TradeOutcome.symbol.like("TEST%"),
+                    ~TradeOutcome.symbol.like("MOCK%"),
+                    ~TradeOutcome.symbol.like("DEMO%"),
+                    ~TradeOutcome.symbol.like("SIM_%"),
+                ).count()
+                return count
+            finally:
+                session.close()
         except Exception:
             return 0
 
@@ -159,24 +120,19 @@ class TradeOutcomeLogger:
         pnl_pct: float,
         exit_reason: str = "",
         confidence: float = 0.0,
-    ) -> None:
+        trade_id: Optional[str] = None,
+        asset_class: Optional[str] = None,
+        entry_time: Optional[str] = None,
+        exit_time: Optional[str] = None,
+        stop_loss: Optional[float] = None,
+        target: Optional[float] = None,
+        pnl: Optional[float] = None,
+        quantity: Optional[float] = None,
+        environment: str = "PAPER_FORWARD",
+    ) -> Optional[int]:
         """
-        Log one closed trade outcome to SQLite.
-
-        Parameters
-        ----------
-        symbol           : e.g. "RELIANCE.NS" or "BTC/USDT"
-        direction        : "LONG" or "SHORT"
-        signal_type      : Which pattern triggered — "RSI_BOUNCE", "MACD_CROSS",
-                           "BREAKOUT", "EMA_CROSS", "DIVERGENCE", "COMBINED"
-        regime           : "TRENDING", "RANGING", "HIGH_VOLATILITY", "UNKNOWN"
-        rsi_at_entry     : RSI value (0-100) at the bar that generated the signal
-        volume_above_avg : True if volume > 1.5x average at entry
-        entry_price      : Fill price
-        exit_price       : Exit price (TP / SL / manual)
-        pnl_pct          : % P&L (positive = win)
-        exit_reason      : "CLOSED_TP" / "CLOSED_SL" / "CLOSED_TRAIL" / "CLOSED_MANUAL"
-        confidence       : AI confidence score at signal time (0-100)
+        Log one closed trade outcome to PostgreSQL trade_outcomes_pg table.
+        Returns outcome id or None if skipped/quarantined.
         """
         result = "WIN" if pnl_pct > 0 else "LOSS"
         closed_at = datetime.now(tz=_IST).isoformat()
@@ -186,93 +142,149 @@ class TradeOutcomeLogger:
 
         # Quarantine test / mock / demo trades from adaptive learning
         sym_upper = (symbol or "").upper()
-        if sym_upper.startswith(("TEST", "MOCK", "DEMO", "SIM_")) or "PYTEST_CURRENT_TEST" in os.environ:
+        if sym_upper.startswith(("TEST", "MOCK", "DEMO", "SIM_")):
             log.debug("Quarantined test trade %s from production trade_outcomes", symbol)
-            return
+            return None
 
+        # Detect missing critical metadata
+        if regime in ("UNKNOWN", "", None) or confidence <= 0.0:
+            environment = "LEGACY_INCOMPLETE"
+            log.warning("Trade %s has incomplete metadata (regime=%s, conf=%.1f) -> marked %s",
+                        symbol, regime, confidence, environment)
+
+        # Auto-detect asset class if not provided
+        if not asset_class:
+            if "/" in symbol:
+                asset_class = "CRYPTO"
+            else:
+                asset_class = "EQUITY"
 
         try:
-            with _get_conn() as conn:
-                conn.execute("""
-                    INSERT INTO trade_outcomes
-                        (symbol, direction, signal_type, regime, rsi_at_entry,
-                         volume_above_avg, entry_price, exit_price, pnl_pct,
-                         result, closed_at, confidence, exit_reason)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """, (
-                    symbol, direction, signal_type, regime,
-                    rsi_at_entry, int(volume_above_avg),
-                    entry_price, exit_price, pnl_pct,
-                    result, closed_at, confidence, exit_reason,
-                ))
-                conn.commit()
+            from db.models import TradeOutcome
+            session = _get_pg_session()
+            try:
+                # Idempotency check on trade_id
+                if trade_id:
+                    existing = session.query(TradeOutcome).filter(
+                        TradeOutcome.trade_id == trade_id
+                    ).first()
+                    if existing:
+                        log.debug("Outcome for trade_id=%s already exists (id=%s) — skipping duplicate",
+                                  trade_id, existing.id)
+                        return existing.id
 
-            self._trade_count += 1
-            log.info(
-                "📝 Feedback logged: %s %s %s | %s | RSI=%.1f | %.2f%% | %s",
-                result, direction, symbol,
-                signal_type, rsi_at_entry or 0.0, pnl_pct, regime,
-            )
-
-            # Auto-trigger analysis every N trades
-            if self._trade_count % ANALYSE_EVERY_N_TRADES == 0:
-                log.info(
-                    "🧠 %d trades logged — running learning analysis...",
-                    self._trade_count,
+                outcome = TradeOutcome(
+                    trade_id=trade_id,
+                    symbol=symbol,
+                    direction=direction,
+                    signal_type=signal_type,
+                    regime=regime,
+                    rsi_at_entry=rsi_at_entry,
+                    volume_above_avg=int(volume_above_avg),
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    pnl_pct=pnl_pct,
+                    result=result,
+                    closed_at=closed_at,
+                    confidence=confidence,
+                    exit_reason=exit_reason,
+                    asset_class=asset_class,
+                    environment=environment,
+                    entry_time=entry_time,
+                    exit_time=exit_time,
+                    stop_loss=stop_loss,
+                    target=target,
+                    pnl=pnl,
+                    quantity=quantity,
                 )
-                analyser = FeedbackAnalyser()
-                insights = analyser.run()
-                adapter = WeightAdapter()
-                adapter.update_weights(insights)
+                session.add(outcome)
+                session.commit()
+                out_id = outcome.id
+
+                if environment == "PAPER_FORWARD":
+                    self._trade_count += 1
+                    log.info(
+                        "📝 Feedback logged (PG #%d): %s %s %s | %s | RSI=%.1f | %.2f%% | %s",
+                        out_id, result, direction, symbol,
+                        signal_type, rsi_at_entry or 0.0, pnl_pct, regime,
+                    )
+
+                    # Auto-trigger analysis every N genuine trades
+                    if self._trade_count >= ANALYSE_EVERY_N_TRADES and (self._trade_count % ANALYSE_EVERY_N_TRADES == 0):
+                        log.info(
+                            "🧠 %d trades logged — running learning analysis...",
+                            self._trade_count,
+                        )
+                        analyser = FeedbackAnalyser()
+                        insights = analyser.run()
+                        adapter = WeightAdapter()
+                        adapter.update_weights(insights)
+                else:
+                    log.info("📝 Logged %s outcome #%d for %s (excluded from active learning)",
+                             environment, out_id, symbol)
+
+                return out_id
+
+            except Exception as exc:
+                session.rollback()
+                if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():
+                    log.debug("Duplicate outcome insert ignored for trade_id=%s", trade_id)
+                else:
+                    log.error("TradeOutcomeLogger.log_closed_trade failed: %s", exc)
+                return None
+            finally:
+                session.close()
 
         except Exception as exc:
             log.error("TradeOutcomeLogger.log_closed_trade failed: %s", exc)
+            return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FeedbackAnalyser  — runs every 50 trades
+# FeedbackAnalyser  — queries ONLY PAPER_FORWARD outcomes
 # ─────────────────────────────────────────────────────────────────────────────
 
 class FeedbackAnalyser:
     """
-    Queries trade_outcomes and returns structured insights.
-
-    Returns a dict with:
-      signal_type_stats  : {type → {win_rate, trades, wins, avg_pnl}}
-      regime_stats       : {regime → {win_rate, trades, wins, avg_pnl}}
-      rsi_zone_stats     : {zone → {win_rate, trades}}
-      volume_stats       : {"above" → ..., "below" → ...}
-            confidence_band_stats : confidence buckets (60-70 / 70-80 / 80-90 / 90+)
-            confidence_calibration: monotonicity + spread diagnostics
-      overall            : {total_trades, win_rate, avg_pnl, model_accuracy}
-      best_signal_type   : str
-      worst_signal_type  : str
-      best_regime        : str
-      optimal_rsi_zone   : str
-      insights_at        : ISO timestamp
+    Queries trade_outcomes_pg and returns structured insights.
+    Exclusively evaluates genuine 'PAPER_FORWARD' records.
     """
 
     def run(self, lookback: int = 500) -> dict:
         """
-        Run analysis on the last `lookback` trades.
+        Run analysis on the last `lookback` trades from PostgreSQL.
         Returns structured insights dict.
         """
         try:
-            bootstrap_db()
-            with _get_conn() as conn:
-                rows = conn.execute("""
-                    SELECT signal_type, regime, rsi_at_entry, volume_above_avg,
-                           pnl_pct, result, confidence
-                    FROM trade_outcomes
-                    WHERE symbol NOT LIKE 'TEST%' AND symbol NOT LIKE 'MOCK%' AND symbol NOT LIKE 'DEMO%' AND symbol NOT LIKE 'SIM_%'
-                    ORDER BY id DESC
-                    LIMIT ?
-                """, (lookback,)).fetchall()
+            from db.models import TradeOutcome
+            session = _get_pg_session()
+            try:
+                # Query ONLY PAPER_FORWARD records (excludes LEGACY_INCOMPLETE and TEST)
+                rows = session.query(TradeOutcome).filter(
+                    TradeOutcome.environment == "PAPER_FORWARD",
+                    ~TradeOutcome.symbol.like("TEST%"),
+                    ~TradeOutcome.symbol.like("MOCK%"),
+                    ~TradeOutcome.symbol.like("DEMO%"),
+                    ~TradeOutcome.symbol.like("SIM_%"),
+                ).order_by(TradeOutcome.id.desc()).limit(lookback).all()
 
-            if not rows:
-                return _empty_insights()
+                if not rows:
+                    return _empty_insights()
 
-            trades = [dict(r) for r in rows]
+                trades = []
+                for r in rows:
+                    trades.append({
+                        "signal_type": r.signal_type,
+                        "regime": r.regime,
+                        "rsi_at_entry": r.rsi_at_entry,
+                        "volume_above_avg": r.volume_above_avg,
+                        "pnl_pct": r.pnl_pct,
+                        "result": r.result,
+                        "confidence": r.confidence,
+                    })
+            finally:
+                session.close()
+
             _attach_recency_weights(trades, half_life=RECENCY_HALF_LIFE_TRADES)
 
             # ── 1. Signal type win rates ──────────────────────────────────────
@@ -308,7 +320,7 @@ class FeedbackAnalyser:
             avg_pnl = round(_safe_div(weighted_pnl_sum, total_weight), 2)
             avg_pnl_unweighted = round(sum(float(t.get("pnl_pct", 0.0)) for t in trades) / total, 2) if total else 0
 
-            # Model accuracy: % trades where confidence > 50 that WON (higher conf = better accuracy)
+            # Model accuracy: % trades where confidence > 50 that WON
             high_conf = [t for t in trades if (t.get("confidence") or 0) >= 50]
             high_conf_weight = sum(float(t.get("_w", 1.0)) for t in high_conf)
             hc_wins_weight = sum(float(t.get("_w", 1.0)) for t in high_conf if t["result"] == "WIN")
@@ -317,7 +329,6 @@ class FeedbackAnalyser:
 
             # ── 6. Pick best / worst ──────────────────────────────────────────
             def _best(stats: dict) -> str:
-                """Return key with highest win_rate (min 5 trades to qualify)."""
                 eligible = {k: v for k, v in stats.items() if v["trades"] >= 5}
                 if not eligible:
                     eligible = stats
@@ -371,7 +382,6 @@ class FeedbackAnalyser:
     def run_daily_eod_review(self, target_date_ist: Optional[str] = None) -> dict:
         """
         Run EOD learning review for trades closed today (or target_date_ist).
-        Adapts Bayesian weights and produces structured daily performance breakdown.
         """
         if not target_date_ist:
             target_date_ist = datetime.now(tz=_IST).date().isoformat()
@@ -382,15 +392,31 @@ class FeedbackAnalyser:
 
         today_trades = []
         try:
-            with _get_conn() as conn:
-                rows = conn.execute("""
-                    SELECT id, symbol, direction, signal_type, regime,
-                           entry_price, exit_price, pnl_pct, result, exit_reason, closed_at
-                    FROM trade_outcomes
-                    WHERE closed_at LIKE ?
-                    ORDER BY id ASC
-                """, (f"{target_date_ist}%",)).fetchall()
-                today_trades = [dict(r) for r in rows]
+            from db.models import TradeOutcome
+            session = _get_pg_session()
+            try:
+                rows = session.query(TradeOutcome).filter(
+                    TradeOutcome.environment == "PAPER_FORWARD",
+                    TradeOutcome.closed_at.like(f"{target_date_ist}%")
+                ).order_by(TradeOutcome.id.asc()).all()
+                today_trades = [
+                    {
+                        "id": r.id,
+                        "symbol": r.symbol,
+                        "direction": r.direction,
+                        "signal_type": r.signal_type,
+                        "regime": r.regime,
+                        "entry_price": r.entry_price,
+                        "exit_price": r.exit_price,
+                        "pnl_pct": r.pnl_pct,
+                        "result": r.result,
+                        "exit_reason": r.exit_reason,
+                        "closed_at": r.closed_at,
+                    }
+                    for r in rows
+                ]
+            finally:
+                session.close()
         except Exception as e:
             log.warning("Could not query today trades for EOD review: %s", e)
 
@@ -417,21 +443,20 @@ class FeedbackAnalyser:
         return review
 
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# WeightAdapter  — writes config/learned_weights.json
+# WeightAdapter  — writes config/learned_weights.json with conservative bounds
 # ─────────────────────────────────────────────────────────────────────────────
 
 class WeightAdapter:
     """
-    Reads insights from FeedbackAnalyser and updates signal component weights
-    in config/learned_weights.json.
+    Reads insights from FeedbackAnalyser and updates signal component weights.
 
-        Weight adjustment logic:
-            - Uses recency-aware win rates from FeedbackAnalyser.
-            - Applies Bayesian shrinkage toward 50% win rate for low sample sizes.
-            - Uses adaptive blend rate + max step cap to avoid unstable jumps.
-            - Weights are clipped to [0.3, 2.5] to avoid extremes.
+    Conservative Bayesian Shrinkage:
+      - Threshold gate: < 30 trades -> weights remain strictly 1.0 (COLD_START).
+      - Sample 30-99 trades: conservative bounds [0.75, 1.25].
+      - Sample 100-249 trades: expanded bounds [0.50, 1.75].
+      - Sample 250+ trades: full bounds [0.30, 2.50].
+      - Max step per update capped at 0.15.
     """
 
     def update_weights(self, insights: dict) -> dict:
@@ -440,11 +465,29 @@ class WeightAdapter:
         Returns the new weights dict.
         """
         stats = insights.get("signal_type_stats", {})
+        total_sample = int(insights.get("overall", {}).get("total_trades", 0) or 0)
         existing = self._load()
         new_weights = {
             k: float(existing.get(k, v))
             for k, v in DEFAULT_WEIGHTS.items()
         }
+
+        # Cold start gate: do NOT modify weights if sample < canonical requirement
+        if total_sample < PAPER_TRADING_UNLOCK_MIN_TRADES:
+            log.info("Cold start active (%d/%d trades) — weights held at prior",
+                     total_sample, PAPER_TRADING_UNLOCK_MIN_TRADES)
+            new_weights["_updated_at"] = datetime.now(tz=_IST).isoformat()
+            new_weights["_total_trades"] = total_sample
+            new_weights["_learning_state"] = "COLD_START"
+            return new_weights
+
+        # Determine conservative bounds by sample size
+        if total_sample < 100:
+            bound_lo, bound_hi = 0.75, 1.25
+        elif total_sample < 250:
+            bound_lo, bound_hi = 0.50, 1.75
+        else:
+            bound_lo, bound_hi = 0.30, 2.50
 
         for sig_type, data in stats.items():
             if sig_type not in new_weights:
@@ -452,38 +495,36 @@ class WeightAdapter:
             wr = float(data.get("win_rate", 50.0))
             nt = int(data.get("trades", 0))
             if nt < WEIGHT_MIN_SAMPLE_TRADES:
-                # Too few samples — don't adjust
                 continue
 
             weighted_nt = float(data.get("weighted_trades", nt))
             sample_strength = max(0.0, min(250.0, weighted_nt))
 
-            # Bayesian shrinkage to neutral 50% so low-sample stats don't overreact.
+            # Bayesian shrinkage toward neutral 50%
             shrunk_wr = _safe_div(
                 (wr * sample_strength) + (50.0 * WEIGHT_PRIOR_STRENGTH),
                 sample_strength + WEIGHT_PRIOR_STRENGTH,
             )
 
-            # Sigmoid-like adjustment centred at 50% win rate
+            # Target computation
             x = (shrunk_wr - 50.0) / 18.0
-            target = 1.0 / (1.0 + math.exp(-x))
-            target = 0.3 + target * (2.5 - 0.3)
+            sigmoid = 1.0 / (1.0 + math.exp(-x))
+            target = bound_lo + sigmoid * (bound_hi - bound_lo)
 
             old = float(new_weights[sig_type])
-
-            # Larger sample size allows slightly faster adaptation.
-            alpha = min(0.35, 0.12 + min(1.0, sample_strength / 180.0) * 0.23)
+            alpha = min(0.25, 0.08 + min(1.0, sample_strength / 180.0) * 0.17)
             proposed = old * (1.0 - alpha) + target * alpha
 
-            # Hard cap per update to avoid sudden behavior drift.
+            # Step cap
             hi = old + WEIGHT_MAX_STEP_PER_UPDATE
             lo = old - WEIGHT_MAX_STEP_PER_UPDATE
             proposed = min(hi, max(lo, proposed))
 
-            new_weights[sig_type] = round(min(2.5, max(0.3, proposed)), 3)
+            # Hard clamp
+            new_weights[sig_type] = round(min(bound_hi, max(bound_lo, proposed)), 3)
 
         new_weights["_updated_at"] = datetime.now(tz=_IST).isoformat()
-        new_weights["_total_trades"] = insights.get("overall", {}).get("total_trades", 0)
+        new_weights["_total_trades"] = total_sample
         new_weights["_effective_trades"] = insights.get("overall", {}).get("effective_trades", 0)
         new_weights["_win_rate"] = insights.get("overall", {}).get("win_rate", 0)
         new_weights["_model_accuracy"] = insights.get("overall", {}).get("model_accuracy", 0)
@@ -491,11 +532,12 @@ class WeightAdapter:
         new_weights["_best_signal"] = insights.get("best_signal_type", "")
         new_weights["_worst_signal"] = insights.get("worst_signal_type", "")
         new_weights["_learning_version"] = 2
+        new_weights["_bounds"] = [bound_lo, bound_hi]
 
         try:
             from db.runtime_state import set_runtime_state
             set_runtime_state("learned_weights:v1", new_weights)
-            log.info("Persisted learned weights to DB runtime_state")
+            log.info("Persisted learned weights to DB runtime_state (bounds: [%.2f, %.2f])", bound_lo, bound_hi)
         except Exception as exc:
             log.debug("WeightAdapter DB backup failed: %s", exc)
 
@@ -509,7 +551,6 @@ class WeightAdapter:
         return new_weights
 
     def _load(self) -> dict:
-        # If a custom weights path is configured (e.g. in unit tests with tmp_path), prioritize it
         if _WEIGHTS_PATH != Path("config/learned_weights.json") and _WEIGHTS_PATH.exists():
             try:
                 with open(_WEIGHTS_PATH, "r", encoding="utf-8") as f:
@@ -533,20 +574,114 @@ class WeightAdapter:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Controlled Backfill Utility for Legacy Closed Paper Trades
+# ─────────────────────────────────────────────────────────────────────────────
+
+def backfill_closed_paper_trades(trades_list: list[dict[str, Any]]) -> dict[str, int]:
+    """
+    Safely backfill closed paper trades into TradeOutcome PostgreSQL table.
+    Enforces strict metadata audit:
+      - Valid metadata (regime != UNKNOWN, confidence > 0) -> PAPER_FORWARD
+      - Incomplete metadata -> LEGACY_INCOMPLETE (excluded from learning)
+      - Test/Mock symbols -> QUARANTINED (skipped)
+      - Duplicate trade_id -> IDEMPOTENT (skipped)
+
+    Returns audit counts dict.
+    """
+    logger = TradeOutcomeLogger()
+    stats = {
+        "total_evaluated": len(trades_list),
+        "quarantined_test": 0,
+        "legacy_incomplete": 0,
+        "genuine_forward": 0,
+        "already_exists": 0,
+    }
+
+    for td in trades_list:
+        status = td.get("status") or td.get("exit_reason", "")
+        if status == "OPEN":
+            continue
+
+        sym = td.get("symbol", "")
+        if sym.upper().startswith(("TEST", "MOCK", "DEMO", "SIM_")):
+            stats["quarantined_test"] += 1
+            continue
+
+        trade_id = f"pt-{td.get('id')}"
+        regime = str(td.get("regime") or "UNKNOWN").upper()
+        confidence = float(td.get("confidence") or 0.0)
+
+        # Check if complete
+        is_complete = (
+            regime != "UNKNOWN"
+            and confidence > 0.0
+            and td.get("entry_price") is not None
+            and td.get("exit_price") is not None
+            and td.get("exit_time")
+        )
+
+        env = "PAPER_FORWARD" if is_complete else "LEGACY_INCOMPLETE"
+        if env == "LEGACY_INCOMPLETE":
+            stats["legacy_incomplete"] += 1
+        else:
+            stats["genuine_forward"] += 1
+
+        out_id = logger.log_closed_trade(
+            trade_id=trade_id,
+            symbol=sym,
+            direction=td.get("direction", "LONG"),
+            signal_type=td.get("signal_type", "COMBINED"),
+            regime=regime,
+            rsi_at_entry=td.get("rsi_at_entry"),
+            volume_above_avg=bool(td.get("volume_above_avg", False)),
+            entry_price=float(td.get("entry_price", 0.0)),
+            exit_price=float(td.get("exit_price", 0.0)),
+            pnl_pct=float(td.get("pnl_pct", 0.0)),
+            exit_reason=status,
+            confidence=confidence,
+            asset_class="CRYPTO" if "/" in sym else "EQUITY",
+            entry_time=td.get("entry_time"),
+            exit_time=td.get("exit_time"),
+            stop_loss=td.get("stop_loss"),
+            target=td.get("target"),
+            pnl=td.get("total_pnl"),
+            quantity=td.get("quantity"),
+            environment=env,
+        )
+
+    return stats
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public API helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_learning_stats() -> dict:
     """
     Primary read API for /api/learning/stats FastAPI endpoint.
-    Returns latest insights (runs analysis live over last 500 trades),
-    plus current learned weights.
+    Returns latest insights from PAPER_FORWARD trades, plus current weights.
     """
     analyser = FeedbackAnalyser()
     insights = analyser.run()
     adapter  = WeightAdapter()
     weights  = adapter._load()
     total_trades = int(insights.get("overall", {}).get("total_trades", 0) or 0)
+
+    # Count breakdown from DB
+    incomplete_count = 0
+    quarantined_count = 0
+    try:
+        from db.models import TradeOutcome
+        session = _get_pg_session()
+        try:
+            incomplete_count = session.query(TradeOutcome).filter(
+                TradeOutcome.environment == "LEGACY_INCOMPLETE"
+            ).count()
+        finally:
+            session.close()
+    except Exception:
+        pass
+
     if total_trades <= 0:
         to_next_recalibration = ANALYSE_EVERY_N_TRADES
     else:
@@ -557,31 +692,53 @@ def get_learning_stats() -> dict:
         "trades_until_recalibration": to_next_recalibration,
         "state": _learning_state_label(total_trades),
         "canonical_sample_requirement": PAPER_TRADING_UNLOCK_MIN_TRADES,
+        "genuine_forward_trades": total_trades,
+        "legacy_incomplete_trades": incomplete_count,
+        "bounds": [0.75, 1.25] if total_trades < 100 else [0.50, 1.75],
     }
 
     return {
         "insights":  insights,
         "weights":   weights,
         "health":    health,
-        "db_path":   str(_DB_PATH.resolve()),
+        "storage":   "postgresql" if _is_using_postgres() else "sqlite",
     }
 
 
 def get_recent_outcomes(limit: int = 100) -> list[dict]:
     """Return recent trade outcomes for the dashboard table."""
     try:
-        bootstrap_db()
-        with _get_conn() as conn:
-            rows = conn.execute("""
-                SELECT id, symbol, direction, signal_type, regime,
-                       rsi_at_entry, volume_above_avg, pnl_pct, result,
-                       closed_at, confidence, exit_reason
-                FROM trade_outcomes
-                WHERE symbol NOT LIKE 'TEST%' AND symbol NOT LIKE 'MOCK%' AND symbol NOT LIKE 'DEMO%' AND symbol NOT LIKE 'SIM_%'
-                ORDER BY id DESC
-                LIMIT ?
-            """, (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        from db.models import TradeOutcome
+        session = _get_pg_session()
+        try:
+            rows = session.query(TradeOutcome).filter(
+                ~TradeOutcome.symbol.like("TEST%"),
+                ~TradeOutcome.symbol.like("MOCK%"),
+                ~TradeOutcome.symbol.like("DEMO%"),
+                ~TradeOutcome.symbol.like("SIM_%"),
+            ).order_by(TradeOutcome.id.desc()).limit(limit).all()
+            return [
+                {
+                    "id": r.id,
+                    "trade_id": r.trade_id,
+                    "symbol": r.symbol,
+                    "direction": r.direction,
+                    "signal_type": r.signal_type,
+                    "regime": r.regime,
+                    "rsi_at_entry": r.rsi_at_entry,
+                    "volume_above_avg": r.volume_above_avg,
+                    "pnl_pct": r.pnl_pct,
+                    "result": r.result,
+                    "closed_at": r.closed_at,
+                    "confidence": r.confidence,
+                    "exit_reason": r.exit_reason,
+                    "environment": r.environment,
+                    "asset_class": r.asset_class,
+                }
+                for r in rows
+            ]
+        finally:
+            session.close()
     except Exception as exc:
         log.error("get_recent_outcomes failed: %s", exc)
         return []
@@ -603,12 +760,12 @@ def _normalise_signal_type(raw: str) -> str:
         "DIV": "DIVERGENCE", "DIVERGENCE": "DIVERGENCE",
         "BULLISH_DIV": "DIVERGENCE", "BEARISH_DIV": "DIVERGENCE",
         "VOLUME": "VOLUME_SPIKE", "VOLUME_SPIKE": "VOLUME_SPIKE",
+        "AUTONOMOUS": "COMBINED",
     }
     return mapping.get(raw, "COMBINED")
 
 
 def _group_win_rate(trades: list[dict], key: str) -> dict:
-    """Group trades by a categorical key and compute weighted + raw stats."""
     groups: dict[str, list] = {}
     for t in trades:
         val = str(t.get(key) or "UNKNOWN").upper()
@@ -633,7 +790,6 @@ def _group_win_rate(trades: list[dict], key: str) -> dict:
 
 
 def _rsi_zone_analysis(trades: list[dict]) -> dict:
-    """Bucket trades by RSI zone and return weighted + raw win rates."""
     zones = {
         "oversold (<30)":    [],
         "mild_bull (30-50)": [],
@@ -643,7 +799,7 @@ def _rsi_zone_analysis(trades: list[dict]) -> dict:
     }
     for t in trades:
         rsi = t.get("rsi_at_entry")
-        if rsi is None:
+        if rsi is None or rsi <= 0.0:
             zones["unknown"].append(t)
         elif rsi < 30:
             zones["oversold (<30)"].append(t)
@@ -717,7 +873,6 @@ def _empty_insights() -> dict:
 
 
 def _attach_recency_weights(trades: list[dict], half_life: int = RECENCY_HALF_LIFE_TRADES) -> None:
-    """Attach recency weights in-place (newest trade gets highest weight)."""
     hl = max(1, int(half_life))
     for idx, t in enumerate(trades):
         t["_w"] = float(0.5 ** (idx / hl))
@@ -734,13 +889,12 @@ def _learning_state_label(total_trades: int) -> str:
         return "MATURE"
     if total_trades >= 80:
         return "WARMING_UP"
-    if total_trades >= 20:
+    if total_trades >= PAPER_TRADING_UNLOCK_MIN_TRADES:
         return "EARLY"
     return "COLD_START"
 
 
 def _confidence_band_analysis(trades: list[dict]) -> dict:
-    """Return weighted and unweighted win stats for confidence buckets."""
     bands = {
         "60-70": (60.0, 70.0),
         "70-80": (70.0, 80.0),
@@ -769,7 +923,6 @@ def _confidence_band_analysis(trades: list[dict]) -> dict:
 
 
 def _confidence_calibration_summary(bands: dict) -> dict:
-    """Check whether higher confidence bands show higher realized win rates."""
     order = ["60-70", "70-80", "80-90", "90+"]
     series = [
         float((bands.get(k) or {}).get("win_rate", 0.0) or 0.0)

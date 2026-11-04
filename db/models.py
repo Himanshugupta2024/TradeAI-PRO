@@ -400,21 +400,40 @@ class SwingSetupOutcome(Base):
 # ── Intraday scanner persistence (B-lite, paper-only) ─────────────
 
 class IntradayScan(Base):
-    """One manual or API-triggered intraday scan snapshot."""
+    """
+    Intraday scan snapshot with full Freshness Contract metadata.
+    Supports both manual API triggers and automated scheduled workers.
+    """
 
     __tablename__ = "intraday_scans"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    scan_id = Column(String(64), nullable=True, index=True)
     scan_time = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    source_last_candle_at = Column(DateTime, nullable=True)
+    market_session_date = Column(Date, nullable=True)
+    provider = Column(String(32), nullable=True, default="yfinance")
+    provider_freshness = Column(String(32), nullable=True, default="15m Delayed")
+    symbols_attempted = Column(Integer, nullable=True, default=0)
+    symbols_successful = Column(Integer, nullable=True, default=0)
+    symbols_failed = Column(Integer, nullable=True, default=0)
+    scanner_version = Column(String(16), nullable=True, default="2.0.0")
+    scan_duration_ms = Column(Integer, nullable=True, default=0)
     trigger = Column(String(24), nullable=False, default="manual")
     symbols_scanned = Column(Integer, nullable=False, default=0)
     signal_count = Column(Integer, nullable=False, default=0)
     payload_json = Column(Text, nullable=False, default="[]")
+    meta_json = Column(Text, nullable=True)
 
-    __table_args__ = (Index("idx_intraday_scans_time", "scan_time"),)
+    __table_args__ = (
+        Index("idx_intraday_scans_time", "scan_time"),
+        Index("idx_intraday_scans_scan_id", "scan_id"),
+    )
 
     def __repr__(self):
-        return f"<IntradayScan id={self.id} signals={self.signal_count}>"
+        return f"<IntradayScan id={self.id} scan_id={self.scan_id} signals={self.signal_count}>"
 
 
 # ── Telegram Alert Log ────────────────────────────────────────────
@@ -495,3 +514,59 @@ class AutonomousDecisionRecord(Base):
 
     def __repr__(self):
         return f"<AutonomousDecisionRecord {self.symbol} {self.action} run={self.run_id}>"
+
+
+# ── Trade Outcome (Persistent Learning Pipeline) ────────────────────────────
+class TradeOutcome(Base):
+    """
+    Persistent trade outcome record for the self-learning feedback loop.
+    Migrated from ephemeral SQLite trade_outcomes to PostgreSQL for
+    Render restart safety.
+
+    One row per closed paper trade. Used by FeedbackAnalyser to compute
+    signal-type win rates and by WeightAdapter to update learned weights.
+
+    Unique constraint on trade_id prevents duplicate learning outcomes
+    from the same trade close event.
+    """
+    __tablename__ = "trade_outcomes_pg"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_id = Column(String(128), nullable=True, unique=True, index=True)
+    symbol = Column(String(30), nullable=False, index=True)
+    direction = Column(String(10), nullable=False)
+    signal_type = Column(String(30), nullable=False, default="COMBINED")
+    regime = Column(String(30), nullable=False, default="UNKNOWN")
+    rsi_at_entry = Column(Float, nullable=True)
+    volume_above_avg = Column(Integer, nullable=False, default=0)
+    entry_price = Column(Float, nullable=False)
+    exit_price = Column(Float, nullable=False)
+    pnl_pct = Column(Float, nullable=False)
+    result = Column(String(10), nullable=False)  # WIN / LOSS
+    closed_at = Column(String(64), nullable=False)
+    confidence = Column(Float, default=0.0)
+    exit_reason = Column(String(30), default="")
+    # Enriched metadata for future analysis
+    asset_class = Column(String(20), nullable=True)  # EQUITY / CRYPTO / FOREX
+    strategy_version = Column(String(20), nullable=True)
+    environment = Column(String(30), nullable=False, default="PAPER_FORWARD")
+    entry_time = Column(String(64), nullable=True)
+    exit_time = Column(String(64), nullable=True)
+    stop_loss = Column(Float, nullable=True)
+    target = Column(Float, nullable=True)
+    pnl = Column(Float, nullable=True)
+    quantity = Column(Float, nullable=True)
+
+    __table_args__ = (
+        Index("idx_trade_outcomes_pg_signal_type", "signal_type"),
+        Index("idx_trade_outcomes_pg_regime", "regime"),
+        Index("idx_trade_outcomes_pg_result", "result"),
+        Index("idx_trade_outcomes_pg_env", "environment"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<TradeOutcome {self.symbol} {self.direction} "
+            f"{self.result} pnl={self.pnl_pct}%>"
+        )
+

@@ -22070,10 +22070,10 @@ function _updateIntradayKpis(sigs, session, niftyContext, dataStatus) {
         regEl.style.color = trend === "BULLISH" ? "var(--green)" : (trend === "BEARISH" ? "var(--red)" : "var(--text-muted)");
     }
 
-    // Feed Quality KPI
-    if (feedEl && dataStatus) {
-        feedEl.textContent = dataStatus === "LIVE" ? "LIVE (0-DELAY)" : "DELAYED (5M)";
-        feedEl.style.color = dataStatus === "LIVE" ? "var(--green)" : "#38bdf8";
+    // Feed Quality KPI (Strict Truthful Freshness: No Fake LIVE Badges)
+    if (feedEl) {
+        feedEl.textContent = "15M DELAYED (NSE)";
+        feedEl.style.color = "#38bdf8";
     }
 }
 
@@ -22227,9 +22227,10 @@ function _renderIntradayTable(sigs) {
             ? `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(148,163,184,0.12);color:#94a3b8;border:1px solid rgba(148,163,184,0.3);">EXPIRED</span>`
             : `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(16,185,129,0.12);color:var(--green);border:1px solid rgba(16,185,129,0.35);">ACTIVE</span>`;
 
-        const feedBadge = s.data_status === "LIVE"
-            ? `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(16,185,129,0.1);color:var(--green);">LIVE</span>`
-            : `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(56,189,248,0.1);color:#38bdf8;">DELAYED</span>`;
+        const isCrypto = (s.symbol || "").includes("/");
+        const feedBadge = isCrypto
+            ? `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(56,189,248,0.1);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);">CRYPTO 24/7</span>`
+            : `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(56,189,248,0.1);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);">15m DELAYED</span>`;
 
         const classification = s.classification || (dir === "LONG" ? (score >= 80 ? "STRONG LONG" : "LONG") : (score >= 80 ? "STRONG SHORT" : "SHORT"));
 
@@ -22718,11 +22719,20 @@ async function loadIntradayLatest() {
             `;
         }
 
-        // Update scan meta
+        // Update scan meta with full Scan Freshness Contract details
         if (meta) {
-            meta.innerHTML = row.scan_time
-                ? `Last snapshot: <strong>${row.scan_time}</strong> · ID <strong>#${row.scan_id || "—"}</strong> · <strong>${_intradayAllSigs.length}</strong> setups`
-                : "No saved scan yet · click ⚡ Run Scan to initiate.";
+            if (row.scan_time || row.last_scan_at) {
+                const lastScanStr = row.last_scan_at ? new Date(row.last_scan_at).toLocaleTimeString() : (row.scan_time || "—");
+                const sourceCandleStr = row.source_candle_at ? new Date(row.source_candle_at).toLocaleTimeString() : "15m delayed EOD/intraday";
+                const delayStr = row.provider_freshness || "15m Delayed";
+                const coverageStr = `${row.symbols_scanned || 20} symbols`;
+                const qualifiedCount = row.qualified_setups != null ? row.qualified_setups : (row.active_signals ? row.active_signals.length : _intradayAllSigs.length);
+                const statusBadgeColor = row.freshness_status === "FRESH" ? "#10b981" : (row.freshness_status === "EOD" ? "#94a3b8" : "#38bdf8");
+
+                meta.innerHTML = `<span>Scan: <strong>${lastScanStr}</strong></span> · <span>Candle: <strong>${sourceCandleStr}</strong></span> · <span>Status: <strong style="color:${statusBadgeColor};">${row.freshness_status || "DELAYED"}</strong></span> · <span>Coverage: <strong>${coverageStr}</strong></span> · <span>Qualified: <strong>${qualifiedCount}</strong> setups</span> · <span style="color:#60a5fa;">${delayStr}</span>`;
+            } else {
+                meta.innerHTML = "No saved scan yet · click ⚡ Run Scan to initiate.";
+            }
         }
 
         applyIntradayFilters();
