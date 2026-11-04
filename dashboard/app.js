@@ -15870,195 +15870,140 @@ function drawModalChart(data, interval) {
 
 
 function renderModalInfo(data, symbol, interval) {
-
-
-
     const last = data[data.length - 1];
-
-
-
-    // Signal/Regime/Trend come from the live 5m signal cache (always most current)
-
-
-
     const sig = allSignals.find(s => s.symbol === symbol);
-
-
-
     const isCrypto = symbol.includes('/');
-
-
-
     const curr = isCrypto ? '$' : '₹';
-
-
-
     const tf = interval || currentModalInterval || '5m';
 
-
-
-
-
-
-
-    const sigVal   = sig?.signal  || last.signal || 'HOLD';
-
-
-
-    const sigColor = ['LONG','BUY'].includes(sigVal) ? 'var(--green)'
-
-
-
-                   : ['SHORT','SELL'].includes(sigVal) ? 'var(--red)'
-
-
-
-                   : sigVal === 'SKIP' ? 'var(--text-muted)'
-
-
-
-                   : 'var(--cyan)';
-
-
-
-
-
-
-
-    const items = [
-
-
-
-        { label: 'Close',    value: `${curr}${Number(last.close).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-
-
-
-        { label: 'RSI',      value: last.rsi != null ? last.rsi.toFixed(1) : '—',
-
-
-
-          color: last.rsi < 30 ? 'var(--green)' : last.rsi > 70 ? 'var(--red)' : null },
-
-
-
-        { label: 'VWAP',     value: last.vwap     ? `${curr}${last.vwap.toFixed(2)}`    : '—' },
-
-
-
-        { label: 'ADX',      value: last.adx      ? last.adx.toFixed(1)                 : '—' },
-
-
-
-        { label: 'EMA 20',   value: last.ema_20   ? `${curr}${last.ema_20.toFixed(2)}`  : '—' },
-
-
-
-        { label: 'EMA 50',   value: last.ema_50   ? `${curr}${last.ema_50.toFixed(2)}`  : '—' },
-
-
-
-        { label: 'BB Upper', value: last.bb_upper ? `${curr}${last.bb_upper.toFixed(2)}`: '—' },
-
-
-
-        { label: 'BB Lower', value: last.bb_lower ? `${curr}${last.bb_lower.toFixed(2)}`: '—' },
-
-
-
-        { label: 'Signal',   value: sigVal, color: sigColor },
-
-
-
-        { label: 'Confidence', value: sig?.confidence != null ? `${sig.confidence}%` : '—' },
-
-
-
-        { label: 'Regime',   value: sig?.regime || '—' },
-
-
-
-        { label: 'Trend',    value: (sig?.trend || '—').replace('TrendDirection.', '') },
-
-
-
-        { label: 'TF',       value: tf.toUpperCase(), color: 'rgba(99,102,241,0.9)' },
-
-
-
-    ];
-
-
-
-
-
-
-
-    if (sig?.quality_score != null) {
-
-
-
-        items.push({ label: 'Quality', value: `${sig.quality_score} ${sig.quality_grade || ''}`,
-
-
-
-            color: sig.quality_grade === 'A' ? 'var(--green)' : sig.quality_grade === 'D' ? 'var(--red)' : null });
-
-
-
+    const sigVal   = sig?.signal || last.signal || 'HOLD';
+    const sigDir   = sig?.direction || sigVal;
+    const entryVal = sig?.entry ?? last.close;
+    const slVal    = sig?.stop_loss;
+    const tpVal    = sig?.target;
+    const curClose = Number(last.close || 0);
+
+    // Determine trade lifecycle status (active vs target hit vs stopped out)
+    const status = sig?.signal_status || (
+        sigVal === 'LONG' && tpVal && curClose >= tpVal ? 'TARGET_HIT' :
+        sigVal === 'SHORT' && tpVal && curClose <= tpVal ? 'TARGET_HIT' :
+        sigVal === 'LONG' && slVal && curClose <= slVal ? 'STOPPED_OUT' :
+        sigVal === 'SHORT' && slVal && curClose >= slVal ? 'STOPPED_OUT' :
+        sig?.stale ? 'STALE' : 'ACTIVE'
+    );
+
+    const isTargetHit = status === 'TARGET_HIT';
+    const isStoppedOut = status === 'STOPPED_OUT';
+    const displaySig = (isTargetHit || isStoppedOut) ? 'HOLD' : sigVal;
+
+    let statusBadge = '';
+    if (isTargetHit) {
+        statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--green);padding:1px 6px;border-radius:8px;background:rgba(16,185,129,0.15);margin-left:4px;">✓ TARGET HIT</span>';
+    } else if (isStoppedOut) {
+        statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--red);padding:1px 6px;border-radius:8px;background:rgba(239,68,68,0.15);margin-left:4px;">✕ STOPPED OUT</span>';
+    } else if (status === 'STALE') {
+        statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--yellow);padding:1px 6px;border-radius:8px;background:rgba(245,158,11,0.15);margin-left:4px;">⏱ STALE</span>';
     }
 
+    const sigColor = ['LONG','BUY'].includes(displaySig)   ? 'var(--green)'
+                   : ['SHORT','SELL'].includes(displaySig) ? 'var(--red)'
+                   : displaySig === 'SKIP' ? 'var(--text-muted)'
+                   : 'var(--cyan)';
 
+    // MACD color
+    const macdHist = last.macd_hist;
+    const macdColor = macdHist > 0 ? 'var(--green)' : macdHist < 0 ? 'var(--red)' : 'var(--text-muted)';
+    const macdIcon  = macdHist > 0 ? '▲' : macdHist < 0 ? '▼' : '—';
 
+    // RSI color
+    const rsiVal = last.rsi;
+    const rsiColor = rsiVal < 30 ? 'var(--green)' : rsiVal > 70 ? 'var(--yellow)' : 'var(--text-secondary)';
+    const rsiLabel = rsiVal != null ? `${rsiVal.toFixed(1)}${rsiVal > 70 ? ' (OB)' : rsiVal < 30 ? ' (OS)' : ''}` : '—';
 
+    // Multi-timeframe trend separation: Local TF vs Daily Macro
+    const localTrend = sig?.local_trend || (last.ema_20 && last.ema_50 ? (last.ema_20 >= last.ema_50 ? 'BULLISH' : 'BEARISH') : 'NEUTRAL');
+    const macroTrend = (sig?.trend || '—').replace('TrendDirection.', '');
+    const localColor = localTrend === 'BULLISH' ? 'var(--green)' : localTrend === 'BEARISH' ? 'var(--red)' : 'var(--text-muted)';
+    const macroColor = macroTrend === 'BULLISH' ? 'var(--green)' : macroTrend === 'BEARISH' ? 'var(--red)' : 'var(--text-muted)';
 
+    // Entry / SL / Target Trade Section
+    const hasSignal = ['LONG', 'SHORT', 'BUY', 'SELL'].includes(sigDir);
+    let tradeSectionHTML = '';
+    if (hasSignal && (slVal || tpVal)) {
+        if (isTargetHit) {
+            const gainPct = entryVal > 0 && tpVal ? Math.abs((tpVal - entryVal) / entryVal * 100).toFixed(2) : '0';
+            tradeSectionHTML = `
+                <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.55rem;margin-top:0.1rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
+                        <span style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Previous Completed Trade</span>
+                        <span style="font-size:0.68rem;color:var(--green);font-weight:700;">✓ Target Achieved (+${gainPct}%)</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;text-align:center;">
+                        <div>
+                            <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
+                            <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
+                        </div>
+                        <div>
+                            <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss</div>
+                            <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${slVal ? curr + slVal.toFixed(2) : '—'}</div>
+                        </div>
+                        <div>
+                            <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Target Hit</div>
+                            <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tpVal ? curr + tpVal.toFixed(2) : '—'}</div>
+                        </div>
+                    </div>
+                </div>`;
+        } else {
+            tradeSectionHTML = `
+                <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.6rem;margin-top:0.1rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;">
+                    <div style="text-align:center">
+                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Entry</div>
+                        <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
+                    </div>
+                    <div style="text-align:center">
+                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Stop Loss</div>
+                        <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${slVal ? curr + slVal.toFixed(2) : '—'}</div>
+                    </div>
+                    <div style="text-align:center">
+                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Target</div>
+                        <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tpVal ? curr + tpVal.toFixed(2) : '—'}</div>
+                    </div>
+                </div>`;
+        }
+    }
 
+    const items = [
+        { label: 'Close',       value: `${curr}${Number(last.close).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+        { label: 'RSI (14)',    value: rsiLabel, color: rsiColor },
+        { label: 'MACD Hist',   value: macdHist != null ? `${macdIcon} ${Math.abs(macdHist).toFixed(4)}` : '—', color: macdColor },
+        { label: 'Signal',      value: `${displaySig} ${statusBadge}`, color: sigColor },
+        { label: 'Confluence',  value: sig?.confidence != null ? `${sig.confidence}/100` : '—' },
+        { label: 'Regime',      value: sig?.regime || '—' },
+        { label: `${tf.toUpperCase()} Trend`, value: localTrend, color: localColor },
+        { label: 'Daily Macro', value: macroTrend, color: macroColor },
+        { label: 'EMA 20',      value: last.ema_20 ? `${curr}${last.ema_20.toFixed(2)}` : '—' },
+        { label: 'EMA 50',      value: last.ema_50 ? `${curr}${last.ema_50.toFixed(2)}` : '—' },
+        { label: 'VWAP',        value: last.vwap   ? `${curr}${last.vwap.toFixed(2)}` : '—' },
+    ];
+
+    if (sig?.quality_score != null) {
+        items.push({ 
+            label: 'Quality', 
+            value: `${sig.quality_score} ${sig.quality_grade || ''}`,
+            color: sig.quality_grade === 'A' ? 'var(--green)' : sig.quality_grade === 'D' ? 'var(--red)' : null 
+        });
+    }
 
     const grid = document.getElementById('modalInfoGrid');
-
-
-
-    grid.innerHTML = items.map(item => `
-
-
-
-        <div class="info-item">
-
-
-
-            <span class="info-label">${item.label}</span>
-
-
-
-            <span class="info-value" ${item.color ? `style="color:${item.color}"` : ''}>${item.value}</span>
-
-
-
-        </div>
-
-
-
-    `).join('');
-
-
-
+    if (grid) {
+        grid.innerHTML = items.map(item => `
+            <div class="info-item">
+                <span class="info-label">${item.label}</span>
+                <span class="info-value" ${item.color ? `style="color:${item.color}"` : ''}>${item.value}</span>
+            </div>
+        `).join('') + tradeSectionHTML;
+    }
 }
-
-
-
-
-
-
-
-
-
-
-
-// ── Clock & Dynamic Market Status ───────────────────────
-
-
-
-
-
 
 
 function updateDynamicMarketStatus() {
