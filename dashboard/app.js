@@ -16455,6 +16455,26 @@ async function loadMarket() {
 
 
 
+            const screenerUpd = document.getElementById('screenerUpdatedTime');
+
+
+
+            if (screenerUpd) {
+
+
+
+                const now = new Date();
+
+
+
+                screenerUpd.textContent = `Updated ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+
+
+
+            }
+
+
+
         } catch (err) {
 
 
@@ -16795,6 +16815,64 @@ function showScreener(mode) {
 
 
 
+
+
+let screenerSortCol = null;
+let screenerSortAsc = false;
+
+function sortScreener(col) {
+    if (screenerSortCol === col) {
+        screenerSortAsc = !screenerSortAsc;
+    } else {
+        screenerSortCol = col;
+        screenerSortAsc = (col === 'symbol');
+    }
+    const data = screenerData[currentScreenerMode] || [];
+    data.sort((a, b) => {
+        let va = a[col] ?? 0;
+        let vb = b[col] ?? 0;
+        if (typeof va === 'string') va = va.toLowerCase();
+        if (typeof vb === 'string') vb = vb.toLowerCase();
+        if (va < vb) return screenerSortAsc ? -1 : 1;
+        if (va > vb) return screenerSortAsc ? 1 : -1;
+        return 0;
+    });
+    renderScreener(data);
+}
+
+async function refreshScreener(force = false) {
+    const icon = document.getElementById('screenerRefreshIcon');
+    const btn = document.getElementById('screenerRefreshBtn');
+    if (icon) icon.style.animation = 'spin 1s linear infinite';
+    if (btn) btn.disabled = true;
+
+    try {
+        const [gainersRes, losersRes] = await Promise.all([
+            fetchWithTimeout(`${API}/api/screener/gainers${force ? '?refresh=1' : ''}`, {}, 20000),
+            fetchWithTimeout(`${API}/api/screener/losers${force ? '?refresh=1' : ''}`, {}, 20000),
+        ]);
+
+        const gainers = await parseJsonResponse(gainersRes);
+        const losers = await parseJsonResponse(losersRes);
+
+        screenerData.gainers = gainers.data || [];
+        screenerData.losers = losers.data || [];
+
+        renderScreener(screenerData[currentScreenerMode]);
+
+        const upd = document.getElementById('screenerUpdatedTime');
+        if (upd) {
+            const now = new Date();
+            upd.textContent = `Updated ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+        }
+    } catch (err) {
+        console.error('Error refreshing screener:', err);
+    } finally {
+        if (icon) icon.style.animation = '';
+        if (btn) btn.disabled = false;
+    }
+}
+
 function filterScreener() {
 
 
@@ -16947,7 +17025,7 @@ function renderScreener(stocks) {
 
 
 
-            <tr>
+            <tr onclick="fetchAndShowQuote('${s.symbol}')" style="cursor:pointer;" title="Click to view detailed analysis & chart for ${s.symbol}">
 
 
 
@@ -16967,7 +17045,19 @@ function renderScreener(stocks) {
 
 
 
-                            <span class="stock-sym">${s.symbol}</span>
+                            <div style="display:flex;align-items:center;gap:0.35rem;">
+
+
+
+                                <span class="stock-sym">${s.symbol}</span>
+
+
+
+                                ${s.sector ? `<span style="font-size:0.58rem;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.08);color:var(--text-muted);font-weight:500;">${s.sector}</span>` : ''}
+
+
+
+                            </div>
 
 
 

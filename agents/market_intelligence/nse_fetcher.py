@@ -836,7 +836,7 @@ def fetch_sector_performance() -> list[dict]:
         "IT":       ["TCS.NS", "INFY.NS", "WIPRO.NS"],
         "Finance":  ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS"],
         "FMCG":     ["HINDUNILVR.NS", "ITC.NS"],
-        "Auto":     ["MARUTI.NS", "TATAMOTORS.NS"],  # uses correct TATAMOTORS.NS now
+        "Auto":     ["MARUTI.NS", "BAJAJ-AUTO.NS", "M&M.NS"],
         "Pharma":   ["SUNPHARMA.NS"],
         "Energy":   ["RELIANCE.NS"],
         "Telecom":  ["BHARTIARTL.NS"],

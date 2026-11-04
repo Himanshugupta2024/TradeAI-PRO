@@ -4138,7 +4138,7 @@ async def screener_gainers():
 
             }
 
-    # Cache empty — try yFinance batch (with short timeout)
+    # Cache empty — try yFinance batch (with 15s timeout)
 
     try:
 
@@ -4146,13 +4146,19 @@ async def screener_gainers():
 
             asyncio.to_thread(fetch_nse_gainers_losers, "gainers"),
 
-            timeout=5.0,
+            timeout=15.0,
 
         )
 
+        if data:
+
+            svc._movers_cache["gainers"] = data
+
+            svc._movers_cache["updated_at"] = datetime.now().isoformat()
+
     except asyncio.TimeoutError:
 
-        logger.warning("Screener gainers timed out (5s) — no cache available")
+        logger.warning("Screener gainers timed out (15s) — checking DB fallback")
 
         data = []
 
@@ -4161,6 +4167,28 @@ async def screener_gainers():
         logger.error("Screener gainers fetch failed: %s", e)
 
         data = []
+
+    # Durable DB runtime_state fallback if network failed/empty
+
+    if not data:
+
+        try:
+
+            from db.runtime_state import get_runtime_state
+
+            db_data = await asyncio.to_thread(get_runtime_state, "screener_gainers")
+
+            if db_data and isinstance(db_data, list) and len(db_data) > 0:
+
+                logger.info("Screener gainers restored from DB runtime_state: %d stocks", len(db_data))
+
+                data = db_data
+
+                svc._movers_cache["gainers"] = data
+
+        except Exception as exc:
+
+            logger.debug("Runtime state fallback for gainers failed: %s", exc)
 
     return {
 
@@ -4230,7 +4258,7 @@ async def screener_losers():
 
             }
 
-    # Cache empty — try yFinance batch (with short timeout)
+    # Cache empty — try yFinance batch (with 15s timeout)
 
     try:
 
@@ -4238,13 +4266,19 @@ async def screener_losers():
 
             asyncio.to_thread(fetch_nse_gainers_losers, "losers"),
 
-            timeout=5.0,
+            timeout=15.0,
 
         )
 
+        if data:
+
+            svc._movers_cache["losers"] = data
+
+            svc._movers_cache["updated_at"] = datetime.now().isoformat()
+
     except asyncio.TimeoutError:
 
-        logger.warning("Screener losers timed out (5s) — no cache available")
+        logger.warning("Screener losers timed out (15s) — checking DB fallback")
 
         data = []
 
@@ -4253,6 +4287,28 @@ async def screener_losers():
         logger.error("Screener losers fetch failed: %s", e)
 
         data = []
+
+    # Durable DB runtime_state fallback if network failed/empty
+
+    if not data:
+
+        try:
+
+            from db.runtime_state import get_runtime_state
+
+            db_data = await asyncio.to_thread(get_runtime_state, "screener_losers")
+
+            if db_data and isinstance(db_data, list) and len(db_data) > 0:
+
+                logger.info("Screener losers restored from DB runtime_state: %d stocks", len(db_data))
+
+                data = db_data
+
+                svc._movers_cache["losers"] = data
+
+        except Exception as exc:
+
+            logger.debug("Runtime state fallback for losers failed: %s", exc)
 
     return {
 

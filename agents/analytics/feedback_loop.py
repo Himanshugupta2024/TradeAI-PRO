@@ -509,6 +509,13 @@ class WeightAdapter:
         return new_weights
 
     def _load(self) -> dict:
+        # If a custom weights path is configured (e.g. in unit tests with tmp_path), prioritize it
+        if _WEIGHTS_PATH != Path("config/learned_weights.json") and _WEIGHTS_PATH.exists():
+            try:
+                with open(_WEIGHTS_PATH, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
         try:
             from db.runtime_state import get_runtime_state
             db_weights = get_runtime_state("learned_weights:v1")
@@ -518,7 +525,7 @@ class WeightAdapter:
             pass
         try:
             if _WEIGHTS_PATH.exists():
-                with open(_WEIGHTS_PATH) as f:
+                with open(_WEIGHTS_PATH, "r", encoding="utf-8") as f:
                     return json.load(f)
         except Exception:
             pass

@@ -4409,17 +4409,23 @@
 
                             <h2 class="section-title">Market Wise</h2>
 
-                            <div class="live-pill" title="Sector momentum based on 15m delayed market quotes"><span class="status-dot" style="background:#f59e0b;"></span> 15m Delayed</div>
+                            <div style="display:flex;align-items:center;gap:0.5rem;">
+
+                                <button class="btn btn-secondary btn-xs" id="screenerRefreshBtn" onclick="refreshScreener(true)" style="padding:0.22rem 0.55rem;font-size:0.68rem;display:inline-flex;align-items:center;gap:0.3rem;cursor:pointer;border-radius:4px;border:1px solid var(--border-color);background:var(--bg-input);color:var(--text-secondary);" title="Refresh Screener Data"><span id="screenerRefreshIcon">↻</span> Refresh</button>
+
+                                <div class="live-pill" title="Sector momentum based on 15m delayed market quotes"><span class="status-dot" style="background:#f59e0b;"></span> 15m Delayed</div>
+
+                            </div>
 
                         </div>
 
-                        <div class="screener-toggle">
+                        <div class="screener-toggle" style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
 
-                            <button class="toggle-btn active" id="gainersBtn" onclick="showScreener('gainers')">▲
-
-                                Gainers</button>
+                            <button class="toggle-btn active" id="gainersBtn" onclick="showScreener('gainers')">▲ Gainers</button>
 
                             <button class="toggle-btn" id="losersBtn" onclick="showScreener('losers')">▼ Losers</button>
+
+                            <span id="screenerUpdatedTime" style="font-size:0.65rem;color:var(--text-muted);margin-left:auto;"></span>
 
                         </div>
 
@@ -4449,15 +4455,15 @@
 
                                 <tr>
 
-                                    <th>SYMBOL</th>
+                                    <th onclick="sortScreener('symbol')" style="cursor:pointer;" title="Sort by Symbol">SYMBOL ⬍</th>
 
-                                    <th>LTP</th>
+                                    <th onclick="sortScreener('ltp')" style="cursor:pointer;" title="Sort by Price">LTP ⬍</th>
 
-                                    <th>%CHG</th>
+                                    <th onclick="sortScreener('pct_change')" style="cursor:pointer;" title="Sort by % Change">%CHG ⬍</th>
 
-                                    <th>X FAC</th>
+                                    <th onclick="sortScreener('x_factor')" style="cursor:pointer;" title="Sort by X-Factor">X FAC ⬍</th>
 
-                                    <th>VOL (Cr)</th>
+                                    <th onclick="sortScreener('volume_cr')" style="cursor:pointer;" title="Sort by Volume">VOL (Cr) ⬍</th>
 
                                 </tr>
 
@@ -7613,7 +7619,7 @@
 
     <script src="/static/config.js"></script>
 
-    <script src="/static/app.js?v=id_cmd_1"></script>
+    <script src="/static/app.js?v=mw_2"></script>
 
 </body>
 
