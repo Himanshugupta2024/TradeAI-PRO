@@ -796,25 +796,11 @@ async def get_meme_coin_signals():
 
         return cached
 
-    if _meme_refresh_lock.locked():
+    # Non-blocking cold start: if cache is empty, trigger background refresh and return fallback immediately
+    if not _meme_refresh_lock.locked():
+        asyncio.create_task(_refresh_meme_signals_bg())
 
-        return _get_fallback_meme_payload()
-
-    async with _meme_refresh_lock:
-
-        if _meme_cache.get("payload") is not None:
-
-            return _meme_cache["payload"]
-
-        try:
-
-            return await _compute_meme_signals_raw()
-
-        except Exception as exc:
-
-            logger.error("Failed to compute meme signals: %s", exc)
-
-            return _get_fallback_meme_payload()
+    return _get_fallback_meme_payload()
 
 async def _compute_meme_signals_raw():
 

@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 from datetime import datetime, date, timezone, timedelta
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field, asdict
 
 from config import settings
@@ -529,7 +530,7 @@ class PaperTradingEngine:
 
         return closed
 
-    def check_eod_squareoff(self, prices: dict[str, dict] = None) -> list[PaperTrade]:
+    def check_eod_squareoff(self, prices: dict[str, dict] = None, dt: Optional[datetime] = None) -> list[PaperTrade]:
         """
         Auto-square-off open intraday equity trades at or after 15:15 IST (Mon-Fri).
         Prevents overnight gap-down risk for intraday setups.
@@ -537,7 +538,7 @@ class PaperTradingEngine:
         """
         prices = prices or {}
         closed = []
-        now_ist = datetime.now(tz=_IST)
+        now_ist = dt or datetime.now(tz=_IST)
         ist_minutes = now_ist.hour * 60 + now_ist.minute
         is_weekday = now_ist.weekday() < 5
 

@@ -120,21 +120,42 @@ def evaluate_data_freshness(
 
     # Ensure UTC normalized comparison
     if ts_val.tzinfo is None:
-        # Default assume UTC unless in IST range
-        ts_utc = ts_val.replace(tzinfo=timezone.utc)
+        if "/" not in symbol:
+            # NSE equities from nse_fetcher are in Asia/Kolkata
+            ts_localized = ts_val.replace(tzinfo=_IST)
+            ts_utc = ts_localized.astimezone(timezone.utc)
+        else:
+            ts_utc = ts_val.replace(tzinfo=timezone.utc)
     else:
         ts_utc = ts_val.astimezone(timezone.utc)
 
     now_utc = datetime.now(timezone.utc)
     age_seconds = max(0.0, (now_utc - ts_utc).total_seconds())
 
-    # Date check (is it an EOD bar from a prior day?)
+    # Date check and Session bounds check for NSE equities
     if "/" not in symbol:
-        # For NSE equities, check if the bar is older than today in IST
         bar_ist = ts_utc.astimezone(_IST)
         today_ist = get_current_ist_time().date()
+
+        # Check if bar is from prior day
         if bar_ist.date() < today_ist:
             return "EOD", age_seconds
+
+        # Daily candle check: often 00:00:00
+        if bar_ist.hour == 0 and bar_ist.minute == 0 and bar_ist.second == 0:
+            return "EOD", age_seconds
+
+        # Check for weekend candle
+        if bar_ist.weekday() >= 5:
+            return "IMPOSSIBLE_SESSION_TIME", age_seconds
+
+        # Check market session window (09:15 to 15:30 IST)
+        bar_time_minutes = bar_ist.hour * 60 + bar_ist.minute
+        open_time_minutes = _NSE_OPEN_HOUR * 60 + _NSE_OPEN_MINUTE
+        close_time_minutes = _NSE_CLOSE_HOUR * 60 + _NSE_CLOSE_MINUTE
+
+        if bar_time_minutes < open_time_minutes or bar_time_minutes > close_time_minutes:
+            return "IMPOSSIBLE_SESSION_TIME", age_seconds
 
     if age_seconds <= max_live_age_seconds:
         return "LIVE", age_seconds

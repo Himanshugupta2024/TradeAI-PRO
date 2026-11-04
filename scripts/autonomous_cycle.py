@@ -265,6 +265,19 @@ async def run_single_autonomous_cycle(
                     )
                     summary["decisions_recorded"] += 1
                     continue
+                elif freshness == "IMPOSSIBLE_SESSION_TIME":
+                    logger.warning("[Freshness] Symbol %s has IMPOSSIBLE_SESSION_TIME. Skipping entry.", sym)
+                    record_autonomous_decision_to_db(
+                        signal_id=f"reject-impossible-{sym}-{today_str}-{int(time.time())}",
+                        run_id=run_id,
+                        symbol=sym,
+                        action="SKIP_IMPOSSIBLE_SESSION_TIME",
+                        direction="HOLD",
+                        source_freshness="IMPOSSIBLE_SESSION_TIME",
+                        reason="Candle timestamp is outside valid NSE market trading session (09:15-15:30 IST)",
+                    )
+                    summary["decisions_recorded"] += 1
+                    continue
                 elif freshness == "EOD" and not is_crypto:
                     logger.debug("[Freshness] Symbol %s returned prior EOD bar during intraday. Skipping entry.", sym)
                     continue
