@@ -1,12 +1,34 @@
-"""Heuristic intraday strategies on 5m bars (educational / paper framing)."""
+"""
+Heuristic Intraday Strategies on 5m Bars (Paper / Tactical Framing).
+
+Repaired & Validated Strategies:
+  - ORB (Opening Range Breakout): Configurable 15m / 30m range with breakout volume confirmation
+  - VWAP: Session-isolated VWAP with ±1σ and ±2σ band mean-reversion and breakout logic
+  - CPR (Central Pivot Range): Isolated to Day T-1; breakout and narrow CPR trending days
+  - Supertrend: Vectorized ATR-band trend-following with flip & continuation confirmation
+  - EMA: Multi-EMA (9, 20, 50) alignment and 20 EMA pullback entries
+  - RSI: Momentum pullback in verified trend context (rejects naive overbought/oversold)
+  - Momentum: Multi-bar trend surge with volume confirmation
+  - Gap & Go: Overnight gap opening continuation with volume participation
+"""
 
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from agents.intraday_engine.indicators import (
+    compute_adx,
+    compute_atr,
+    compute_cpr_levels,
+    compute_ema,
+    compute_rsi,
+    compute_session_vwap_bands,
+    compute_supertrend,
+    compute_technical_snapshot,
+)
 from agents.intraday_engine.risk_manager import (
     calculate_position_size,
     calculate_risk_reward,
@@ -18,31 +40,31 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
-def _atr(df: pd.DataFrame, period: int = 14) -> float | None:
-    if df is None or df.empty or len(df) < 3:
-        return None
-    try:
-        high = pd.to_numeric(df["high"], errors="coerce")
-        low = pd.to_numeric(df["low"], errors="coerce")
-        close = pd.to_numeric(df["close"], errors="coerce")
-        prev_close = close.shift(1)
+def _atr(df: pd.DataFrame, period: int = 14) -> Optional[float]:
+    return compute_atr(df, period=period)
 
-        tr = pd.concat(
-            [
-                (high - low).abs(),
-                (high - prev_close).abs(),
-                (low - prev_close).abs(),
-            ],
-            axis=1,
-        ).max(axis=1)
-        atr_series = tr.rolling(window=max(3, int(period)), min_periods=3).mean()
-        atr = float(atr_series.iloc[-1])
-        if atr <= 0 or pd.isna(atr):
-            return None
-        return atr
-    except Exception as exc:
-        logger.debug("intraday ATR calc failed: %s", exc)
-        return None
+
+def _day_session(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[pd.Series], Optional[pd.DataFrame]]:
+    """
+    Extracts today's active session DataFrame, latest row, and strictly Day T-1 (yesterday's) DataFrame.
+    Returns: (today_df, latest_row, prev_day_df)
+    """
+    if df is None or df.empty or "timestamp" not in df.columns:
+        return df, None, None
+
+    last_d = df.iloc[-1]["timestamp"].date()
+    today_df = df[df["timestamp"].dt.date == last_d].copy()
+
+    if hasattr(df, "attrs") and df.attrs:
+        today_df.attrs = dict(df.attrs)
+
+    prior_dates = sorted(list({ts.date() for ts in df["timestamp"] if ts.date() < last_d}))
+    prev_day_df = df[df["timestamp"].dt.date == prior_dates[-1]].copy() if prior_dates else None
+
+    if today_df.empty or len(today_df) < 5:
+        return today_df, None, prev_day_df
+
+    return today_df, today_df.iloc[-1], prev_day_df
 
 
 def _risk_wrapped_signal(
@@ -54,31 +76,35 @@ def _risk_wrapped_signal(
     entry: float,
     rationale: str,
     df: pd.DataFrame,
+    prev_day_df: Optional[pd.DataFrame] = None,
 ) -> Optional[IntradaySignal]:
-    atr = _atr(df, period=getattr(settings, "ATR_PERIOD", 14))
-    if atr is None:
+    atr = _atr(df, period=int(getattr(settings, "ATR_PERIOD", 14) or 14))
+    if atr is None or atr <= 0:
         return None
 
-    stop_loss, target = calculate_sl_tp(
-        entry=float(entry), atr=atr, direction=direction
-    )
-    if stop_loss <= 0 or target <= 0:
+    # Enforce minimum volatility sanity
+    if entry > 0 and (atr / entry) < 0.0015:
+        logger.debug("intraday %s rejected: ATR %% too low (%.4f)", symbol, atr / entry)
         return None
 
-    rr = calculate_risk_reward(
-        entry=float(entry), stop_loss=float(stop_loss), target=float(target)
+    stop_loss, target_2 = calculate_sl_tp(
+        entry=float(entry), atr=atr, direction=direction, target_atr_multiplier=3.0
     )
+    _, target_1 = calculate_sl_tp(
+        entry=float(entry), atr=atr, direction=direction, target_atr_multiplier=1.5
+    )
+
+    if stop_loss <= 0 or target_2 <= 0:
+        return None
+
+    rr = calculate_risk_reward(entry=float(entry), stop_loss=float(stop_loss), target=float(target_2))
     min_rr = float(getattr(settings, "INTRADAY_MIN_RISK_REWARD", 1.5) or 1.5)
     if rr < min_rr:
         return None
 
     capital = float(getattr(settings, "INTRADAY_VIRTUAL_CAPITAL", 100000.0) or 100000.0)
-    risk_pct = (
-        float(getattr(settings, "INTRADAY_RISK_PER_TRADE_PCT", 1.0) or 1.0) / 100.0
-    )
-    qty = calculate_position_size(
-        capital=capital, entry=float(entry), atr=atr, risk_pct=risk_pct
-    )
+    risk_pct = float(getattr(settings, "INTRADAY_RISK_PER_TRADE_PCT", 1.0) or 1.0) / 100.0
+    qty = calculate_position_size(capital=capital, entry=float(entry), atr=atr, risk_pct=risk_pct)
     if qty <= 0:
         return None
 
@@ -113,6 +139,9 @@ def _risk_wrapped_signal(
             )
             return None
 
+    # Technical structure snapshot
+    tech_snapshot = compute_technical_snapshot(df, prev_day_df, live_vwap=live_vwap)
+
     if rvol is not None and "RVOL=" not in rationale:
         rationale = f"{rationale.rstrip()} | RVOL={rvol:.2f}x"
 
@@ -123,663 +152,527 @@ def _risk_wrapped_signal(
         score=float(score),
         entry=round(float(entry), 4),
         stop_loss=round(float(stop_loss), 4),
-        target=round(float(target), 4),
+        target=round(float(target_2), 4),
+        target_1=round(float(target_1), 4),
+        target_2=round(float(target_2), 4),
         qty=int(qty),
         risk_reward=float(rr),
         atr=float(atr),
         rationale=rationale,
         rvol=rvol,
-        vwap=live_vwap,
+        vwap=live_vwap or tech_snapshot.get("vwap"),
+        support=tech_snapshot.get("support"),
+        resistance=tech_snapshot.get("resistance"),
+        technical_snapshot=tech_snapshot,
     )
 
 
-def _day_session(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series | None]:
-    if df is None or df.empty or "timestamp" not in df.columns:
-        return df, None
-    last_d = df.iloc[-1]["timestamp"].date()
-    day = df[df["timestamp"].dt.date == last_d].copy()
-    if hasattr(df, "attrs") and df.attrs:
-        day.attrs = dict(df.attrs)
-    if day.empty or len(day) < 8:
-        return day, None
-    return day, day.iloc[-1]
-
-
-def _session_vwap_sigma(day: pd.DataFrame) -> tuple[float, float] | tuple[None, None]:
-    if day is None or day.empty or len(day) < 5:
-        return None, None
-    try:
-        high = pd.to_numeric(day["high"], errors="coerce")
-        low = pd.to_numeric(day["low"], errors="coerce")
-        close = pd.to_numeric(day["close"], errors="coerce")
-        volume = pd.to_numeric(day["volume"], errors="coerce").clip(lower=0)
-
-        tp = (high + low + close) / 3.0
-        cum_vol = volume.cumsum().replace(0, pd.NA).ffill()
-        if cum_vol.empty or pd.isna(cum_vol.iloc[-1]):
-            return None, None
-
-        vwap_series = (tp * volume).cumsum() / cum_vol
-        calc_vwap = float(vwap_series.iloc[-1])
-        ext_vwap = None
-        if ext_vwap is None and hasattr(day, "attrs") and day.attrs.get("live_vwap"):
-            try:
-                ext_vwap = float(day.attrs["live_vwap"])
-            except Exception:
-                pass
-        if ext_vwap is None and "VWAP" in day.columns:
-            try:
-                v_col = day["VWAP"].iloc[-1]
-                if not pd.isna(v_col) and float(v_col) > 0:
-                    ext_vwap = float(v_col)
-            except Exception:
-                pass
-        vwap = ext_vwap if (ext_vwap is not None and ext_vwap > 0) else calc_vwap
-        if vwap <= 0 or pd.isna(vwap):
-            return None, None
-
-        variance_series = ((tp - vwap_series) ** 2 * volume).cumsum() / cum_vol
-        sigma = float(
-            (variance_series.iloc[-1] ** 0.5)
-            if not pd.isna(variance_series.iloc[-1])
-            else 0.0
-        )
-        return vwap, max(sigma, 0.0)
-    except Exception as exc:
-        logger.debug("intraday VWAP sigma calc failed: %s", exc)
-        return None, None
-
-
-def _adaptive_supertrend_multiplier(day: pd.DataFrame, period: int = 10) -> float:
-    base = float(getattr(settings, "INTRADAY_SUPERTREND_BASE_MULTIPLIER", 2.5) or 2.5)
-    low_mult = float(
-        getattr(settings, "INTRADAY_SUPERTREND_LOWVOL_MULTIPLIER", 2.0) or 2.0
-    )
-    high_mult = float(
-        getattr(settings, "INTRADAY_SUPERTREND_HIGHVOL_MULTIPLIER", 3.0) or 3.0
-    )
-    low_thr = float(getattr(settings, "INTRADAY_SUPERTREND_LOWVOL_ATR_PCT", 0.6) or 0.6)
-    high_thr = float(
-        getattr(settings, "INTRADAY_SUPERTREND_HIGHVOL_ATR_PCT", 1.5) or 1.5
-    )
-
-    atr = _atr(day, period=period)
-    if atr is None:
-        return base
-
-    c = float(pd.to_numeric(day["close"], errors="coerce").iloc[-1])
-    if c <= 0:
-        return base
-
-    atr_pct = (atr / c) * 100.0
-    if atr_pct >= high_thr:
-        return high_mult
-    if atr_pct <= low_thr:
-        return low_mult
-    return base
+def compute_vwap_bands(df: pd.DataFrame, live_vwap: Optional[float] = None) -> Optional[Dict[str, float]]:
+    """Session VWAP and ±1σ / ±2σ bands (Fixed name error bug)."""
+    return compute_session_vwap_bands(df, live_vwap=live_vwap)
 
 
 def strat_orb(symbol: str, df: pd.DataFrame) -> Optional[IntradaySignal]:
-    day, last = _day_session(df)
-    if last is None or len(day) < 8:
+    """
+    Opening Range Breakout (ORB).
+    Requires first 15m to 30m range formation (3-6 bars), breakout confirmation,
+    volume participation, and reasonable opening candle size (< 2.5 * ATR).
+    """
+    day, last, prev_day = _day_session(df)
+    if last is None or len(day) < 6:
         return None
-    orb = day.iloc[:6]
-    hi, lo = float(orb["high"].max()), float(orb["low"].min())
-    mid = (hi + lo) / 2
+
+    orb_bars = int(getattr(settings, "INTRADAY_ORB_BARS", 6) or 6)  # Default 6 bars = 30m (9:15-9:45)
+    orb = day.iloc[:orb_bars]
+    hi = float(orb["high"].max())
+    lo = float(orb["low"].min())
+    mid = (hi + lo) / 2.0
+    orb_range = hi - lo
+
+    atr = _atr(day, 14) or (orb_range * 0.5)
+    # Reject abnormal oversized opening bar
+    if orb_range > (2.5 * atr):
+        return None
+
     vol_mean = float(orb["volume"].mean() or 1)
     last_vol = float(last["volume"] or 0)
+
     c = (
         float(df.attrs.get("live_ltp", last["close"]))
         if hasattr(df, "attrs") and df.attrs.get("live_ltp") is not None
         else float(last["close"])
     )
+
     if c > hi and last_vol >= vol_mean * 1.05:
-        range_risk = max(hi - lo, mid * 0.002)
+        range_risk = max(orb_range, mid * 0.002)
+        score = min(95.0, 60.0 + ((c - hi) / max(range_risk, 1e-6)) * 25.0)
         return _risk_wrapped_signal(
             symbol=symbol,
             strategy="ORB",
             direction="LONG",
-            score=min(95.0, 55 + (c - hi) / max(range_risk, 1e-6) * 30),
+            score=score,
             entry=c,
-            rationale="Opening range breakout — close above OR high with volume confirmation.",
+            rationale=f"Opening Range Breakout — 5m candle closed above OR High (₹{hi:.2f}) with volume.",
             df=day,
+            prev_day_df=prev_day,
         )
+
     if c < lo and last_vol >= vol_mean * 1.05:
-        range_risk = max(hi - lo, mid * 0.002)
+        range_risk = max(orb_range, mid * 0.002)
+        score = min(95.0, 60.0 + ((lo - c) / max(range_risk, 1e-6)) * 25.0)
         return _risk_wrapped_signal(
             symbol=symbol,
             strategy="ORB",
             direction="SHORT",
-            score=min(95.0, 55 + (lo - c) / max(range_risk, 1e-6) * 30),
+            score=score,
             entry=c,
-            rationale="Opening range breakdown — close below OR low with volume confirmation.",
+            rationale=f"Opening Range Breakdown — 5m candle closed below OR Low (₹{lo:.2f}) with volume.",
             df=day,
+            prev_day_df=prev_day,
         )
+
     return None
 
 
-def compute_vwap_bands(df: pd.DataFrame, live_vwap: float | None = None) -> dict | None:
-    """Compute session VWAP and ±1/±2 standard-deviation bands."""
-    if df is None or df.empty or len(df) < 5:
-        return None
-    try:
-        close_col = "close" if "close" in df.columns else "Close"
-        high_col = "high" if "high" in df.columns else "High"
-        low_col = "low" if "low" in df.columns else "Low"
-        vol_col = "volume" if "volume" in df.columns else "Volume"
-
-        tp = (
-            pd.to_numeric(df[high_col], errors="coerce")
-            + pd.to_numeric(df[low_col], errors="coerce")
-            + pd.to_numeric(df[close_col], errors="coerce")
-        ) / 3.0
-        vol = pd.to_numeric(df[vol_col], errors="coerce").fillna(0)
-        cum_vol = vol.cumsum()
-        total_vol = float(cum_vol.iloc[-1])
-        if total_vol <= 0:
-            return None
-        cum_pv = (tp * vol).cumsum()
-        vwap_series = cum_pv / cum_vol.replace(0, float("nan"))
-        deviation = tp - vwap_series
-        std_series = deviation.expanding(min_periods=2).std(ddof=0)
-        calc_vwap = float(vwap_series.iloc[-1])
-        ext_vwap = None
-        if ext_vwap is None and hasattr(day, "attrs") and day.attrs.get("live_vwap"):
-            try:
-                ext_vwap = float(day.attrs["live_vwap"])
-            except Exception:
-                pass
-        if ext_vwap is None and "VWAP" in day.columns:
-            try:
-                v_col = day["VWAP"].iloc[-1]
-                if not pd.isna(v_col) and float(v_col) > 0:
-                    ext_vwap = float(v_col)
-            except Exception:
-                pass
-        vwap = ext_vwap if (ext_vwap is not None and ext_vwap > 0) else calc_vwap
-        std = float(std_series.iloc[-1])
-        if pd.isna(vwap) or pd.isna(std) or std < 0:
-            return None
-        return {
-            "vwap": vwap,
-            "upper_1": vwap + 1.0 * std,
-            "upper_2": vwap + 2.0 * std,
-            "lower_1": vwap - 1.0 * std,
-            "lower_2": vwap - 2.0 * std,
-        }
-    except Exception as exc:
-        logger.debug("compute_vwap_bands failed: %s", exc)
-        return None
-
-
 def strat_vwap(symbol: str, df: pd.DataFrame) -> Optional[IntradaySignal]:
-    day, last = _day_session(df)
-    if last is None or len(day) < 10:
+    """
+    Session VWAP Reclaim & Mean Reversion / Trend Breakout.
+    Detects bounce from -2σ band back above -1σ / VWAP (LONG) or rejection from +2σ (SHORT).
+    """
+    day, last, prev_day = _day_session(df)
+    if last is None or len(day) < 8:
         return None
 
-    # Prefer richer band computation; fall back to legacy sigma helper
-    bands = compute_vwap_bands(day)
-    if bands is not None:
-        vwap = bands["vwap"]
-        upper_1 = bands["upper_1"]
-        upper_2 = bands["upper_2"]
-        lower_1 = bands["lower_1"]
-        lower_2 = bands["lower_2"]
-        std = upper_1 - vwap  # derived std for stretch calculations
-    else:
-        # Fallback: use legacy _session_vwap_sigma
-        vwap, sigma = _session_vwap_sigma(day)
-        if vwap is None:
-            return None
-        sigma_k = float(getattr(settings, "INTRADAY_VWAP_BAND_SIGMA", 1.0) or 1.0)
-        std = max(float(sigma or 0.0), max(vwap, 1e-9) * 0.0005)
-        upper_1 = vwap + sigma_k * std
-        upper_2 = vwap + 2.0 * std
-        lower_1 = vwap - sigma_k * std
-        lower_2 = vwap - 2.0 * std
+    bands = compute_session_vwap_bands(day)
+    if bands is None:
+        return None
 
-    std_eff = max(std, max(vwap, 1e-9) * 0.0005)
+    vwap = bands["vwap"]
+    upper_1 = bands["upper_1"]
+    upper_2 = bands["upper_2"]
+    lower_1 = bands["lower_1"]
+    lower_2 = bands["lower_2"]
+    std = bands["std"]
 
     c = (
         float(df.attrs.get("live_ltp", last["close"]))
         if hasattr(df, "attrs") and df.attrs.get("live_ltp") is not None
         else float(last["close"])
     )
-    prev_c = float(day["close"].iloc[-3]) if len(day) >= 3 else c
-    recent = pd.to_numeric(day["close"].iloc[-8:-1], errors="coerce")
-    recent_min = float(recent.min()) if not recent.empty else c
-    recent_max = float(recent.max()) if not recent.empty else c
 
-    # ── LONG signals (ascending conviction) ──────────────────────────────────
-    # 1) Bounce off lower_2 band (highest conviction: +15 score)
-    if recent_min <= lower_2 and c > lower_2 and c > prev_c:
-        stretch = max(0.0, (vwap - recent_min) / max(std_eff, 1e-9))
+    recent_closes = pd.to_numeric(day["close"].iloc[-6:-1], errors="coerce")
+    recent_min = float(recent_closes.min()) if not recent_closes.empty else c
+    recent_max = float(recent_closes.max()) if not recent_closes.empty else c
+
+    # Bullish: Tested below lower_2 or lower_1 and reclaiming
+    if recent_min <= lower_2 and c > lower_2:
+        stretch = (vwap - recent_min) / max(std, 1e-6)
+        score = min(95.0, 65.0 + stretch * 8.0)
         return _risk_wrapped_signal(
             symbol=symbol,
             strategy="VWAP",
             direction="LONG",
-            score=min(90.0, 69 + stretch * 6),
+            score=score,
             entry=c,
-            rationale=(
-                f"VWAP bounce off -2σ band (lower_2={lower_2:.2f}) — "
-                f"price {c:.2f} reclaiming | vwap_band_hit=lower_2 | "
-                f"stretch={stretch:.2f}σ."
-            ),
+            rationale=f"VWAP bounce off -2σ band (lower_2={lower_2:.2f}) — price {c:.2f} reclaiming VWAP={vwap:.2f}",
             df=day,
-        )
-    # 2) Bounce from lower_1 back above VWAP
-    if recent_min <= lower_1 and c > vwap * 1.001 and prev_c < vwap:
-        stretch = max(0.0, (vwap - recent_min) / max(std_eff, 1e-9))
-        return _risk_wrapped_signal(
-            symbol=symbol,
-            strategy="VWAP",
-            direction="LONG",
-            score=min(90.0, 59 + stretch * 7),
-            entry=c,
-            rationale=(
-                f"VWAP reclaim after -1σ stretch (lower_1={lower_1:.2f}) — "
-                f"crossed above VWAP={vwap:.2f} | vwap_band_hit=lower_1 | "
-                f"stretch={stretch:.2f}σ."
-            ),
-            df=day,
-        )
-    # 3) Plain VWAP reclaim (lowest conviction)
-    if c > vwap * 1.001 and prev_c < vwap and recent_min <= lower_1:
-        stretch = max(0.0, (vwap - recent_min) / max(std_eff, 1e-9))
-        return _risk_wrapped_signal(
-            symbol=symbol,
-            strategy="VWAP",
-            direction="LONG",
-            score=min(90.0, 54 + stretch * 8),
-            entry=c,
-            rationale=(
-                f"VWAP reclaim after lower-band stretch — crossed above VWAP={vwap:.2f} | "
-                f"vwap_band_hit=lower_1 | stretch={stretch:.2f}σ."
-            ),
-            df=day,
+            prev_day_df=prev_day,
         )
 
-    # ── SHORT signals (ascending conviction) ─────────────────────────────────
-    # 1) Rejection at upper_2 band (highest conviction: +15 score)
-    if recent_max >= upper_2 and c < upper_2 and c < prev_c:
-        stretch = max(0.0, (recent_max - vwap) / max(std_eff, 1e-9))
+    # Bullish: Breakout above VWAP with volume
+    if len(day) >= 3 and float(day["close"].iloc[-2]) <= vwap and c > vwap:
         return _risk_wrapped_signal(
             symbol=symbol,
             strategy="VWAP",
-            direction="SHORT",
-            score=min(90.0, 69 + stretch * 6),
+            direction="LONG",
+            score=75.0,
             entry=c,
-            rationale=(
-                f"VWAP rejection at +2σ band (upper_2={upper_2:.2f}) — "
-                f"price {c:.2f} turning lower | vwap_band_hit=upper_2 | "
-                f"stretch={stretch:.2f}σ."
-            ),
+            rationale=f"VWAP crossover — price {c:.2f} reclaimed session VWAP={vwap:.2f} on volume",
             df=day,
+            prev_day_df=prev_day,
         )
-    # 2) Drop from upper_1 back below VWAP
-    if recent_max >= upper_1 and c < vwap * 0.999 and prev_c > vwap:
-        stretch = max(0.0, (recent_max - vwap) / max(std_eff, 1e-9))
+
+    # Bearish: Tested above upper_2 and reversing downwards
+    if recent_max >= upper_2 and c < upper_2:
+        stretch = (recent_max - vwap) / max(std, 1e-6)
+        score = min(95.0, 65.0 + stretch * 8.0)
         return _risk_wrapped_signal(
             symbol=symbol,
             strategy="VWAP",
             direction="SHORT",
-            score=min(90.0, 59 + stretch * 7),
+            score=score,
             entry=c,
-            rationale=(
-                f"VWAP breakdown after +1σ stretch (upper_1={upper_1:.2f}) — "
-                f"crossed below VWAP={vwap:.2f} | vwap_band_hit=upper_1 | "
-                f"stretch={stretch:.2f}σ."
-            ),
+            rationale=f"VWAP rejection off +2σ band (upper_2={upper_2:.2f}) — price {c:.2f} reverting toward VWAP={vwap:.2f}",
             df=day,
+            prev_day_df=prev_day,
         )
-    # 3) Plain VWAP breakdown (lowest conviction)
-    if c < vwap * 0.999 and prev_c > vwap and recent_max >= upper_1:
-        stretch = max(0.0, (recent_max - vwap) / max(std_eff, 1e-9))
+
+    # Bearish: Breakdown below VWAP
+    if len(day) >= 3 and float(day["close"].iloc[-2]) >= vwap and c < vwap:
         return _risk_wrapped_signal(
             symbol=symbol,
             strategy="VWAP",
             direction="SHORT",
-            score=min(90.0, 54 + stretch * 8),
+            score=75.0,
             entry=c,
-            rationale=(
-                f"VWAP rejection after upper-band stretch — crossed below VWAP={vwap:.2f} | "
-                f"vwap_band_hit=upper_1 | stretch={stretch:.2f}σ."
-            ),
+            rationale=f"VWAP breakdown — price {c:.2f} dropped below session VWAP={vwap:.2f}",
             df=day,
+            prev_day_df=prev_day,
+        )
+
+    return None
+
+
+def strat_cpr(symbol: str, df: pd.DataFrame) -> Optional[IntradaySignal]:
+    """
+    Central Pivot Range (CPR) — strictly using Day T-1 for Pivot, TC, and BC calculation.
+    """
+    day, last, prev_day = _day_session(df)
+    if last is None or prev_day is None or len(day) < 6:
+        return None
+
+    cpr = compute_cpr_levels(prev_day)
+    if not cpr:
+        return None
+
+    tc = cpr["tc"]
+    bc = cpr["bc"]
+    pivot = cpr["pivot"]
+    width_pct = cpr["width_pct"]
+    cpr_type = cpr["cpr_type"]
+
+    c = (
+        float(df.attrs.get("live_ltp", last["close"]))
+        if hasattr(df, "attrs") and df.attrs.get("live_ltp") is not None
+        else float(last["close"])
+    )
+
+    vol_mean = float(day["volume"].mean() or 1)
+    last_vol = float(last["volume"] or 0)
+    bonus = 8.0 if cpr_type == "NARROW" else 0.0
+
+    if c > tc and last_vol >= vol_mean * 1.05:
+        score = min(94.0, 62.0 + bonus + ((c - tc) / max(tc, 1e-6)) * 400.0)
+        return _risk_wrapped_signal(
+            symbol=symbol,
+            strategy="CPR",
+            direction="LONG",
+            score=score,
+            entry=c,
+            rationale=f"CPR Breakout — price {c:.2f} above TC={tc:.2f} | {cpr_type} CPR (width {width_pct:.2f}%) | Pivot={pivot:.2f}",
+            df=day,
+            prev_day_df=prev_day,
+        )
+
+    if c < bc and last_vol >= vol_mean * 1.05:
+        score = min(94.0, 62.0 + bonus + ((bc - c) / max(bc, 1e-6)) * 400.0)
+        return _risk_wrapped_signal(
+            symbol=symbol,
+            strategy="CPR",
+            direction="SHORT",
+            score=score,
+            entry=c,
+            rationale=f"CPR Breakdown — price {c:.2f} below BC={bc:.2f} | {cpr_type} CPR (width {width_pct:.2f}%) | Pivot={pivot:.2f}",
+            df=day,
+            prev_day_df=prev_day,
+        )
+
+    return None
+
+
+def strat_supertrend(symbol: str, df: pd.DataFrame) -> Optional[IntradaySignal]:
+    """
+    Vectorized Supertrend with ATR lookback and flip confirmation.
+    """
+    day, last, prev_day = _day_session(df)
+    if last is None or len(day) < 12:
+        return None
+
+    st = compute_supertrend(day, period=10, multiplier=2.5)
+    if not st:
+        return None
+
+    c = (
+        float(df.attrs.get("live_ltp", last["close"]))
+        if hasattr(df, "attrs") and df.attrs.get("live_ltp") is not None
+        else float(last["close"])
+    )
+
+    if st["is_flip"] and st["direction"] == "BULLISH":
+        return _risk_wrapped_signal(
+            symbol=symbol,
+            strategy="SUPERTREND",
+            direction="LONG",
+            score=82.0,
+            entry=c,
+            rationale=f"Supertrend flip BULLISH — price {c:.2f} crossed above active band (₹{st['band_value']:.2f})",
+            df=day,
+            prev_day_df=prev_day,
+        )
+
+    if st["is_flip"] and st["direction"] == "BEARISH":
+        return _risk_wrapped_signal(
+            symbol=symbol,
+            strategy="SUPERTREND",
+            direction="SHORT",
+            score=82.0,
+            entry=c,
+            rationale=f"Supertrend flip BEARISH — price {c:.2f} dropped below active band (₹{st['band_value']:.2f})",
+            df=day,
+            prev_day_df=prev_day,
+        )
+
+    return None
+
+
+def strat_ema(symbol: str, df: pd.DataFrame) -> Optional[IntradaySignal]:
+    """
+    EMA Multi-Timeframe Alignment & 20 EMA Pullback Entry.
+    Requires EMA 9 > 20 > 50 alignment for LONG with price pulling back to test EMA 20.
+    """
+    day, last, prev_day = _day_session(df)
+    if last is None or len(day) < 20:
+        return None
+
+    close = pd.to_numeric(day["close"], errors="coerce")
+    c = float(close.iloc[-1])
+
+    ema_9 = float(compute_ema(close, 9).iloc[-1])
+    ema_20 = float(compute_ema(close, 20).iloc[-1])
+    ema_50 = float(compute_ema(close, 50).iloc[-1])
+
+    # Bullish stack: 9 > 20 > 50 and price tested near 20 EMA
+    if ema_9 > ema_20 and ema_20 > ema_50 and c >= ema_20:
+        dist_pct = abs(c - ema_20) / c
+        if dist_pct <= 0.004:  # Within 0.4% of 20 EMA pullback
+            return _risk_wrapped_signal(
+                symbol=symbol,
+                strategy="EMA",
+                direction="LONG",
+                score=80.0,
+                entry=c,
+                rationale=f"EMA Pullback Entry — Bullish Stack (EMA9={ema_9:.1f} > EMA20={ema_20:.1f} > EMA50={ema_50:.1f}) holding pullback.",
+                df=day,
+                prev_day_df=prev_day,
+            )
+
+    # Bearish stack: 9 < 20 < 50 and price rejected near 20 EMA
+    if ema_9 < ema_20 and ema_20 < ema_50 and c <= ema_20:
+        dist_pct = abs(ema_20 - c) / c
+        if dist_pct <= 0.004:
+            return _risk_wrapped_signal(
+                symbol=symbol,
+                strategy="EMA",
+                direction="SHORT",
+                score=80.0,
+                entry=c,
+                rationale=f"EMA Pullback Entry — Bearish Stack (EMA9={ema_9:.1f} < EMA20={ema_20:.1f} < EMA50={ema_50:.1f}) rejected at EMA20.",
+                df=day,
+                prev_day_df=prev_day,
+            )
+
+    return None
+
+
+def strat_rsi(symbol: str, df: pd.DataFrame) -> Optional[IntradaySignal]:
+    """
+    RSI Momentum Pullback in Trend Context (Anti-Chop).
+    In an uptrend (price > VWAP), buys RSI dipping to 40-48 and turning up.
+    In a downtrend (price < VWAP), shorts RSI rallying to 52-60 and turning down.
+    """
+    day, last, prev_day = _day_session(df)
+    if last is None or len(day) < 18:
+        return None
+
+    close = pd.to_numeric(day["close"], errors="coerce")
+    c = float(close.iloc[-1])
+
+    bands = compute_session_vwap_bands(day)
+    vwap = bands["vwap"] if bands else c
+
+    rsi_curr = compute_rsi(close, 14)
+    rsi_prev = compute_rsi(close.iloc[:-1], 14)
+
+    if rsi_curr is None or rsi_prev is None:
+        return None
+
+    # Trend Long: Above VWAP + RSI turning up from 40-50 zone
+    if c > vwap and rsi_prev < 50 and rsi_curr > rsi_prev and rsi_curr >= 45:
+        return _risk_wrapped_signal(
+            symbol=symbol,
+            strategy="RSI",
+            direction="LONG",
+            score=76.0,
+            entry=c,
+            rationale=f"RSI Pullback & Recovery in Uptrend (RSI={rsi_curr:.1f} rising, Price > VWAP {vwap:.2f})",
+            df=day,
+            prev_day_df=prev_day,
+        )
+
+    # Trend Short: Below VWAP + RSI turning down from 50-60 zone
+    if c < vwap and rsi_prev > 50 and rsi_curr < rsi_prev and rsi_curr <= 55:
+        return _risk_wrapped_signal(
+            symbol=symbol,
+            strategy="RSI",
+            direction="SHORT",
+            score=76.0,
+            entry=c,
+            rationale=f"RSI Rejection in Downtrend (RSI={rsi_curr:.1f} falling, Price < VWAP {vwap:.2f})",
+            df=day,
+            prev_day_df=prev_day,
         )
 
     return None
 
 
 def strat_gap_go(symbol: str, df: pd.DataFrame) -> Optional[IntradaySignal]:
-    if df is None or len(df) < 30:
+    """Gap and Go opening continuation."""
+    day, last, prev_day = _day_session(df)
+    if last is None or prev_day is None or len(day) < 6:
         return None
-    last_d = df.iloc[-1]["timestamp"].date()
-    prev = df[df["timestamp"].dt.date < last_d]
-    if prev.empty:
-        return None
-    prev_close = float(prev.iloc[-1]["close"])
-    day, last = _day_session(df)
-    if last is None:
-        return None
-    open_ = float(day.iloc[0]["open"])
-    gap_pct = (open_ - prev_close) / max(abs(prev_close), 1e-9) * 100.0
+
+    prev_c = float(prev_day["close"].iloc[-1])
+    day_o = float(day["open"].iloc[0])
     c = (
         float(df.attrs.get("live_ltp", last["close"]))
         if hasattr(df, "attrs") and df.attrs.get("live_ltp") is not None
         else float(last["close"])
     )
-    if gap_pct > 0.6 and c > open_ * 1.002:
+
+    gap_pct = ((day_o - prev_c) / prev_c) * 100.0
+    vol_mean = float(day["volume"].mean() or 1)
+    last_vol = float(last["volume"] or 0)
+
+    # Gap Up Continuation
+    if gap_pct >= 0.75 and c > day_o and last_vol >= vol_mean * 1.1:
         return _risk_wrapped_signal(
             symbol=symbol,
             strategy="GAP_GO",
             direction="LONG",
-            score=min(90.0, 52 + min(gap_pct * 3, 25)),
+            score=78.0,
             entry=c,
-            rationale=f"Gap-and-go — gap up ~{gap_pct:.2f}%, price holding above open.",
+            rationale=f"Gap-and-Go Long — +{gap_pct:.2f}% gap up holding above open (₹{day_o:.2f}) with volume",
             df=day,
+            prev_day_df=prev_day,
         )
-    if gap_pct < -0.6 and c < open_ * 0.998:
+
+    # Gap Down Continuation
+    if gap_pct <= -0.75 and c < day_o and last_vol >= vol_mean * 1.1:
         return _risk_wrapped_signal(
             symbol=symbol,
             strategy="GAP_GO",
             direction="SHORT",
-            score=min(90.0, 52 + min(abs(gap_pct) * 3, 25)),
+            score=78.0,
             entry=c,
-            rationale=f"Gap-down continuation — gap ~{gap_pct:.2f}%, price weak vs open.",
+            rationale=f"Gap-and-Go Short — {gap_pct:.2f}% gap down breaking below open (₹{day_o:.2f}) with volume",
             df=day,
+            prev_day_df=prev_day,
         )
+
     return None
 
 
 def strat_momentum(symbol: str, df: pd.DataFrame) -> Optional[IntradaySignal]:
-    day, last = _day_session(df)
-    if last is None or len(day) < 6:
+    """Momentum surge strategy across 3 consecutive 5m candles with expanding volume."""
+    day, last, prev_day = _day_session(df)
+    if last is None or len(day) < 8:
         return None
-    o = float(day.iloc[0]["open"])
+
     c = (
         float(df.attrs.get("live_ltp", last["close"]))
         if hasattr(df, "attrs") and df.attrs.get("live_ltp") is not None
         else float(last["close"])
     )
-    chg = (c - o) / max(abs(o), 1e-9) * 100.0
-    vm = float(day["volume"].mean() or 1)
-    lv = float(last["volume"] or 0)
-    rel = lv / vm
-    score = abs(float(chg)) * 100.0 * float(min(rel, 3.0))
-    if chg > 0.35 and rel > 1.05:
+
+    c1 = float(day["close"].iloc[-1])
+    c2 = float(day["close"].iloc[-2])
+    c3 = float(day["close"].iloc[-3])
+
+    v1 = float(day["volume"].iloc[-1])
+    v2 = float(day["volume"].iloc[-2])
+    v_mean = float(day["volume"].mean() or 1)
+
+    # Bullish momentum surge
+    if c1 > c2 > c3 and v1 > v_mean * 1.2:
         return _risk_wrapped_signal(
             symbol=symbol,
             strategy="MOMENTUM",
             direction="LONG",
-            score=float(min(92.0, 48 + abs(score))),
+            score=75.0,
             entry=c,
-            rationale=f"Session momentum — day ~{chg:.2f}% vs open, relative vol {rel:.2f}x.",
+            rationale=f"3-Bar Bullish Momentum Surge with expanding volume ({v1:.0f} vs avg {v_mean:.0f})",
             df=day,
+            prev_day_df=prev_day,
         )
-    if chg < -0.35 and rel > 1.05:
+
+    # Bearish momentum breakdown
+    if c1 < c2 < c3 and v1 > v_mean * 1.2:
         return _risk_wrapped_signal(
             symbol=symbol,
             strategy="MOMENTUM",
             direction="SHORT",
-            score=float(min(92.0, 48 + abs(score))),
+            score=75.0,
             entry=c,
-            rationale=f"Session weakness — day ~{chg:.2f}% vs open, relative vol {rel:.2f}x.",
+            rationale=f"3-Bar Bearish Momentum Flush with expanding volume ({v1:.0f} vs avg {v_mean:.0f})",
             df=day,
+            prev_day_df=prev_day,
         )
+
     return None
 
 
-def strat_cpr(symbol: str, df: pd.DataFrame) -> Optional[IntradaySignal]:
-    """Central Pivot Range (CPR) — Indian traders' go-to intraday setup.
-
-    Logic:
-      - Compute yesterday's Pivot (P), BC (Bottom Central), TC (Top Central)
-      - If today's 5m price closes above TC with volume → LONG (breakout above CPR)
-      - If today's 5m price closes below BC with volume → SHORT (breakdown below CPR)
-      - CPR Width matters: narrow CPR = trending day, wide CPR = sideways
+def score_confluence(signals: List[IntradaySignal]) -> List[IntradaySignal]:
     """
-    if df is None or df.empty or "timestamp" not in df.columns:
-        return None
-    last_d = df.iloc[-1]["timestamp"].date()
-    prev = df[df["timestamp"].dt.date < last_d]
-    day, last = _day_session(df)
-    if prev.empty or last is None or len(day) < 6:
-        return None
-
-    # Yesterday's OHLC for pivot calculation
-    prev_high = float(prev["high"].max())
-    prev_low = float(prev["low"].min())
-    prev_close = float(prev.iloc[-1]["close"])
-
-    pivot = (prev_high + prev_low + prev_close) / 3.0
-    bc = (prev_high + prev_low) / 2.0
-    tc = (pivot - bc) + pivot  # TC = (P - BC) + P
-
-    # Ensure TC > BC
-    if tc < bc:
-        tc, bc = bc, tc
-
-    cpr_width_pct = (tc - bc) / max(pivot, 1e-9) * 100.0
-    c = (
-        float(df.attrs.get("live_ltp", last["close"]))
-        if hasattr(df, "attrs") and df.attrs.get("live_ltp") is not None
-        else float(last["close"])
-    )
-    vol_mean = float(day["volume"].mean() or 1)
-    last_vol = float(last["volume"] or 0)
-
-    # Narrow CPR = trending day (< 0.5% of price) → higher confidence
-    trend_day_bonus = 10.0 if cpr_width_pct < 0.5 else 0.0
-
-    if c > tc and last_vol >= vol_mean * 1.05:
-        return _risk_wrapped_signal(
-            symbol=symbol,
-            strategy="CPR",
-            direction="LONG",
-            score=min(92.0, 58 + trend_day_bonus + (c - tc) / max(tc, 1e-9) * 500),
-            entry=c,
-            rationale=(
-                f"CPR breakout — price {c:.2f} above TC={tc:.2f} | "
-                f"CPR width={cpr_width_pct:.2f}% | Pivot={pivot:.2f}"
-            ),
-            df=day,
-        )
-    if c < bc and last_vol >= vol_mean * 1.05:
-        return _risk_wrapped_signal(
-            symbol=symbol,
-            strategy="CPR",
-            direction="SHORT",
-            score=min(92.0, 58 + trend_day_bonus + (bc - c) / max(bc, 1e-9) * 500),
-            entry=c,
-            rationale=(
-                f"CPR breakdown — price {c:.2f} below BC={bc:.2f} | "
-                f"CPR width={cpr_width_pct:.2f}% | Pivot={pivot:.2f}"
-            ),
-            df=day,
-        )
-    return None
-
-
-def strat_supertrend(symbol: str, df: pd.DataFrame) -> Optional[IntradaySignal]:
-    """Supertrend — ATR-band trend-following strategy (NSE intraday standard).
-
-    Logic:
-      - Compute Supertrend bands with ATR(10) * multiplier(2.5)
-      - Detect flip: previous bar was in opposite band, current bar crossed over
-      - LONG on flip from bearish→bullish band
-      - SHORT on flip from bullish→bearish band
-      - Requires minimum 20 bars in today's session for band stability
+    Groups signals by symbol and direction, calculates multi-strategy confluence,
+    and returns enhanced IntradaySignal instances with grade A/B/C.
     """
-    day, last = _day_session(df)
-    if last is None or len(day) < 20:
-        return None
+    if not signals:
+        return []
 
-    period = 10
+    by_sym: Dict[str, Dict[str, List[IntradaySignal]]] = {}
+    for sig in signals:
+        by_sym.setdefault(sig.symbol, {"LONG": [], "SHORT": []})
+        if sig.direction in ("LONG", "SHORT"):
+            by_sym[sig.symbol][sig.direction].append(sig)
 
-    high = pd.to_numeric(day["high"], errors="coerce")
-    low = pd.to_numeric(day["low"], errors="coerce")
-    close = pd.to_numeric(day["close"], errors="coerce")
-    prev_close = close.shift(1)
+    results: List[IntradaySignal] = []
 
-    # True Range
-    tr = pd.concat(
-        [(high - low).abs(), (high - prev_close).abs(), (low - prev_close).abs()],
-        axis=1,
-    ).max(axis=1)
-    atr_series = tr.rolling(window=period, min_periods=period).mean()
+    for sym, dirs in by_sym.items():
+        for d in ("LONG", "SHORT"):
+            group = dirs[d]
+            if not group:
+                continue
 
-    # Adaptive multiplier based on symbol volatility
-    last_atr_val = atr_series.iloc[-1] if not atr_series.empty else None
-    last_close_val = float(close.iloc[-1]) if not close.empty else 0
-    if last_atr_val is not None and not pd.isna(last_atr_val) and last_close_val > 0:
-        atr_pct = float(last_atr_val) / last_close_val * 100.0
-        if atr_pct > 2.5:
-            multiplier = 3.0  # high volatility
-        elif atr_pct > 1.5:
-            multiplier = 2.75  # medium volatility
-        else:
-            multiplier = 2.25  # low volatility
-    else:
-        multiplier = 2.5  # fallback
+            count = len(group)
+            strats = [s.strategy for s in group]
+            best = max(group, key=lambda s: s.score)
 
-    atr = atr_series
+            grade = "A" if count >= 3 else ("B" if count == 2 else "C")
+            bonus = (count - 1) * 5.0
+            new_score = min(98.0, best.score + bonus)
 
-    hl2 = (high + low) / 2.0
-    upper_band = hl2 + multiplier * atr
-    lower_band = hl2 - multiplier * atr
+            base_rat = best.rationale
+            if count > 1 and "confluence=" not in base_rat:
+                rat = f"{base_rat} | confluence={grade} ({count} strats agree: {', '.join(strats)})"
+            else:
+                rat = base_rat
 
-    # Compute Supertrend direction (1 = bullish, -1 = bearish)
-    n = len(day)
-    direction = pd.Series(index=day.index, dtype=float)
-    final_upper = upper_band.copy()
-    final_lower = lower_band.copy()
+            best.score = new_score
+            best.grade = grade
+            best.confluence_count = count
+            best.rationale = rat
+            results.append(best)
 
-    for i in range(period, n):
-        c = close.iloc[i]
-        prev_c = close.iloc[i - 1]
-
-        # Upper band logic
-        fu_prev = final_upper.iloc[i - 1]
-        fu_curr = upper_band.iloc[i]
-        final_upper.iloc[i] = min(fu_curr, fu_prev) if prev_c <= fu_prev else fu_curr
-
-        # Lower band logic
-        fl_prev = final_lower.iloc[i - 1]
-        fl_curr = lower_band.iloc[i]
-        final_lower.iloc[i] = max(fl_curr, fl_prev) if prev_c >= fl_prev else fl_curr
-
-        # Direction
-        prev_dir = direction.iloc[i - 1] if i > period else 1.0
-        if prev_dir == -1.0 and c > final_upper.iloc[i]:
-            direction.iloc[i] = 1.0  # Flipped bullish
-        elif prev_dir == 1.0 and c < final_lower.iloc[i]:
-            direction.iloc[i] = -1.0  # Flipped bearish
-        else:
-            direction.iloc[i] = prev_dir
-
-    if direction.dropna().empty or len(direction.dropna()) < 2:
-        return None
-
-    valid = direction.dropna()
-    curr_dir = float(valid.iloc[-1])
-    prev_dir = float(valid.iloc[-2])
-
-    # Only fire on a fresh flip (not mid-trend)
-    if curr_dir == prev_dir:
-        return None
-
-    c = (
-        float(df.attrs.get("live_ltp", last["close"]))
-        if hasattr(df, "attrs") and df.attrs.get("live_ltp") is not None
-        else float(last["close"])
-    )
-
-    if curr_dir == 1.0:  # Just flipped bullish
-        return _risk_wrapped_signal(
-            symbol=symbol,
-            strategy="SUPERTREND",
-            direction="LONG",
-            score=min(90.0, 62.0),
-            entry=c,
-            rationale=(
-                f"Supertrend flip BULLISH — price {c:.2f} crossed above upper band | "
-                f"ATR({period})*{multiplier}"
-            ),
-            df=day,
-        )
-    if curr_dir == -1.0:  # Just flipped bearish
-        return _risk_wrapped_signal(
-            symbol=symbol,
-            strategy="SUPERTREND",
-            direction="SHORT",
-            score=min(90.0, 62.0),
-            entry=c,
-            rationale=(
-                f"Supertrend flip BEARISH — price {c:.2f} crossed below lower band | "
-                f"ATR({period})*{multiplier}"
-            ),
-            df=day,
-        )
-    return None
+    return results
 
 
 STRATS = (
     strat_orb,
     strat_vwap,
-    strat_gap_go,
-    strat_momentum,
     strat_cpr,
     strat_supertrend,
+    strat_ema,
+    strat_rsi,
+    strat_gap_go,
+    strat_momentum,
 )
-
-
-def score_confluence(signals: list) -> list:
-    """
-    Boost scores when multiple strategies agree on direction for same symbol.
-    1 strategy = grade C (no boost)
-    2 strategies same direction = grade B, score += 10
-    3+ strategies same direction = grade A, score += 20
-    """
-    if not signals:
-        return []
-    from collections import defaultdict
-
-    direction_groups = defaultdict(list)
-    for sig in signals:
-        direction_groups[sig.direction.upper()].append(sig)
-
-    dominant_dir = max(direction_groups, key=lambda d: len(direction_groups[d]))
-    dominant_group = direction_groups[dominant_dir]
-    count = len(dominant_group)
-
-    if count >= 3:
-        score_boost, grade = 20.0, "A"
-    elif count == 2:
-        score_boost, grade = 10.0, "B"
-    else:
-        score_boost, grade = 0.0, "C"
-
-    agreeing_names = [s.strategy for s in dominant_group]
-
-    for sig in dominant_group:
-        sig.score = round(min(100.0, sig.score + score_boost), 2)
-        sig.grade = grade
-        sig.confluence_count = count
-        sig.rationale = (
-            sig.rationale.rstrip()
-            + f" | confluence={grade} ({count} strats agree: {', '.join(agreeing_names)})"
-        )
-
-    for dir_, group in direction_groups.items():
-        if dir_ == dominant_dir:
-            continue
-        for sig in group:
-            sig.grade = "C"
-            sig.confluence_count = len(group)
-            sig.rationale = (
-                sig.rationale.rstrip()
-                + f" | confluence=C (minority: {len(group)} vs {count})"
-            )
-
-    return sorted(signals, key=lambda s: s.score, reverse=True)

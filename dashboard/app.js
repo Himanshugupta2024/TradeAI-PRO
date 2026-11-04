@@ -2488,193 +2488,186 @@ async function parseJsonResponse(res) {
 
 
 async function loadAutonomousFeed() {
-
     try {
-
         const [feedRes, statusRes] = await Promise.all([
-
-            fetchWithTimeout(`${API}/api/autonomous/feed?limit=15`, {}, 5000),
-
+            fetchWithTimeout(`${API}/api/autonomous/feed?limit=25`, {}, 5000),
             fetchWithTimeout(`${API}/api/autonomous/status`, {}, 5000),
-
         ]);
-
         const feedData = await parseJsonResponse(feedRes);
-
         const statusData = await parseJsonResponse(statusRes);
 
-
-
         if (statusData && statusData.status) {
-
             const st = statusData.status;
-
             const badge = document.getElementById('autonomousModeBadge');
-
+            const workerBadge = document.getElementById('autonomousWorkerBadge');
             const toggleBtn = document.getElementById('toggleAutonomousBtn');
-
             const slotsBadge = document.getElementById('autonomousSlotsBadge');
 
-
-
             if (badge) {
-
                 if (st.enabled) {
-
                     badge.textContent = '100% Zero-Click Active';
-
                     badge.style.background = 'rgba(16,185,129,0.15)';
-
                     badge.style.color = '#10b981';
-
                     badge.style.borderColor = 'rgba(16,185,129,0.3)';
-
                 } else {
-
                     badge.textContent = 'Paused';
-
                     badge.style.background = 'rgba(239,68,68,0.15)';
-
                     badge.style.color = '#ef4444';
-
                     badge.style.borderColor = 'rgba(239,68,68,0.3)';
-
                 }
+            }
 
+            if (workerBadge && statusData.watchdog) {
+                const wd = statusData.watchdog;
+                if (wd.status === 'RUNNING') {
+                    workerBadge.textContent = 'Worker: Running ⚡';
+                    workerBadge.style.background = 'rgba(56,189,248,0.2)';
+                    workerBadge.style.color = '#38bdf8';
+                    workerBadge.style.borderColor = 'rgba(56,189,248,0.4)';
+                } else if (wd.status === 'HEALTHY') {
+                    const ageText = wd.age_minutes != null ? `${wd.age_minutes}m ago` : 'active';
+                    workerBadge.textContent = `Worker: Healthy (${ageText})`;
+                    workerBadge.style.background = 'rgba(16,185,129,0.15)';
+                    workerBadge.style.color = '#10b981';
+                    workerBadge.style.borderColor = 'rgba(16,185,129,0.3)';
+                } else if (wd.status === 'WORKER_STALE') {
+                    workerBadge.textContent = `Worker: Stale (${wd.age_minutes}m)`;
+                    workerBadge.style.background = 'rgba(245,158,11,0.15)';
+                    workerBadge.style.color = '#f59e0b';
+                    workerBadge.style.borderColor = 'rgba(245,158,11,0.3)';
+                } else if (wd.status === 'MARKET_CLOSED') {
+                    workerBadge.textContent = 'Worker: Standby (Closed)';
+                    workerBadge.style.background = 'rgba(148,163,184,0.15)';
+                    workerBadge.style.color = '#94a3b8';
+                    workerBadge.style.borderColor = 'rgba(148,163,184,0.3)';
+                } else {
+                    workerBadge.textContent = 'Worker: Idle';
+                    workerBadge.style.background = 'rgba(148,163,184,0.15)';
+                    workerBadge.style.color = '#94a3b8';
+                    workerBadge.style.borderColor = 'rgba(148,163,184,0.3)';
+                }
             }
 
             if (toggleBtn) {
-
                 toggleBtn.textContent = st.enabled ? 'Pause Auto-Trade' : 'Resume Auto-Trade';
-
             }
-
             if (slotsBadge) {
-
                 slotsBadge.textContent = `Slots: ${st.open_positions || 0}/${st.max_positions || 8} Active`;
-
             }
-
         }
-
-
 
         const listEl = document.getElementById('autonomousDecisionFeedList');
-
         if (listEl && feedData && Array.isArray(feedData.feed)) {
-
             if (feedData.feed.length === 0) {
-
                 listEl.innerHTML = '<div style="color:var(--text-muted,#94a3b8);font-size:12px;padding:0.5rem;">Autonomous engine active. Monitoring candles for qualified entries...</div>';
-
                 return;
-
             }
 
-
-
             listEl.innerHTML = feedData.feed.map(item => {
-
                 let badgeColor = '#38bdf8';
-
                 let bgBadge = 'rgba(56,189,248,0.15)';
+                const act = (item.action || '').toUpperCase();
 
-                if (item.action === 'AUTO_ENTER') {
-
+                if (act === 'AUTO_ENTER') {
                     badgeColor = '#10b981';
-
                     bgBadge = 'rgba(16,185,129,0.15)';
-
-                } else if (item.action.includes('TP') || item.action.includes('TARGET')) {
-
+                } else if (act.includes('TP') || act.includes('TARGET') || act.includes('TRAILING')) {
                     badgeColor = '#10b981';
-
                     bgBadge = 'rgba(16,185,129,0.15)';
-
-                } else if (item.action.includes('SL') || item.action.includes('STOP')) {
-
+                } else if (act.includes('SL') || act.includes('STOP')) {
                     badgeColor = '#f43f5e';
-
                     bgBadge = 'rgba(244,63,94,0.15)';
-
-                } else if (item.action.includes('EOD') || item.action.includes('SQUAREOFF')) {
-
+                } else if (act.includes('EOD') || act.includes('SQUAREOFF')) {
                     badgeColor = '#f59e0b';
-
                     bgBadge = 'rgba(245,158,11,0.15)';
-
+                } else if (act.includes('SKIP') || act.includes('DUPLICATE')) {
+                    badgeColor = '#a855f7';
+                    bgBadge = 'rgba(168,85,247,0.15)';
+                } else if (act === 'NO_TRADE' || act.includes('CLOSED')) {
+                    badgeColor = '#94a3b8';
+                    bgBadge = 'rgba(148,163,184,0.15)';
                 }
 
-
-
                 const timeStr = item.timestamp ? new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
-
                 const pnlText = (item.pnl_pct !== null && item.pnl_pct !== undefined) ? `<span style="color:${item.pnl_pct >= 0 ? '#10b981' : '#f43f5e'};font-weight:600;">(${item.pnl_pct >= 0 ? '+' : ''}${item.pnl_pct}%)</span>` : '';
-
-
+                const priceText = item.price ? `₹${Number(item.price).toLocaleString('en-IN')}` : '';
+                const scorePill = item.qs_score > 0 ? `<span style="font-size:10px;color:#38bdf8;background:rgba(56,189,248,0.1);padding:1px 4px;border-radius:3px;">QS ${item.qs_score}</span>` : '';
 
                 return `
-
                     <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:6px;padding:6px 10px;font-size:12px;">
-
                         <div style="display:flex;align-items:center;gap:8px;">
-
                             <span style="font-family:monospace;font-size:10px;color:var(--text-muted,#94a3b8);">${timeStr}</span>
-
                             <span style="background:${bgBadge};color:${badgeColor};border:1px solid ${badgeColor}33;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">${escapeHtml(item.action)}</span>
-
                             <strong style="color:var(--text,#f8fafc);">${escapeHtml(item.symbol)}</strong>
-
-                            <span style="color:${item.direction === 'LONG' ? '#10b981' : '#f43f5e'};font-weight:600;font-size:11px;">${escapeHtml(item.direction)}</span>
-
+                            ${item.direction && item.direction !== 'HOLD' && item.direction !== 'NEUTRAL' ? `<span style="color:${item.direction === 'LONG' ? '#10b981' : '#f43f5e'};font-weight:600;font-size:11px;">${escapeHtml(item.direction)}</span>` : ''}
+                            ${priceText ? `<span style="font-family:monospace;font-size:11px;color:var(--text-muted,#94a3b8);">${priceText}</span>` : ''}
+                            ${scorePill}
                             ${pnlText}
-
                         </div>
-
-                        <div style="color:var(--text-muted,#94a3b8);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-
+                        <div style="color:var(--text-muted,#94a3b8);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(item.reason || '')}">
                             ${escapeHtml(item.reason || '')}
-
                         </div>
-
                     </div>
-
                 `;
-
             }).join('');
-
         }
-
     } catch (e) {
-
         console.debug('Failed to load autonomous feed:', e);
-
     }
-
 }
 
-
+async function runAutonomousCycleNow() {
+    const btn = document.getElementById('runAutonomousCycleBtn');
+    const origText = btn ? btn.textContent : '⚡ Run Cycle';
+    try {
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '⏳ Starting...';
+        }
+        const res = await fetchWithTimeout(`${API}/api/autonomous/run-cycle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ universe: 'tier1' }),
+        }, 15000);
+        const data = await parseJsonResponse(res);
+        if (data && data.ok) {
+            if (typeof showToast === 'function') {
+                showToast(`Cycle triggered (${data.method || 'dispatched'})`, 'success');
+            }
+            setTimeout(() => { loadAutonomousFeed(); }, 3000);
+        } else {
+            const msg = data?.message || 'Cycle rate limited. Please wait a minute.';
+            if (typeof showToast === 'function') {
+                showToast(msg, 'warning');
+            } else {
+                alert(msg);
+            }
+        }
+    } catch (e) {
+        console.error('Failed to trigger autonomous cycle:', e);
+        if (typeof showToast === 'function') {
+            showToast('Error triggering autonomous cycle', 'error');
+        }
+    } finally {
+        if (btn) {
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.textContent = origText;
+            }, 3000);
+        }
+    }
+}
 
 async function toggleAutonomousMode() {
-
     try {
-
         const res = await fetchWithTimeout(`${API}/api/autonomous/toggle`, { method: 'POST' }, 5000);
-
         const data = await parseJsonResponse(res);
-
         if (data && data.ok) {
-
             loadAutonomousFeed();
-
         }
-
     } catch (e) {
-
         console.error('Failed to toggle autonomous mode:', e);
-
     }
-
 }
 
 

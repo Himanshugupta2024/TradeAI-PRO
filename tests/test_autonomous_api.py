@@ -52,3 +52,17 @@ def test_toggle_autonomous_mode(client, monkeypatch):
     assert res.status_code == 200
     assert res.json().get("ok") is True
     assert res.json()["status"]["enabled"] is True
+
+
+def test_trigger_autonomous_cycle_endpoint(client):
+    # Test triggering a single cycle
+    res = client.post("/api/autonomous/run-cycle", json={"universe": "BTC/USDT", "dry_run": True})
+    assert res.status_code == 200
+    data = res.json()
+    assert "ok" in data
+    # Either successfully dispatched (True) or rate-limited if run right before
+    if data["ok"]:
+        assert "method" in data
+        assert data["method"] in ("local_async", "github_actions")
+    else:
+        assert data.get("error") == "RATE_LIMITED"

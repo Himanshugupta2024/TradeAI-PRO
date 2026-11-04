@@ -5873,110 +5873,242 @@
 
 
         <!-- ════════ INTRADAY (paper, 5m delayed) ════════ -->
-
         <section class="tab-content" id="intradayTab">
-
-            <!-- Header -->
-
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:0.85rem;flex-wrap:wrap;gap:0.75rem;">
-
+            <!-- Premium Header -->
+            <div class="intraday-command-header" style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:1rem;padding:1.1rem 1.4rem;background:linear-gradient(135deg,rgba(15,23,42,0.95) 0%,rgba(30,41,59,0.85) 100%);border:1px solid rgba(99,102,241,0.25);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.35);">
                 <div>
-
-                    <h2 class="section-title">⏱ Intraday Scanner <span style="font-size:0.65rem;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);padding:2px 7px;border-radius:4px;font-weight:700;vertical-align:middle;">PAPER ONLY</span></h2>
-
-                    <p style="color:var(--text-muted);font-size:0.76rem;margin-top:0.2rem;">ORB · VWAP · Gap-Go · Momentum · <strong style="color:#818cf8;">CPR</strong> · <strong style="color:#22d3ee;">Supertrend</strong> — 5m delayed yFinance, ATR-sized risk, auto square-off 3:15 PM IST</p>
-
+                    <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+                        <h2 class="section-title" style="margin:0;font-size:1.35rem;font-weight:800;letter-spacing:-0.02em;background:linear-gradient(135deg,#ffffff 0%,#cbd5e1 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">⚡ Intraday Command Center</h2>
+                        <span style="font-size:0.65rem;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);padding:2px 8px;border-radius:4px;font-weight:700;letter-spacing:0.04em;">PAPER ONLY · SEBI COMPLIANT</span>
+                        <span id="idSessionBadge" style="font-size:0.65rem;background:rgba(148,163,184,0.15);color:#cbd5e1;border:1px solid rgba(148,163,184,0.3);padding:2px 8px;border-radius:4px;font-weight:700;display:inline-flex;align-items:center;gap:4px;">
+                            <span id="idSessionDot" style="width:6px;height:6px;border-radius:50%;background:#94a3b8;display:inline-block;"></span>
+                            <span id="idSessionText">CHECKING SESSION...</span>
+                        </span>
+                        <span id="idDataFeedBadge" style="font-size:0.65rem;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);padding:2px 8px;border-radius:4px;font-weight:600;">5M DELAYED HYBRID</span>
+                    </div>
+                    <p style="color:var(--text-muted);font-size:0.78rem;margin:0.35rem 0 0;line-height:1.4;">
+                        Institutional Multi-Strategy Confluence · ORB · Session VWAP · Day T-1 CPR · Supertrend · EMA Flow · RSI Momentum · Volatility Risk Engine
+                    </p>
                 </div>
-
                 <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-
-                    <button type="button" class="toggle-btn" id="intradayLatestBtn" onclick="loadIntradayLatest()" style="font-size:0.72rem;padding:0.3rem 0.7rem;">↻ Latest</button>
-
-                    <button type="button" class="toggle-btn" id="intradayScanBtn" onclick="runIntradayScan()" style="background:rgba(99,102,241,0.2);border-color:rgba(99,102,241,0.5);color:#a5b4fc;">▶ Run Scan</button>
-
+                    <!-- View toggle -->
+                    <div style="display:inline-flex;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:2px;">
+                        <button type="button" class="toggle-btn active" id="idBtnViewTable" onclick="setIntradayView('table')" style="font-size:0.7rem;padding:0.25rem 0.6rem;border:none;border-radius:4px;" title="Data Grid View">📊 Grid</button>
+                        <button type="button" class="toggle-btn" id="idBtnViewCards" onclick="setIntradayView('cards')" style="font-size:0.7rem;padding:0.25rem 0.6rem;border:none;border-radius:4px;" title="Cards View">🗂️ Cards</button>
+                    </div>
+                    <!-- Density toggle -->
+                    <button type="button" class="toggle-btn" id="idBtnDensity" onclick="toggleIntradayDensity()" style="font-size:0.7rem;padding:0.28rem 0.6rem;" title="Toggle row density">Compact</button>
+                    <button type="button" class="toggle-btn" id="intradayLatestBtn" onclick="loadIntradayLatest()" style="font-size:0.72rem;padding:0.32rem 0.75rem;">↻ Latest</button>
+                    <button type="button" class="btn btn-secondary" onclick="exportIntradayCSV()" style="font-size:0.72rem;padding:0.32rem 0.75rem;display:inline-flex;align-items:center;gap:4px;" title="Export Setups to CSV">📥 CSV</button>
+                    <button type="button" class="btn btn-primary" id="intradayScanBtn" onclick="runIntradayScan()" style="font-size:0.75rem;padding:0.35rem 0.9rem;background:linear-gradient(135deg,#4f46e5 0%,#3b82f6 100%);color:#fff;border:none;border-radius:6px;font-weight:700;display:inline-flex;align-items:center;gap:5px;box-shadow:0 4px 14px rgba(79,70,229,0.35);">⚡ Run Scan</button>
                 </div>
-
             </div>
 
-
-
-            <!-- KPI Strip -->
-
-            <div id="intradayKpiStrip" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:1rem;">
-
-                <div class="kpi-card" style="padding:0.6rem 0.75rem;">
-
-                    <span class="kpi-val" id="idKpiTotal" style="font-size:1.3rem;">—</span>
-
-                    <span class="kpi-lbl">Signals</span>
-
+            <!-- 8 KPI System Metrics Strip -->
+            <div id="intradayKpiStrip" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.75rem;margin-bottom:1rem;">
+                <div class="kpi-card" style="padding:0.7rem 0.85rem;background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:8px;">
+                    <span class="kpi-lbl" style="font-size:0.62rem;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:2px;">Market Session</span>
+                    <span class="kpi-val" id="idKpiSession" style="font-size:1.05rem;font-weight:700;color:#cbd5e1;">—</span>
                 </div>
-
-                <div class="kpi-card" style="padding:0.6rem 0.75rem;">
-
-                    <span class="kpi-val" id="idKpiLong" style="font-size:1.3rem;color:var(--green);">—</span>
-
-                    <span class="kpi-lbl">LONG</span>
-
+                <div class="kpi-card" style="padding:0.7rem 0.85rem;background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:8px;">
+                    <span class="kpi-lbl" style="font-size:0.62rem;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:2px;">NIFTY 50 Regime</span>
+                    <span class="kpi-val" id="idKpiRegime" style="font-size:1.05rem;font-weight:700;color:var(--text-muted);">—</span>
                 </div>
-
-                <div class="kpi-card" style="padding:0.6rem 0.75rem;">
-
-                    <span class="kpi-val" id="idKpiShort" style="font-size:1.3rem;color:var(--red);">—</span>
-
-                    <span class="kpi-lbl">SHORT</span>
-
+                <div class="kpi-card" style="padding:0.7rem 0.85rem;background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:8px;">
+                    <span class="kpi-lbl" style="font-size:0.62rem;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:2px;">Total Setups</span>
+                    <span class="kpi-val" id="idKpiTotal" style="font-size:1.2rem;font-weight:800;color:var(--text-primary);">—</span>
                 </div>
-
-                <div class="kpi-card" style="padding:0.6rem 0.75rem;">
-
-                    <span class="kpi-val" id="idKpiScore" style="font-size:1.3rem;color:#818cf8;">—</span>
-
-                    <span class="kpi-lbl">Avg Score</span>
-
+                <div class="kpi-card" style="padding:0.7rem 0.85rem;background:rgba(16,185,129,0.04);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
+                    <span class="kpi-lbl" style="font-size:0.62rem;text-transform:uppercase;color:rgba(16,185,129,0.8);display:block;margin-bottom:2px;">LONG Setups</span>
+                    <span class="kpi-val" id="idKpiLong" style="font-size:1.2rem;font-weight:800;color:var(--green);">—</span>
                 </div>
-
+                <div class="kpi-card" style="padding:0.7rem 0.85rem;background:rgba(239,68,68,0.04);border:1px solid rgba(239,68,68,0.2);border-radius:8px;">
+                    <span class="kpi-lbl" style="font-size:0.62rem;text-transform:uppercase;color:rgba(239,68,68,0.8);display:block;margin-bottom:2px;">SHORT Setups</span>
+                    <span class="kpi-val" id="idKpiShort" style="font-size:1.2rem;font-weight:800;color:var(--red);">—</span>
+                </div>
+                <div class="kpi-card" style="padding:0.7rem 0.85rem;background:rgba(99,102,241,0.04);border:1px solid rgba(99,102,241,0.2);border-radius:8px;">
+                    <span class="kpi-lbl" style="font-size:0.62rem;text-transform:uppercase;color:#818cf8;display:block;margin-bottom:2px;">Top Confluence</span>
+                    <span class="kpi-val" id="idKpiTopScore" style="font-size:1.2rem;font-weight:800;color:#a5b4fc;">—</span>
+                </div>
+                <div class="kpi-card" style="padding:0.7rem 0.85rem;background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:8px;">
+                    <span class="kpi-lbl" style="font-size:0.62rem;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:2px;">Avg Confluence</span>
+                    <span class="kpi-val" id="idKpiScore" style="font-size:1.2rem;font-weight:800;color:#818cf8;">—</span>
+                </div>
+                <div class="kpi-card" style="padding:0.7rem 0.85rem;background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.06);border-radius:8px;">
+                    <span class="kpi-lbl" style="font-size:0.62rem;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:2px;">Feed Quality</span>
+                    <span class="kpi-val" id="idKpiFeed" style="font-size:0.95rem;font-weight:700;color:#38bdf8;">DELAYED 5M</span>
+                </div>
             </div>
 
-
-
-            <!-- Strategy Filter Chips -->
-
-            <div id="intradayStratFilter" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.85rem;">
-
-                <button type="button" class="toggle-btn active" data-strat="all" onclick="filterIntradayStrat('all')" style="font-size:0.7rem;padding:0.22rem 0.65rem;">All</button>
-
-                <button type="button" class="toggle-btn" data-strat="ORB" onclick="filterIntradayStrat('ORB')" style="font-size:0.7rem;padding:0.22rem 0.65rem;">ORB</button>
-
-                <button type="button" class="toggle-btn" data-strat="VWAP" onclick="filterIntradayStrat('VWAP')" style="font-size:0.7rem;padding:0.22rem 0.65rem;">VWAP</button>
-
-                <button type="button" class="toggle-btn" data-strat="GAP_GO" onclick="filterIntradayStrat('GAP_GO')" style="font-size:0.7rem;padding:0.22rem 0.65rem;">Gap-Go</button>
-
-                <button type="button" class="toggle-btn" data-strat="MOMENTUM" onclick="filterIntradayStrat('MOMENTUM')" style="font-size:0.7rem;padding:0.22rem 0.65rem;">Momentum</button>
-
-                <button type="button" class="toggle-btn" data-strat="CPR" onclick="filterIntradayStrat('CPR')" style="font-size:0.7rem;padding:0.22rem 0.65rem;background:rgba(129,140,248,0.15);border-color:rgba(129,140,248,0.4);color:#818cf8;">CPR 🆕</button>
-
-                <button type="button" class="toggle-btn" data-strat="SUPERTREND" onclick="filterIntradayStrat('SUPERTREND')" style="font-size:0.7rem;padding:0.22rem 0.65rem;background:rgba(34,211,238,0.12);border-color:rgba(34,211,238,0.4);color:#22d3ee;">Supertrend 🆕</button>
-
-                <span style="margin-left:auto;font-size:0.68rem;color:var(--text-muted);align-self:center;">LONG only: <input type="checkbox" id="idFilterLong" onchange="filterIntradayStrat()" aria-label="Filter long signals only" style="vertical-align:middle;margin-left:3px;"></span>
-
+            <!-- Market Regime & Context Banner -->
+            <div id="intradayContextBanner" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem;padding:0.5rem 0.85rem;background:rgba(30,41,59,0.5);border:1px solid rgba(255,255,255,0.06);border-radius:8px;font-size:0.72rem;color:var(--text-muted);flex-wrap:wrap;gap:0.5rem;">
+                <div id="intradayNiftyContext" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+                    <span><strong style="color:var(--text-primary);">NIFTY 50:</strong> Syncing index regime...</span>
+                </div>
+                <div id="intradayScanMeta" style="font-family:var(--font-mono);font-size:0.68rem;color:#94a3b8;">
+                    No scan run yet
+                </div>
             </div>
 
+            <!-- Strategy & Filters Toolbar -->
+            <div id="intradayFilterToolbar" style="display:flex;flex-direction:column;gap:0.6rem;margin-bottom:1rem;padding:0.75rem;background:rgba(15,23,42,0.5);border:1px solid rgba(255,255,255,0.06);border-radius:8px;">
+                <!-- Row 1: Search & Direction & Score Filter -->
+                <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;">
+                    <div style="position:relative;flex:1;min-width:180px;">
+                        <input type="text" id="idSearchInput" oninput="applyIntradayFilters()" placeholder="🔍 Filter by symbol (e.g. RELIANCE, TCS)..." style="width:100%;padding:0.35rem 0.65rem;font-size:0.74rem;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.12);border-radius:5px;color:#fff;">
+                    </div>
+                    <div style="display:inline-flex;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:2px;">
+                        <button type="button" class="toggle-btn active" data-dir="all" onclick="setIntradayDir('all')" style="font-size:0.7rem;padding:0.22rem 0.6rem;border:none;">All Bias</button>
+                        <button type="button" class="toggle-btn" data-dir="LONG" onclick="setIntradayDir('LONG')" style="font-size:0.7rem;padding:0.22rem 0.6rem;border:none;color:var(--green);">🟢 LONG Only</button>
+                        <button type="button" class="toggle-btn" data-dir="SHORT" onclick="setIntradayDir('SHORT')" style="font-size:0.7rem;padding:0.22rem 0.6rem;border:none;color:var(--red);">🔴 SHORT Only</button>
+                    </div>
+                    <div style="display:inline-flex;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:2px;">
+                        <button type="button" class="toggle-btn active" data-conf="all" onclick="setIntradayConf('all')" style="font-size:0.7rem;padding:0.22rem 0.6rem;border:none;">All Scores</button>
+                        <button type="button" class="toggle-btn" data-conf="70" onclick="setIntradayConf('70')" style="font-size:0.7rem;padding:0.22rem 0.6rem;border:none;color:#818cf8;">⭐ High Conviction (≥70)</button>
+                        <button type="button" class="toggle-btn" data-conf="80" onclick="setIntradayConf('80')" style="font-size:0.7rem;padding:0.22rem 0.6rem;border:none;color:#10b981;">💎 Elite (≥80)</button>
+                    </div>
+                    <button type="button" class="toggle-btn" onclick="resetIntradayFilters()" style="font-size:0.68rem;padding:0.25rem 0.55rem;margin-left:auto;">Reset Filters</button>
+                </div>
 
-
-            <div id="intradayMeta" style="font-size:0.7rem;color:var(--text-muted);margin-bottom:0.75rem;padding:0.3rem 0.6rem;background:rgba(255,255,255,0.03);border-radius:6px;"></div>
-
-            <div id="intradayGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:1rem;">
-
-                <div class="loading-state"><p>Click <strong>↻ Latest</strong> to load last saved scan, or <strong>▶ Run Scan</strong> to fetch fresh 5m signals.</p></div>
-
+                <!-- Row 2: Strategy Chips -->
+                <div id="intradayStratFilter" style="display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;">
+                    <span style="font-size:0.68rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-right:4px;">Strategies:</span>
+                    <button type="button" class="toggle-btn active" data-strat="all" onclick="filterIntradayStrat('all')" style="font-size:0.7rem;padding:0.2rem 0.6rem;">All Strategies</button>
+                    <button type="button" class="toggle-btn" data-strat="ORB" onclick="filterIntradayStrat('ORB')" style="font-size:0.7rem;padding:0.2rem 0.6rem;">ORB</button>
+                    <button type="button" class="toggle-btn" data-strat="VWAP" onclick="filterIntradayStrat('VWAP')" style="font-size:0.7rem;padding:0.2rem 0.6rem;">VWAP</button>
+                    <button type="button" class="toggle-btn" data-strat="CPR" onclick="filterIntradayStrat('CPR')" style="font-size:0.7rem;padding:0.2rem 0.6rem;background:rgba(14,165,233,0.12);border-color:rgba(14,165,233,0.35);color:#38bdf8;">CPR (Day T-1)</button>
+                    <button type="button" class="toggle-btn" data-strat="SUPERTREND" onclick="filterIntradayStrat('SUPERTREND')" style="font-size:0.7rem;padding:0.2rem 0.6rem;background:rgba(34,197,94,0.12);border-color:rgba(34,197,94,0.35);color:#4ade80;">Supertrend</button>
+                    <button type="button" class="toggle-btn" data-strat="EMA" onclick="filterIntradayStrat('EMA')" style="font-size:0.7rem;padding:0.2rem 0.6rem;background:rgba(168,85,247,0.12);border-color:rgba(168,85,247,0.35);color:#c084fc;">EMA Flow 🆕</button>
+                    <button type="button" class="toggle-btn" data-strat="RSI" onclick="filterIntradayStrat('RSI')" style="font-size:0.7rem;padding:0.2rem 0.6rem;background:rgba(236,72,153,0.12);border-color:rgba(236,72,153,0.35);color:#f472b6;">RSI Pullback 🆕</button>
+                    <button type="button" class="toggle-btn" data-strat="GAP_GO" onclick="filterIntradayStrat('GAP_GO')" style="font-size:0.7rem;padding:0.2rem 0.6rem;">Gap-Go</button>
+                    <button type="button" class="toggle-btn" data-strat="MOMENTUM" onclick="filterIntradayStrat('MOMENTUM')" style="font-size:0.7rem;padding:0.2rem 0.6rem;">Momentum</button>
+                </div>
             </div>
 
+            <!-- Table View Container -->
+            <div id="intradayTableViewWrap" style="overflow-x:auto;border:1px solid rgba(255,255,255,0.08);border-radius:10px;background:rgba(15,23,42,0.7);box-shadow:0 8px 24px rgba(0,0,0,0.25);margin-bottom:1rem;">
+                <table id="intradayTable" style="width:100%;border-collapse:collapse;font-size:0.76rem;text-align:left;white-space:nowrap;">
+                    <thead>
+                        <tr style="background:rgba(15,23,42,0.95);border-bottom:2px solid rgba(255,255,255,0.1);position:sticky;top:0;z-index:2;">
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">#</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">Symbol</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">Direction</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">Strategy</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;min-width:130px;">Confluence Score</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">LTP</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">Entry</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">Stop Loss</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">Target 1</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">Target 2</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">R:R</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">RVOL</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">Feed</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;">Status</th>
+                            <th style="padding:0.65rem 0.8rem;color:var(--text-muted);font-weight:700;text-align:right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="intradayTableBody">
+                        <tr>
+                            <td colspan="15" style="text-align:center;padding:2.5rem;color:var(--text-muted);">
+                                Click <strong>↻ Latest</strong> to load last saved snapshot or <strong>⚡ Run Scan</strong> to initiate live calculation.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Cards View Grid Container (hidden by default unless Cards view toggled) -->
+            <div id="intradayGrid" style="display:none;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:1rem;margin-bottom:1rem;">
+                <div class="loading-state"><p>Click <strong>↻ Latest</strong> to load last saved scan, or <strong>⚡ Run Scan</strong> to fetch fresh 5m signals.</p></div>
+            </div>
+
+            <!-- Setup Research Drawer (Slide-in modal / pane) -->
+            <div id="intradayDrawer" style="display:none;position:fixed;top:0;right:0;bottom:0;width:550px;max-width:95vw;background:#0b1120;border-left:1px solid rgba(255,255,255,0.12);box-shadow:-10px 0 40px rgba(0,0,0,0.7);z-index:9999;overflow-y:auto;padding:1.4rem;transition:transform 0.3s ease;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:1rem;border-bottom:1px solid rgba(255,255,255,0.1);margin-bottom:1.2rem;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                            <h3 id="idDrawerSymbol" style="font-size:1.4rem;margin:0;font-weight:800;color:#fff;">—</h3>
+                            <span id="idDrawerDirection" style="font-size:0.7rem;font-weight:800;padding:2px 8px;border-radius:4px;">—</span>
+                            <span id="idDrawerStrategy" style="font-size:0.68rem;font-weight:700;padding:2px 7px;border-radius:4px;">—</span>
+                        </div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.25rem;">
+                            LTP: <strong id="idDrawerLtp" style="color:#fff;font-family:var(--font-mono);">—</strong> · Valid Until: <span id="idDrawerValidUntil" style="color:#94a3b8;font-family:var(--font-mono);">—</span>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeIntradayDrawer()" style="background:none;border:none;color:#94a3b8;font-size:1.5rem;cursor:pointer;padding:0 0.5rem;line-height:1;" title="Close Drawer">×</button>
+                </div>
+
+                <!-- 5m Candlestick Chart Area -->
+                <div style="margin-bottom:1.25rem;background:rgba(15,23,42,0.8);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:0.75rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                        <span style="font-size:0.72rem;font-weight:700;color:#cbd5e1;text-transform:uppercase;letter-spacing:0.04em;">📈 5-Minute Execution Chart</span>
+                        <span id="idDrawerChartStatus" style="font-size:0.65rem;color:var(--text-muted);">Recent 45 Bars</span>
+                    </div>
+                    <div style="height:220px;position:relative;">
+                        <canvas id="idDrawerChartCanvas"></canvas>
+                    </div>
+                </div>
+
+                <!-- Confluence Factor Contribution Breakdown -->
+                <div style="margin-bottom:1.25rem;">
+                    <h4 style="font-size:0.76rem;text-transform:uppercase;color:#cbd5e1;letter-spacing:0.05em;margin:0 0 0.65rem;">Confluence Score Breakdown (<span id="idDrawerScoreVal" style="color:#818cf8;font-family:var(--font-mono);">—</span>/100)</h4>
+                    <div id="idDrawerFactorList" style="display:flex;flex-direction:column;gap:0.45rem;">
+                        <!-- Injected dynamically -->
+                    </div>
+                </div>
+
+                <!-- Execution Price Structure -->
+                <div style="margin-bottom:1.25rem;">
+                    <h4 style="font-size:0.76rem;text-transform:uppercase;color:#cbd5e1;letter-spacing:0.05em;margin:0 0 0.65rem;">Execution Matrix</h4>
+                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:0.6rem;">
+                        <div style="padding:0.55rem;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;">
+                            <div style="font-size:0.6rem;color:var(--text-muted);text-transform:uppercase;">Entry Price</div>
+                            <div id="idDrawerEntry" style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#fff;">—</div>
+                        </div>
+                        <div style="padding:0.55rem;background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.2);border-radius:6px;">
+                            <div style="font-size:0.6rem;color:rgba(239,68,68,0.8);text-transform:uppercase;">Stop Loss</div>
+                            <div id="idDrawerSL" style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">—</div>
+                        </div>
+                        <div style="padding:0.55rem;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.2);border-radius:6px;">
+                            <div style="font-size:0.6rem;color:rgba(16,185,129,0.8);text-transform:uppercase;">Target 1 (1.5x)</div>
+                            <div id="idDrawerT1" style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">—</div>
+                        </div>
+                        <div style="padding:0.55rem;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.2);border-radius:6px;">
+                            <div style="font-size:0.6rem;color:rgba(16,185,129,0.8);text-transform:uppercase;">Target 2 (2.5x)</div>
+                            <div id="idDrawerT2" style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">—</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Technical Indicators Snapshot -->
+                <div style="margin-bottom:1.25rem;">
+                    <h4 style="font-size:0.76rem;text-transform:uppercase;color:#cbd5e1;letter-spacing:0.05em;margin:0 0 0.65rem;">Technical Indicators & Levels</h4>
+                    <div id="idDrawerTechSnapshot" style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.45rem;font-size:0.7rem;">
+                        <!-- Injected dynamically -->
+                    </div>
+                </div>
+
+                <!-- Reasons & Invalidation Risks -->
+                <div style="display:grid;grid-template-columns:1fr;gap:0.75rem;margin-bottom:1.25rem;">
+                    <div style="padding:0.75rem;background:rgba(16,185,129,0.04);border:1px solid rgba(16,185,129,0.2);border-radius:6px;">
+                        <div style="font-size:0.65rem;font-weight:700;color:var(--green);text-transform:uppercase;margin-bottom:0.35rem;">Confluence Reasons</div>
+                        <ul id="idDrawerReasons" style="margin:0;padding-left:1.1rem;font-size:0.72rem;color:#cbd5e1;line-height:1.45;"></ul>
+                    </div>
+                    <div style="padding:0.75rem;background:rgba(239,68,68,0.04);border:1px solid rgba(239,68,68,0.2);border-radius:6px;">
+                        <div style="font-size:0.65rem;font-weight:700;color:var(--red);text-transform:uppercase;margin-bottom:0.35rem;">Invalidation Conditions & Risks</div>
+                        <ul id="idDrawerRisks" style="margin:0;padding-left:1.1rem;font-size:0.72rem;color:#cbd5e1;line-height:1.45;"></ul>
+                    </div>
+                </div>
+
+                <!-- Action Button -->
+                <div style="display:flex;gap:0.75rem;align-items:center;">
+                    <button type="button" id="idDrawerPaperTradeBtn" class="btn btn-primary" style="flex:1;padding:0.6rem;font-size:0.8rem;font-weight:700;background:linear-gradient(135deg,#4f46e5 0%,#3b82f6 100%);color:#fff;border:none;border-radius:6px;cursor:pointer;">⚡ Take Paper Trade</button>
+                    <button type="button" onclick="closeIntradayDrawer()" class="btn btn-secondary" style="padding:0.6rem 1rem;font-size:0.8rem;">Close</button>
+                </div>
+            </div>
+            <!-- Backdrop for drawer -->
+            <div id="intradayDrawerBackdrop" onclick="closeIntradayDrawer()" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(2px);z-index:9998;"></div>
         </section>
-
-
-
-
 
         <!-- ════════ INDEX MOVER TAB ════════ -->
 
@@ -7474,7 +7606,7 @@
 
     <script src="/static/config.js"></script>
 
-    <script src="/static/app.js?v=ee3_3"></script>
+    <script src="/static/app.js?v=ee3_4"></script>
 
 </body>
 

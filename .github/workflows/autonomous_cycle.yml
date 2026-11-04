@@ -1,0 +1,103 @@
+name: Autonomous Paper Trading Cycle
+
+on:
+  schedule:
+    # Mon-Fri: Run every 20 minutes between 03:45 UTC (09:15 IST) and 10:00 UTC (15:30 IST)
+    # 03:45 UTC = 09:15 IST (Market Open)
+    - cron: '45 3 * * 1-5'
+    # 04:00 - 09:40 UTC = 09:30 - 15:10 IST (Active Trading Window)
+    - cron: '*/20 4-9 * * 1-5'
+    # 10:00 UTC = 15:30 IST (Market Close / Final EOD Management)
+    - cron: '0,15 10 * * 1-5'
+    # Weekends / Crypto: Run every 3 hours for continuous 24/7 crypto scanning
+    - cron: '0 */3 * * 0,6'
+
+  workflow_dispatch:
+    inputs:
+      universe:
+        description: 'Asset Universe to scan'
+        required: true
+        default: 'tier1'
+        type: choice
+        options:
+          - tier1
+          - nse
+          - crypto
+          - all
+      force_scan:
+        description: 'Bypass market session hours check'
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Dry run (calculate signals but do not execute paper trades)'
+        required: false
+        type: boolean
+        default: false
+
+  repository_dispatch:
+    types: [run_autonomous_cycle]
+
+concurrency:
+  group: autonomous-paper-worker
+  cancel-in-progress: false
+
+jobs:
+  run-cycle:
+    name: Execute Autonomous Paper Worker Cycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Single Autonomous Cycle
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          AUTONOMOUS_TRADING_ENABLED: "true"
+          AUTONOMOUS_MAX_POSITIONS: "8"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          ARGS=""
+          
+          # Handle workflow_dispatch inputs
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ github.event.inputs.universe }}" ]; then
+              ARGS="$ARGS --universe ${{ github.event.inputs.universe }}"
+            fi
+            if [ "${{ github.event.inputs.force_scan }}" = "true" ]; then
+              ARGS="$ARGS --force-scan"
+            fi
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              ARGS="$ARGS --dry-run"
+            fi
+          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            # Handle client_payload from repository_dispatch
+            CLIENT_UNIVERSE="${{ github.event.client_payload.universe }}"
+            if [ -n "$CLIENT_UNIVERSE" ]; then
+              ARGS="$ARGS --universe $CLIENT_UNIVERSE"
+            fi
+            if [ "${{ github.event.client_payload.force_scan }}" = "true" ]; then
+              ARGS="$ARGS --force-scan"
+            fi
+          else
+            # Default scheduled cron execution: tier-1 universe
+            ARGS="--universe tier1"
+          fi
+
+          echo "Executing: python scripts/autonomous_cycle.py $ARGS"
+          python scripts/autonomous_cycle.py $ARGS

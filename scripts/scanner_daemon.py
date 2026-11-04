@@ -226,6 +226,27 @@ def handle_signal(sig, frame):
 
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
-    asyncio.run(run_worker_loop())
+    import argparse
+    parser = argparse.ArgumentParser(description="TradeAI PRO Autonomous Scanning Daemon")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run a single autonomous scan/execution cycle and exit cleanly.",
+    )
+    parser.add_argument(
+        "--universe",
+        type=str,
+        default="tier1",
+        help="Asset universe for single cycle: tier1, nse, crypto, all, or comma-separated symbols.",
+    )
+    args, _ = parser.parse_known_args()
+
+    if args.once:
+        from scripts.autonomous_cycle import run_single_autonomous_cycle
+        result = asyncio.run(run_single_autonomous_cycle(universe_arg=args.universe))
+        logger.info("[Daemon] Single cycle complete: %s", result.get("status", "OK"))
+        sys.exit(0 if result.get("ok", True) else 1)
+    else:
+        signal.signal(signal.SIGINT, handle_signal)
+        signal.signal(signal.SIGTERM, handle_signal)
+        asyncio.run(run_worker_loop())

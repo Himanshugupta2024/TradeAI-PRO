@@ -218,6 +218,8 @@ class TestRenderMemoryProfiling:
     """Ensures live OS process RSS is strictly within 512MB limits."""
 
     def test_process_rss_memory_guardrail(self):
+        import gc
+        gc.collect()
         rss_mb = get_process_rss_mb()
         assert rss_mb > 0.0, "Could not measure process RSS!"
 

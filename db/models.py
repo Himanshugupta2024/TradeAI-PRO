@@ -433,3 +433,65 @@ class TelegramAlertLog(Base):
     __table_args__ = (
         Index("idx_tg_alert_symbol_ts", "symbol", "sent_at"),
     )
+
+
+
+# ── Distributed Worker Lock ──────────────────────────────────────────
+class WorkerDistributedLock(Base):
+    """
+    Database-backed distributed lock table for coordinating worker runs across
+    GitHub Actions, cron schedules, local runners, and container instances.
+    """
+    __tablename__ = "worker_distributed_locks"
+
+    job_name = Column(String(64), primary_key=True)
+    run_id = Column(String(64), nullable=False)
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    locked_until = Column(DateTime, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    status = Column(String(32), nullable=False, default="RUNNING")  # RUNNING, COMPLETED, FAILED, EXPIRED
+    heartbeat_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    meta_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_worker_lock_status", "status", "locked_until"),
+    )
+
+    def __repr__(self):
+        return f"<WorkerDistributedLock job={self.job_name} run_id={self.run_id} status={self.status}>"
+
+
+# ── Autonomous Decision Record ───────────────────────────────────────
+class AutonomousDecisionRecord(Base):
+    """
+    Persistent audit log of autonomous paper trading decisions.
+    Enforces deterministic signal idempotency via unique signal_id constraint.
+    """
+    __tablename__ = "autonomous_decision_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    signal_id = Column(String(128), nullable=False, unique=True, index=True)
+    run_id = Column(String(64), nullable=False, index=True)
+    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    symbol = Column(String(30), nullable=False, index=True)
+    action = Column(String(32), nullable=False, index=True)  # AUTO_ENTER, REJECT, SKIP, NO_TRADE, EXIT, TRAILING_STOP
+    direction = Column(String(10), nullable=True)            # LONG, SHORT, HOLD
+    entry_price = Column(Float, nullable=True)
+    stop_loss = Column(Float, nullable=True)
+    target_price = Column(Float, nullable=True)
+    quality_score = Column(Float, nullable=True)
+    confluence_score = Column(Float, nullable=True)
+    risk_reward = Column(Float, nullable=True)
+    market_regime = Column(String(32), nullable=True)
+    source_freshness = Column(String(20), nullable=True)    # LIVE, DELAYED, STALE, EOD, UNAVAILABLE
+    paper_trade_id = Column(Integer, nullable=True)
+    reason = Column(Text, nullable=True)
+    meta_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_auto_decision_symbol_action", "symbol", "action"),
+        Index("idx_auto_decision_run_id", "run_id"),
+    )
+
+    def __repr__(self):
+        return f"<AutonomousDecisionRecord {self.symbol} {self.action} run={self.run_id}>"

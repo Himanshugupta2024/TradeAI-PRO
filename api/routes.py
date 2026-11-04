@@ -2778,21 +2778,216 @@ async def reset_paper_trading_endpoint(capital: float = Query(100000.0, ge=1000.
 
 # ── Autonomous Daemon & Decision Feed endpoints ──────────────────────────────
 
+_last_manual_cycle_dispatch_time: float = 0.0
+
+
 @router.get("/api/autonomous/status")
 async def get_autonomous_status():
-    """Return operational status of the autonomous execution daemon."""
+    """Return operational status, watchdog health, and worker lock state."""
     from agents.execution.autonomous_daemon import get_autonomous_daemon
+    from agents.execution.distributed_lock import DistributedLockManager
+    from agents.execution.session_guard import is_nse_market_open, get_current_ist_time
+    from db.runtime_state import get_runtime_state
+
     daemon = get_autonomous_daemon()
     engine = svc._get_engine()
-    return {"ok": True, "status": daemon.get_status(engine)}
+    daemon_status = daemon.get_status(engine)
+
+    # Latest cycle status from worker
+    worker_status = get_runtime_state("autonomous_worker:latest_status", {}) or {}
+
+    # Lock info
+    lock_mgr = DistributedLockManager()
+    lock_info = lock_mgr.get_lock_info("autonomous_paper_worker")
+
+    # Watchdog evaluation
+    now_ist = get_current_ist_time()
+    is_nse_open, nse_reason = is_nse_market_open(now_ist)
+
+    watchdog_status = "HEALTHY"
+    watchdog_message = "Autonomous worker operating normally."
+    age_minutes = None
+
+    if lock_info and lock_info.get("status") == "RUNNING":
+        watchdog_status = "RUNNING"
+        watchdog_message = f"Worker cycle currently executing (run_id: {lock_info.get('run_id')})."
+    elif worker_status and worker_status.get("timestamp"):
+        try:
+            ts_str = worker_status["timestamp"]
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            age_sec = (datetime.now(timezone.utc) - ts).total_seconds()
+            age_minutes = round(age_sec / 60.0, 1)
+
+            if is_nse_open and age_minutes > 35.0:
+                watchdog_status = "WORKER_STALE"
+                watchdog_message = f"Last cycle completed {age_minutes:.1f}m ago during active market hours (>35m threshold)."
+            elif not is_nse_open:
+                watchdog_status = "MARKET_CLOSED"
+                watchdog_message = f"NSE cash market is closed ({nse_reason}). Worker in off-hours standby."
+            else:
+                watchdog_status = "HEALTHY"
+                watchdog_message = f"Worker healthy. Last cycle completed {age_minutes:.1f}m ago."
+        except Exception:
+            pass
+    elif not is_nse_open:
+        watchdog_status = "MARKET_CLOSED"
+        watchdog_message = f"NSE cash market is closed ({nse_reason}). Worker in off-hours standby."
+    else:
+        watchdog_status = "IDLE"
+        watchdog_message = "No worker cycle runs recorded yet today."
+
+    return {
+        "ok": True,
+        "status": daemon_status,
+        "worker": worker_status,
+        "lock": lock_info,
+        "watchdog": {
+            "status": watchdog_status,
+            "message": watchdog_message,
+            "age_minutes": age_minutes,
+            "is_nse_market_open": is_nse_open,
+            "nse_reason": nse_reason,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
 
 
 @router.get("/api/autonomous/feed")
 async def get_autonomous_feed(limit: int = 25):
     """Return live stream of autonomous trading decisions and management actions."""
     from agents.execution.autonomous_daemon import get_autonomous_daemon
+    from db.runtime_state import get_runtime_state
+
     daemon = get_autonomous_daemon()
-    return {"ok": True, "feed": daemon.get_decision_feed(limit=min(limit, 100))}
+
+    # Priority 1: Check runtime state
+    feed = get_runtime_state("autonomous_feed:v1", []) or []
+
+    # Priority 2: Fall back to PostgreSQL database records
+    if not feed:
+        try:
+            from db.connection import SessionLocal
+            from db.models import AutonomousDecisionRecord
+            with SessionLocal() as s:
+                records = s.query(AutonomousDecisionRecord).order_by(AutonomousDecisionRecord.id.desc()).limit(limit).all()
+                for r in records:
+                    feed.append({
+                        "id": r.signal_id or f"rec-{r.id}",
+                        "run_id": r.run_id,
+                        "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+                        "action": r.action,
+                        "symbol": r.symbol,
+                        "direction": r.direction or "HOLD",
+                        "price": r.entry_price or 0.0,
+                        "qs_score": r.quality_score or 0.0,
+                        "ai_confidence": r.confluence_score or 0.0,
+                        "risk_reward": r.risk_reward or 0.0,
+                        "market_regime": r.market_regime or "UNKNOWN",
+                        "source_freshness": r.source_freshness or "UNKNOWN",
+                        "trade_id": r.paper_trade_id,
+                        "reason": r.reason or "",
+                        "asset_class": "CRYPTO" if "/" in (r.symbol or "") else "EQUITY",
+                    })
+        except Exception:
+            pass
+
+    # Priority 3: Fall back to daemon in-memory log
+    if not feed and daemon.decision_log:
+        feed = daemon.decision_log
+
+    return {"ok": True, "feed": feed[:min(limit, 100)], "count": len(feed[:min(limit, 100)])}
+
+
+@router.post("/api/autonomous/run-cycle")
+async def trigger_autonomous_cycle(payload: dict | None = None):
+    """
+    Trigger a single autonomous worker cycle immediately.
+    Dispatches to GitHub Actions if GITHUB_TOKEN is available,
+    otherwise executes single cycle in a background task.
+    Enforces a 60-second cooldown rate limit.
+    """
+    global _last_manual_cycle_dispatch_time
+    now = time.time()
+    cooldown = 60.0
+    elapsed = now - _last_manual_cycle_dispatch_time
+
+    if elapsed < cooldown:
+        remaining = int(cooldown - elapsed)
+        return {
+            "ok": False,
+            "error": "RATE_LIMITED",
+            "message": f"Autonomous cycle was triggered recently. Please wait {remaining}s before triggering again.",
+            "retry_after_sec": remaining,
+        }
+
+    payload = payload or {}
+    universe = payload.get("universe", "tier1")
+    force_scan = bool(payload.get("force_scan", False))
+    dry_run = bool(payload.get("dry_run", False))
+
+    gh_token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+    gh_repo = os.getenv("GITHUB_REPOSITORY", "Himanshugupta2024/TradeAI-PRO")
+
+    dispatched_via = "local_async"
+    dispatch_msg = "Dispatched single autonomous cycle in local background task."
+
+    if gh_token and gh_repo:
+        try:
+            import httpx
+            url = f"https://api.github.com/repos/{gh_repo}/actions/workflows/autonomous_cycle.yml/dispatches"
+            headers = {
+                "Authorization": f"Bearer {gh_token}",
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "TradeAI-PRO-API",
+            }
+            body = {
+                "ref": "main",
+                "inputs": {
+                    "universe": universe,
+                    "force_scan": str(force_scan).lower(),
+                    "dry_run": str(dry_run).lower(),
+                },
+            }
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(url, headers=headers, json=body)
+                if res.status_code in (204, 201):
+                    dispatched_via = "github_actions"
+                    dispatch_msg = f"Triggered GitHub Actions autonomous cycle workflow on {gh_repo}."
+                    _last_manual_cycle_dispatch_time = now
+                    return {
+                        "ok": True,
+                        "method": dispatched_via,
+                        "message": dispatch_msg,
+                        "universe": universe,
+                        "dispatched_at": datetime.now(timezone.utc).isoformat(),
+                    }
+        except Exception as gh_err:
+            log.warning("[Autonomous] GitHub workflow dispatch error: %s. Falling back to local.", gh_err)
+
+    # Local async fallback
+    _last_manual_cycle_dispatch_time = now
+    from scripts.autonomous_cycle import run_single_autonomous_cycle
+
+    async def _run_bg():
+        try:
+            await run_single_autonomous_cycle(
+                universe_arg=universe,
+                force_scan=force_scan,
+                dry_run=dry_run,
+                max_symbols=15,
+            )
+        except Exception as bg_err:
+            log.error("[Autonomous] Background cycle execution failed: %s", bg_err)
+
+    asyncio.create_task(_run_bg())
+
+    return {
+        "ok": True,
+        "method": "local_async",
+        "message": dispatch_msg,
+        "universe": universe,
+        "dispatched_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.post("/api/autonomous/toggle", dependencies=[Depends(require_admin)])
@@ -5333,124 +5528,171 @@ async def swing_scan_now():
     }
 
 @router.post("/api/intraday/scan", dependencies=[Depends(require_admin)])
-
 async def intraday_run_scan():
-
     """Paper-only intraday heuristics on tracked NSE symbols (5m delayed yFinance)."""
-
     from agents.intraday_engine.scanner import (
-
         get_nifty_market_context,
-
         scan_intraday_setups,
-
     )
-
+    from agents.intraday_engine.session import evaluate_market_session
     from agents.intraday_engine.risk_manager import should_square_off_now
 
+    session = evaluate_market_session()
     symbols = list(svc.TOP_NSE_SYMBOLS or [])
-
     engine = svc._get_engine()
-
     stats = engine.get_stats()
-
     capital = float(
-
         stats.get("capital")
-
         or getattr(settings, "INTRADAY_VIRTUAL_CAPITAL", 100000.0)
-
         or 100000.0
-
     )
-
     daily_pnl = float(stats.get("daily_pnl") or 0.0)
-
     daily_pnl_pct = daily_pnl / max(capital, 1.0)
-
     portfolio_state = {
-
         "open_trades": len(engine.get_open_trades()),
-
         "daily_pnl_pct": daily_pnl_pct,
-
         "capital": capital,
-
     }
 
     sigs = await asyncio.to_thread(scan_intraday_setups, symbols, portfolio_state)
-
     scan_id = await asyncio.to_thread(
-
         lambda: intraday_store.save_scan(
-
             sigs,
-
             symbols_scanned=len(symbols),
-
             trigger="api",
-
         ),
-
     )
 
+    nifty_ctx = await asyncio.to_thread(get_nifty_market_context)
+    long_count = sum(1 for s in sigs if s.get("direction") == "LONG")
+    short_count = sum(1 for s in sigs if s.get("direction") == "SHORT")
+    scores = [float(s.get("confluence_score") or s.get("score") or 0) for s in sigs]
+    avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+
     return {
-
         "scan_id": scan_id,
-
-        "signals": sigs[:40],
-
+        "signals": sigs[:50],
         "count": len(sigs),
-
         "symbols_scanned": len(symbols),
-
-        "nifty_market_context": await asyncio.to_thread(get_nifty_market_context),
-
+        "session": session.to_dict(),
+        "nifty_market_context": nifty_ctx,
         "should_square_off": should_square_off_now(),
-
+        "stats": {
+            "total_signals": len(sigs),
+            "long_count": long_count,
+            "short_count": short_count,
+            "avg_score": avg_score,
+            "symbols_scanned": len(symbols),
+        },
+        "data_status": "DELAYED (5m)",
         "updated_at": datetime.now().isoformat(),
-
         "disclaimer": "Paper / educational — 5m delayed data, ATR-sized risk, and mandatory intraday square-off; not live broker execution.",
-
     }
 
+
 @router.get("/api/intraday/latest")
-
 async def intraday_latest():
-
-    row = await asyncio.to_thread(intraday_store.load_latest_scan)
-
     from agents.intraday_engine.scanner import get_nifty_market_context
-
+    from agents.intraday_engine.session import evaluate_market_session
     from agents.intraday_engine.risk_manager import should_square_off_now
 
+    session = evaluate_market_session()
     nifty_ctx = await asyncio.to_thread(get_nifty_market_context)
-
     sq_off = should_square_off_now()
 
+    row = await asyncio.to_thread(intraday_store.load_latest_scan)
     if not row:
-
         return {
-
             "signals": [],
-
             "signal_count": 0,
-
             "scan_time": None,
-
+            "session": session.to_dict(),
             "nifty_market_context": nifty_ctx,
-
             "should_square_off": sq_off,
-
+            "stats": {"total_signals": 0, "long_count": 0, "short_count": 0, "avg_score": 0.0, "symbols_scanned": 20},
+            "data_status": "DELAYED (5m)",
         }
 
-    if isinstance(row, dict):
+    raw_sigs = row.get("signals") or []
+    from zoneinfo import ZoneInfo
+    _IST = ZoneInfo("Asia/Kolkata")
+    now_ist = datetime.now(_IST)
+    is_today = False
+    if row.get("scan_time"):
+        try:
+            st = datetime.fromisoformat(row["scan_time"])
+            is_today = (st.date() == now_ist.date())
+        except Exception:
+            pass
 
-        row["nifty_market_context"] = nifty_ctx
+    for s in raw_sigs:
+        if not is_today or not session.is_trading_active:
+            s["is_expired"] = True
 
-        row["should_square_off"] = sq_off
+    long_count = sum(1 for s in raw_sigs if s.get("direction") == "LONG")
+    short_count = sum(1 for s in raw_sigs if s.get("direction") == "SHORT")
+    scores = [float(s.get("confluence_score") or s.get("score") or 0) for s in raw_sigs]
+    avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
 
+    row["session"] = session.to_dict()
+    row["nifty_market_context"] = nifty_ctx
+    row["should_square_off"] = sq_off
+    row["stats"] = {
+        "total_signals": len(raw_sigs),
+        "long_count": long_count,
+        "short_count": short_count,
+        "avg_score": avg_score,
+        "symbols_scanned": row.get("symbols_scanned") or 20,
+    }
+    row["data_status"] = "DELAYED (5m)" if is_today else "EOD / HISTORICAL"
     return row
+
+
+@router.get("/api/intraday/symbol/{symbol}")
+async def intraday_symbol_detail(symbol: str):
+    """
+    Detailed technical drilldown and 5m candle history for the Setup Research Drawer.
+    """
+    from agents.intraday_engine.fetcher import fetch_5m
+    from agents.intraday_engine.indicators import compute_technical_snapshot
+    from agents.intraday_engine.session import evaluate_market_session
+
+    clean_sym = symbol.strip().upper().replace(".NS", "")
+    df = await asyncio.to_thread(fetch_5m, clean_sym)
+    if df is None or df.empty:
+        return JSONResponse({"detail": f"5m data unavailable for {symbol}"}, status_code=404)
+
+    last_d = df.iloc[-1]["timestamp"].date()
+    today_df = df[df["timestamp"].dt.date == last_d].copy()
+    prior_dates = sorted(list({ts.date() for ts in df["timestamp"] if ts.date() < last_d}))
+    prev_day_df = df[df["timestamp"].dt.date == prior_dates[-1]].copy() if prior_dates else None
+
+    tech = await asyncio.to_thread(compute_technical_snapshot, today_df, prev_day_df)
+
+    chart_slice = df.tail(45).copy()
+    candles = []
+    for _, row in chart_slice.iterrows():
+        ts_val = row["timestamp"]
+        ts_str = ts_val.strftime("%H:%M") if hasattr(ts_val, "strftime") else str(ts_val)[11:16]
+        candles.append({
+            "time": ts_str,
+            "open": round(float(row["open"]), 2),
+            "high": round(float(row["high"]), 2),
+            "low": round(float(row["low"]), 2),
+            "close": round(float(row["close"]), 2),
+            "volume": int(row.get("volume") or 0),
+        })
+
+    session = evaluate_market_session()
+    return {
+        "symbol": clean_sym,
+        "technical_snapshot": tech,
+        "candles": candles,
+        "session": session.to_dict(),
+        "bar_count": len(today_df),
+        "data_status": "DELAYED (5m)",
+        "updated_at": datetime.now().isoformat(),
+    }
 
 @router.get("/api/intraday/live-quote/{symbol}")
 
