@@ -47,6 +47,7 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 - For the Forex module, treats "paper trading only, NO live broker integration ever, zero-cost free APIs only" as a hard non-negotiable product rule, not just a default.
 - Ships on Render and expects deployment notes to call out free-tier limits (no persistent disk on `plan: free` web services, idle sleep, and small-RAM/OOM risk during heavy ML stack imports).
 - Expects agents to run shell commands locally and verify outcomes rather than only suggesting steps.
+- Adheres strictly to the 'unslop' contract (from https://github.com/theclaymethod/unslop, installed in user skills): avoids robotic AI tells, throat-clearing, generic filler, inflated buzzwords ("tapestry", "delve", "testament to", "game-changer"), sycophancy, and moralizing codas; preserves concrete facts, technical definitions, exact numbers, and direct human-like engineering tone.
 
 ## Learned Workspace Facts
 

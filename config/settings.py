@@ -91,6 +91,7 @@ NSE_TICKER_MAP = {
     "BANKNIFTY": "^NSEBANK",
     "SENSEX": "^BSESN",
     "RELIANCE": "RELIANCE.NS",
+    "PREMIERENE": "PREMIERENE.NS",
     "TCS": "TCS.NS",
     "HDFCBANK": "HDFCBANK.NS",
     "INFY": "INFY.NS",
@@ -816,6 +817,7 @@ NSE_SECTOR_MAP: dict[str, str] = {
     "LTIM":         "IT",
     # Oil & Gas / Energy
     "RELIANCE":     "Energy",
+    "PREMIERENE":   "Energy",
     "ONGC":         "Energy",
     "BPCL":         "Energy",
     "IOC":          "Energy",
