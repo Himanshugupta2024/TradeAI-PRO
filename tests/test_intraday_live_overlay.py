@@ -123,6 +123,7 @@ def test_index_confluence_blocks_divergent_trades(monkeypatch: pytest.MonkeyPatc
     with patch("agents.intraday_engine.scanner.get_nifty_market_context", return_value=bearish_nifty), \
          patch("agents.intraday_engine.scanner.fetch_5m", return_value=_sample_df()), \
          patch("agents.intraday_engine.scanner.STRATS", (_long_strat,)), \
+         patch("agents.intraday_engine.scanner.is_entry_cutoff_active", return_value=False), \
          patch("agents.intraday_engine.scanner.should_square_off_now", return_value=False):
         
         # When NIFTY is BEARISH, LONG signal should be blocked
@@ -142,6 +143,8 @@ def test_index_confluence_blocks_divergent_trades(monkeypatch: pytest.MonkeyPatc
     with patch("agents.intraday_engine.scanner.get_nifty_market_context", return_value=bullish_nifty), \
          patch("agents.intraday_engine.scanner.fetch_5m", return_value=_sample_df()), \
          patch("agents.intraday_engine.scanner.STRATS", (_long_strat,)), \
+         patch("agents.intraday_engine.scanner._is_fresh_intraday", return_value=True), \
+         patch("agents.intraday_engine.scanner.is_entry_cutoff_active", return_value=False), \
          patch("agents.intraday_engine.scanner.should_square_off_now", return_value=False):
         
         # When NIFTY is BULLISH, LONG signal is approved

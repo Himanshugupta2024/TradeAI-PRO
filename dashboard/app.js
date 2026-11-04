@@ -23342,10 +23342,10 @@ async function loadEdgeTopSetups(universe = null, force = false) {
         else if (_currentEdgeUniverse === 'index') assetParam = 'index';
 
         const [setupsRes, overviewRes, flowRes, newsRes] = await Promise.all([
-            fetchWithTimeout(`/api/edge/top-setups?asset_class=${assetParam}&limit=40${force ? '&force_refresh=true' : ''}`, {}, 25000, 1),
-            fetchWithTimeout('/api/overview/intelligence', {}, 20000, 1).catch(() => null),
-            fetchWithTimeout('/api/tradeflow', {}, 15000, 1).catch(() => null),
-            fetchWithTimeout('/api/nse/news', {}, 15000, 1).catch(() => null),
+            fetchWithTimeout(`${API}/api/edge/top-setups?asset_class=${assetParam}&limit=40${force ? '&force_refresh=true' : ''}`, {}, 25000, 1),
+            fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 20000, 1).catch(() => null),
+            fetchWithTimeout(`${API}/api/tradeflow`, {}, 15000, 1).catch(() => null),
+            fetchWithTimeout(`${API}/api/nse/news`, {}, 15000, 1).catch(() => null),
         ]);
 
         if (spinner) spinner.style.animation = 'none';
@@ -23755,7 +23755,7 @@ async function openEdgeResearchDrawer(symbol, assetClass = 'nse') {
 
     // Load Multi-Factor & News Telemetry
     try {
-        const resp = await fetchWithTimeout(`/api/edge/research/${encodeURIComponent(symbol)}?asset_class=${assetClass || ''}`, {}, 15000);
+        const resp = await fetchWithTimeout(`${API}/api/edge/research/${encodeURIComponent(symbol)}?asset_class=${assetClass || ''}`, {}, 15000);
         if (resp && resp.ok) {
             const data = await resp.json();
             const sc = Number(data.edge_score || 0);
@@ -23828,7 +23828,7 @@ async function loadDrawerChartData(symbol, interval = '1d') {
     _currentDrawerTf = interval;
     const cleanSym = symbol.replace('.NS', '').replace('/', '-');
     try {
-        const res = await fetchWithTimeout(`/api/market/${cleanSym}?limit=60&interval=${interval}`, {}, 10000);
+        const res = await fetchWithTimeout(`${API}/api/market/${cleanSym}?limit=60&interval=${interval}`, {}, 10000);
         if (!res.ok) throw new Error('Market data unavailable');
         const json = await res.json();
         const bars = json.data || [];
@@ -23989,7 +23989,7 @@ async function loadEdgeMacroHeatmap() {
 
 
 
-        const resp = await fetchWithTimeout('/api/edge/macro-heatmap', {}, 20000, 1);
+        const resp = await fetchWithTimeout(`${API}/api/edge/macro-heatmap`, {}, 20000, 1);
 
 
 
@@ -24153,7 +24153,7 @@ async function loadEdgeRiskGauge() {
 
 
 
-        const resp = await fetchWithTimeout('/api/edge/risk-gauge');
+        const resp = await fetchWithTimeout(`${API}/api/edge/risk-gauge`);
 
 
 
@@ -24417,7 +24417,7 @@ async function loadForexData() {
 
     try {
 
-        const iResp = await fetchWithTimeout('/api/forex/intelligence');
+        const iResp = await fetchWithTimeout(`${API}/api/forex/intelligence`);
 
         if (iResp.ok) {
 
@@ -24463,7 +24463,7 @@ async function loadForexData() {
 
     try {
 
-        const rResp = await fetchWithTimeout('/api/forex/rates');
+        const rResp = await fetchWithTimeout(`${API}/api/forex/rates`);
 
         if (rResp.ok) {
 
@@ -24489,7 +24489,7 @@ async function loadForexData() {
 
         try {
 
-            const resp = await fetchWithTimeout('/api/forex/signals', {}, 30000);
+            const resp = await fetchWithTimeout(`${API}/api/forex/signals`, {}, 30000);
 
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
@@ -25193,7 +25193,7 @@ async function loadNsePredictionTab() {
 
 
 
-        const resp = await fetchWithTimeout('/api/nse/prediction');
+        const resp = await fetchWithTimeout(`${API}/api/nse/prediction`);
 
 
 
@@ -25437,7 +25437,7 @@ async function loadSwingOutcomeStats() {
 
 
 
-        const resp = await fetchWithTimeout('/api/swing/stats');
+        const resp = await fetchWithTimeout(`${API}/api/swing/stats`);
 
 
 
@@ -25553,7 +25553,7 @@ async function lookupSwingSymbol() {
 
 
 
-        const resp = await fetchWithTimeout(`/api/swing/symbol/${encodeURIComponent(sym)}`);
+        const resp = await fetchWithTimeout(`${API}/api/swing/symbol/${encodeURIComponent(sym)}`);
 
 
 
@@ -25713,7 +25713,7 @@ async function paperResolveEOD() {
 
 
 
-        const resp = await fetchWithTimeout('/api/swing/resolve-eod', { method: 'POST' });
+        const resp = await fetchWithTimeout(`${API}/api/swing/resolve-eod`, { method: 'POST' });
 
 
 
