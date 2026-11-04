@@ -19408,200 +19408,117 @@ async function fetchAndShowQuote(symbol) {
 
         const sigVal   = sig?.signal || 'HOLD';
 
-
-
         const sigDir   = sig?.direction || sigVal;
 
+        const entryVal = sig?.entry ?? data.close;
 
+        const slVal    = sig?.stop_loss;
 
-        const sigColor = ['LONG','BUY'].includes(sigVal)   ? 'var(--green)'
+        const tpVal    = sig?.target;
 
+        const curClose = Number(data.close || 0);
 
+        // Determine trade lifecycle status (active vs target hit vs stopped out)
+        const status = sig?.signal_status || (
+            sigVal === 'LONG' && tpVal && curClose >= tpVal ? 'TARGET_HIT' :
+            sigVal === 'SHORT' && tpVal && curClose <= tpVal ? 'TARGET_HIT' :
+            sigVal === 'LONG' && slVal && curClose <= slVal ? 'STOPPED_OUT' :
+            sigVal === 'SHORT' && slVal && curClose >= slVal ? 'STOPPED_OUT' :
+            sig?.stale ? 'STALE' : 'ACTIVE'
+        );
 
-                       : ['SHORT','SELL'].includes(sigVal) ? 'var(--red)'
+        const isTargetHit = status === 'TARGET_HIT';
+        const isStoppedOut = status === 'STOPPED_OUT';
+        const displaySig = (isTargetHit || isStoppedOut) ? 'HOLD' : sigVal;
 
+        let statusBadge = '';
+        if (isTargetHit) {
+            statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--green);padding:1px 6px;border-radius:8px;background:rgba(16,185,129,0.15);margin-left:4px;">✓ TARGET HIT</span>';
+        } else if (isStoppedOut) {
+            statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--red);padding:1px 6px;border-radius:8px;background:rgba(239,68,68,0.15);margin-left:4px;">✕ STOPPED OUT</span>';
+        } else if (status === 'STALE') {
+            statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--yellow);padding:1px 6px;border-radius:8px;background:rgba(245,158,11,0.15);margin-left:4px;">⏱ STALE</span>';
+        }
 
-
-                       : sigVal === 'SKIP' ? 'var(--text-muted)'
-
-
-
+        const sigColor = ['LONG','BUY'].includes(displaySig)   ? 'var(--green)'
+                       : ['SHORT','SELL'].includes(displaySig) ? 'var(--red)'
+                       : displaySig === 'SKIP' ? 'var(--text-muted)'
                        : 'var(--cyan)';
 
-
-
-
-
-
-
         // MACD color
-
-
-
         const macdHist = data.macd_hist ?? last.macd_hist;
-
-
-
         const macdColor = macdHist > 0 ? 'var(--green)' : macdHist < 0 ? 'var(--red)' : 'var(--text-muted)';
-
-
-
         const macdIcon  = macdHist > 0 ? '▲' : macdHist < 0 ? '▼' : '—';
 
-
-
-
-
-
-
-        // RSI color
-
-
-
+        // RSI color: amber for overbought (informative warning, not error red)
         const rsiVal = data.rsi;
+        const rsiColor = rsiVal < 30 ? 'var(--green)' : rsiVal > 70 ? 'var(--yellow)' : 'var(--text-secondary)';
+        const rsiLabel = rsiVal != null ? `${rsiVal.toFixed(1)}${rsiVal > 70 ? ' (OB)' : rsiVal < 30 ? ' (OS)' : ''}` : '—';
 
-
-
-        const rsiColor = rsiVal < 30 ? 'var(--green)' : rsiVal > 70 ? 'var(--red)' : 'var(--text-secondary)';
-
-
-
-
-
-
+        // Local Trend (5m) vs Macro Trend (Daily)
+        const localTrend = sig?.local_trend || data.local_trend || (last.ema_20 && last.ema_50 ? (last.ema_20 >= last.ema_50 ? 'BULLISH' : 'BEARISH') : 'NEUTRAL');
+        const macroTrend = (sig?.trend || '—').replace('TrendDirection.', '');
+        const localColor = localTrend === 'BULLISH' ? 'var(--green)' : localTrend === 'BEARISH' ? 'var(--red)' : 'var(--text-muted)';
+        const macroColor = macroTrend === 'BULLISH' ? 'var(--green)' : macroTrend === 'BEARISH' ? 'var(--red)' : 'var(--text-muted)';
 
         // Entry/SL/Target section
-
-
-
         const hasSignal = ['LONG', 'SHORT', 'BUY', 'SELL'].includes(sigDir);
-
-
-
-        const entryVal  = sig?.entry ?? data.close;
-
-
-
-        const slVal     = sig?.stop_loss;
-
-
-
-        const tpVal     = sig?.target;
-
-
-
-
-
-
-
-        const tradeSectionHTML = hasSignal && (slVal || tpVal) ? `
-
-
-
-            <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.6rem;margin-top:0.1rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;">
-
-
-
-                <div style="text-align:center">
-
-
-
-                    <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Entry</div>
-
-
-
-                    <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
-
-
-
-                </div>
-
-
-
-                <div style="text-align:center">
-
-
-
-                    <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Stop Loss</div>
-
-
-
-                    <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${slVal ? curr + slVal.toFixed(2) : '—'}</div>
-
-
-
-                </div>
-
-
-
-                <div style="text-align:center">
-
-
-
-                    <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Target</div>
-
-
-
-                    <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tpVal ? curr + tpVal.toFixed(2) : '—'}</div>
-
-
-
-                </div>
-
-
-
-            </div>` : '';
-
-
-
-
-
-
+        let tradeSectionHTML = '';
+        if (hasSignal && (slVal || tpVal)) {
+            if (isTargetHit) {
+                const gainPct = entryVal > 0 && tpVal ? Math.abs((tpVal - entryVal) / entryVal * 100).toFixed(2) : '0';
+                tradeSectionHTML = `
+                    <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.55rem;margin-top:0.1rem;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
+                            <span style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Previous Completed Trade</span>
+                            <span style="font-size:0.68rem;color:var(--green);font-weight:700;">✓ Target Achieved (+${gainPct}%)</span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;text-align:center;">
+                            <div>
+                                <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
+                                <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss</div>
+                                <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${slVal ? curr + slVal.toFixed(2) : '—'}</div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Target Hit</div>
+                                <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tpVal ? curr + tpVal.toFixed(2) : '—'}</div>
+                            </div>
+                        </div>
+                    </div>`;
+            } else {
+                tradeSectionHTML = `
+                    <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.6rem;margin-top:0.1rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;">
+                        <div style="text-align:center">
+                            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Entry</div>
+                            <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
+                        </div>
+                        <div style="text-align:center">
+                            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Stop Loss</div>
+                            <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${slVal ? curr + slVal.toFixed(2) : '—'}</div>
+                        </div>
+                        <div style="text-align:center">
+                            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Target</div>
+                            <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tpVal ? curr + tpVal.toFixed(2) : '—'}</div>
+                        </div>
+                    </div>`;
+            }
+        }
 
         const items = [
-
-
-
-            { label: 'Close',      value: `${curr}${(data.close||0).toLocaleString('en-IN', { minimumFractionDigits:2, maximumFractionDigits:2 })}` },
-
-
-
-            { label: 'RSI (14)',   value: rsiVal != null ? rsiVal.toFixed(1) : '—', color: rsiColor },
-
-
-
-            { label: 'MACD Hist', value: macdHist != null ? `${macdIcon} ${Math.abs(macdHist).toFixed(4)}` : '—', color: macdColor },
-
-
-
-            { label: 'Signal',     value: sigVal, color: sigColor },
-
-
-
-            { label: 'Confidence', value: sig?.confidence != null ? `${sig.confidence}%` : '—' },
-
-
-
-            { label: 'Regime',     value: sig?.regime || data.regime || '—' },
-
-
-
-            { label: 'Trend',      value: (sig?.trend || '—').replace('TrendDirection.', '') },
-
-
-
-            { label: 'EMA 20',     value: last.ema_20 ? `${curr}${last.ema_20.toFixed(2)}` : '—' },
-
-
-
-            { label: 'EMA 50',     value: last.ema_50 ? `${curr}${last.ema_50.toFixed(2)}` : '—' },
-
-
-
-            { label: 'VWAP',       value: last.vwap   ? `${curr}${last.vwap.toFixed(2)}` : '—' },
-
-
-
+            { label: 'Close',          value: `${curr}${(data.close||0).toLocaleString('en-IN', { minimumFractionDigits:2, maximumFractionDigits:2 })}` },
+            { label: 'RSI (14)',       value: rsiLabel, color: rsiColor },
+            { label: 'MACD Hist',      value: macdHist != null ? `${macdIcon} ${Math.abs(macdHist).toFixed(4)}` : '—', color: macdColor },
+            { label: 'Signal',         value: `${displaySig} ${statusBadge}`, color: sigColor },
+            { label: 'Confluence',     value: sig?.confidence != null ? `${sig.confidence}/100` : '—' },
+            { label: 'Regime',         value: sig?.regime || data.regime || '—' },
+            { label: '5m Trend',       value: localTrend, color: localColor },
+            { label: 'Daily Macro',    value: macroTrend, color: macroColor },
+            { label: 'EMA 20',         value: last.ema_20 ? `${curr}${last.ema_20.toFixed(2)}` : '—' },
+            { label: 'EMA 50',         value: last.ema_50 ? `${curr}${last.ema_50.toFixed(2)}` : '—' },
+            { label: 'VWAP',           value: last.vwap   ? `${curr}${last.vwap.toFixed(2)}` : '—' },
         ];
 
 
@@ -19631,6 +19548,18 @@ async function fetchAndShowQuote(symbol) {
 
 
             `).join('') + tradeSectionHTML;
+
+
+
+
+
+
+
+        // Automatically trigger live backtest for this symbol
+
+
+
+        loadModalBacktest(symbol);
 
 
 
@@ -25440,6 +25369,110 @@ async function loadNsePredictionTab() {
 
 
             topSellEl.innerHTML = sells.length ? sells.map(s => `<div style="padding:0.25rem 0;font-size:0.75rem;"><strong>${_escHtml(s.symbol)}</strong>: ₹${s.price} (conf ${s.confidence}%)</div>`).join('') : '<span style="font-size:0.75rem;color:var(--text-muted);">None in current scan</span>';
+
+
+
+        }
+
+
+
+
+
+
+
+        // ── Render Latest Indian Market Headlines in NSE Tab ───
+
+
+
+        const newsGrid = document.getElementById('nseTabNews');
+
+
+
+        if (newsGrid) {
+
+
+
+            const newsItems = (data.news && data.news.items) ? data.news.items : [];
+
+
+
+            if (newsItems.length) {
+
+
+
+                newsGrid.innerHTML = newsItems.slice(0, 6).map(item => {
+
+
+
+                    const titleSafe = _escHtml(item.title || '');
+
+
+
+                    const srcSafe = _escHtml(item.source || 'NSE Feed');
+
+
+
+                    const timeSafe = _escHtml(item.published || 'Today');
+
+
+
+                    return `
+
+
+
+                        <div class="nse-news-card" style="background:var(--bg-card);border:1px solid var(--border-color);border-radius:8px;padding:0.75rem 0.9rem;display:flex;flex-direction:column;justify-content:space-between;gap:0.4rem;">
+
+
+
+                            <a href="${item.url || '#'}" target="_blank" rel="noopener noreferrer" style="color:var(--text-primary);text-decoration:none;font-size:0.78rem;font-weight:600;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${titleSafe}">
+
+
+
+                                ${titleSafe}
+
+
+
+                            </a>
+
+
+
+                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.68rem;color:var(--text-muted);margin-top:2px;">
+
+
+
+                                <span style="color:var(--cyan);font-weight:600;">📰 ${srcSafe}</span>
+
+
+
+                                <span>${timeSafe}</span>
+
+
+
+                            </div>
+
+
+
+                        </div>
+
+
+
+                    `;
+
+
+
+                }).join('');
+
+
+
+            } else {
+
+
+
+                newsGrid.innerHTML = '<div style="color:var(--text-muted);font-size:0.75rem;padding:0.5rem;">No breaking headlines at this moment.</div>';
+
+
+
+            }
 
 
 
