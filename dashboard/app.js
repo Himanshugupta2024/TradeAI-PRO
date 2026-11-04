@@ -2629,15 +2629,19 @@ async function runAutonomousCycleNow() {
             btn.disabled = true;
             btn.textContent = '⏳ Starting...';
         }
-        const res = await fetchWithTimeout(`${API}/api/autonomous/run-cycle`, {
+        const targetApi = (typeof API !== 'undefined' && API) ? API : (window.__TRADEAI_CONFIG__?.API_BASE_URL || 'https://trading-api-n1wt.onrender.com');
+        const res = await fetchWithTimeout(targetApi + '/api/autonomous/run-cycle', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ universe: 'tier1' }),
         }, 15000);
         const data = await parseJsonResponse(res);
         if (data && data.ok) {
+            const okMsg = 'Cycle triggered (' + (data.method || 'dispatched') + ')';
             if (typeof showToast === 'function') {
-                showToast(`Cycle triggered (${data.method || 'dispatched'})`, 'success');
+                showToast(okMsg, 'success');
+            } else {
+                alert(okMsg);
             }
             setTimeout(() => { loadAutonomousFeed(); }, 3000);
         } else {
@@ -2650,8 +2654,11 @@ async function runAutonomousCycleNow() {
         }
     } catch (e) {
         console.error('Failed to trigger autonomous cycle:', e);
+        const errMsg = 'Error triggering autonomous cycle: ' + (e.message || e);
         if (typeof showToast === 'function') {
-            showToast('Error triggering autonomous cycle', 'error');
+            showToast(errMsg, 'error');
+        } else {
+            alert(errMsg);
         }
     } finally {
         if (btn) {
@@ -2661,6 +2668,7 @@ async function runAutonomousCycleNow() {
             }, 3000);
         }
     }
+}
 }
 
 async function toggleAutonomousMode() {
@@ -21858,899 +21866,808 @@ function renderBreakoutsTable(breakouts) {
 
 // ── Intraday Strategy Engine Tab ────────────────────────
 
-
-
 const _ID_STRAT_COLORS = {
-
-
-
-    ORB: { bg: "rgba(59,130,246,0.15)", color: "#60a5fa", border: "rgba(59,130,246,0.4)" },
-
-
-
-    GAP_GO: { bg: "rgba(16,185,129,0.15)", color: "#34d399", border: "rgba(16,185,129,0.4)" },
-
-
-
+    ORB: { bg: "rgba(99,102,241,0.15)", color: "#a5b4fc", border: "rgba(99,102,241,0.4)" },
+    VWAP: { bg: "rgba(59,130,246,0.15)", color: "#60a5fa", border: "rgba(59,130,246,0.4)" },
     VWAP_REV: { bg: "rgba(245,158,11,0.15)", color: "#fbbf24", border: "rgba(245,158,11,0.4)" },
-
-
-
-    MOMENTUM: { bg: "rgba(168,85,247,0.15)", color: "#c084fc", border: "rgba(168,85,247,0.4)" },
-
-
-
-    RANGE_BREAK: { bg: "rgba(236,72,153,0.15)", color: "#f472b6", border: "rgba(236,72,153,0.4)" },
-
-
-
     CPR: { bg: "rgba(14,165,233,0.15)", color: "#38bdf8", border: "rgba(14,165,233,0.4)" },
-
-
-
     SUPERTREND: { bg: "rgba(34,197,94,0.15)", color: "#4ade80", border: "rgba(34,197,94,0.4)" },
-
-
-
+    EMA: { bg: "rgba(168,85,247,0.15)", color: "#c084fc", border: "rgba(168,85,247,0.4)" },
+    RSI: { bg: "rgba(236,72,153,0.15)", color: "#f472b6", border: "rgba(236,72,153,0.4)" },
+    GAP_GO: { bg: "rgba(234,179,8,0.15)", color: "#facc15", border: "rgba(234,179,8,0.4)" },
+    MOMENTUM: { bg: "rgba(249,115,22,0.15)", color: "#fb923c", border: "rgba(249,115,22,0.4)" },
+    RANGE_BREAK: { bg: "rgba(236,72,153,0.15)", color: "#f472b6", border: "rgba(236,72,153,0.4)" }
 };
 
-
-
-
-
-
-
 let _intradayAllSigs = [];
+let _intradaySession = null;
+let _intradayNiftyContext = null;
+let _intradayDataStatus = "DELAYED";
+let _intradayCurrentView = "table"; // "table" or "cards"
+let _intradayFilterDir = "all"; // "all", "LONG", "SHORT"
+let _intradayFilterStrat = "all";
+let _intradayFilterConf = "all"; // "all", "70", "80"
+let _intradaySearchQuery = "";
+let _intradayDensityCompact = true;
+let _intradayDrawerChart = null;
 
-
-
-
-
-
-
-function _updateIntradayKpis(sigs) {
-
-
-
+function _updateIntradayKpis(sigs, session, niftyContext, dataStatus) {
+    sigs = sigs || [];
     const total = sigs.length;
+    const longCount = sigs.filter(s => (s.direction || "").toUpperCase() === "LONG").length;
+    const shortCount = sigs.filter(s => (s.direction || "").toUpperCase() === "SHORT").length;
 
-
-
-    const longCount = sigs.filter(s => s.direction === "LONG").length;
-
-
-
-    const shortCount = sigs.filter(s => s.direction === "SHORT").length;
-
-
-
-    const scores = sigs.map(s => Number(s.score || 0)).filter(n => !isNaN(n) && n > 0);
-
-
-
-    const avgScore = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : "—";
-
-
-
-
-
-
+    const scores = sigs.map(s => Number(s.confluence_score ?? s.score ?? 0)).filter(n => !isNaN(n) && n > 0);
+    const avgScore = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) + "%" : "—";
+    const topScore = scores.length ? Math.max(...scores).toFixed(1) + "%" : "—";
 
     const tEl = document.getElementById("idKpiTotal");
-
-
-
     const lEl = document.getElementById("idKpiLong");
-
-
-
     const sEl = document.getElementById("idKpiShort");
-
-
-
-    const aEl = document.getElementById("idKpiAvgScore") || document.getElementById("idKpiScore");
-
-
+    const aEl = document.getElementById("idKpiScore") || document.getElementById("idKpiAvgScore");
+    const topEl = document.getElementById("idKpiTopScore");
+    const sessEl = document.getElementById("idKpiSession");
+    const regEl = document.getElementById("idKpiRegime");
+    const feedEl = document.getElementById("idKpiFeed");
 
     if (tEl) tEl.textContent = total;
-
-
-
     if (lEl) lEl.textContent = longCount;
-
-
-
     if (sEl) sEl.textContent = shortCount;
-
-
-
     if (aEl) aEl.textContent = avgScore;
+    if (topEl) topEl.textContent = topScore;
 
+    // Session badge & KPI
+    if (session) {
+        if (sessEl) {
+            sessEl.textContent = session.session_label || session.state || "—";
+            sessEl.style.color = session.status_color || "#cbd5e1";
+        }
+        const badgeTxt = document.getElementById("idSessionText");
+        const badgeDot = document.getElementById("idSessionDot");
+        if (badgeTxt) badgeTxt.textContent = (session.session_label || session.state || "UNKNOWN").toUpperCase();
+        if (badgeDot && session.status_color) badgeDot.style.background = session.status_color;
+    }
 
+    // Regime KPI
+    if (niftyContext && regEl) {
+        const trend = niftyContext.trend || "NEUTRAL";
+        const regime = niftyContext.regime || "NORMAL";
+        regEl.textContent = `${trend} · ${regime}`;
+        regEl.style.color = trend === "BULLISH" ? "var(--green)" : (trend === "BEARISH" ? "var(--red)" : "var(--text-muted)");
+    }
 
+    // Feed Quality KPI
+    if (feedEl && dataStatus) {
+        feedEl.textContent = dataStatus === "LIVE" ? "LIVE (0-DELAY)" : "DELAYED (5M)";
+        feedEl.style.color = dataStatus === "LIVE" ? "var(--green)" : "#38bdf8";
+    }
 }
 
+function setIntradayView(view) {
+    _intradayCurrentView = view;
+    const btnTable = document.getElementById("idBtnViewTable");
+    const btnCards = document.getElementById("idBtnViewCards");
+    const tableWrap = document.getElementById("intradayTableViewWrap");
+    const cardsWrap = document.getElementById("intradayGrid");
 
+    if (btnTable) btnTable.classList.toggle("active", view === "table");
+    if (btnCards) btnCards.classList.toggle("active", view === "cards");
 
+    if (tableWrap) tableWrap.style.display = view === "table" ? "block" : "none";
+    if (cardsWrap) cardsWrap.style.display = view === "cards" ? "grid" : "none";
 
+    applyIntradayFilters();
+}
 
+function toggleIntradayDensity() {
+    _intradayDensityCompact = !_intradayDensityCompact;
+    const btn = document.getElementById("idBtnDensity");
+    if (btn) btn.textContent = _intradayDensityCompact ? "Compact" : "Comfortable";
 
+    const table = document.getElementById("intradayTable");
+    if (table) {
+        table.querySelectorAll("th, td").forEach(cell => {
+            cell.style.padding = _intradayDensityCompact ? "0.45rem 0.65rem" : "0.75rem 0.95rem";
+        });
+    }
+}
+
+function setIntradayDir(dir) {
+    _intradayFilterDir = dir;
+    document.querySelectorAll("#intradayFilterToolbar [data-dir]").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.dir === dir);
+    });
+    applyIntradayFilters();
+}
+
+function setIntradayConf(conf) {
+    _intradayFilterConf = conf;
+    document.querySelectorAll("#intradayFilterToolbar [data-conf]").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.conf === conf);
+    });
+    applyIntradayFilters();
+}
 
 function filterIntradayStrat(strat) {
-
-
-
+    _intradayFilterStrat = strat;
     document.querySelectorAll("#intradayStratFilter [data-strat]").forEach(btn => {
-
-
-
         btn.classList.toggle("active", btn.dataset.strat === strat);
-
-
-
     });
-
-
-
-    const longOnly = !!document.getElementById("idFilterLong")?.checked;
-
-
-
-    let filtered = _intradayAllSigs;
-
-
-
-    if (strat && strat !== "all") {
-
-
-
-        filtered = filtered.filter(s => s.strategy === strat);
-
-
-
-    }
-
-
-
-    if (longOnly) {
-
-
-
-        filtered = filtered.filter(s => s.direction === "LONG");
-
-
-
-    }
-
-
-
-    _renderIntradayCards(filtered);
-
-
-
+    applyIntradayFilters();
 }
-
-
-
-
-
-
 
 function resetIntradayFilters() {
+    _intradayFilterDir = "all";
+    _intradayFilterStrat = "all";
+    _intradayFilterConf = "all";
+    _intradaySearchQuery = "";
 
+    const searchInput = document.getElementById("idSearchInput");
+    if (searchInput) searchInput.value = "";
 
+    document.querySelectorAll("#intradayFilterToolbar [data-dir]").forEach(b => b.classList.toggle("active", b.dataset.dir === "all"));
+    document.querySelectorAll("#intradayFilterToolbar [data-conf]").forEach(b => b.classList.toggle("active", b.dataset.conf === "all"));
+    document.querySelectorAll("#intradayStratFilter [data-strat]").forEach(b => b.classList.toggle("active", b.dataset.strat === "all"));
 
-    document.querySelectorAll("#intradayStratFilter [data-strat]").forEach(b => b.classList.remove("active"));
-
-
-
-    const allBtn = document.querySelector("#intradayStratFilter [data-strat=\"all\"]");
-
-
-
-    if (allBtn) allBtn.classList.add("active");
-
-
-
-    const cb = document.getElementById("idFilterLong");
-
-
-
-    if (cb) cb.checked = false;
-
-
-
-    _renderIntradayCards(_intradayAllSigs || []);
-
-
-
+    applyIntradayFilters();
 }
 
+function applyIntradayFilters() {
+    const searchInput = document.getElementById("idSearchInput");
+    _intradaySearchQuery = (searchInput ? searchInput.value : "").trim().toUpperCase();
 
+    let filtered = _intradayAllSigs || [];
 
+    // Filter by Strategy
+    if (_intradayFilterStrat && _intradayFilterStrat !== "all") {
+        filtered = filtered.filter(s => (s.strategy || "").toUpperCase() === _intradayFilterStrat.toUpperCase());
+    }
 
+    // Filter by Direction
+    if (_intradayFilterDir && _intradayFilterDir !== "all") {
+        filtered = filtered.filter(s => (s.direction || "").toUpperCase() === _intradayFilterDir.toUpperCase());
+    }
 
+    // Filter by Confluence Score
+    if (_intradayFilterConf === "70") {
+        filtered = filtered.filter(s => Number(s.confluence_score ?? s.score ?? 0) >= 70);
+    } else if (_intradayFilterConf === "80") {
+        filtered = filtered.filter(s => Number(s.confluence_score ?? s.score ?? 0) >= 80);
+    }
 
+    // Filter by Search query
+    if (_intradaySearchQuery) {
+        filtered = filtered.filter(s => (s.symbol || "").toUpperCase().includes(_intradaySearchQuery));
+    }
+
+    if (_intradayCurrentView === "table") {
+        _renderIntradayTable(filtered);
+    } else {
+        _renderIntradayCards(filtered);
+    }
+}
 
 function renderIntradayGrid(sigs) {
-
-
-
     _intradayAllSigs = sigs || [];
-
-
-
-    _updateIntradayKpis(_intradayAllSigs);
-
-
-
-    const activeChip = document.querySelector("#intradayStratFilter [data-strat].active");
-
-
-
-    const strat = activeChip ? activeChip.dataset.strat || "all" : "all";
-
-
-
-    filterIntradayStrat(strat);
-
-
-
+    _updateIntradayKpis(_intradayAllSigs, _intradaySession, _intradayNiftyContext, _intradayDataStatus);
+    applyIntradayFilters();
 }
 
-
-
-
-
-
-
-function _renderIntradayCards(sigs) {
-
-
-
-    const grid = document.getElementById("intradayGrid");
-
-
-
-    if (!grid) return;
-
-
-
-
-
-
+function _renderIntradayTable(sigs) {
+    const tbody = document.getElementById("intradayTableBody");
+    if (!tbody) return;
 
     if (!sigs || !sigs.length) {
-
-
-
         const total = (_intradayAllSigs || []).length;
-
-
-
-        if (total > 0) {
-
-
-
-            grid.innerHTML = `<div class="loading-state"><p style="color:var(--text-muted);font-size:0.85rem;">No signals match current filter. ${total} signal(s) available in latest scan.</p><p style="margin-top:0.5rem;"><button type="button" onclick="resetIntradayFilters()" class="btn btn-secondary" style="font-size:0.75rem;padding:0.3rem 0.65rem;">Show All strategies</button></p></div>`;
-
-
-
-        } else {
-
-
-
-            grid.innerHTML = '<div class="loading-state"><p style="color:var(--text-muted);font-size:0.85rem;">No intraday signals in latest snapshot. Run a fresh scan during market hours (9:15-15:15 IST) or check again after a few minutes.</p><p style="margin-top:0.5rem;"><button type="button" onclick="runIntradayScan()" class="btn btn-secondary" style="font-size:0.75rem;padding:0.3rem 0.65rem;">Run fresh scan</button></p></div>';
-
-
-
-        }
-
-
-
+        const msg = total > 0
+            ? `No signals match current filter. (${total} available in latest snapshot)`
+            : "No intraday signals found in latest snapshot. Run a fresh scan or check back during active session.";
+        tbody.innerHTML = `<tr><td colspan="15" style="text-align:center;padding:2.5rem;color:var(--text-muted);">${msg}</td></tr>`;
         return;
-
-
-
     }
 
+    const pad = _intradayDensityCompact ? "0.45rem 0.65rem" : "0.75rem 0.95rem";
 
+    tbody.innerHTML = sigs.map((s, idx) => {
+        const dir = (s.direction || "").toUpperCase();
+        const dirColor = dir === "LONG" ? "var(--green)" : "var(--red)";
+        const dirBg = dir === "LONG" ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)";
+        const dirBorder = dir === "LONG" ? "rgba(16,185,129,0.35)" : "rgba(239,68,68,0.35)";
 
+        const stc = _ID_STRAT_COLORS[s.strategy] || { bg: "rgba(148,163,184,0.15)", color: "#cbd5e1", border: "rgba(148,163,184,0.3)" };
+        const score = Number(s.confluence_score ?? s.score ?? 0);
+        const scoreColor = score >= 80 ? "#10b981" : (score >= 65 ? "#818cf8" : "#f59e0b");
 
-
-
-
-    grid.innerHTML = sigs.map(s => {
-
-
-
-        const dirColor = s.direction === "LONG" ? "var(--green)" : "var(--red)";
-
-
-
-        const dirBg = s.direction === "LONG" ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)";
-
-
-
-        const dirBorder = s.direction === "LONG" ? "rgba(16,185,129,0.4)" : "rgba(239,68,68,0.4)";
-
-
-
-        const stc = _ID_STRAT_COLORS[s.strategy] || _ID_STRAT_COLORS["MOMENTUM"];
-
-
-
-        const score = Number(s.score || 0);
-
-
-
-        const scorePct = Math.min(100, score);
-
-
-
-        const scoreColor = score >= 80 ? "#10b981" : score >= 65 ? "#818cf8" : "#f59e0b";
-
-
+        const ltpTxt = s.ltp != null ? "₹" + Number(s.ltp).toFixed(2) : (s.entry != null ? "₹" + Number(s.entry).toFixed(2) : "—");
+        const entryFmt = s.entry != null ? "₹" + Number(s.entry).toFixed(2) : "—";
+        const slFmt = s.stop_loss != null ? "₹" + Number(s.stop_loss).toFixed(2) : "—";
+        const t1Fmt = s.target_1 != null ? "₹" + Number(s.target_1).toFixed(2) : (s.target != null ? "₹" + Number(s.target).toFixed(2) : "—");
+        const t2Fmt = s.target_2 != null ? "₹" + Number(s.target_2).toFixed(2) : "—";
 
         const rr = Number(s.risk_reward || 0);
-
-
-
         const rrTxt = Number.isFinite(rr) && rr > 0 ? rr.toFixed(2) + "x" : "—";
+        const rvolTxt = s.rvol != null ? Number(s.rvol).toFixed(1) + "x" : "—";
 
+        const isExpired = !!s.is_expired;
+        const statusBadge = isExpired
+            ? `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(148,163,184,0.12);color:#94a3b8;border:1px solid rgba(148,163,184,0.3);">EXPIRED</span>`
+            : `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(16,185,129,0.12);color:var(--green);border:1px solid rgba(16,185,129,0.35);">ACTIVE</span>`;
 
+        const feedBadge = s.data_status === "LIVE"
+            ? `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(16,185,129,0.1);color:var(--green);">LIVE</span>`
+            : `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(56,189,248,0.1);color:#38bdf8;">DELAYED</span>`;
 
-        const qtyTxt = s.qty != null ? Number(s.qty).toLocaleString("en-IN") : "—";
-
-
-
-        const atrTxt = s.atr != null ? "₹" + Number(s.atr).toFixed(2) : "—";
-
-
-
-        const entryFmt = s.entry != null ? "₹" + Number(s.entry).toFixed(2) : "—";
-
-
-
-        const slFmt = s.stop_loss != null ? "₹" + Number(s.stop_loss).toFixed(2) : "—";
-
-
-
-        const tgtFmt = s.target != null ? "₹" + Number(s.target).toFixed(2) : "—";
-
-
-
-        const riskNote = s.risk_reason && s.risk_reason !== "OK"
-
-
-
-            ? `<div style="font-size:0.67rem;color:#f59e0b;margin-top:0.35rem;padding:3px 6px;background:rgba(245,158,11,0.08);border-radius:4px;">⚠️ ${_escHtml(s.risk_reason)}</div>`
-
-
-
-            : "";
-
-
-
-        const rvolBadge = s.rvol != null
-
-
-
-            ? `<span style="font-size:0.65rem;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.35);" title="Relative Volume vs 20-Day Profile">RVOL ${Number(s.rvol).toFixed(1)}x</span>`
-
-
-
-            : "";
-
-
-
-
-
-
+        const classification = s.classification || (dir === "LONG" ? (score >= 80 ? "STRONG LONG" : "LONG") : (score >= 80 ? "STRONG SHORT" : "SHORT"));
 
         return `
-
-
-
-            <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};transition:transform 0.15s,box-shadow 0.15s;cursor:default;">
-
-
-
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
-
-
-
-                    <div>
-
-
-
-                        <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
-
-
-
-                            <strong style="font-size:1.05rem;color:var(--text-primary);">${_escHtml(s.symbol)}</strong>
-
-
-
-                            <span style="font-size:0.68rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${dirColor};border:1px solid ${dirBorder};">${_escHtml(s.direction)}</span>
-
-
-
-                            <span style="font-size:0.65rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${stc.bg};color:${stc.color};border:1px solid ${stc.border};">${_escHtml(s.strategy)}</span>
-
-
-
-                            ${rvolBadge}
-
-
-
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);transition:background 0.15s;cursor:pointer;" onmouseover="this.style.background='rgba(255,255,255,0.03)'" onmouseout="this.style.background='transparent'" onclick="openIntradayDrawer('${_escHtml(s.symbol)}')">
+                <td style="padding:${pad};color:var(--text-muted);font-weight:700;font-family:var(--font-mono);">${s.rank || (idx + 1)}</td>
+                <td style="padding:${pad};">
+                    <div style="font-weight:800;font-size:0.85rem;color:#fff;">${_escHtml(s.symbol)}</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);">${_escHtml(s.market || "NSE")}</div>
+                </td>
+                <td style="padding:${pad};">
+                    <span style="font-size:0.68rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${dirColor};border:1px solid ${dirBorder};">${_escHtml(classification)}</span>
+                </td>
+                <td style="padding:${pad};">
+                    <span style="font-size:0.65rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${stc.bg};color:${stc.color};border:1px solid ${stc.border};">${_escHtml(s.strategy)}</span>
+                </td>
+                <td style="padding:${pad};">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="font-weight:800;font-family:var(--font-mono);color:${scoreColor};font-size:0.82rem;">${score.toFixed(1)}%</span>
+                        <div style="flex:1;height:5px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;min-width:40px;">
+                            <div style="height:100%;width:${Math.min(100, score)}%;background:${scoreColor};border-radius:3px;"></div>
                         </div>
-
-
-
                     </div>
+                </td>
+                <td style="padding:${pad};font-family:var(--font-mono);font-weight:700;color:#fff;">${ltpTxt}</td>
+                <td style="padding:${pad};font-family:var(--font-mono);color:var(--text-primary);">${entryFmt}</td>
+                <td style="padding:${pad};font-family:var(--font-mono);color:var(--red);">${slFmt}</td>
+                <td style="padding:${pad};font-family:var(--font-mono);color:var(--green);">${t1Fmt}</td>
+                <td style="padding:${pad};font-family:var(--font-mono);color:var(--green);">${t2Fmt}</td>
+                <td style="padding:${pad};font-family:var(--font-mono);font-weight:700;color:#cbd5e1;">${rrTxt}</td>
+                <td style="padding:${pad};font-family:var(--font-mono);">${rvolTxt}</td>
+                <td style="padding:${pad};">${feedBadge}</td>
+                <td style="padding:${pad};">${statusBadge}</td>
+                <td style="padding:${pad};text-align:right;" onclick="event.stopPropagation();">
+                    <div style="display:inline-flex;gap:4px;">
+                        <button type="button" class="btn btn-secondary" onclick="openIntradayDrawer('${_escHtml(s.symbol)}')" style="font-size:0.68rem;padding:0.22rem 0.5rem;" title="View Confluence Breakdown & Chart">🔍</button>
+                        <button type="button" class="btn btn-primary" onclick="takePaperTrade('${_escHtml(s.symbol)}', '${_escHtml(s.direction)}', ${Number(s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, '${_escHtml(s.strategy || "INTRADAY")}', this)" style="font-size:0.68rem;padding:0.22rem 0.55rem;background:linear-gradient(135deg,#4f46e5 0%,#3b82f6 100%);color:#fff;border:none;border-radius:4px;font-weight:700;">⚡ Trade</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join("");
+}
 
+function _renderIntradayCards(sigs) {
+    const grid = document.getElementById("intradayGrid");
+    if (!grid) return;
 
+    if (!sigs || !sigs.length) {
+        const total = (_intradayAllSigs || []).length;
+        if (total > 0) {
+            grid.innerHTML = `<div class="loading-state" style="grid-column:1/-1;"><p style="color:var(--text-muted);font-size:0.85rem;">No signals match current filter. ${total} signal(s) available in latest scan.</p><p style="margin-top:0.5rem;"><button type="button" onclick="resetIntradayFilters()" class="btn btn-secondary" style="font-size:0.75rem;padding:0.3rem 0.65rem;">Show All</button></p></div>`;
+        } else {
+            grid.innerHTML = '<div class="loading-state" style="grid-column:1/-1;"><p style="color:var(--text-muted);font-size:0.85rem;">No intraday signals in latest snapshot. Run a fresh scan or check back during market hours.</p></div>';
+        }
+        return;
+    }
 
+    grid.innerHTML = sigs.map(s => {
+        const dir = (s.direction || "").toUpperCase();
+        const dirColor = dir === "LONG" ? "var(--green)" : "var(--red)";
+        const dirBg = dir === "LONG" ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)";
+        const dirBorder = dir === "LONG" ? "rgba(16,185,129,0.4)" : "rgba(239,68,68,0.4)";
+
+        const stc = _ID_STRAT_COLORS[s.strategy] || { bg: "rgba(148,163,184,0.15)", color: "#cbd5e1", border: "rgba(148,163,184,0.3)" };
+        const score = Number(s.confluence_score ?? s.score ?? 0);
+        const scoreColor = score >= 80 ? "#10b981" : (score >= 65 ? "#818cf8" : "#f59e0b");
+
+        const rr = Number(s.risk_reward || 0);
+        const rrTxt = Number.isFinite(rr) && rr > 0 ? rr.toFixed(2) + "x" : "—";
+        const entryFmt = s.entry != null ? "₹" + Number(s.entry).toFixed(2) : "—";
+        const slFmt = s.stop_loss != null ? "₹" + Number(s.stop_loss).toFixed(2) : "—";
+        const tgtFmt = s.target_1 != null ? "₹" + Number(s.target_1).toFixed(2) : (s.target != null ? "₹" + Number(s.target).toFixed(2) : "—");
+
+        const rvolBadge = s.rvol != null
+            ? `<span style="font-size:0.65rem;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.35);">RVOL ${Number(s.rvol).toFixed(1)}x</span>`
+            : "";
+
+        return `
+            <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};transition:transform 0.15s,box-shadow 0.15s;cursor:pointer;" onclick="openIntradayDrawer('${_escHtml(s.symbol)}')">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+                            <strong style="font-size:1.05rem;color:var(--text-primary);">${_escHtml(s.symbol)}</strong>
+                            <span style="font-size:0.68rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${dirColor};border:1px solid ${dirBorder};">${_escHtml(s.classification || dir)}</span>
+                            <span style="font-size:0.65rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${stc.bg};color:${stc.color};border:1px solid ${stc.border};">${_escHtml(s.strategy)}</span>
+                            ${rvolBadge}
+                        </div>
+                    </div>
                     <div style="text-align:right;">
-
-
-
-                        <div style="font-size:0.6rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Score</div>
-
-
-
-                        <div style="font-size:1.1rem;font-weight:800;color:${scoreColor};font-family:var(--font-mono);">${score.toFixed(1)}</div>
-
-
-
+                        <div style="font-size:0.6rem;color:var(--text-muted);text-transform:uppercase;">Confluence</div>
+                        <div style="font-size:1.1rem;font-weight:800;color:${scoreColor};font-family:var(--font-mono);">${score.toFixed(1)}%</div>
                     </div>
-
-
-
                 </div>
 
-
-
-                <div style="height:3px;background:rgba(255,255,255,0.06);border-radius:2px;margin-bottom:0.7rem;">
-
-
-
-                    <div style="height:100%;width:${scorePct}%;background:${scoreColor};border-radius:2px;"></div>
-
-
-
+                <div style="height:4px;background:rgba(255,255,255,0.06);border-radius:2px;margin-bottom:0.7rem;overflow:hidden;">
+                    <div style="height:100%;width:${Math.min(100, score)}%;background:${scoreColor};border-radius:2px;"></div>
                 </div>
 
-
-
-                <p style="font-size:0.7rem;color:var(--text-muted);margin:0 0 0.65rem;line-height:1.45;">${_escHtml(s.rationale || "")}</p>
-
-
+                <p style="font-size:0.7rem;color:var(--text-muted);margin:0 0 0.65rem;line-height:1.45;">${_escHtml(s.why_ranked || s.rationale || "")}</p>
 
                 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;margin-bottom:0.5rem;">
-
-
-
                     <div style="text-align:center;padding:0.35rem;background:rgba(255,255,255,0.03);border-radius:6px;">
-
-
-
-                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Entry</div>
-
-
-
+                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
                         <div style="font-weight:700;font-family:var(--font-mono);font-size:0.85rem;color:var(--text-primary);">${entryFmt}</div>
-
-
-
                     </div>
-
-
-
                     <div style="text-align:center;padding:0.35rem;background:rgba(239,68,68,0.06);border-radius:6px;">
-
-
-
-                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">SL</div>
-
-
-
+                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;">SL</div>
                         <div style="font-weight:700;font-family:var(--font-mono);font-size:0.85rem;color:var(--red);">${slFmt}</div>
-
-
-
                     </div>
-
-
-
                     <div style="text-align:center;padding:0.35rem;background:rgba(16,185,129,0.06);border-radius:6px;">
-
-
-
-                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Target</div>
-
-
-
+                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;">Target 1</div>
                         <div style="font-weight:700;font-family:var(--font-mono);font-size:0.85rem;color:var(--green);">${tgtFmt}</div>
-
-
-
                     </div>
-
-
-
                 </div>
 
-
-
-                <div style="display:flex;gap:1rem;font-size:0.7rem;color:var(--text-muted);flex-wrap:wrap;">
-
-
-
-                    <span>R:R <strong style="color:var(--text-primary);">${rrTxt}</strong></span>
-
-
-
-                    <span>Qty <strong style="color:var(--text-primary);">${qtyTxt}</strong></span>
-
-
-
-                    <span>ATR <strong style="color:var(--text-primary);">${atrTxt}</strong></span>
-
-
-
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.65rem;padding-top:0.5rem;border-top:1px solid rgba(255,255,255,0.06);">
+                    <span style="font-size:0.7rem;color:var(--text-muted);">R:R <strong style="color:var(--text-primary);">${rrTxt}</strong></span>
+                    <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(s.symbol)}', '${_escHtml(s.direction)}', ${Number(s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, '${_escHtml(s.strategy || "INTRADAY")}', this)" style="font-size:0.72rem;padding:0.3rem 0.7rem;background:linear-gradient(135deg,#4f46e5 0%,#3b82f6 100%);color:#fff;border:none;border-radius:4px;font-weight:600;">⚡ Paper Trade</button>
                 </div>
-
-
-
-                ${riskNote}
-
-
-
-                <div style="margin-top:0.65rem;padding-top:0.5rem;border-top:1px solid rgba(255,255,255,0.06);display:flex;justify-content:flex-end;">
-
-
-
-                    <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(s.symbol)}', '${_escHtml(s.direction)}', ${Number(s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target || 0)}, ${Number(s.atr || 0)}, '${_escHtml(s.strategy || "INTRADAY")}', this)" style="font-size:0.75rem;padding:0.35rem 0.75rem;display:flex;align-items:center;gap:4px;cursor:pointer;border-radius:5px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;">⚡ Paper Trade</button>
-
-
-
-                </div>
-
-
-
             </div>`;
-
-
-
     }).join("");
-
-
-
 }
 
+async function openIntradayDrawer(symbol) {
+    const s = (_intradayAllSigs || []).find(item => item.symbol === symbol);
+    if (!s) return;
 
+    const drawer = document.getElementById("intradayDrawer");
+    const backdrop = document.getElementById("intradayDrawerBackdrop");
+    if (!drawer) return;
 
+    drawer.style.display = "block";
+    if (backdrop) backdrop.style.display = "block";
 
+    // Header info
+    const symEl = document.getElementById("idDrawerSymbol");
+    const dirEl = document.getElementById("idDrawerDirection");
+    const stratEl = document.getElementById("idDrawerStrategy");
+    const ltpEl = document.getElementById("idDrawerLtp");
+    const validEl = document.getElementById("idDrawerValidUntil");
 
+    if (symEl) symEl.textContent = s.symbol;
+    if (dirEl) {
+        dirEl.textContent = s.classification || s.direction;
+        const isLong = (s.direction || "").toUpperCase() === "LONG";
+        dirEl.style.background = isLong ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)";
+        dirEl.style.color = isLong ? "var(--green)" : "var(--red)";
+        dirEl.style.border = isLong ? "1px solid rgba(16,185,129,0.35)" : "1px solid rgba(239,68,68,0.35)";
+    }
+    if (stratEl) {
+        stratEl.textContent = s.strategy;
+        const stc = _ID_STRAT_COLORS[s.strategy] || { bg: "rgba(148,163,184,0.15)", color: "#cbd5e1", border: "rgba(148,163,184,0.3)" };
+        stratEl.style.background = stc.bg;
+        stratEl.style.color = stc.color;
+        stratEl.style.border = `1px solid ${stc.border}`;
+    }
+    if (ltpEl) ltpEl.textContent = s.ltp != null ? "₹" + Number(s.ltp).toFixed(2) : (s.entry ? "₹" + Number(s.entry).toFixed(2) : "—");
+    if (validEl) validEl.textContent = s.valid_until || "End of Session (15:15 IST)";
 
+    // Execution Levels
+    const entryEl = document.getElementById("idDrawerEntry");
+    const slEl = document.getElementById("idDrawerSL");
+    const t1El = document.getElementById("idDrawerT1");
+    const t2El = document.getElementById("idDrawerT2");
+
+    if (entryEl) entryEl.textContent = s.entry != null ? "₹" + Number(s.entry).toFixed(2) : "—";
+    if (slEl) slEl.textContent = s.stop_loss != null ? "₹" + Number(s.stop_loss).toFixed(2) : "—";
+    if (t1El) t1El.textContent = s.target_1 != null ? "₹" + Number(s.target_1).toFixed(2) : (s.target != null ? "₹" + Number(s.target).toFixed(2) : "—");
+    if (t2El) t2El.textContent = s.target_2 != null ? "₹" + Number(s.target_2).toFixed(2) : "—";
+
+    // Score Value
+    const scoreValEl = document.getElementById("idDrawerScoreVal");
+    const scoreNum = Number(s.confluence_score ?? s.score ?? 0);
+    if (scoreValEl) scoreValEl.textContent = scoreNum.toFixed(1);
+
+    // Confluence Factors breakdown
+    const factorListEl = document.getElementById("idDrawerFactorList");
+    if (factorListEl && s.factors) {
+        let factorArr = [];
+        if (Array.isArray(s.factors)) {
+            factorArr = s.factors;
+        } else if (typeof s.factors === "object") {
+            const factorDefs = [
+                { key: "strategy_confluence", name: "Strategy Confluence", max: 30 },
+                { key: "trend_alignment", name: "Trend Alignment", max: 20 },
+                { key: "volume_rvol", name: "Volume & RVOL", max: 15 },
+                { key: "index_regime", name: "NIFTY Regime Confluence", max: 15 },
+                { key: "risk_reward", name: "Risk / Reward Ratio", max: 10 },
+                { key: "adx_strength", name: "ADX Volatility & Strength", max: 10 }
+            ];
+            factorArr = factorDefs.map(fd => ({
+                name: fd.name,
+                score: Number(s.factors[fd.key] || 0),
+                max: fd.max,
+                status: "NEUTRAL",
+                detail: ""
+            }));
+        }
+
+        factorListEl.innerHTML = factorArr.map(f => {
+            const score = Number(f.score || 0);
+            const max = Number(f.max || 100);
+            const pct = Math.min(100, Math.max(0, (score / max) * 100));
+            const color = f.status === "POSITIVE" ? "var(--green)" : (f.status === "WARNING" ? "#f59e0b" : (f.status === "NEGATIVE" ? "var(--red)" : "#818cf8"));
+            const detailTxt = f.detail ? `<div style="font-size:0.62rem;color:var(--text-muted);margin-top:2px;">${_escHtml(f.detail)}</div>` : "";
+            return `
+                <div style="background:rgba(255,255,255,0.02);padding:0.4rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.04);">
+                    <div style="display:flex;justify-content:space-between;font-size:0.68rem;margin-bottom:3px;">
+                        <span style="color:#cbd5e1;font-weight:600;">${_escHtml(f.name || "")}</span>
+                        <span style="font-family:var(--font-mono);font-weight:700;color:${color};">${score.toFixed(1)} / ${max}</span>
+                    </div>
+                    <div style="height:4px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden;">
+                        <div style="height:100%;width:${pct}%;background:${color};border-radius:2px;"></div>
+                    </div>
+                    ${detailTxt}
+                </div>
+            `;
+        }).join("");
+    }
+
+    // Technical Indicators Snapshot
+    const techEl = document.getElementById("idDrawerTechSnapshot");
+    if (techEl) {
+        const snap = s.technical_snapshot || {};
+        const cprObj = snap.cpr || {};
+        const cprPivot = cprObj.pivot != null ? cprObj.pivot : snap.cpr_pivot;
+        const cprType = cprObj.cpr_type || snap.cpr_type;
+        const supVal = snap.support != null ? snap.support : snap.support_1;
+        const resVal = snap.resistance != null ? snap.resistance : snap.resistance_1;
+
+        const items = [
+            { label: "EMA 9", val: snap.ema_9 != null ? "₹" + Number(snap.ema_9).toFixed(1) : "—" },
+            { label: "EMA 20", val: snap.ema_20 != null ? "₹" + Number(snap.ema_20).toFixed(1) : "—" },
+            { label: "EMA 50", val: snap.ema_50 != null ? "₹" + Number(snap.ema_50).toFixed(1) : "—" },
+            { label: "EMA 200", val: snap.ema_200 != null ? "₹" + Number(snap.ema_200).toFixed(1) : "—" },
+            { label: "RSI 14", val: snap.rsi != null ? Number(snap.rsi).toFixed(1) : "—" },
+            { label: "ADX 14", val: snap.adx != null ? `${Number(snap.adx).toFixed(1)} (${snap.adx_regime || "TRENDING"})` : "—" },
+            { label: "VWAP", val: snap.vwap != null ? "₹" + Number(snap.vwap).toFixed(1) : "—" },
+            { label: "CPR Pivot", val: cprPivot != null ? `₹${Number(cprPivot).toFixed(1)}${cprType ? ' (' + cprType + ')' : ''}` : "—" },
+            { label: "Daily Range", val: (supVal != null && resVal != null) ? `₹${Number(supVal).toFixed(0)} - ₹${Number(resVal).toFixed(0)}` : "—" }
+        ];
+
+        techEl.innerHTML = items.map(it => `
+            <div style="background:rgba(0,0,0,0.25);padding:0.35rem 0.5rem;border-radius:5px;border:1px solid rgba(255,255,255,0.04);">
+                <div style="font-size:0.58rem;color:var(--text-muted);">${it.label}</div>
+                <div style="font-size:0.75rem;font-weight:700;font-family:var(--font-mono);color:#fff;">${it.val}</div>
+            </div>
+        `).join("");
+    }
+
+    // Reasons & Risks lists
+    const reasonsListEl = document.getElementById("idDrawerReasons");
+    const risksListEl = document.getElementById("idDrawerRisks");
+
+    if (reasonsListEl) {
+        const reasons = (s.reasons && s.reasons.length) ? s.reasons : [(s.rationale || "Setup qualified pattern and risk bounds.")];
+        reasonsListEl.innerHTML = reasons.map(r => `<li style="margin-bottom:3px;">${_escHtml(r)}</li>`).join("");
+    }
+
+    if (risksListEl) {
+        const risks = (s.risks && s.risks.length) ? s.risks : [
+            `Invalidation if price crosses Stop Loss at ${slEl ? slEl.textContent : "SL level"}.`,
+            "Auto square-off mandated by 3:15 PM IST."
+        ];
+        risksListEl.innerHTML = risks.map(r => `<li style="margin-bottom:3px;">${_escHtml(r)}</li>`).join("");
+    }
+
+    // Trade Button Handler
+    const tradeBtn = document.getElementById("idDrawerPaperTradeBtn");
+    if (tradeBtn) {
+        tradeBtn.onclick = function() {
+            takePaperTrade(s.symbol, s.direction, Number(s.entry || 0), Number(s.stop_loss || 0), Number(s.target_1 || s.target || 0), Number(s.atr || 0), s.strategy || "INTRADAY", this);
+        };
+    }
+
+    // Render 5m Chart
+    _renderDrawer5mChart(s.symbol, (s.direction || "").toUpperCase());
+}
+
+async function _renderDrawer5mChart(symbol, direction) {
+    const canvas = document.getElementById("idDrawerChartCanvas");
+    const statusEl = document.getElementById("idDrawerChartStatus");
+    if (!canvas) return;
+
+    if (_intradayDrawerChart) {
+        try { _intradayDrawerChart.destroy(); } catch (_) {}
+        _intradayDrawerChart = null;
+    }
+
+    if (statusEl) statusEl.textContent = "Loading 5m candles...";
+
+    try {
+        const res = await fetchWithTimeout(`${API}/api/intraday/symbol/${encodeURIComponent(symbol)}`, {}, 15000);
+        const data = await parseJsonResponse(res);
+
+        const candles = data.candles || [];
+        if (!candles.length) {
+            if (statusEl) statusEl.textContent = "No recent 5m candle data available";
+            return;
+        }
+
+        if (statusEl) statusEl.textContent = `${candles.length} Bars (5m) · Provider: ${data.provider || "NSE"}`;
+
+        const labels = candles.map(c => {
+            return c.time || (c.timestamp ? (c.timestamp.includes("T") ? c.timestamp.split("T")[1].slice(0, 5) : c.timestamp.slice(-5)) : "");
+        });
+        const closes = candles.map(c => Number(c.close));
+
+        // Quick EMA 20 approximation for chart overlay
+        const ema20 = [];
+        const k = 2 / 21;
+        let prevEma = closes[0];
+        closes.forEach(price => {
+            prevEma = price * k + prevEma * (1 - k);
+            ema20.push(Number(prevEma.toFixed(2)));
+        });
+
+        const ctx = canvas.getContext("2d");
+        const isBullish = direction === "LONG";
+        const lineColor = isBullish ? "#10b981" : "#ef4444";
+        const gradColor = isBullish ? "rgba(16,185,129,0.25)" : "rgba(239,68,68,0.25)";
+
+        const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+        gradient.addColorStop(0, gradColor);
+        gradient.addColorStop(1, "rgba(15, 23, 42, 0)");
+
+        if (typeof Chart !== "undefined") {
+            _intradayDrawerChart = new Chart(ctx, {
+                type: "line",
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: `${symbol} Price`,
+                            data: closes,
+                            borderColor: lineColor,
+                            backgroundColor: gradient,
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.15,
+                            pointRadius: 0,
+                            pointHoverRadius: 4
+                        },
+                        {
+                            label: "EMA 20",
+                            data: ema20,
+                            borderColor: "#38bdf8",
+                            borderWidth: 1.5,
+                            borderDash: [4, 4],
+                            fill: false,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { intersect: false, mode: "index" },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: "rgba(15,23,42,0.95)",
+                            titleColor: "#94a3b8",
+                            bodyColor: "#f8fafc",
+                            borderColor: "rgba(255,255,255,0.1)",
+                            borderWidth: 1,
+                            padding: 8,
+                            callbacks: {
+                                label: function(c) { return `${c.dataset.label}: ₹${Number(c.raw).toFixed(2)}`; }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: "rgba(255,255,255,0.04)" },
+                            ticks: { color: "#64748b", font: { size: 9 }, maxTicksLimit: 7 }
+                        },
+                        y: {
+                            grid: { color: "rgba(255,255,255,0.04)" },
+                            ticks: {
+                                color: "#64748b",
+                                font: { size: 9 },
+                                callback: function(val) { return "₹" + Number(val).toFixed(0); }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (err) {
+        console.warn("Error rendering 5m chart:", err);
+        if (statusEl) statusEl.textContent = "Chart unavailable";
+    }
+}
+
+function closeIntradayDrawer() {
+    const drawer = document.getElementById("intradayDrawer");
+    const backdrop = document.getElementById("intradayDrawerBackdrop");
+    if (drawer) drawer.style.display = "none";
+    if (backdrop) backdrop.style.display = "none";
+
+    if (_intradayDrawerChart) {
+        try { _intradayDrawerChart.destroy(); } catch (_) {}
+        _intradayDrawerChart = null;
+    }
+}
+
+function exportIntradayCSV() {
+    if (!_intradayAllSigs || !_intradayAllSigs.length) {
+        alert("No intraday setups to export. Run a scan first.");
+        return;
+    }
+
+    const headers = [
+        "Rank", "Symbol", "Direction", "Classification", "Strategy", "Confluence_Score",
+        "LTP", "Entry", "Stop_Loss", "Target_1", "Target_2", "Risk_Reward", "RVOL",
+        "Data_Status", "Valid_Until", "Why_Ranked"
+    ];
+
+    const rows = _intradayAllSigs.map((s, idx) => [
+        s.rank || (idx + 1),
+        s.symbol || "",
+        s.direction || "",
+        s.classification || "",
+        s.strategy || "",
+        (s.confluence_score ?? s.score ?? 0),
+        s.ltp ?? "",
+        s.entry ?? "",
+        s.stop_loss ?? "",
+        s.target_1 ?? s.target ?? "",
+        s.target_2 ?? "",
+        s.risk_reward ?? "",
+        s.rvol ?? "",
+        s.data_status ?? "DELAYED",
+        s.valid_until ?? "",
+        `"${(s.why_ranked || s.rationale || "").replace(/"/g, '""')}"`
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, "");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `intraday_command_setups_${dateStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
 
 async function loadIntradayLatest() {
-
-
-
-    const meta = document.getElementById("intradayMeta");
-
-
-
+    const meta = document.getElementById("intradayScanMeta");
+    const niftyBanner = document.getElementById("intradayNiftyContext");
+    const tbody = document.getElementById("intradayTableBody");
     const grid = document.getElementById("intradayGrid");
 
-
-
     try {
-
-
-
         const res = await fetchWithTimeout(`${API}/api/intraday/latest`, {}, 35000);
-
-
-
         const row = await parseJsonResponse(res);
 
+        _intradayAllSigs = row.signals || [];
+        _intradaySession = row.session || null;
+        _intradayNiftyContext = row.nifty_market_context || null;
+        _intradayDataStatus = row.data_status || "DELAYED";
 
+        _updateIntradayKpis(_intradayAllSigs, _intradaySession, _intradayNiftyContext, _intradayDataStatus);
 
-        const sigs = row.signals || [];
+        // Update NIFTY context banner
+        if (niftyBanner && row.nifty_market_context) {
+            const nc = row.nifty_market_context;
+            const trend = nc.trend || "NEUTRAL";
+            const trendColor = trend === "BULLISH" ? "var(--green)" : (trend === "BEARISH" ? "var(--red)" : "var(--text-muted)");
+            const trendEmoji = trend === "BULLISH" ? "🟢" : (trend === "BEARISH" ? "🔴" : "⚪");
+            const ltpTxt = nc.ltp ? ` ₹${Number(nc.ltp).toFixed(1)}` : "";
+            const chgTxt = nc.change_pct != null ? ` (${nc.change_pct >= 0 ? "+" : ""}${nc.change_pct.toFixed(2)}%)` : "";
 
-
-
-        if (meta) {
-
-
-
-            let niftyTxt = "";
-
-
-
-            if (row.nifty_market_context && row.nifty_market_context.trend) {
-
-
-
-                const nc = row.nifty_market_context;
-
-
-
-                const trendEmoji = nc.trend === "BULLISH" ? "🟢" : (nc.trend === "BEARISH" ? "🔴" : "⚪");
-
-
-
-                const trendColor = nc.trend === "BULLISH" ? "var(--green)" : (nc.trend === "BEARISH" ? "var(--red)" : "var(--text-muted)");
-
-
-
-                const ltpTxt = nc.ltp ? ` ₹${Number(nc.ltp).toFixed(1)}` : "";
-
-
-
-                const chgTxt = nc.change_pct != null ? ` (${nc.change_pct >= 0 ? "+" : ""}${nc.change_pct.toFixed(2)}%)` : "";
-
-
-
-                niftyTxt = `<span style="margin-right:0.75rem;padding-right:0.75rem;border-right:1px solid rgba(255,255,255,0.1);"><strong style="color:var(--text-primary);">NIFTY 50:</strong> <span style="color:${trendColor};font-weight:700;">${trendEmoji} ${nc.trend}</span>${ltpTxt}${chgTxt}</span>`;
-
-
-
-            }
-
-
-
-            meta.innerHTML = row.scan_time
-
-
-
-                ? `${niftyTxt}Last saved scan: <strong>${row.scan_time}</strong> · <strong>${sigs.length}</strong> signal(s) · 0-delay hybrid quotes`
-
-
-
-                : `${niftyTxt}No saved scan yet · click <strong>Run Scan</strong> to fetch live intraday signals.`;
-
-
-
+            niftyBanner.innerHTML = `
+                <span><strong style="color:var(--text-primary);">NIFTY 50:</strong> <span style="color:${trendColor};font-weight:700;">${trendEmoji} ${trend}</span>${ltpTxt}${chgTxt}</span>
+                <span style="color:rgba(255,255,255,0.2);">|</span>
+                <span>Regime: <strong style="color:#cbd5e1;">${nc.regime || "NORMAL"}</strong></span>
+                <span style="color:rgba(255,255,255,0.2);">|</span>
+                <span>RSI: <strong style="color:#cbd5e1;">${nc.rsi != null ? Number(nc.rsi).toFixed(1) : "—"}</strong></span>
+                <span style="color:rgba(255,255,255,0.2);">|</span>
+                <span>VWAP: <strong style="color:#cbd5e1;">${nc.vwap_bias || "—"}</strong></span>
+            `;
         }
 
+        // Update scan meta
+        if (meta) {
+            meta.innerHTML = row.scan_time
+                ? `Last snapshot: <strong>${row.scan_time}</strong> · ID <strong>#${row.scan_id || "—"}</strong> · <strong>${_intradayAllSigs.length}</strong> setups`
+                : "No saved scan yet · click ⚡ Run Scan to initiate.";
+        }
 
-
-        renderIntradayGrid(sigs);
-
-
+        applyIntradayFilters();
 
     } catch (e) {
-
-
-
         console.warn("loadIntradayLatest error:", e);
-
-
-
         if (meta) meta.textContent = "Could not load intraday snapshot.";
-
-
-
+        if (tbody) tbody.innerHTML = '<tr><td colspan="15" style="color:var(--red);text-align:center;padding:1.5rem;">Failed to load intraday data. Check network or server status.</td></tr>';
         if (grid) grid.innerHTML = '<p style="color:var(--red);padding:1rem;">Failed to load intraday data</p>';
-
-
-
     }
-
-
-
 }
 
-
-
-
-
-
-
 async function runIntradayScan() {
-
-
-
     const btn = document.getElementById("intradayScanBtn");
-
-
-
+    const tbody = document.getElementById("intradayTableBody");
     const grid = document.getElementById("intradayGrid");
-
-
+    const meta = document.getElementById("intradayScanMeta");
 
     if (btn) {
-
-
-
         btn.disabled = true;
-
-
-
         btn.innerHTML = '<span class="spin">⏳</span> Scanning...';
-
-
-
     }
 
-
-
+    if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:2.5rem;color:var(--text-muted);"><div class="loader" style="margin:0 auto 0.75rem;"></div>Running 0-delay hybrid intraday scan across watchlist... please wait (~20-40s)</td></tr>';
+    }
     if (grid) {
-
-
-
         grid.innerHTML = '<div class="loading-state" style="padding:2rem;"><div class="loader" style="margin:0 auto 1rem;"></div><p style="color:var(--text-muted);">Running 0-delay hybrid intraday scan across watchlist... please wait (~20-40s)</p></div>';
-
-
-
     }
-
-
 
     try {
-
-
-
         const res = await fetchWithTimeout(`${API}/api/intraday/scan`, { method: "POST", headers: _getAuthHeaders() }, 300000);
-
-
-
         if (res.status === 401 || res.status === 403) {
-
-
-
             _handleAuthChallenge(res.status);
-
-
-
             if (btn) { btn.disabled = false; btn.innerHTML = "⚡ Run Scan"; }
-
-
-
             return;
-
-
-
         }
-
-
 
         const data = await parseJsonResponse(res);
 
+        _intradayAllSigs = data.signals || [];
+        _intradaySession = data.session || null;
+        _intradayNiftyContext = data.nifty_market_context || null;
+        _intradayDataStatus = data.data_status || "DELAYED";
 
-
-        renderIntradayGrid(data.signals || []);
-
-
-
-        const meta = document.getElementById("intradayMeta");
-
-
+        _updateIntradayKpis(_intradayAllSigs, _intradaySession, _intradayNiftyContext, _intradayDataStatus);
 
         if (meta) {
-
-
-
-            let niftyTxt = "";
-
-
-
-            if (data.nifty_market_context && data.nifty_market_context.trend) {
-
-
-
-                const nc = data.nifty_market_context;
-
-
-
-                const trendEmoji = nc.trend === "BULLISH" ? "🟢" : (nc.trend === "BEARISH" ? "🔴" : "⚪");
-
-
-
-                const trendColor = nc.trend === "BULLISH" ? "var(--green)" : (nc.trend === "BEARISH" ? "var(--red)" : "var(--text-muted)");
-
-
-
-                const ltpTxt = nc.ltp ? ` ₹${Number(nc.ltp).toFixed(1)}` : "";
-
-
-
-                const chgTxt = nc.change_pct != null ? ` (${nc.change_pct >= 0 ? "+" : ""}${nc.change_pct.toFixed(2)}%)` : "";
-
-
-
-                niftyTxt = `<span style="margin-right:0.75rem;padding-right:0.75rem;border-right:1px solid rgba(255,255,255,0.1);"><strong style="color:var(--text-primary);">NIFTY 50:</strong> <span style="color:${trendColor};font-weight:700;">${trendEmoji} ${nc.trend}</span>${ltpTxt}${chgTxt}</span>`;
-
-
-
-            }
-
-
-
-            meta.innerHTML = `${niftyTxt}Saved scan #${data.scan_id || ""} at <strong>${data.scan_time || ""}</strong> · <strong>${(data.signals || []).length}</strong> signal(s) · 0-delay hybrid`;
-
-
-
+            meta.innerHTML = `Saved scan #${data.scan_id || ""} at <strong>${data.scan_time || ""}</strong> · <strong>${_intradayAllSigs.length}</strong> setup(s)`;
         }
 
-
+        applyIntradayFilters();
 
     } catch (e) {
-
-
-
         console.error("runIntradayScan error:", e);
-
-
-
+        if (tbody) tbody.innerHTML = '<tr><td colspan="15" style="color:var(--red);text-align:center;padding:1.5rem;">Intraday scan failed (timeout or server error).</td></tr>';
         if (grid) grid.innerHTML = '<p style="color:var(--red);padding:1rem;">Intraday scan failed (timeout or server error).</p>';
-
-
-
     } finally {
-
-
-
         if (btn) {
-
-
-
             btn.disabled = false;
-
-
-
             btn.innerHTML = "⚡ Run Scan";
-
-
-
         }
-
-
-
     }
-
-
-
 }
 
-
-
-
-
-
-
 // Window globals for HTML onclick handlers
-
-
-
 window.filterIntradayStrat = filterIntradayStrat;
-
-
-
 window.resetIntradayFilters = resetIntradayFilters;
-
-
-
 window.loadIntradayLatest = loadIntradayLatest;
-
-
-
 window.runIntradayScan = runIntradayScan;
-
-
-
 window.takePaperTrade = takePaperTrade;
-
-
-
-
-
-
+window.setIntradayView = setIntradayView;
+window.toggleIntradayDensity = toggleIntradayDensity;
+window.setIntradayDir = setIntradayDir;
+window.setIntradayConf = setIntradayConf;
+window.applyIntradayFilters = applyIntradayFilters;
+window.openIntradayDrawer = openIntradayDrawer;
+window.closeIntradayDrawer = closeIntradayDrawer;
+window.exportIntradayCSV = exportIntradayCSV;
 
 // Make filterBreakouts available globally for onclick
 
