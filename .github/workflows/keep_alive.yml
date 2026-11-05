@@ -1,0 +1,53 @@
+name: Production Backend Keep-Alive
+
+on:
+  schedule:
+    # Mon-Fri Market-Day Schedule (UTC times, convert to IST by +5:30):
+    # 03:00, 03:15, 03:30, 03:45 UTC = 08:30, 08:45, 09:00, 09:15 IST (Pre-Market Warmup)
+    # Wakes Render up from overnight sleep well before user opens dashboard.
+    - cron: '0,15,30,45 3 * * 1-5'
+
+    # Every 12 minutes between 04:00 UTC (09:30 IST) and 10:48 UTC (16:18 IST)
+    # Render free-tier spins down after 15m idle; 12m cadence prevents any mid-day sleep.
+    - cron: '*/12 4-10 * * 1-5'
+
+    # Weekends (Crypto / 24/7 Monitoring): Every 3 hours
+    - cron: '0 */3 * * 0,6'
+
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Endpoint URL to ping'
+        required: true
+        default: 'https://trading-api-n1wt.onrender.com/api/health'
+
+concurrency:
+  group: backend-keep-alive
+  cancel-in-progress: true
+
+jobs:
+  ping-backend:
+    name: Ping Render Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Ping Backend Health Endpoint
+        run: |
+          TARGET="${{ github.event.inputs.target_url || 'https://trading-api-n1wt.onrender.com/api/health' }}"
+          echo "Pinging target: $TARGET"
+          
+          # 90s max-time to gracefully accommodate Render cold-boot if asleep
+          HTTP_RESULT=$(curl -sS --max-time 90 -w "\nHTTP_STATUS:%{http_code}\nTIME_TOTAL:%{time_total}s" "$TARGET" || echo "CURL_FAILED")
+          
+          echo "$HTTP_RESULT"
+          
+          STATUS=$(echo "$HTTP_RESULT" | grep "HTTP_STATUS" | cut -d':' -f2 || echo "UNKNOWN")
+          
+          if [ "$STATUS" = "200" ]; then
+            echo "SUCCESS: Backend is awake and healthy."
+          else
+            echo "Backend status: $STATUS. Retrying in 10s to ensure container settles..."
+            sleep 10
+            curl -sS --max-time 60 "$TARGET" || true
+          fi
