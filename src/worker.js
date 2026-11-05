@@ -29,10 +29,8 @@ export default {
       // Check Edge Cache for GET requests
       const isGet = request.method === "GET";
       const cache = caches.default;
-      // cacheKey must use the Worker's own request URL for Cloudflare edge cache persistence
-      const cacheKey = new Request(request.url, {
-        method: "GET"
-      });
+      // Normalizing cacheKey to request.url without volatile Vary headers
+      const cacheKey = new Request(request.url, { method: "GET" });
 
       if (isGet) {
         const cachedResponse = await cache.match(cacheKey);
@@ -83,9 +81,11 @@ export default {
       if (isCacheable) {
         const responseToCache = originResponse.clone();
         const cacheHeaders = new Headers(responseToCache.headers);
-        if (!cacheControl.includes("public")) {
-          cacheHeaders.set("Cache-Control", "public, max-age=5, s-maxage=15, stale-while-revalidate=30");
-        }
+        // Strip vary: Origin to prevent cache fragmentation across different browsers/clients
+        cacheHeaders.delete("vary");
+        cacheHeaders.set("Cache-Control", "public, max-age=15, s-maxage=30, stale-while-revalidate=60");
+        cacheHeaders.set("Access-Control-Allow-Origin", "*");
+
         const cachedRes = new Response(responseToCache.body, {
           status: responseToCache.status,
           statusText: responseToCache.statusText,
