@@ -63,7 +63,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
-    <link rel="stylesheet" href="/static/styles.css?v=mw_11">
+    <link rel="stylesheet" href="/static/styles.css?v=mw_15">
 
     <style>
 
@@ -7603,7 +7603,7 @@
             <div class="more-menu-header">
                 <div class="more-menu-title-wrap">
                     <span class="more-menu-title">Terminal Hub</span>
-                    <span class="more-menu-subtitle">Algorithmic Scanners & Intelligence</span>
+                    <span class="more-menu-subtitle">Algorithmic Scanners & Multi-Asset Intelligence</span>
                 </div>
                 <button class="more-menu-close" id="moreMenuClose" aria-label="Close Hub">✕</button>
             </div>
@@ -7611,133 +7611,187 @@
             <div class="more-menu-scrollable">
                 <!-- Group 1: Scanners & High-Probability Setups -->
                 <div class="more-menu-section-lbl">Trading Engines & Scanners</div>
-                <div class="more-menu-grid">
-                    <button class="more-menu-item" data-tab="edge-top-setups">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">⚡</span>
-                            <span class="more-menu-item-name">Edge Setups</span>
+                <div class="more-menu-cards-col">
+                    <button class="more-menu-card more-menu-item" data-tab="edge-top-setups">
+                        <div class="more-card-icon icon-emerald">⚡</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Edge Top Setups</span>
+                                <span class="more-card-pill pill-emerald">CONF 85%+</span>
+                            </div>
+                            <span class="more-card-desc">Multi-factor confluence AI signals</span>
                         </div>
-                        <span class="more-menu-item-desc">High-confluence AI signals</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
-                    <button class="more-menu-item" data-tab="intraday">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">🎯</span>
-                            <span class="more-menu-item-name">Intraday</span>
+                    <button class="more-menu-card more-menu-item" data-tab="intraday">
+                        <div class="more-card-icon icon-cyan">🎯</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Intraday Momentum</span>
+                                <span class="more-card-pill pill-cyan">5M / 15M</span>
+                            </div>
+                            <span class="more-card-desc">VWAP breakouts & volume surges</span>
                         </div>
-                        <span class="more-menu-item-desc">VWAP & momentum scalps</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
-                    <button class="more-menu-item" data-tab="swing">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">🌊</span>
-                            <span class="more-menu-item-name">Swing Spectrum</span>
+                    <button class="more-menu-card more-menu-item" data-tab="swing">
+                        <div class="more-card-icon icon-indigo">🌊</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Swing Spectrum</span>
+                                <span class="more-card-pill pill-indigo">EOD BARS</span>
+                            </div>
+                            <span class="more-card-desc">Positional daily & multi-day setups</span>
                         </div>
-                        <span class="more-menu-item-desc">Positional EOD setups</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
-                    <button class="more-menu-item" data-tab="breakouts">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">📈</span>
-                            <span class="more-menu-item-name">Breakouts</span>
+                    <button class="more-menu-card more-menu-item" data-tab="breakouts">
+                        <div class="more-card-icon icon-amber">📈</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Breakout Radar</span>
+                                <span class="more-card-pill pill-amber">VOL SURGE</span>
+                            </div>
+                            <span class="more-card-desc">52W highs & channel expansion triggers</span>
                         </div>
-                        <span class="more-menu-item-desc">Volume expansion triggers</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
-                    <button class="more-menu-item" data-tab="indexmover">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">🏛️</span>
-                            <span class="more-menu-item-name">Index Movers</span>
+                    <button class="more-menu-card more-menu-item" data-tab="indexmover">
+                        <div class="more-card-icon icon-blue">🏛️</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Index Movers</span>
+                                <span class="more-card-pill pill-blue">NIFTY DRIVERS</span>
+                            </div>
+                            <span class="more-card-desc">BankNifty & heavyweight stock drivers</span>
                         </div>
-                        <span class="more-menu-item-desc">Nifty & BankNifty drivers</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
-                    <button class="more-menu-item" data-tab="nseprediction">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">📰</span>
-                            <span class="more-menu-item-name">NSE News Flow</span>
+                    <button class="more-menu-card more-menu-item" data-tab="nseprediction">
+                        <div class="more-card-icon icon-slate">📰</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">NSE News Flow</span>
+                                <span class="more-card-pill pill-slate">RSS & SENTIMENT</span>
+                            </div>
+                            <span class="more-card-desc">Real-time news flow & sentiment scoring</span>
                         </div>
-                        <span class="more-menu-item-desc">Live sentiment analysis</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
                 </div>
 
                 <!-- Group 2: Multi-Asset Terminals -->
                 <div class="more-menu-section-lbl">Multi-Asset Terminals</div>
-                <div class="more-menu-grid">
-                    <a class="more-menu-item" href="/crypto">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">₿</span>
-                            <span class="more-menu-item-name">Crypto Live</span>
+                <div class="more-menu-cards-col">
+                    <a class="more-menu-card more-menu-item" href="/crypto">
+                        <div class="more-card-icon icon-gold">₿</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Crypto Live Terminal</span>
+                                <span class="more-card-pill pill-gold">24/7 LIVE</span>
+                            </div>
+                            <span class="more-card-desc">Binance perpetuals, spot & orderbook</span>
                         </div>
-                        <span class="more-menu-item-desc">24/7 perpetuals & spot</span>
+                        <span class="more-card-arrow">›</span>
                     </a>
-                    <button class="more-menu-item" data-tab="forex">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">💱</span>
-                            <span class="more-menu-item-name">Forex Desk</span>
+                    <button class="more-menu-card more-menu-item" data-tab="forex">
+                        <div class="more-card-icon icon-violet">💱</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Forex Desk</span>
+                                <span class="more-card-pill pill-violet">PAPER MODE</span>
+                            </div>
+                            <span class="more-card-desc">Majors, crosses & TwelveData INR pairs</span>
                         </div>
-                        <span class="more-menu-item-desc">Majors & INR pairs (Paper)</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
                 </div>
 
                 <!-- Group 3: Intelligence & Telemetry -->
                 <div class="more-menu-section-lbl">Risk & Model Intelligence</div>
-                <div class="more-menu-grid">
-                    <button class="more-menu-item" data-tab="edge-macro-heatmap">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">🌐</span>
-                            <span class="more-menu-item-name">Macro Heatmap</span>
+                <div class="more-menu-cards-col">
+                    <button class="more-menu-card more-menu-item" data-tab="edge-macro-heatmap">
+                        <div class="more-card-icon icon-teal">🌐</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Macro Heatmap</span>
+                                <span class="more-card-pill pill-teal">GLOBAL CUES</span>
+                            </div>
+                            <span class="more-card-desc">Brent crude, US 10Y yield, DXY & equities</span>
                         </div>
-                        <span class="more-menu-item-desc">Yields, crude & dollar</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
-                    <button class="more-menu-item" data-tab="edge-risk-gauge">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">🛡️</span>
-                            <span class="more-menu-item-name">Risk Gauge</span>
+                    <button class="more-menu-card more-menu-item" data-tab="edge-risk-gauge">
+                        <div class="more-card-icon icon-rose">🛡️</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Risk Gauge</span>
+                                <span class="more-card-pill pill-rose">GUARDRAILS</span>
+                            </div>
+                            <span class="more-card-desc">VIX safeguard, portfolio heat & 5-slot cap</span>
                         </div>
-                        <span class="more-menu-item-desc">Exposure & VIX safeguards</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
-                    <button class="more-menu-item" data-tab="scorecard">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">📊</span>
-                            <span class="more-menu-item-name">Scorecard</span>
+                    <button class="more-menu-card more-menu-item" data-tab="scorecard">
+                        <div class="more-card-icon icon-purple">📊</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Model Scorecard</span>
+                                <span class="more-card-pill pill-purple">WIN RATES</span>
+                            </div>
+                            <span class="more-card-desc">Signal accuracy, expectancy & win-rates</span>
                         </div>
-                        <span class="more-menu-item-desc">Model win-rate tracking</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
-                    <button class="more-menu-item" data-tab="learning">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">🧠</span>
-                            <span class="more-menu-item-name">Adaptive AI</span>
+                    <button class="more-menu-card more-menu-item" data-tab="learning">
+                        <div class="more-card-icon icon-pink">🧠</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Adaptive AI Learning</span>
+                                <span class="more-card-pill pill-pink">SELF-LEARNING</span>
+                            </div>
+                            <span class="more-card-desc">Autonomous weight updates & 4-model calibration</span>
                         </div>
-                        <span class="more-menu-item-desc">Self-learning neural weights</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
                 </div>
 
                 <!-- Group 4: Account & Strategy Records -->
                 <div class="more-menu-section-lbl">Portfolio & Execution</div>
-                <div class="more-menu-grid">
-                    <button class="more-menu-item" data-tab="portfolio">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">💼</span>
-                            <span class="more-menu-item-name">Paper Portfolio</span>
+                <div class="more-menu-cards-col">
+                    <button class="more-menu-card more-menu-item" data-tab="portfolio">
+                        <div class="more-card-icon icon-emerald">💼</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Paper Portfolio</span>
+                                <span class="more-card-pill pill-emerald">DURABLE</span>
+                            </div>
+                            <span class="more-card-desc">13 durable trades, live P&L & capital settings</span>
                         </div>
-                        <span class="more-menu-item-desc">Positions & live P&L</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
-                    <button class="more-menu-item" data-tab="performance">
-                        <div class="more-menu-item-top">
-                            <span class="more-menu-icon">📈</span>
-                            <span class="more-menu-item-name">Performance</span>
+                    <button class="more-menu-card more-menu-item" data-tab="performance">
+                        <div class="more-card-icon icon-blue">📉</div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">Strategy Analytics</span>
+                                <span class="more-card-pill pill-blue">SUPABASE</span>
+                            </div>
+                            <span class="more-card-desc">Cumulative equity curve, drawdown & metrics</span>
                         </div>
-                        <span class="more-menu-item-desc">Equity curve & history</span>
+                        <span class="more-card-arrow">›</span>
                     </button>
                 </div>
 
                 <div class="more-menu-disclaimer">
-                    <div style="font-weight:600;color:#94a3b8;margin-bottom:2px;">Institutional Paper Trading Mode</div>
-                    Signals are algorithmic indications with zero live broker risk. Durable state backed by Supabase.
+                    <div style="font-weight:700;margin-bottom:3px;letter-spacing:0.02em;">Institutional Paper Trading Mode</div>
+                    Algorithmic advisory indications with zero broker capital risk. Durable telemetry synced with Supabase.
                 </div>
             </div>
         </div>
     </div>
 
-
-
-<!-- Floating Buy Me a Coffee Trigger Button (Image 1) -->
+    <!-- Floating Buy Me a Coffee Trigger Button (Image 1) -->
 
     <button id="bmcFloatBtn" class="bmc-float-btn" type="button" aria-label="Support Creator" style="position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;z-index:1000;display:flex;align-items:center;justify-content:center;box-sizing:border-box;">
 
@@ -7875,7 +7929,7 @@
 
     <script src="/static/config.js"></script>
 
-    <script src="/static/app.js?v=mw_11"></script>
+    <script src="/static/app.js?v=mw_15"></script>
 
 </body>
 

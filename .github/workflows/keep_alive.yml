@@ -1,11 +1,8 @@
 name: Production Backend Keep-Alive
 
 on:
-  schedule:
-    # Continuous 24/7 Keep-Alive: Every 14 minutes across weekdays and weekends
-    # Render free-tier spins down after 15m idle; 14m cadence maintains continuous 24/7 crypto paper execution.
-    - cron: '*/14 * * * *'
-
+  # Cron disabled to conserve GitHub Actions monthly quota on private repository.
+  # 24/7 background keep-alive is handled internally by FastAPI async self-ping and Cloudflare Worker traffic.
   workflow_dispatch:
     inputs:
       target_url:
