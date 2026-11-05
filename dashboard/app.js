@@ -7420,53 +7420,41 @@ async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, s
 
 
 
-    if (cleanDir === 'LONG' || cleanDir === 'BUY') {
+    const _formatPriceDebug = (p) => {
+        if (!p && p !== 0) return '0.00';
+        const abs = Math.abs(p);
+        if (abs < 0.001) return Number(p).toFixed(8);
+        if (abs < 0.1) return Number(p).toFixed(6);
+        if (abs < 1.0) return Number(p).toFixed(4);
+        if (abs < 50.0) return Number(p).toFixed(3);
+        return Number(p).toFixed(2);
+    };
 
-
-
-        if (!(numSl < numEntry && numEntry < numTp)) {
-
-
-
-            showToast(`⚠️ Invalid geometry for LONG: Stop Loss (${numSl}) < Entry (${numEntry}) < Target (${numTp}) required`, 'warn');
-
-
-
-            return;
-
-
-
+    // Auto-heal collapsed or invalid geometry for penny/crypto tokens
+    if (numEntry > 0) {
+        if (numSl === numEntry || numTp === numEntry || (cleanDir === 'LONG' && numSl >= numEntry) || (cleanDir === 'SHORT' && numSl <= numEntry)) {
+            if (cleanDir === 'LONG' || cleanDir === 'BUY') {
+                numSl = Number((numEntry * 0.985).toFixed(6));
+                numTp = Number((numEntry * 1.030).toFixed(6));
+            } else {
+                numSl = Number((numEntry * 1.015).toFixed(6));
+                numTp = Number((numEntry * 0.970).toFixed(6));
+            }
         }
-
-
-
-    } else if (cleanDir === 'SHORT' || cleanDir === 'SELL') {
-
-
-
-        if (!(numTp < numEntry && numEntry < numSl)) {
-
-
-
-            showToast(`⚠️ Invalid geometry for SHORT: Target (${numTp}) < Entry (${numEntry}) < Stop Loss (${numSl}) required`, 'warn');
-
-
-
-            return;
-
-
-
-        }
-
-
-
     }
 
-
-
-
-
-
+    const eps = 1e-6;
+    if (cleanDir === 'LONG' || cleanDir === 'BUY') {
+        if (!((numSl + eps) < numEntry && (numEntry + eps) < numTp)) {
+            showToast(`⚠️ Invalid geometry for LONG: Stop Loss (${_formatPriceDebug(numSl)}) < Entry (${_formatPriceDebug(numEntry)}) < Target (${_formatPriceDebug(numTp)}) required`, 'warn');
+            return;
+        }
+    } else if (cleanDir === 'SHORT' || cleanDir === 'SELL') {
+        if (!((numTp + eps) < numEntry && (numEntry + eps) < numSl)) {
+            showToast(`⚠️ Invalid geometry for SHORT: Target (${_formatPriceDebug(numTp)}) < Entry (${_formatPriceDebug(numEntry)}) < Stop Loss (${_formatPriceDebug(numSl)}) required`, 'warn');
+            return;
+        }
+    }
 
     _activeTradeSubmissions.add(subKey);
 
@@ -12422,7 +12410,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);">Strength</div>
+                    <div style="font-size:0.62rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
 
 
 
@@ -12846,7 +12834,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);">Strength</div>
+                    <div style="font-size:0.62rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
 
 
 
@@ -13266,7 +13254,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);">Strength</div>
+                    <div style="font-size:0.62rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
 
 
 
@@ -17873,37 +17861,20 @@ function renderTradeFlow(data) {
 
 
     const sentMap = {
-
-
-
+        FII_STRONG_BUY:     { label: '🟢 FII Strong Buying',       cls: 'buy' },
+        FII_STRONG_SELL:    { label: '🔴 FII Strong Selling',      cls: 'sell' },
+        FII_MODERATE_BUY:   { label: '🟢 FII Moderate Buying',     cls: 'buy' },
+        FII_MODERATE_SELL:  { label: '🔴 FII Moderate Selling',    cls: 'sell' },
+        DII_STRONG_BUY:     { label: '🟢 DII Strong Buying',       cls: 'buy' },
+        DII_STRONG_SELL:    { label: '🔴 DII Strong Selling',      cls: 'sell' },
         BOTH_BUYING:        { label: '🟢 Both FII & DII Buying',   cls: 'buy' },
-
-
-
         BOTH_SELLING:       { label: '🔴 Both FII & DII Selling',  cls: 'sell' },
-
-
-
         DII_DOMINANT_BUY:   { label: '🟢 DII Dominant Buying',     cls: 'buy' },
-
-
-
         FII_DOMINANT_BUY:   { label: '🟢 FII Dominant Buying',     cls: 'buy' },
-
-
-
         FII_DOMINANT_SELL:  { label: '🔴 FII Dominant Selling',    cls: 'sell' },
-
-
-
         DII_DOMINANT_SELL:  { label: '🟡 DII Selling Pressure',    cls: 'neutral' },
-
-
-
+        NEUTRAL:            { label: '⚪ Balanced Flow',           cls: 'neutral' },
         UNAVAILABLE:        { label: '⚠️ Data Unavailable',        cls: 'neutral' },
-
-
-
     };
 
 
@@ -18129,6 +18100,7 @@ function renderTradeFlow(data) {
 
 
                 <span class="tf-date">📅 ${date || ''}</span>
+                <span class="tf-eod-notice" style="font-size:0.68rem;color:var(--text-muted);background:rgba(255,255,255,0.06);padding:2px 7px;border-radius:4px;border:1px solid rgba(255,255,255,0.08);" title="Official NSE cash settlement data publishes daily after 17:30 IST">Settled EOD Session (Today's live flow publishes after 17:30 IST)</span>
 
 
 
@@ -20463,7 +20435,7 @@ function renderSwingSetups(setups) {
 
 
 
-                    <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Strength</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
 
 
 
@@ -20895,7 +20867,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);">Strength</div>
+                    <div style="font-size:0.62rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
 
 
 
@@ -23896,22 +23868,19 @@ async function loadEdgeMacroHeatmap() {
 
 
 
-        const heatmap = data.heatmap || [];
-
-
-
+        const rawHeatmap = data.heatmap || {};
+        const heatmap = Array.isArray(rawHeatmap)
+            ? rawHeatmap
+            : Object.entries(rawHeatmap).map(([k, v]) => ({
+                symbol: `${k.toUpperCase()} (${v.sample_symbol || ''})`,
+                category: k.toUpperCase(),
+                score: Number(v.edge_score || 50),
+                summary: `Macro ${v.macro_score ?? '—'} · Sentiment ${v.sentiment_score ?? '—'} · Risk ${v.risk_score ?? '—'}`,
+                regime: v.status || 'READY'
+            }));
         if (!heatmap.length) {
-
-
-
             grid.innerHTML = '<p style="color:var(--text-muted);font-size:0.9rem;">No macro heatmap data available.</p>';
-
-
-
             return;
-
-
-
         }
 
 

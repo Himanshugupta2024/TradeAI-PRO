@@ -424,13 +424,14 @@ def fetch_fii_dii_flow() -> dict:
                 "direction": "BUY" if dii_net >= 0 else "SELL",
             },
             {
-                "category": "Retail",
-                "label": "Retail / Others (est.)",
-                "icon": "👥",
+                "category": "Estimated Other / Residual",
+                "label": "Estimated Other / Residual",
+                "icon": "⚖️",
                 "buy_cr": None,
                 "sell_cr": None,
                 "net_cr": retail_net,
                 "direction": "BUY" if retail_net >= 0 else "SELL",
+                "note": "Mathematical balancing residual [-(FII + DII)]; represents retail, HNI, proprietary, and unclassified non-institutional flow.",
             },
         ]
 
@@ -452,10 +453,14 @@ def fetch_fii_dii_flow() -> dict:
         fii_5d_trend = _build_fii_5d_trend(history)
 
         fetched_iso = datetime.now(timezone.utc).isoformat()
+        official_date_str = f"Data Date: {trade_date} EOD Official"
 
         result = {
             "flows": flows,
             "date": trade_date,
+            "display_date": official_date_str,
+            "units": "₹ Crores (1 Cr = ₹10,000,000)",
+            "residual_explanation": "Estimated Other / Residual is the mathematical balancing residual -(FII Net + DII Net), accounting for retail investors, HNIs, and proprietary desks. It is not a direct exchange-polled client category.",
             "sentiment": sentiment,
             "fii_magnitude": fii_magnitude,
             "fii_5d_trend": fii_5d_trend,

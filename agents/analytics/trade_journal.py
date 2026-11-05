@@ -80,24 +80,105 @@ class TradeJournal:
 
     def _load(self) -> None:
         path = os.path.abspath(_JOURNAL_FILE)
-        if not os.path.exists(path):
-            self._records = []
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            self._records = [SignalOutcome(**r) for r in raw]
-            logger.info("Trade journal loaded: %d records from %s", len(self._records), path)
-        except Exception as exc:
-            logger.warning("Could not load trade journal: %s", exc)
+        loaded = False
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                self._records = [SignalOutcome(**r) for r in raw]
+                logger.info("Trade journal loaded: %d records from %s", len(self._records), path)
+                loaded = True
+            except Exception as exc:
+                logger.warning("Could not load trade journal from disk: %s", exc)
+
+        if not loaded:
+            # Fallback to durable runtime_state snapshot
+            try:
+                from db.runtime_state import get_runtime_state
+                raw_snap = get_runtime_state("trade_journal:snapshot")
+                if raw_snap and isinstance(raw_snap, list):
+                    self._records = [SignalOutcome(**r) for r in raw_snap]
+                    logger.info("Trade journal loaded: %d records from runtime_state snapshot", len(self._records))
+                    loaded = True
+            except Exception as exc:
+                logger.debug("Trade journal runtime_state load skipped: %s", exc)
+
+        if not loaded:
             self._records = []
 
     def _save(self) -> None:
+        data = [asdict(r) for r in self._records]
         path = os.path.abspath(_JOURNAL_FILE)
         try:
-            atomic_write_json(path, [asdict(r) for r in self._records], ensure_ascii=False, indent=2)
+            atomic_write_json(path, data, ensure_ascii=False, indent=2)
         except Exception as exc:
-            logger.warning("Could not save trade journal: %s", exc)
+            logger.warning("Could not save trade journal to disk: %s", exc)
+
+        try:
+            from db.runtime_state import set_runtime_state
+            set_runtime_state("trade_journal:snapshot", data)
+        except Exception as exc:
+            logger.debug("Could not save trade journal to runtime_state: %s", exc)
+
+    def _hydrate_from_paper_trades(self) -> None:
+        """Hydrate journal records from persistent paper trade state and DB outcomes."""
+        try:
+            from db.runtime_state import get_runtime_state
+            data = get_runtime_state("paper_trading_state:v1")
+            if not data or not isinstance(data, dict):
+                return
+            trades = data.get("trades", [])
+            existing_keys = {(r.symbol, r.timestamp) for r in self._records}
+            added = 0
+
+            for t in trades:
+                entry_dt_str = t.get("entry_time", "")
+                sym = t.get("symbol", "")
+                key = (sym, entry_dt_str)
+                if key in existing_keys:
+                    continue
+
+                pnl = float(t.get("total_pnl") or t.get("pnl") or 0.0)
+                outcome = 1 if pnl > 0 else (-1 if pnl < 0 else 0)
+                hour_ist = 10
+                if entry_dt_str:
+                    try:
+                        hour_ist = datetime.fromisoformat(entry_dt_str).hour
+                    except Exception:
+                        pass
+
+                conf = float(t.get("confidence") or 60.0)
+                q_grade = "A" if conf >= 75 else ("B" if conf >= 55 else "C")
+                exit_reason = str(t.get("status") or "")
+                false_reason = ""
+                if outcome < 0:
+                    if "SL" in exit_reason or "STOP" in exit_reason:
+                        false_reason = "POOR_SR_POSITION"
+                    else:
+                        false_reason = "NO_FOLLOW_THROUGH"
+
+                rec = SignalOutcome(
+                    symbol=sym,
+                    timestamp=entry_dt_str or datetime.now().isoformat(),
+                    signal=t.get("direction", "LONG"),
+                    quality_score=int(conf),
+                    quality_grade=q_grade,
+                    regime=t.get("regime") or "TREND",
+                    hour_ist=hour_ist,
+                    confidence=conf,
+                    data_quality=100.0,
+                    outcome=outcome,
+                    false_reason=false_reason,
+                )
+                self._records.append(rec)
+                existing_keys.add(key)
+                added += 1
+
+            if added > 0:
+                self._save()
+                logger.info("Hydrated %d closed paper trades into TradeJournal", added)
+        except Exception as exc:
+            logger.debug("Failed hydrating journal from paper trades: %s", exc)
 
     # ── Recording ─────────────────────────────────────────────────────────────
 
@@ -230,6 +311,7 @@ class TradeJournal:
         Returns dict ready to JSON-serialise for /api/analytics/scorecard.
         """
         self._ensure_loaded()
+        self._hydrate_from_paper_trades()
 
         resolved = [r for r in self._records if r.outcome in (1, -1, 0)]
         total    = len(resolved)

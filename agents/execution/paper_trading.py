@@ -338,12 +338,17 @@ class PaperTradingEngine:
                 return None
 
         # Safeguard: strictly validate trade geometry
+        fmt = ".6f" if entry < 1.0 else (".4f" if entry < 10.0 else ".2f")
         if direction == "LONG" and not (sl < entry < tp):
-            self.last_rejection_reason = f"Invalid trade geometry for LONG: SL ({sl:.2f}) < entry ({entry:.2f}) < TP ({tp:.2f}) required"
+            self.last_rejection_reason = (
+                f"SKIP_INVALID_GEOMETRY: Invalid trade geometry for LONG — SL ({sl:{fmt}}) < entry ({entry:{fmt}}) < TP ({tp:{fmt}}) required"
+            )
             log.warning("BLOCKED: %s", self.last_rejection_reason)
             return None
         elif direction == "SHORT" and not (tp < entry < sl):
-            self.last_rejection_reason = f"Invalid trade geometry for SHORT: TP ({tp:.2f}) < entry ({entry:.2f}) < SL ({sl:.2f}) required"
+            self.last_rejection_reason = (
+                f"SKIP_INVALID_GEOMETRY: Invalid trade geometry for SHORT — TP ({tp:{fmt}}) < entry ({entry:{fmt}}) < SL ({sl:{fmt}}) required"
+            )
             log.warning("BLOCKED: %s", self.last_rejection_reason)
             return None
 

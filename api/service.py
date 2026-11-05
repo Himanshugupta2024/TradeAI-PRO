@@ -588,20 +588,123 @@ async def _recompute_swing_cache(
 
 
 def _get_feed_status() -> dict[str, object]:
-    if _last_feed_update == datetime.min:
-        return {"state": "OFFLINE", "last_update": None, "age_seconds": None}
+    """
+    Decoupled feed status sourced from durable state (Supabase runtime_state / intraday_store)
+    with fallback to local in-memory timestamp when running monolithically.
+    """
+    now_utc = datetime.now(timezone.utc)
+    try:
+        from agents.intraday_engine.session import evaluate_market_session
+        session = evaluate_market_session()
+        is_mkt_open = session.is_trading_active
+    except Exception:
+        is_mkt_open = is_market_open()
 
-    age = max((datetime.now() - _last_feed_update).total_seconds(), 0.0)
-    if age <= 60:
-        state = "LIVE"
-    elif age <= 180:
-        state = "DELAYED"
+    # 1. Try durable latest_market_snapshot from runtime_state
+    snapshot = None
+    worker_status = None
+    try:
+        from db.runtime_state import get_runtime_state
+        snapshot = get_runtime_state("latest_market_snapshot")
+        worker_status = get_runtime_state("autonomous_worker:latest_status")
+    except Exception as exc:
+        logger.debug("Failed reading durable feed state: %s", exc)
+
+    # 2. Extract timestamp from durable snapshot or fallback to local in-memory
+    snap_dt: datetime | None = None
+    source = "NONE"
+    if snapshot and isinstance(snapshot, dict) and snapshot.get("timestamp"):
+        try:
+            raw_ts = snapshot["timestamp"]
+            if isinstance(raw_ts, str):
+                snap_dt = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                if snap_dt.tzinfo is None:
+                    snap_dt = snap_dt.replace(tzinfo=timezone.utc)
+            source = str(snapshot.get("source", "WORKER_DB"))
+        except Exception:
+            snap_dt = None
+
+    if snap_dt is None:
+        # Fallback to intraday_store latest scan
+        try:
+            import db.intraday_store as ids
+            latest_scan = ids.load_latest_scan()
+            if latest_scan and latest_scan.get("scan_time"):
+                st = latest_scan["scan_time"]
+                if isinstance(st, str):
+                    snap_dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+                    if snap_dt.tzinfo is None:
+                        snap_dt = snap_dt.replace(tzinfo=timezone.utc)
+                source = "INTRADAY_STORE"
+        except Exception:
+            pass
+
+    if snap_dt is None and _last_feed_update != datetime.min:
+        snap_dt = _last_feed_update
+        if snap_dt.tzinfo is None:
+            snap_dt = snap_dt.replace(tzinfo=timezone.utc)
+        source = "LOCAL_CACHE"
+
+    if snap_dt is None:
+        return {
+            "state": "OFFLINE",
+            "market_snapshot_health": "UNAVAILABLE",
+            "worker_health": "NO_RECENT_RUN",
+            "last_update": None,
+            "age_seconds": None,
+            "source": "NONE",
+            "mode": "15m Delayed Public Feed",
+            "is_market_open": is_mkt_open,
+        }
+
+    age = max((now_utc - snap_dt).total_seconds(), 0.0)
+
+    # Determine snapshot health
+    if is_mkt_open:
+        if age <= 300:
+            snapshot_health = "CURRENT"
+            state = "LIVE"
+        elif age <= 1800:
+            snapshot_health = "DELAYED"
+            state = "DELAYED"
+        else:
+            snapshot_health = "STALE"
+            state = "STALE"
     else:
-        state = "OFFLINE"
+        snapshot_health = "EOD"
+        state = "EOD"
+
+    # Determine worker health
+    worker_health = "NO_RECENT_RUN"
+    if worker_status and isinstance(worker_status, dict):
+        w_ts_str = worker_status.get("timestamp")
+        w_status_code = str(worker_status.get("status", "")).upper()
+        if w_ts_str:
+            try:
+                w_dt = datetime.fromisoformat(w_ts_str.replace("Z", "+00:00"))
+                if w_dt.tzinfo is None:
+                    w_dt = w_dt.replace(tzinfo=timezone.utc)
+                w_age = max((now_utc - w_dt).total_seconds(), 0.0)
+                if w_status_code in ("FAILED", "ERROR"):
+                    worker_health = "WORKER_FAILED"
+                elif w_age <= 1800:
+                    worker_health = "WORKER_OK"
+                elif w_age <= 3600:
+                    worker_health = "WORKER_LATE"
+                else:
+                    worker_health = "NO_RECENT_RUN"
+            except Exception:
+                worker_health = "NO_RECENT_RUN"
+
     return {
         "state": state,
-        "last_update": _last_feed_update.isoformat(),
+        "market_snapshot_health": snapshot_health,
+        "worker_health": worker_health,
+        "last_update": snap_dt.isoformat(),
         "age_seconds": round(age, 1),
+        "source": source,
+        "mode": "15m Delayed Public Feed (NSE / Yahoo)",
+        "is_market_open": is_mkt_open,
     }
 
 
@@ -1637,14 +1740,17 @@ def _get_signal_for_symbol(symbol: str) -> dict:
     sig_label = str(last_signal["signal"])
     raw_dir = str(last_signal.get("_raw_direction", sig_label))
 
-    # Entry price = signal bar's close
-    entry_price = round(float(last_signal["close"]), 2)
+    raw_close = float(last_signal["close"])
+    precision = 6 if raw_close < 0.01 else (4 if raw_close < 1.0 else (3 if raw_close < 10.0 else 2))
+
+    # Entry price = signal bar's close with asset-magnitude-aware precision
+    entry_price = round(raw_close, precision)
 
     # SL/Target from signal bar — validate they make sense relative to entry
     sl_raw = last_signal.get("stop_loss")
     tp_raw = last_signal.get("target")
-    sl = round(float(sl_raw), 2) if pd.notna(sl_raw) else None
-    tp = round(float(tp_raw), 2) if pd.notna(tp_raw) else None
+    sl = round(float(sl_raw), precision) if pd.notna(sl_raw) else None
+    tp = round(float(tp_raw), precision) if pd.notna(tp_raw) else None
 
     # Sanity check: SL must be on the correct side of entry
     effective_dir = sig_label if sig_label in ("LONG", "SHORT") else raw_dir
@@ -1652,23 +1758,22 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         # SL above entry for LONG = wrong, recalculate using current ATR
         atr_val = _safe_float(last, f"ATR_{settings.ATR_PERIOD}")
         if atr_val:
-            sl = round(entry_price - atr_val * settings.ATR_SL_MULTIPLIER, 2)
+            sl = round(entry_price - atr_val * settings.ATR_SL_MULTIPLIER, precision)
             tp = round(
                 entry_price
                 + atr_val * settings.ATR_SL_MULTIPLIER * settings.MIN_RISK_REWARD,
-                2,
+                precision,
             )
     elif sl is not None and effective_dir == "SHORT" and sl <= entry_price:
         atr_val = _safe_float(last, f"ATR_{settings.ATR_PERIOD}")
         if atr_val:
-            sl = round(entry_price + atr_val * settings.ATR_SL_MULTIPLIER, 2)
+            sl = round(entry_price + atr_val * settings.ATR_SL_MULTIPLIER, precision)
             tp = round(
                 entry_price
                 - atr_val * settings.ATR_SL_MULTIPLIER * settings.MIN_RISK_REWARD,
-                2,
+                precision,
             )
 
-    # Local trend calculation on the LTF bars
     local_trend = "NEUTRAL"
     if pd.notna(last.get("EMA_20")) and pd.notna(last.get("EMA_50")):
         e20 = float(last["EMA_20"])

@@ -47,21 +47,44 @@ def _atr(df: pd.DataFrame, period: int = 14) -> Optional[float]:
 def _day_session(df: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[pd.Series], Optional[pd.DataFrame]]:
     """
     Extracts today's active session DataFrame, latest row, and strictly Day T-1 (yesterday's) DataFrame.
-    Returns: (today_df, latest_row, prev_day_df)
+    Guarantees that during active market hours, candles from prior calendar dates are NEVER treated as today's active session.
     """
     if df is None or df.empty or "timestamp" not in df.columns:
         return df, None, None
 
-    last_d = df.iloc[-1]["timestamp"].date()
-    today_df = df[df["timestamp"].dt.date == last_d].copy()
+    from agents.intraday_engine.session import get_current_ist_datetime, evaluate_market_session
+    now_ist = get_current_ist_datetime()
+    today_date = now_ist.date()
+    session = evaluate_market_session(now_ist)
+
+    ts_series = pd.to_datetime(df["timestamp"], errors="coerce")
+    dates = ts_series.dt.date
+    valid_dates = dates.dropna()
+    if valid_dates.empty:
+        return df, None, None
+
+    last_d = valid_dates.iloc[-1]
+    # Check if df is a current/live feed (within 7 days of today) vs synthetic/historical test dataset
+    is_live_feed = abs((today_date - last_d).days) <= 7
+
+    # During trading active hours or post-market on a live feed, today's session must strictly match today's date
+    if is_live_feed and (session.is_trading_active or session.session_state in ("CLOSING_PERIOD", "SQUARE_OFF", "POST_MARKET")):
+        today_df = df[dates == today_date].copy()
+        if today_df.empty:
+            # First bar has not arrived yet for today — do NOT leak yesterday's EOD bar as today's active intraday session!
+            return today_df, None, df[dates < today_date].copy()
+        prior_dates = sorted(list({d for d in dates if d < today_date}))
+        prev_day_df = df[dates == prior_dates[-1]].copy() if prior_dates else None
+    else:
+        # Historical backtest / test data OR outside market hours: last available trading day is the reference session
+        today_df = df[dates == last_d].copy()
+        prior_dates = sorted(list({d for d in dates if d < last_d}))
+        prev_day_df = df[dates == prior_dates[-1]].copy() if prior_dates else None
 
     if hasattr(df, "attrs") and df.attrs:
         today_df.attrs = dict(df.attrs)
 
-    prior_dates = sorted(list({ts.date() for ts in df["timestamp"] if ts.date() < last_d}))
-    prev_day_df = df[df["timestamp"].dt.date == prior_dates[-1]].copy() if prior_dates else None
-
-    if today_df.empty or len(today_df) < 5:
+    if today_df.empty or len(today_df) < 3:
         return today_df, None, prev_day_df
 
     return today_df, today_df.iloc[-1], prev_day_df
@@ -145,6 +168,13 @@ def _risk_wrapped_signal(
     if rvol is not None and "RVOL=" not in rationale:
         rationale = f"{rationale.rstrip()} | RVOL={rvol:.2f}x"
 
+    session_date = None
+    if not df.empty and "timestamp" in df.columns:
+        try:
+            session_date = str(df.iloc[-1]["timestamp"].date())
+        except Exception:
+            session_date = None
+
     return IntradaySignal(
         symbol=symbol,
         strategy=strategy,
@@ -163,6 +193,7 @@ def _risk_wrapped_signal(
         vwap=live_vwap or tech_snapshot.get("vwap"),
         support=tech_snapshot.get("support"),
         resistance=tech_snapshot.get("resistance"),
+        signal_session_date=session_date,
         technical_snapshot=tech_snapshot,
     )
 

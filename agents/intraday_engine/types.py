@@ -4,6 +4,38 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
 
+def format_price_by_magnitude(val: float | None, symbol: str = "") -> float | None:
+    """Format price dynamically based on asset class and price magnitude to prevent rounding collapse."""
+    if val is None:
+        return None
+    try:
+        f = float(val)
+    except (ValueError, TypeError):
+        return None
+
+    abs_f = abs(f)
+    if abs_f == 0.0:
+        return 0.0
+
+    # Forex pairs (e.g. EUR/USD, GBP/USD, USD/INR)
+    if "/" in symbol:
+        if "JPY" in symbol:
+            return round(f, 3)
+        return round(f, 5)
+
+    # Sub-rupee or micro-price crypto / penny tokens
+    if abs_f < 0.001:
+        return round(f, 8)
+    elif abs_f < 0.1:
+        return round(f, 6)
+    elif abs_f < 1.0:
+        return round(f, 4)
+    elif abs_f < 50.0:
+        return round(f, 3)
+    else:
+        return round(f, 2)
+
+
 @dataclass
 class IntradaySignal:
     symbol: str
@@ -38,6 +70,7 @@ class IntradaySignal:
     technical_snapshot: Dict[str, Any] | None = None
     data_status: str = "DELAYED"  # LIVE | DELAYED | EOD | STALE | UNAVAILABLE
     session_state: str = "NORMAL_SESSION"
+    signal_session_date: str | None = None
     generated_at: str | None = None
     source_candle_time: str | None = None
     valid_until: str | None = None
@@ -54,14 +87,14 @@ class IntradaySignal:
 
         for num_field in ("entry", "stop_loss", "target", "target_1", "target_2", "support", "resistance", "atr"):
             if d.get(num_field) is not None:
-                d[num_field] = round(float(d[num_field]), 2)
+                d[num_field] = format_price_by_magnitude(d[num_field], self.symbol)
 
         if d.get("risk_reward") is not None:
             d["risk_reward"] = round(float(d["risk_reward"]), 2)
         if d.get("rvol") is not None:
             d["rvol"] = round(float(d["rvol"]), 2)
         if d.get("vwap") is not None:
-            d["vwap"] = round(float(d["vwap"]), 2)
+            d["vwap"] = format_price_by_magnitude(d["vwap"], self.symbol)
         if d.get("qty") is not None:
             d["qty"] = int(d["qty"])
         return d
