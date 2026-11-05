@@ -1503,6 +1503,7 @@ async def _refresh_market_data_inner():
         try:
             _refresh_movers_cache()
             _compute_market_mood()
+            _compute_overview_intelligence(force_refresh=True)
         except Exception as e:
             logger.debug("Dashboard precompute failed: %s", e)
 
@@ -2702,7 +2703,12 @@ def _index_leadership_summary() -> dict:
     return result
 
 
-def _compute_overview_intelligence() -> dict:
+_cached_overview_intelligence: dict | None = None
+_cached_overview_time: float = 0.0
+_OVERVIEW_CACHE_TTL_SEC: float = 15.0
+
+
+def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
     """
     Aggregated decision-cockpit payload for the Overview tab.
 
@@ -2715,6 +2721,15 @@ def _compute_overview_intelligence() -> dict:
       learning_overlay — advisory hints from the feedback loop (safe, labelled as advisory)
       updated_at
     """
+    global _cached_overview_intelligence, _cached_overview_time
+    now_m = time.monotonic()
+    if (
+        not force_refresh
+        and _cached_overview_intelligence is not None
+        and (now_m - _cached_overview_time) < _OVERVIEW_CACHE_TTL_SEC
+    ):
+        return _cached_overview_intelligence
+
     top_setups: list[dict] = []
     avoid_list: list[dict] = []
 
@@ -3019,7 +3034,7 @@ def _compute_overview_intelligence() -> dict:
     _last_intelligence_snapshot["captured_at"] = datetime.now().isoformat()
 
     updated_at = datetime.now().isoformat()
-    return {
+    result = {
         "top_setups": top_setups[:5],
         "avoid_list": avoid_list[:5],
         "ranking_meta": {
@@ -3070,6 +3085,9 @@ def _compute_overview_intelligence() -> dict:
         "portfolio_caution": portfolio_caution,
         "updated_at": updated_at,
     }
+    _cached_overview_intelligence = result
+    _cached_overview_time = time.monotonic()
+    return result
 
 
 # ── Phase 6: Crypto intelligence caches ───────────────────────────────────────

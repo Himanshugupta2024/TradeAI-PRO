@@ -788,7 +788,8 @@ async def get_all_regimes():
 
 @router.get("/api/signals/all")
 
-async def get_all_signals():
+async def get_all_signals(response: Response):
+    response.headers["Cache-Control"] = "public, max-age=5, s-maxage=15, stale-while-revalidate=30" 
 
     """Get the latest signal for every tracked symbol."""
 
@@ -4723,7 +4724,8 @@ async def get_ai_summary(symbol: str | None = Query(default=None)):
 
 @router.get("/api/overview/intelligence")
 
-async def get_overview_intelligence():
+async def get_overview_intelligence(response: Response):
+    response.headers["Cache-Control"] = "public, max-age=5, s-maxage=15, stale-while-revalidate=30" 
 
     """
 
