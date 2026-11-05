@@ -36,23 +36,27 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/health/live",
 ]);
 
-// Helper to store response in Cloudflare edge cache with explicit SWR metadata
-async function storeInEdgeCache(cache, cacheKey, originResponse) {
-  const now = Date.now();
-  const cacheHeaders = new Headers(originResponse.headers);
-  cacheHeaders.set("X-SWR-Cached-At", String(now));
-  // Instruct Cloudflare's underlying cache engine to retain response for 45s
-  cacheHeaders.set("Cache-Control", `public, max-age=${BROWSER_TTL_SEC}, s-maxage=${PHYSICAL_EDGE_TTL_SEC}`);
-  // Only vary on Accept-Encoding for public JSON to prevent cache fragmentation across different user-agents
-  cacheHeaders.set("Vary", "Accept-Encoding");
-  cacheHeaders.set("Access-Control-Allow-Origin", "*");
+// Helper to store response in Cloudflare edge cache using exact request.url string
+async function storeInEdgeCache(cache, urlStr, originResponse) {
+  try {
+    const now = Date.now();
+    const cacheHeaders = new Headers(originResponse.headers);
+    cacheHeaders.set("X-SWR-Cached-At", String(now));
+    // Physical retention for full fresh + SWR window
+    cacheHeaders.set("Cache-Control", `public, max-age=${PHYSICAL_EDGE_TTL_SEC}, s-maxage=${PHYSICAL_EDGE_TTL_SEC}`);
+    // Delete vary on public JSON so cache matches across all user-agents/headers
+    cacheHeaders.delete("vary");
+    cacheHeaders.set("Access-Control-Allow-Origin", "*");
 
-  const cachedResponse = new Response(originResponse.body, {
-    status: originResponse.status,
-    statusText: originResponse.statusText,
-    headers: cacheHeaders,
-  });
-  await cache.put(cacheKey, cachedResponse);
+    const cachedResponse = new Response(originResponse.body, {
+      status: originResponse.status,
+      statusText: originResponse.statusText,
+      headers: cacheHeaders,
+    });
+    await cache.put(urlStr, cachedResponse);
+  } catch (err) {
+    // Non-fatal cache store failure
+  }
 }
 
 export default {
@@ -75,13 +79,11 @@ export default {
       const targetUrl = new URL(url.pathname + url.search, BACKEND_ORIGIN);
       const isGet = request.method === "GET";
       const isPublicCacheable = isGet && PUBLIC_CACHEABLE_PATHS.has(url.pathname);
-
       const cache = caches.default;
-      const cacheKey = new Request(request.url, { method: "GET" });
 
       // Check Edge Cache only for approved public GET endpoints
       if (isPublicCacheable) {
-        const cachedResponse = await cache.match(cacheKey);
+        const cachedResponse = await cache.match(request.url);
         if (cachedResponse) {
           const cachedAt = parseInt(cachedResponse.headers.get("X-SWR-Cached-At") || "0", 10);
           const ageSec = Math.max(0, Math.floor((Date.now() - cachedAt) / 1000));
@@ -111,7 +113,7 @@ export default {
                 });
                 const revalRes = await fetch(revalReq);
                 if (revalRes.status === 200) {
-                  await storeInEdgeCache(cache, cacheKey, revalRes);
+                  await storeInEdgeCache(cache, request.url, revalRes);
                 }
               } catch (revalErr) {
                 // Background fetch failed, stale entry remains until physical expiry
@@ -157,24 +159,28 @@ export default {
         });
       }
 
-      // Response processing
+      // Public Cacheable: Store in cache and return MISS with unified headers
       if (isPublicCacheable && originResponse.status === 200) {
-        // Cache in background for future requests
-        ctx.waitUntil(storeInEdgeCache(cache, cacheKey, originResponse.clone()));
+        ctx.waitUntil(storeInEdgeCache(cache, request.url, originResponse.clone()));
 
-        const clientResponse = new Response(originResponse.body, originResponse);
-        clientResponse.headers.set("CF-Cache-Status", "MISS");
-        clientResponse.headers.set("Cache-Control", UNIFIED_CACHE_CONTROL);
-        clientResponse.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
-        clientResponse.headers.set("Access-Control-Allow-Origin", "*");
-        return clientResponse;
+        const clientHeaders = new Headers(originResponse.headers);
+        clientHeaders.set("CF-Cache-Status", "MISS");
+        clientHeaders.set("Cache-Control", UNIFIED_CACHE_CONTROL);
+        clientHeaders.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+        clientHeaders.set("Access-Control-Allow-Origin", "*");
+
+        return new Response(originResponse.body, {
+          status: originResponse.status,
+          statusText: originResponse.statusText,
+          headers: clientHeaders,
+        });
       }
 
       // Non-public / Private / Mutating endpoints: Explicit BYPASS & Private Caching
-      const clientResponse = new Response(originResponse.body, originResponse);
-      clientResponse.headers.set("CF-Cache-Status", "BYPASS");
-      clientResponse.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
-      clientResponse.headers.set("Access-Control-Allow-Origin", "*");
+      const clientHeaders = new Headers(originResponse.headers);
+      clientHeaders.set("CF-Cache-Status", "BYPASS");
+      clientHeaders.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+      clientHeaders.set("Access-Control-Allow-Origin", "*");
 
       // For sensitive user/trading endpoints, enforce strict private no-store headers
       if (
@@ -188,12 +194,15 @@ export default {
         url.pathname.includes("/positions") ||
         request.method !== "GET"
       ) {
-        clientResponse.headers.set("Cache-Control", "private, no-cache, no-store, must-revalidate");
-        clientResponse.headers.set("Pragma", "no-cache");
+        clientHeaders.set("Cache-Control", "private, no-cache, no-store, must-revalidate");
+        clientHeaders.set("Pragma", "no-cache");
       }
 
-      // Preserve origin Vary headers exactly as-is for private/general responses
-      return clientResponse;
+      return new Response(originResponse.body, {
+        status: originResponse.status,
+        statusText: originResponse.statusText,
+        headers: clientHeaders,
+      });
     }
 
     // 3. Fallback to Static Asset delivery
