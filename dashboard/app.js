@@ -22960,7 +22960,7 @@ function updateMoodStripUI(data) {
     } else if (eventLabel && data.next_event && Number(data.next_event.days_away || 99) <= 1) {
         if (moodEventContainer) moodEventContainer.style.display = 'flex';
         const evt = data.next_event;
-        eventLabel.textContent = evt.event_name ? ${evt.event_name} · d : 'Event Imminent';
+        eventLabel.textContent = evt.event_name ? `${evt.event_name} · ${evt.days_away ?? 0}d` : 'Event Imminent';
         eventLabel.style.color = '#f59e0b';
     } else {
         if (moodEventContainer) moodEventContainer.style.display = 'none';
