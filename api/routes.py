@@ -4739,7 +4739,7 @@ async def get_overview_intelligence(response: Response):
 
     try:
 
-        return svc._compute_overview_intelligence()
+        return await asyncio.to_thread(svc._compute_overview_intelligence)
 
     except Exception as exc:
 
