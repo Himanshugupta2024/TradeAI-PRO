@@ -7432,12 +7432,12 @@ async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, s
 
     if (cleanDir === 'LONG' || cleanDir === 'BUY') {
         if (!(numSl < numEntry && numEntry < numTp)) {
-            showToast(`⚠️ Invalid geometry for LONG: Stop Loss (${fmtP(numSl)}) < Entry (${fmtP(numEntry)}) < Target (${fmtP(numTp)}) required`, 'warn');
+            showToast(`⚠️ Invalid geometry for LONG: Stop Loss (${_formatPriceDebug(numSl)}) < Entry (${_formatPriceDebug(numEntry)}) < Target (${_formatPriceDebug(numTp)}) required`, 'warn');
             return;
         }
     } else if (cleanDir === 'SHORT' || cleanDir === 'SELL') {
         if (!(numTp < numEntry && numEntry < numSl)) {
-            showToast(`⚠️ Invalid geometry for SHORT: Target (${fmtP(numTp)}) < Entry (${fmtP(numEntry)}) < Stop Loss (${fmtP(numSl)}) required`, 'warn');
+            showToast(`⚠️ Invalid geometry for SHORT: Target (${_formatPriceDebug(numTp)}) < Entry (${_formatPriceDebug(numEntry)}) < Stop Loss (${_formatPriceDebug(numSl)}) required`, 'warn');
             return;
         }
     }
