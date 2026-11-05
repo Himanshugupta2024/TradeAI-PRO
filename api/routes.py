@@ -646,14 +646,13 @@ async def get_dashboard_overview():
     tracker = PerfTracker("dashboard/overview", slow_threshold_ms=100.0)
 
     engine = svc._get_engine()
-    prices = {}
-    for sym, d in svc._market_data.items():
-        if isinstance(d, pd.DataFrame) and not d.empty and "close" in d.columns:
-            prices[sym] = {"close": float(d["close"].iloc[-1])}
-        elif isinstance(d, dict) and "close" in d:
-            prices[sym] = {"close": float(d["close"])}
-    stats = engine.get_stats(current_prices=prices) if engine else {}
-    positions = engine.get_open_trades() if engine else []
+    from api.valuation import resolve_open_trades_valuation
+    val = await resolve_open_trades_valuation(engine, svc)
+    positions = val["open_trades"]
+    val_summary = val["summary"]
+    stats = engine.get_stats() if engine else {}
+    stats["total_equity"] = val_summary["total_equity"]
+    stats["unrealized_pnl"] = val_summary["unrealized_pnl"]
 
     top_signals = []
 
@@ -683,6 +682,12 @@ async def get_dashboard_overview():
     tracker.set_meta("positions_count", len(positions))
     tracker.finish()
 
+    try:
+        from agents.ai_engine.ensemble import get_model_status
+        ai_status = get_model_status()
+    except Exception:
+        ai_status = {"mode": "Statistical Heuristic", "fitted_count": 0, "ready": True, "badge_short": "🧠 AI: Heuristic"}
+
     return {
 
         "status": "ok",
@@ -707,9 +712,10 @@ async def get_dashboard_overview():
         },
         "system_status": {
             "ai_engine": {
-                "mode": "Ensemble V2 (4/4 ML Fitted)",
-                "fitted_count": 4,
-                "ready": True
+                "mode": ai_status.get("mode", "Statistical Heuristic"),
+                "fitted_count": ai_status.get("fitted_count", 0),
+                "ready": True,
+                "badge_short": ai_status.get("badge_short", "🧠 AI: Heuristic"),
             },
             "risk_state": {
                 "circuit_breaker_active": getattr(engine, "circuit_breaker_active", False) if engine else False,
@@ -2775,52 +2781,11 @@ async def place_paper_trade_endpoint(payload: dict):
 
 @router.get("/api/paper/open")
 async def get_open_paper_trades_endpoint():
-    """Get all currently open paper trades with live pricing and auto-exit evaluation."""
+    """Get all currently open paper trades with unified live pricing and valuation."""
+    from api.valuation import resolve_open_trades_valuation
     engine = svc._get_engine()
-    prices = {}
-    for sym, d in svc._market_data.items():
-        if isinstance(d, pd.DataFrame) and not d.empty and "close" in d.columns:
-            last_r = d.iloc[-1]
-            prices[sym] = {
-                "high": float(last_r.get("high", last_r["close"])),
-                "low": float(last_r.get("low", last_r["close"])),
-                "close": float(last_r["close"]),
-            }
-        elif isinstance(d, dict) and "close" in d:
-            prices[sym] = {
-                "high": float(d.get("high", d["close"])),
-                "low": float(d.get("low", d["close"])),
-                "close": float(d["close"]),
-            }
-
-    # Ensure every open trade symbol has live pricing (crypto/equity fallback)
-    for t in list(engine.open_trades):
-        if t.symbol not in prices:
-            try:
-                if "/" in t.symbol:
-                    from agents.data_ingestion.binance_fetcher import fetch_historical
-                    cdf = await asyncio.to_thread(fetch_historical, t.symbol, "1h", 2)
-                    if cdf is not None and not cdf.empty:
-                        lr = cdf.iloc[-1]
-                        prices[t.symbol] = {
-                            "high": float(lr["high"]),
-                            "low": float(lr["low"]),
-                            "close": float(lr["close"]),
-                        }
-                else:
-                    from agents.market_intelligence.nse_fetcher import fetch_ohlcv
-                    edf = await asyncio.to_thread(fetch_ohlcv, t.symbol, "5d", "1d")
-                    if edf is not None and not edf.empty:
-                        lr = edf.iloc[-1]
-                        prices[t.symbol] = {
-                            "high": float(lr["high"]),
-                            "low": float(lr["low"]),
-                            "close": float(lr["close"]),
-                        }
-            except Exception as p_err:
-                svc.logger.debug("Live price lookup failed for open trade %s: %s", t.symbol, p_err)
-
-    return {"open_trades": engine.get_open_trades(current_prices=prices)}
+    val = await resolve_open_trades_valuation(engine, svc)
+    return {"open_trades": val["open_trades"], "summary": val["summary"]}
 
 @router.post("/api/paper/close/{trade_id}")
 

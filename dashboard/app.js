@@ -6638,80 +6638,28 @@ function closeP5Shortcuts() {
 
 
 function exportDecisionPackJson() {
+    const activeList = (window._lastFilteredSignals && window._lastFilteredSignals.length > 0)
+        ? window._lastFilteredSignals
+        : ((_lastCockpitData && _lastCockpitData.top_setups) ? _lastCockpitData.top_setups : []);
 
-
-
-    const pack = {
-
-
-
+    if (!activeList.length) {
+        showToast('No signals or cockpit data to export yet.', 'info');
+        return;
+    }
+    const payload = {
         exported_at: new Date().toISOString(),
-
-
-
-        app: 'TradeAI PRO cockpit export',
-
-
-
-        intelligence: _lastCockpitData,
-
-
-
-        morning_scan: _morningScanData,
-
-
-
-        trader_notes: localStorage.getItem('tradeai_trader_notes') || '',
-
-
-
-        watchlist: [..._watchlist],
-
-
-
-        alert_thresholds: _alertThresholds,
-
-
-
+        source: 'TradeAI PRO Active Signal Table',
+        count: activeList.length,
+        signals: activeList,
+        overview: (_lastCockpitData && _lastCockpitData.overview) ? _lastCockpitData.overview : null,
     };
-
-
-
-    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' });
-
-
-
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
-
-
-
     a.href = URL.createObjectURL(blob);
-
-
-
-    a.download = `tradeai-cockpit-${new Date().toISOString().slice(0, 10)}.json`;
-
-
-
+    a.download = `tradeai-signals-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
-
-
-
-    URL.revokeObjectURL(a.href);
-
-
-
-    showToast('Exported decision pack (JSON)', 'success');
-
-
-
+    showToast(`Exported ${activeList.length} signals to JSON`, 'success');
 }
-
-
-
-
-
-
 
 function exportDecisionPackCsv() {
 
@@ -9256,6 +9204,7 @@ function renderSignals(signals) {
 
 
 
+    window._lastFilteredSignals = visibleSignals;
     visibleSignals.forEach((sig, i) => {
 
 

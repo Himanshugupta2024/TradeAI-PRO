@@ -99,6 +99,18 @@ class PaperTrade:
     entry_raw: float = 0.0
     stop_raw: float = 0.0
     target_raw: float = 0.0
+    # ── Multi-Currency Accounting metadata ────────────────────────────────
+    asset_class: str = "EQUITY"
+    quote_currency: str = "INR"
+    base_currency: str = "INR"
+    fx_rate_entry: float = 1.0
+    fx_rate_exit: float = 1.0
+    fx_rate_source: str = "CANONICAL"
+    fx_rate_timestamp: str = ""
+    total_pnl_native: float = 0.0
+    pnl_native: float = 0.0
+    realized_pnl_native: float = 0.0
+    fx_status: str = "ACTIVE" 
 
 
 class PaperTradingEngine:
@@ -379,9 +391,31 @@ class PaperTradingEngine:
             log.warning("BLOCKED: %s", self.last_rejection_reason)
             return None
 
-        # Calculate position size (strict 1.0x cash leverage cap)
+        # Resolve instrument currency and FX rate
+        from agents.execution.currency import (
+            resolve_instrument_identity,
+            FXRateService,
+            MissingFXRateError,
+            to_decimal,
+            quantize_inr,
+        )
+        asset_class, quote_curr, base_curr = resolve_instrument_identity(symbol)
+        try:
+            fx_rec = FXRateService.get_instance().get_fx_rate(quote_curr, base_curr)
+            fx_rate = float(fx_rec.rate)
+            fx_source = fx_rec.source
+            fx_ts = fx_rec.timestamp
+        except MissingFXRateError as fx_err:
+            self.last_rejection_reason = f"SKIP_MISSING_FX: Cannot resolve FX rate for {quote_curr}->{base_curr}: {fx_err}"
+            log.warning("BLOCKED: %s", self.last_rejection_reason)
+            return None
+
+        # Convert base capital to quote currency for position sizing
+        capital_in_quote = float(to_decimal(self.capital) / to_decimal(fx_rate))
+
+        # Calculate position size in native quote units
         qty = calculate_position_size(
-            capital=self.capital,
+            capital=capital_in_quote,
             risk_pct=settings.RISK_PER_TRADE_PCT,
             entry=entry,
             stop_loss=sl,
@@ -397,10 +431,10 @@ class PaperTradingEngine:
                 log.warning("BLOCKED: %s", self.last_rejection_reason)
                 return None
 
-        # Risk check: portfolio-wide gross exposure limit (cumulative leverage across all open positions)
-        current_exposure = sum(abs(t.entry_price * t.quantity) for t in self.open_trades)
+        # Risk check: portfolio-wide gross exposure limit (converted to base currency INR)
+        current_exposure = sum(float(to_decimal(t.entry_price * t.quantity) * to_decimal(getattr(t, "fx_rate_entry", 1.0))) for t in self.open_trades)
         max_exposure = self.capital * float(getattr(settings, "MAX_PORTFOLIO_LEVERAGE", 1.0))
-        new_exposure = abs(entry * qty)
+        new_exposure = float(to_decimal(abs(entry * qty)) * to_decimal(fx_rate))
         if current_exposure + new_exposure > max_exposure:
             remaining_exposure = max(max_exposure - current_exposure, 0.0)
             if remaining_exposure >= entry:
@@ -448,6 +482,17 @@ class PaperTradingEngine:
             entry_raw=entry_raw,
             stop_raw=sl_raw,
             target_raw=tp_raw,
+            asset_class=asset_class,
+            quote_currency=quote_curr,
+            base_currency=base_curr,
+            fx_rate_entry=fx_rate,
+            fx_rate_exit=fx_rate,
+            fx_rate_source=fx_source,
+            fx_rate_timestamp=fx_ts,
+            total_pnl_native=0.0,
+            pnl_native=0.0,
+            realized_pnl_native=0.0,
+            fx_status="ACTIVE",
         )
 
         self.trades.append(trade)
@@ -698,14 +743,24 @@ class PaperTradingEngine:
             else:
                 cur_price = trade.entry_price
 
+            from agents.execution.currency import FXRateService, to_decimal, quantize_inr
             qty = trade.quantity
             if trade.direction in ("LONG", "BUY"):
-                mtm = (cur_price - trade.entry_price) * qty
+                mtm_native = (cur_price - trade.entry_price) * qty
             else:
-                mtm = (trade.entry_price - cur_price) * qty
+                mtm_native = (trade.entry_price - cur_price) * qty
 
-            unrealized_pnl += mtm
-            deployed_margin += trade.entry_price * qty
+            try:
+                fx_rec = FXRateService.get_instance().get_fx_rate(getattr(trade, "quote_currency", "INR"), "INR")
+                fx_rate = float(fx_rec.rate)
+            except Exception:
+                fx_rate = float(getattr(trade, "fx_rate_entry", 1.0) or 1.0)
+
+            mtm_base = float(quantize_inr(to_decimal(mtm_native) * to_decimal(fx_rate)))
+            margin_base = float(quantize_inr(to_decimal(trade.entry_price * qty) * to_decimal(fx_rate)))
+
+            unrealized_pnl += mtm_base
+            deployed_margin += margin_base
 
         total_equity = self.capital + unrealized_pnl
         closed = [t for t in self.trades if t.status != "OPEN"]
@@ -1054,13 +1109,39 @@ class PaperTradingEngine:
         remaining_leg_pnl = leg_pnl_per_unit * remaining_qty
         trade.total_pnl = float(getattr(trade, "realized_pnl", 0.0) or 0.0) + remaining_leg_pnl
 
-        initial_qty = max(float(getattr(trade, "initial_quantity", 0.0) or 0.0), 1e-9)
-        trade.pnl = trade.total_pnl / initial_qty
-        trade.pnl_pct = round((trade.total_pnl / (trade.entry_price * initial_qty)) * 100, 3)
+        from agents.execution.currency import FXRateService, to_decimal, quantize_inr
+        try:
+            fx_rec = FXRateService.get_instance().get_fx_rate(
+                getattr(trade, "quote_currency", "INR"),
+                getattr(trade, "base_currency", "INR"),
+            )
+            fx_rate_exit = float(fx_rec.rate)
+            fx_source = fx_rec.source
+            fx_ts = fx_rec.timestamp
+        except Exception:
+            fx_rate_exit = float(getattr(trade, "fx_rate_entry", 1.0) or 1.0)
+            fx_source = "ENTRY_RATE_FALLBACK"
+            fx_ts = trade.exit_time
 
-        # PnL weighted by quantity
-        weighted_pnl = remaining_leg_pnl
-        self.capital += weighted_pnl
+        trade.fx_rate_exit = fx_rate_exit
+        trade.fx_rate_source = fx_source
+        trade.fx_rate_timestamp = fx_ts
+
+        total_pnl_native = float(getattr(trade, "realized_pnl_native", 0.0) or 0.0) + remaining_leg_pnl
+        trade.total_pnl_native = round(total_pnl_native, 6)
+
+        # Base currency INR amounts using Decimal quantization
+        total_pnl_base = float(quantize_inr(to_decimal(total_pnl_native) * to_decimal(fx_rate_exit)))
+        remaining_leg_pnl_base = float(quantize_inr(to_decimal(remaining_leg_pnl) * to_decimal(fx_rate_exit)))
+        trade.total_pnl = total_pnl_base
+
+        initial_qty = max(float(getattr(trade, "initial_quantity", 0.0) or 0.0), 1e-9)
+        trade.pnl_native = trade.total_pnl_native / initial_qty
+        trade.pnl = trade.total_pnl / initial_qty
+        trade.pnl_pct = round((total_pnl_native / (trade.entry_price * initial_qty)) * 100, 3)
+
+        # Capital & Daily PnL updated in base currency INR
+        self.capital += remaining_leg_pnl_base
         self.open_trades.remove(trade)
 
         # Remove from trailing manager
@@ -1071,7 +1152,7 @@ class PaperTradingEngine:
 
         # Track daily PnL (keyed by IST date)
         today = _today_ist()
-        self._daily_pnl[today] = self._daily_pnl.get(today, 0.0) + weighted_pnl
+        self._daily_pnl[today] = self._daily_pnl.get(today, 0.0) + remaining_leg_pnl_base
 
         # Track equity history
         self.equity_history.append({
@@ -1189,6 +1270,33 @@ class PaperTradingEngine:
             td.setdefault("partial_closed_qty", 0.0)
             td.setdefault("realized_pnl", 0.0)
             td.setdefault("total_pnl", 0.0)
+            # Multi-currency legacy hydration
+            if "quote_currency" not in td:
+                from agents.execution.currency import resolve_instrument_identity
+                ac, qc, bc = resolve_instrument_identity(td.get("symbol", ""))
+                td["asset_class"] = ac
+                td["quote_currency"] = qc
+                td["base_currency"] = bc
+                td["fx_rate_entry"] = 1.0
+                td["fx_rate_exit"] = 1.0
+                td["fx_rate_source"] = "LEGACY_PRE_MIGRATION"
+                td["fx_rate_timestamp"] = ""
+                td["total_pnl_native"] = td.get("total_pnl", 0.0)
+                td["pnl_native"] = td.get("pnl", 0.0)
+                td["realized_pnl_native"] = td.get("realized_pnl", 0.0)
+                td["fx_status"] = "LEGACY_UNCONVERTED" if qc != "INR" else "ACTIVE"
+            else:
+                td.setdefault("asset_class", "EQUITY")
+                td.setdefault("quote_currency", "INR")
+                td.setdefault("base_currency", "INR")
+                td.setdefault("fx_rate_entry", 1.0)
+                td.setdefault("fx_rate_exit", 1.0)
+                td.setdefault("fx_rate_source", "CANONICAL")
+                td.setdefault("fx_rate_timestamp", "")
+                td.setdefault("total_pnl_native", td.get("total_pnl", 0.0))
+                td.setdefault("pnl_native", td.get("pnl", 0.0))
+                td.setdefault("realized_pnl_native", td.get("realized_pnl", 0.0))
+                td.setdefault("fx_status", "ACTIVE")
             trade = PaperTrade(**td)
             self.trades.append(trade)
             if trade.status == "OPEN":

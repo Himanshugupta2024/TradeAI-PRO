@@ -233,6 +233,38 @@ def _fetch_ohlcv_yfinance(symbol: str, interval: str, outputsize: int = 200) -> 
         return pd.DataFrame()
 
 
+def _fetch_rates_yfinance_batch(symbols: list[str]) -> dict[str, float]:
+    """Fetch live rates for multiple pairs in a single fast yfinance batch download."""
+    results: dict[str, float] = {}
+    valid_map = {s: _SYMBOL_YF_MAP[s] for s in symbols if s in _SYMBOL_YF_MAP}
+    if not valid_map:
+        return results
+
+    tickers = list(valid_map.values())
+    try:
+        import yfinance as yf
+        now_ts = time.time()
+        data = yf.download(tickers, period="1d", interval="5m", progress=False)
+        if not data.empty and "Close" in data.columns:
+            close_data = data["Close"]
+            for sym, ticker in valid_map.items():
+                try:
+                    if len(tickers) == 1:
+                        c_series = close_data.dropna()
+                    else:
+                        c_series = close_data[ticker].dropna() if ticker in close_data else pd.Series()
+                    if not c_series.empty:
+                        last_c = float(c_series.iloc[-1])
+                        if last_c > 0:
+                            results[sym] = last_c
+                            _rate_cache[sym] = {"rate": last_c, "fetched_at": now_ts}
+                except Exception:
+                    pass
+    except Exception as e:
+        log.debug("[FOREX] Batch yfinance rate download failed: %s", e)
+    return results
+
+
 def _fetch_rate_yfinance(symbol: str) -> float:
     """Fetch live quote via yfinance as a zero-cost fallback."""
     yf_sym = _SYMBOL_YF_MAP.get(symbol)
@@ -474,17 +506,17 @@ def get_all_forex_rates() -> dict[str, float]:
     if not stale:
         return rates
 
-    _BATCH_SIZE = 7
-    for i in range(0, len(stale), _BATCH_SIZE):
-        chunk = stale[i : i + _BATCH_SIZE]
-        _fetch_rate_batch(chunk, rates)
+    # Fast single batch fetch for all stale pairs
+    batch_rates = _fetch_rates_yfinance_batch(stale)
+    rates.update(batch_rates)
 
-    # Double check for any zeros
-    for sym in symbols:
-        if rates.get(sym, 0.0) <= 0:
-            yf_r = _fetch_rate_yfinance(sym)
-            if yf_r > 0:
-                rates[sym] = yf_r
+    # For any remaining unresolved pairs, try fallback batch
+    remaining = [s for s in symbols if rates.get(s, 0.0) <= 0]
+    if remaining and not is_twelve_data_backed_off():
+        _BATCH_SIZE = 7
+        for i in range(0, len(remaining), _BATCH_SIZE):
+            chunk = remaining[i : i + _BATCH_SIZE]
+            _fetch_rate_batch(chunk, rates)
 
     return rates
 
