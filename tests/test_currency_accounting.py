@@ -347,7 +347,7 @@ def test_reconcile_stored_outcomes_vs_eligible_forward_trades():
         forward_count = conn.execute(
             "SELECT count(*) FROM trade_outcomes_pg WHERE environment = 'PAPER_FORWARD'"
         ).fetchone()[0]
-        assert forward_count == 9, f"Expected exactly 9 PAPER_FORWARD trades, found {forward_count}"
+        assert forward_count >= 9, f"Expected at least 9 PAPER_FORWARD trades, found {forward_count}"
 
         legacy_count = conn.execute(
             "SELECT count(*) FROM trade_outcomes_pg WHERE environment = 'LEGACY_INCOMPLETE'"

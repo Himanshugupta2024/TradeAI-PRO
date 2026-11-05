@@ -137,6 +137,7 @@ def test_short_paper_trade_geometry_and_raw_preservation():
     engine._cooldowns.clear()
     engine.capital = 500000.0
     engine.balance = 500000.0
+    engine._consecutive_losses = 0
 
     trade = engine.execute(
         symbol="DOGEUSDT",
