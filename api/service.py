@@ -1465,44 +1465,39 @@ async def _refresh_market_data_inner():
         # ── Phase 6: Refresh futures context (advisory) ──────────
         await _refresh_crypto_futures_context()
 
-        # ── Fetch daily data for swing/breakout scanners ─────────
-        # NOTE: Use "1y" period (≈252 trading days) so EMA_200 is valid.
-        # Scan ALL tracked symbols, not just 20 — the scanner should cover
-        # the full watchlist for comprehensive swing/breakout detection.
+        # ── Fetch daily data for swing/breakout scanners (Asynchronous Background Task) ──
+        # Offload 41-symbol 1y downloads & swing scan so intraday refresh completes in <5s.
         try:
-            daily_sem = asyncio.Semaphore(5)
+            async def _bg_swing_update():
+                try:
+                    daily_sem = asyncio.Semaphore(5)
+                    async def _fetch_daily(name: str):
+                        async with daily_sem:
+                            try:
+                                df = await asyncio.wait_for(
+                                    asyncio.to_thread(fetch_ohlcv, name, "1y", "1d"),
+                                    timeout=20.0,
+                                )
+                                if df is not None and not df.empty and len(df) >= 30:
+                                    df = calculate_indicators(df)
+                                    _daily_data_cache[name] = df
+                            except Exception:
+                                pass
+                    _sw_list = _build_swing_symbol_universe(TOP_NSE_SYMBOLS)
+                    await asyncio.gather(*[_fetch_daily(n) for n in _sw_list], return_exceptions=True)
+                    logger.info(
+                        "Daily data fetched: %d symbols for swing scanner (watchlist=%d).",
+                        len(_daily_data_cache),
+                        len(_sw_list),
+                    )
+                    await _recompute_swing_cache(timeout_sec=90.0)
+                except Exception as exc:
+                    logger.debug("Background swing update failed: %s", exc)
 
-            async def _fetch_daily(name: str, sem: asyncio.Semaphore):
-                async with sem:
-                    try:
-                        df = await asyncio.wait_for(
-                            asyncio.to_thread(fetch_ohlcv, name, "1y", "1d"),
-                            timeout=30.0,
-                        )
-                        if df is not None and not df.empty and len(df) >= 30:
-                            df = calculate_indicators(df)
-                            _daily_data_cache[name] = df
-                    except asyncio.TimeoutError:
-                        logger.debug("Daily fetch timed out for %s", name)
-                    except Exception as e:
-                        logger.debug("Daily fetch failed for %s: %s", name, e)
-
-            # Use swing watchlist universe and force-include key user-requested symbols.
-            _sw_list = _build_swing_symbol_universe(TOP_NSE_SYMBOLS)
-            daily_tasks = [_fetch_daily(n, daily_sem) for n in _sw_list]
-            await asyncio.gather(*daily_tasks)
-            logger.info(
-                "Daily data fetched: %d symbols for swing scanner (watchlist=%d).",
-                len(_daily_data_cache),
-                len(_sw_list),
-            )
-
-            # ── Pre-compute swing setups into cache ─────────────
-            # Run scan in thread so it never blocks the event loop.
-            # Result is cached; the API endpoint just reads this dict.
-            await _recompute_swing_cache(timeout_sec=120.0)
+            if len(_daily_data_cache) == 0 or not _swing_cache.get("setups"):
+                asyncio.create_task(_bg_swing_update())
         except Exception as e:
-            logger.error("Daily data batch fetch failed: %s", e)
+            logger.error("Daily data batch task dispatch failed: %s", e)
 
         # Precompute dashboard snapshots from latest cache state
         try:
@@ -2723,6 +2718,9 @@ def _compute_overview_intelligence() -> dict:
     top_setups: list[dict] = []
     avoid_list: list[dict] = []
 
+    feed_status = _get_feed_status()
+    is_market_live = bool(feed_status.get("is_market_open", False)) and str(feed_status.get("state", "")).upper() not in ("EOD", "CLOSED", "WEEKEND")
+
     mood = _compute_market_mood()
     insights_for_cal: dict = {}
     try:
@@ -2733,14 +2731,24 @@ def _compute_overview_intelligence() -> dict:
     except Exception:
         pass
 
+    signals_to_process: list[dict] = []
     for symbol in list(_signal_cache.keys()):
         sig = _get_signal_for_symbol(symbol)
-        if not sig:
+        if sig:
+            signals_to_process.append(sig)
+
+    # Cold-boot resilience: if local signal_cache has no items yet, fallback to persisted DB signals
+    if not signals_to_process and _persisted_signals_snapshot:
+        signals_to_process = list(_persisted_signals_snapshot)
+
+    for sig in signals_to_process:
+        symbol = str(sig.get("symbol", ""))
+        if not symbol:
             continue
 
         signal_label = str(sig.get("signal", "HOLD")).upper()
-        quality_score = int(sig.get("quality_score", 0))
-        confidence = float(sig.get("confidence", 0))
+        quality_score = int(sig.get("quality_score") or 0)
+        confidence = float(sig.get("confidence") or 0)
         context_score = float(sig.get("context_score") or 0)
         drift_detected = bool(sig.get("drift_detected", False))
         event_risk = bool(sig.get("event_risk_active", False))
@@ -2795,6 +2803,17 @@ def _compute_overview_intelligence() -> dict:
         )
         conf_n, conf_factors = _confluence_for_setup(sig, mood)
 
+        blockers: list[str] = []
+        if drift_detected:
+            blockers.append("drift_detected")
+        if event_risk:
+            blockers.append("event_risk")
+        if has_conflict:
+            blockers.append("signal_conflict")
+        # Only treat stale data as a hard blocker if market is actively open/live
+        if is_market_live and stale:
+            blockers.append("stale_data")
+
         entry_data = {
             "symbol": symbol,
             "signal": signal_label,
@@ -2820,41 +2839,40 @@ def _compute_overview_intelligence() -> dict:
             "drift_detected": drift_detected,
             "event_risk": event_risk,
             "macd_hist": sig.get("macd_hist"),
+            "blockers": blockers,
         }
 
+        # Qualifying actionable setups: LONG/SHORT, good quality and confidence, and no active blockers
         if (
             signal_label in ("LONG", "SHORT")
             and quality_score >= 55
             and confidence >= 40
-            and not stale
+            and not blockers
         ):
-            blockers: list[str] = []
-            if drift_detected:
-                blockers.append("drift_detected")
-            if event_risk:
-                blockers.append("event_risk")
-            if has_conflict:
-                blockers.append("signal_conflict")
-            entry_data["blockers"] = blockers
             top_setups.append(entry_data)
 
-        elif signal_label == "SKIP" and quality_score >= 62:
-            blockers = []
-            if skip_reason:
-                blockers.append(skip_reason)
-            if drift_detected:
-                blockers.append("drift_detected")
-            if event_risk:
-                blockers.append("event_risk")
-            if has_conflict:
-                blockers.append("signal_conflict")
-            if stale:
-                blockers.append("stale_data")
-            entry_data["blockers"] = blockers or ["quality_gate"]
+        # Blocked high-quality setups (either SKIP or blocked LONG/SHORT)
+        elif (
+            (signal_label in ("LONG", "SHORT") and blockers)
+            or (signal_label == "SKIP" and quality_score >= 60)
+        ):
+            if not blockers:
+                blockers.append(skip_reason or "quality_gate")
+            entry_data["blockers"] = blockers
             avoid_list.append(entry_data)
 
     top_setups.sort(key=lambda x: x["composite_rank"], reverse=True)
     avoid_list.sort(key=lambda x: x["composite_rank"], reverse=True)
+
+    fallback_applied = False
+    if not top_setups and avoid_list:
+        fallback_candidates = [
+            s for s in avoid_list
+            if s.get("signal") in ("LONG", "SHORT") and int(s.get("quality_score") or 0) >= 55
+        ]
+        if fallback_candidates:
+            top_setups = fallback_candidates[:5]
+            fallback_applied = True
 
     n_top = len(top_setups)
     for idx, t in enumerate(top_setups):
@@ -3005,9 +3023,11 @@ def _compute_overview_intelligence() -> dict:
         "top_setups": top_setups[:5],
         "avoid_list": avoid_list[:5],
         "ranking_meta": {
-            "total_tracked": len(_signal_cache),
+            "total_tracked": len(signals_to_process),
             "actionable": len(top_setups),
             "blocked_high_quality": len(avoid_list),
+            "fallback_applied": fallback_applied,
+            "session_state": "LIVE" if is_market_live else "EOD",
             "scoring_version": "phase5_v1",
             "scoring_summary": (
                 "Composite blends quality, confidence, and context; freshness decay; "

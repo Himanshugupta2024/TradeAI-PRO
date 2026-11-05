@@ -4095,7 +4095,9 @@ function _renderTopSetups(setups, meta) {
 
 
 
-        metaLabel.textContent = `${actionable} actionable / ${total} tracked (${blocked} blocked)${ver ? ` · ${ver}` : ''}`;
+        const sessionTag = meta.session_state === 'EOD' ? ' · Last Session' : '';
+        const fallbackNote = meta.fallback_applied ? ' · high-QS candidates' : '';
+        metaLabel.textContent = `${actionable} actionable / ${total} tracked (${blocked} blocked)${sessionTag}${fallbackNote}${ver ? ` · ${ver}` : ''}`;
 
 
 
@@ -5923,7 +5925,7 @@ function _renderFeedStalenessBanner(grd) {
 
 
 
-        if (state !== 'LIVE' && state !== 'DELAYED') {
+        if (state === 'EOD') { show = false; } else if (state !== 'LIVE' && state !== 'DELAYED') {
 
 
 
