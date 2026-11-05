@@ -195,7 +195,7 @@ class DistributedLockManager:
             session.close()
 
     def get_lock_info(self, job_name: str) -> Optional[dict[str, Any]]:
-        """Return raw inspection data for a job lock."""
+        """Return raw inspection data for a job lock with active validity check."""
         session = SessionLocal()
         try:
             lock = session.execute(
@@ -203,13 +203,25 @@ class DistributedLockManager:
             ).scalar_one_or_none()
             if not lock:
                 return None
+
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            is_active = False
+            if lock.status == "RUNNING":
+                is_unexpired = lock.locked_until is not None and lock.locked_until > now
+                is_heartbeat_fresh = (
+                    lock.heartbeat_at is not None
+                    and (now - lock.heartbeat_at).total_seconds() < self.heartbeat_timeout_sec
+                )
+                is_active = bool(is_unexpired and is_heartbeat_fresh)
+
             return {
                 "job_name": lock.job_name,
                 "run_id": lock.run_id,
                 "started_at": lock.started_at.isoformat() if lock.started_at else None,
                 "locked_until": lock.locked_until.isoformat() if lock.locked_until else None,
                 "completed_at": lock.completed_at.isoformat() if lock.completed_at else None,
-                "status": lock.status,
+                "status": "EXPIRED" if (lock.status == "RUNNING" and not is_active) else lock.status,
+                "is_active": is_active,
                 "heartbeat_at": lock.heartbeat_at.isoformat() if lock.heartbeat_at else None,
             }
         finally:

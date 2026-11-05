@@ -582,8 +582,9 @@ class PaperTradingEngine:
             return closed
 
         for trade in list(self.open_trades):
-            # Equities do not contain '/' (crypto is BTC/USDT, ETH/USDT; forex is EUR/USD)
-            if "/" in trade.symbol:
+            # Crypto and forex pairs skip NSE 15:15 IST equity square-off
+            sym_u = trade.symbol.upper()
+            if "/" in sym_u or sym_u.endswith("USDT") or sym_u in ("BTC", "ETH", "SOL", "DOGE", "XRP", "BNB"):
                 continue
 
             # Swing trades held deliberately across days skip intraday squareoff

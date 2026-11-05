@@ -701,6 +701,8 @@ async def get_dashboard_overview():
             "win_rate": stats.get("win_rate", 0.0),
             "total_trades": stats.get("total_trades", 0),
             "closed_trades": stats.get("total_trades", 0),
+            "winning_trades": stats.get("winning_trades", 0),
+            "losing_trades": stats.get("losing_trades", 0),
             "open_positions_count": len(positions),
         },
         "system_status": {
@@ -2927,7 +2929,7 @@ async def get_autonomous_status():
     watchdog_message = "Autonomous worker operating normally."
     age_minutes = None
 
-    if lock_info and lock_info.get("status") == "RUNNING":
+    if lock_info and lock_info.get("is_active"):
         watchdog_status = "RUNNING"
         watchdog_message = f"Worker cycle currently executing (run_id: {lock_info.get('run_id')})."
     elif worker_status and worker_status.get("timestamp"):

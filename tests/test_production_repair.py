@@ -134,6 +134,7 @@ def test_short_paper_trade_geometry_and_raw_preservation():
     """Verify PaperTradingEngine validates SHORT geometry and preserves raw vs final values."""
     engine = PaperTradingEngine()
     engine.trades = []
+    engine._cooldowns.clear()
     engine.capital = 500000.0
     engine.balance = 500000.0
 

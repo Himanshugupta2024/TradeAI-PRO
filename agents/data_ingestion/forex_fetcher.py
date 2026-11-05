@@ -106,6 +106,8 @@ def is_session_active(symbol: str) -> tuple[bool, str]:
     Returns: (is_active, session_name)
     """
     now_ist = datetime.now(_IST)
+    if now_ist.weekday() >= 5:
+        return False, "CLOSED_WEEKEND"
     now_time = now_ist.strftime("%H:%M")
 
     inr_pairs = {"USD/INR", "EUR/INR", "GBP/INR", "JPY/INR"}
@@ -494,6 +496,7 @@ def compute_session_intelligence() -> dict:
     Evaluate global trading sessions, active overlap, and market liquidity.
     """
     now_ist = datetime.now(_IST)
+    is_weekend = now_ist.weekday() == 5 or (now_ist.weekday() == 6 and now_ist.hour < 23)
     now_time = now_ist.strftime("%H:%M")
     sessions = settings.FOREX_SESSIONS
 
@@ -505,7 +508,7 @@ def compute_session_intelligence() -> dict:
     status_map = {}
     active_sessions = []
     for name, data in sessions.items():
-        is_open = _in_session(data["start"], data["end"], now_time)
+        is_open = False if is_weekend else _in_session(data["start"], data["end"], now_time)
         status_map[name] = {
             "open": is_open,
             "start": data["start"],

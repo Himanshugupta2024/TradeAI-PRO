@@ -7787,7 +7787,7 @@ function renderOverviewActiveTrades(openTrades) {
         const isProfit = pnl > 0.01;
         const isLoss = pnl < -0.01;
         const pnlClass = isProfit ? 'pnl-profit' : (isLoss ? 'pnl-loss' : 'pnl-neutral');
-        const pnlSign = pnl >= 0 ? '+' : '';
+        const pnlSign = pnl < -0.005 ? '-' : (pnl > 0.005 ? '+' : '');
         const pnlPctSign = pnlPct >= 0 ? '+' : '';
 
         // Distance to target / SL
@@ -7988,7 +7988,7 @@ async function openPositionDetail(tradeId) {
     const pnlPct = isClosed
         ? Number(trade.pnl_pct || (entry > 0 ? ((exitPx - entry) / entry * 100 * mult) : 0))
         : (entry > 0 ? ((ltp - entry) / entry) * 100 * mult : 0);
-    const pnlSign = pnl >= 0 ? '+' : '';
+    const pnlSign = pnl < -0.005 ? '-' : (pnl > 0.005 ? '+' : '');
     const pnlBg = pnl >= 0 ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)';
     const pnlBorder = pnl >= 0 ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)';
     const pnlColor = pnl >= 0 ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
@@ -9312,7 +9312,7 @@ function renderSignals(signals) {
 
 
 
-        const fmtPrice = (v) => v == null ? '—' : `${curr}${v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const fmtPrice = (v) => { if (v == null) return '—'; const num = Number(v); const digits = (num !== 0 && Math.abs(num) < 0.1) ? 6 : (Math.abs(num) < 10 ? 4 : 2); return `${curr}${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: digits })}`; };
 
 
 
