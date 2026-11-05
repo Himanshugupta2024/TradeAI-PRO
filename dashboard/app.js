@@ -566,31 +566,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     hydrateFromLocalStorageCache();
 
-
-
     loadOverviewFast();
-
-    loadAutonomousFeed();
-
-
-
-    loadAllData({ background: false });
-
-
-
-    connectPriceWebSocket();
-
-
+    // Stagger peripheral requests by 200-800ms to stay within Render free-tier concurrent connection caps
+    setTimeout(() => loadAutonomousFeed(), 200);
+    setTimeout(() => loadAllData({ background: false }), 450);
+    setTimeout(() => loadPortfolio(), 750);
+    setTimeout(() => updateAiModelHealthBadge(), 1050);
+    setTimeout(() => connectPriceWebSocket(), 1400);
 
     startBackgroundRefresh();
-
-
-
-    loadPortfolio();
-
-
-
-    updateAiModelHealthBadge();
 
 
 
@@ -2311,30 +2295,12 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
 
 
-        // HTTP-level 503 → server is still waking up, retry
-
-
-
-        if (resp.status === 503 && _retries > 0) {
-
-
-
-            const delay = Math.min(_backoffMs, 20000);
-
-
-
-            console.warn(`[fetch] 503 from ${url} — server waking up, retrying in ${delay / 1000}s (${_retries} left)...`);
-
-
-
+        // HTTP-level 503 or 429 → server waking up or burst rate-limited, retry with backoff
+        if ((resp.status === 503 || resp.status === 429) && _retries > 0) {
+            const delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
+            console.warn(`[fetch] ${resp.status} from ${url} — retrying in ${(delay / 1000).toFixed(1)}s (${_retries} left)...`);
             await new Promise(r => setTimeout(r, delay));
-
-
-
-            return fetchWithTimeout(url, options, timeoutMs, _retries - 1, _backoffMs * 2);
-
-
-
+            return fetchWithTimeout(url, options, timeoutMs, _retries - 1, _backoffMs * 1.5);
         }
 
 
