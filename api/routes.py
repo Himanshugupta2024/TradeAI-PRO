@@ -2388,7 +2388,7 @@ async def get_current_signal(symbol: str):
 async def get_trades(limit: int = Query(50, le=100)):
     """Get recent trade history from real paper trading engine (newest first)."""
     engine = svc._get_engine()
-    raw_history = engine.get_history(limit=limit)
+    raw_history = await asyncio.to_thread(engine.get_history, limit)
     enriched = []
     for t in raw_history:
         d = dict(t)
