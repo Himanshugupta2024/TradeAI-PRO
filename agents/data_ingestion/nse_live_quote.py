@@ -14,6 +14,7 @@ Provides normalized 0-delay market snapshot with:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -119,6 +120,15 @@ class NSELiveQuoteClient:
             ts, cached_quote = self._cache[clean]
             if now - ts <= self._cache_ttl:
                 return cached_quote
+
+        # On cloud hosting (Render) or lightweight mode, NSE India website blocks international
+        # datacenter IPs with connection timeouts. Fast-track to reliable yfinance fast_info.
+        is_cloud = bool(os.getenv("RENDER") or os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes"))
+        if is_cloud:
+            quote = self._fetch_yfinance(symbol, avg_volume)
+            if quote is not None:
+                self._cache[clean] = (now, quote)
+                return quote
 
         # Tier 1: Direct NSE
         quote = self._fetch_direct_nse(clean, avg_volume)

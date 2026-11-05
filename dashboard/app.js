@@ -7432,12 +7432,12 @@ async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, s
 
     if (cleanDir === 'LONG' || cleanDir === 'BUY') {
         if (!(numSl < numEntry && numEntry < numTp)) {
-            showToast(⚠️ Invalid geometry for LONG: Stop Loss () < Entry () < Target () required, 'warn');
+            showToast(`⚠️ Invalid geometry for LONG: Stop Loss (${fmtP(numSl)}) < Entry (${fmtP(numEntry)}) < Target (${fmtP(numTp)}) required`, 'warn');
             return;
         }
     } else if (cleanDir === 'SHORT' || cleanDir === 'SELL') {
         if (!(numTp < numEntry && numEntry < numSl)) {
-            showToast(⚠️ Invalid geometry for SHORT: Target () < Entry () < Stop Loss () required, 'warn');
+            showToast(`⚠️ Invalid geometry for SHORT: Target (${fmtP(numTp)}) < Entry (${fmtP(numEntry)}) < Stop Loss (${fmtP(numSl)}) required`, 'warn');
             return;
         }
     }
@@ -14995,6 +14995,10 @@ async function loadModalBacktest(symbol) {
     try {
         const encodedSymbol = symbol.replace('/', '-');
         const res = await fetch(`${API}/api/backtest/${encodedSymbol}`);
+        if (res.status === 429) {
+            section.innerHTML = '<p style="color:var(--yellow);font-size:0.8rem">⚠️ Rate limit in effect. Retrying shortly...</p>';
+            return;
+        }
         const data = await res.json();
 
         if (data.error) {
@@ -15077,6 +15081,11 @@ async function loadModalNews(symbol) {
     try {
         const encodedSymbol = symbol.replace('/', '-');
         const res = await fetch(`${API}/api/news/${encodedSymbol}?limit=6`);
+        if (res.status === 429) {
+            list.innerHTML = '<p style="color:var(--yellow);font-size:0.75rem;">⚠️ Rate limit in effect. Retrying shortly...</p>';
+            if (freshEl) freshEl.textContent = 'Rate limited';
+            return;
+        }
         const data = await res.json();
 
         if (!data || !data.items || data.items.length === 0) {
@@ -16032,7 +16041,7 @@ function updateDynamicMarketStatus() {
 
 
 
-            el.title = 'Indian Market Open (09:15 - 15:30 IST) | Real-time WebSocket connected';
+            el.title = 'NSE Indian Market Open (09:15 - 15:30 IST) | Quotes delayed ~15m per exchange compliance on zero-cost public feed. WebSocket active.';
 
 
 

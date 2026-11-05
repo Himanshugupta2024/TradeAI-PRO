@@ -4182,10 +4182,14 @@ async def run_backtest(
                         )
 
                 if ext_df is not None and not ext_df.empty and len(ext_df) >= 20:
-                    ext_df = calculate_indicators(ext_df)
-                    ext_df = classify_trend(ext_df)
-                    regime = detect_regime(ext_df)
-                    df = generate_signals(ext_df, regime=regime, symbol=clean_sym, offline=True)
+                    bars_to_use = min(len(ext_df), max(180, days * 25 + 40))
+                    slice_df = ext_df.tail(bars_to_use).copy()
+                    def _compute_backtest_pipeline(s_df):
+                        s_df = calculate_indicators(s_df)
+                        s_df = classify_trend(s_df)
+                        regime = detect_regime(s_df)
+                        return generate_signals(s_df, regime=regime, symbol=clean_sym, offline=True)
+                    df = await asyncio.to_thread(_compute_backtest_pipeline, slice_df)
                     svc._signal_cache[clean_sym] = df
             except Exception as exc:
                 logger.error("Backtest on-demand fetch failed for %s (%sd): %s", clean_sym, days, exc)
