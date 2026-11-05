@@ -2,17 +2,9 @@ name: Production Backend Keep-Alive
 
 on:
   schedule:
-    # Mon-Fri Market-Day Schedule (UTC times, convert to IST by +5:30):
-    # 03:00, 03:15, 03:30, 03:45 UTC = 08:30, 08:45, 09:00, 09:15 IST (Pre-Market Warmup)
-    # Wakes Render up from overnight sleep well before user opens dashboard.
-    - cron: '0,15,30,45 3 * * 1-5'
-
-    # Every 12 minutes between 04:00 UTC (09:30 IST) and 10:48 UTC (16:18 IST)
-    # Render free-tier spins down after 15m idle; 12m cadence prevents any mid-day sleep.
-    - cron: '*/12 4-10 * * 1-5'
-
-    # Weekends (Crypto / 24/7 Monitoring): Every 3 hours
-    - cron: '0 */3 * * 0,6'
+    # Continuous 24/7 Keep-Alive: Every 14 minutes across weekdays and weekends
+    # Render free-tier spins down after 15m idle; 14m cadence maintains continuous 24/7 crypto paper execution.
+    - cron: '*/14 * * * *'
 
   workflow_dispatch:
     inputs:

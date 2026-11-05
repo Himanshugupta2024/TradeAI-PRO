@@ -33,6 +33,9 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/swing/shortlist",
   "/api/swing/stats",
   "/api/forex/signals",
+  "/api/macro/intelligence",
+  "/api/edge/macro-heatmap",
+  "/api/edge/risk-gauge",
   "/api/health/live",
 ]);
 

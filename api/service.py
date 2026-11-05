@@ -2889,6 +2889,60 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             top_setups = fallback_candidates[:5]
             fallback_applied = True
 
+    if not top_setups:
+        # Off-hours fallback to latest SwingSpectrum shortlist candidates
+        swing_candidates = _swing_cache.get("setups") or []
+        for s in swing_candidates[:5]:
+            entry_p = float(s.get("entry_price") or s.get("entry") or 0.0)
+            sl_p = float(s.get("stop_loss") or 0.0)
+            tp_p = float(s.get("target") or 0.0)
+            qs = int(s.get("confluence_score") or s.get("score") or 75)
+            q_grade = "A" if qs >= 75 else ("B" if qs >= 60 else "C")
+            top_setups.append({
+                "symbol": str(s.get("symbol", "")),
+                "signal": str(s.get("direction") or s.get("signal") or "LONG"),
+                "quality_score": qs,
+                "quality_grade": q_grade,
+                "confidence": float(s.get("confidence") or 70.0),
+                "composite_rank": float(qs),
+                "entry": entry_p,
+                "stop_loss": sl_p,
+                "target": tp_p,
+                "trend": str(s.get("trend") or "TRENDING"),
+                "regime": str(s.get("regime") or "SWING_DAILY"),
+                "blockers": [],
+                "session_badge": "LAST SESSION SWING",
+                "is_off_hours_fallback": True,
+            })
+        if top_setups:
+            fallback_applied = True
+
+    if not top_setups and _persisted_signals_snapshot:
+        for s in _persisted_signals_snapshot[:5]:
+            sig = s.get("signal")
+            if sig in ("LONG", "SHORT", "BUY", "SELL"):
+                sig_norm = "LONG" if sig in ("LONG", "BUY") else "SHORT"
+                qs = int(s.get("quality_score") or 70)
+                q_grade = "A" if qs >= 75 else ("B" if qs >= 60 else "C")
+                top_setups.append({
+                    "symbol": str(s.get("symbol", "")),
+                    "signal": sig_norm,
+                    "quality_score": qs,
+                    "quality_grade": q_grade,
+                    "confidence": float(s.get("confidence") or 65.0),
+                    "composite_rank": float(qs),
+                    "entry": float(s.get("entry") or s.get("close") or 0.0),
+                    "stop_loss": float(s.get("stop_loss") or 0.0),
+                    "target": float(s.get("target") or 0.0),
+                    "trend": str(s.get("trend") or "NEUTRAL"),
+                    "regime": str(s.get("regime") or "LAST_SESSION"),
+                    "blockers": [],
+                    "session_badge": "LAST SESSION INTRADAY",
+                    "is_off_hours_fallback": True,
+                })
+        if top_setups:
+            fallback_applied = True
+
     n_top = len(top_setups)
     for idx, t in enumerate(top_setups):
         if n_top <= 1:

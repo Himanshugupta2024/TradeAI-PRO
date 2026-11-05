@@ -2460,8 +2460,8 @@ async function parseJsonResponse(res) {
 async function loadAutonomousFeed() {
     try {
         const [feedRes, statusRes] = await Promise.all([
-            fetchWithTimeout(`${API}/api/autonomous/feed?limit=25`, {}, 5000),
-            fetchWithTimeout(`${API}/api/autonomous/status`, {}, 5000),
+            fetchWithTimeout(`${API}/api/autonomous/feed?limit=25`, {}, 10000),
+            fetchWithTimeout(`${API}/api/autonomous/status`, {}, 10000),
         ]);
         const feedData = await parseJsonResponse(feedRes);
         const statusData = await parseJsonResponse(statusRes);
@@ -4357,7 +4357,7 @@ function _renderTopSetups(setups, meta) {
 
 
 
-                    ${freshBadge}
+                    ${freshBadge}${s.session_badge ? `<span class="cs-pct-badge" style="background:rgba(99,102,241,0.22);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);font-size:8px;padding:1px 5px;border-radius:4px;margin-left:4px;">${s.session_badge}</span>` : ''}
 
 
 
