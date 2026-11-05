@@ -115,8 +115,10 @@ def parse_args() -> argparse.Namespace:
 
 def resolve_universe(universe_arg: str, max_symbols: int = 20) -> list[str]:
     u = universe_arg.strip().lower()
+    is_nse_open, _ = is_nse_market_open()
     if u == "tier1":
-        symbols = TIER1_NSE + TIER1_CRYPTO
+        # When NSE is closed, prioritize 24/7 crypto symbols first so off-hours scanning executes
+        symbols = (TIER1_CRYPTO + TIER1_NSE) if not is_nse_open else (TIER1_NSE + TIER1_CRYPTO)
     elif u == "nse":
         symbols = list(TIER1_NSE)
     elif u == "crypto":
@@ -124,7 +126,7 @@ def resolve_universe(universe_arg: str, max_symbols: int = 20) -> list[str]:
     elif u == "all":
         nse_all = list(settings.NSE_SYMBOLS.keys()) if isinstance(settings.NSE_SYMBOLS, dict) else list(settings.NSE_SYMBOLS)
         crypto_all = list(settings.CRYPTO_SYMBOLS.keys()) if isinstance(settings.CRYPTO_SYMBOLS, dict) else list(settings.CRYPTO_SYMBOLS)
-        symbols = nse_all[:15] + crypto_all[:5]
+        symbols = (crypto_all[:5] + nse_all[:15]) if not is_nse_open else (nse_all[:15] + crypto_all[:5])
     else:
         symbols = [s.strip().upper() for s in universe_arg.split(",") if s.strip()]
 
@@ -210,15 +212,18 @@ async def run_single_autonomous_cycle(
                     logger.debug("[Session] Skipping %s: NSE Cash market closed (%s)", sym, nse_reason)
 
         if not active_symbols:
-            logger.info("ℹ️ [Session] No eligible symbols for active market hours. Recording MARKET_CLOSED.")
-            record_autonomous_decision_to_db(
-                signal_id=f"mc-{today_str}-{int(time.time())}",
-                run_id=run_id,
-                symbol="NSE",
-                action="MARKET_CLOSED",
-                direction="NEUTRAL",
-                reason=f"NSE cash market closed ({nse_reason}). Next session: 09:15 IST.",
-            )
+            logger.info("ℹ️ [Session] No eligible symbols for active market hours. Standby status maintained.")
+            from db.runtime_state import get_runtime_state
+            existing = get_runtime_state("autonomous_feed:v1", []) or []
+            if not existing or existing[0].get("action") not in ("MARKET_CLOSED", "SYSTEM_STANDBY"):
+                record_autonomous_decision_to_db(
+                    signal_id=f"mc-{today_str}",
+                    run_id=run_id,
+                    symbol="NSE",
+                    action="MARKET_CLOSED",
+                    direction="NEUTRAL",
+                    reason=f"NSE cash market closed ({nse_reason}). Next session: 09:15 IST.",
+                )
             summary["status"] = "MARKET_CLOSED"
             summary["reason"] = nse_reason
             return summary

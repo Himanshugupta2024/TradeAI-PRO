@@ -3030,7 +3030,20 @@ async def get_autonomous_feed(limit: int = 25):
             "asset_class": "SYSTEM",
         }]
 
-    return {"ok": True, "feed": feed[:min(limit, 100)], "count": len(feed[:min(limit, 100)])}
+    # Deduplicate consecutive standby/closed entries so the feed never spams duplicate rows
+    cleaned_feed = []
+    seen_standby = False
+    for item in feed:
+        act = (item.get("action") or "").upper()
+        if act in ("MARKET_CLOSED", "SYSTEM_STANDBY"):
+            if not seen_standby:
+                cleaned_feed.append(item)
+                seen_standby = True
+            continue
+        cleaned_feed.append(item)
+
+    final_feed = cleaned_feed[:min(limit, 100)]
+    return {"ok": True, "feed": final_feed, "count": len(final_feed)}
 
 
 @router.post("/api/autonomous/run-cycle")

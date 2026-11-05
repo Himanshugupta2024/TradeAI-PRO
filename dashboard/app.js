@@ -2526,12 +2526,23 @@ async function loadAutonomousFeed() {
 
         const listEl = document.getElementById('autonomousDecisionFeedList');
         if (listEl && feedData && Array.isArray(feedData.feed)) {
-            if (feedData.feed.length === 0) {
+            // Deduplicate consecutive standby/closed items so user never sees a wall of duplicate closed rows
+            let seenStandby = false;
+            const displayFeed = feedData.feed.filter(item => {
+                const act = (item.action || '').toUpperCase();
+                if (act === 'MARKET_CLOSED' || act === 'SYSTEM_STANDBY') {
+                    if (seenStandby) return false;
+                    seenStandby = true;
+                }
+                return true;
+            });
+
+            if (displayFeed.length === 0) {
                 listEl.innerHTML = '<div style="color:var(--text-muted,#94a3b8);font-size:12px;padding:0.5rem;">Autonomous engine active. Monitoring candles for qualified entries...</div>';
                 return;
             }
 
-            listEl.innerHTML = feedData.feed.map(item => {
+            listEl.innerHTML = displayFeed.map(item => {
                 let badgeColor = '#38bdf8';
                 let bgBadge = 'rgba(56,189,248,0.15)';
                 const act = (item.action || '').toUpperCase();

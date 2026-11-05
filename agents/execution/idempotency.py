@@ -148,10 +148,14 @@ def record_autonomous_decision_to_db(
 
     try:
         feed = get_runtime_state("autonomous_feed:v1", []) or []
-        # Prepend latest decision, cap at 100 entries
-        feed.insert(0, feed_entry)
-        if len(feed) > 100:
-            feed = feed[:100]
+        # Deduplicate consecutive MARKET_CLOSED / SYSTEM_STANDBY entries
+        if feed and feed[0].get("action") in ("MARKET_CLOSED", "SYSTEM_STANDBY") and action in ("MARKET_CLOSED", "SYSTEM_STANDBY"):
+            feed[0]["timestamp"] = now.isoformat()
+            feed[0]["reason"] = reason or feed[0].get("reason", "")
+        else:
+            feed.insert(0, feed_entry)
+            if len(feed) > 100:
+                feed = feed[:100]
         set_runtime_state("autonomous_feed:v1", feed)
     except Exception as exc:
         log.debug("[Idempotency] Runtime state feed persist error: %s", exc)
