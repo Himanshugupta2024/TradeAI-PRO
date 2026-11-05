@@ -8,7 +8,8 @@
     <script>
         const isWorker = window.location.hostname.endsWith('workers.dev');
         window.__TRADEAI_CONFIG__ = {
-            API_BASE_URL: isWorker ? '' : (window.location.port === '5500' || window.location.port === '3000' || window.location.port === '5173') ? 'http://127.0.0.1:8000' : 'https://trading-api-n1wt.onrender.com'
+            API_BASE_URL: isWorker ? '' : (window.location.port === '5500' || window.location.port === '3000' || window.location.port === '5173') ? 'http://127.0.0.1:8000' : 'https://trading-api-n1wt.onrender.com',
+            WS_URL: isWorker ? wss:///ws/prices : (window.location.port === '5500' || window.location.port === '3000' || window.location.port === '5173') ? 'ws://127.0.0.1:8000/ws/prices' : 'wss://trading-api-n1wt.onrender.com/ws/prices'
         };
     </script>
 

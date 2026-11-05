@@ -396,6 +396,16 @@ def create_app() -> FastAPI:
 
     )
 
+    @app.middleware("http")
+    async def add_security_and_cache_headers(request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        # Enforce strict private, no-store policy on sensitive / stateful endpoints
+        if any(k in path for k in ("/portfolio", "/trades", "/paper", "/capital", "/journal", "/risk", "/admin", "/orders", "/positions")) or request.method != "GET":
+            response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+        return response
+
     app.include_router(router)
 
     if os.path.exists(STATIC_DIR):

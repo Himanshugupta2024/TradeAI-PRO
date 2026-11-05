@@ -38,10 +38,10 @@ def _create_engine():
         kwargs["pool_size"] = 10
         kwargs["max_overflow"] = 20
         # Disable server-side prepared statements for Supabase PgBouncer / Transaction pooler
+        connect_args = {"connect_timeout": 5, "options": "-c search_path=tradeai,public"}
         if "psycopg" in url and "psycopg2" not in url:
-            kwargs["connect_args"] = {"prepare_threshold": None, "connect_timeout": 5}
-        else:
-            kwargs["connect_args"] = {"connect_timeout": 5}
+            connect_args["prepare_threshold"] = None
+        kwargs["connect_args"] = connect_args
 
     eng = create_engine(url, **kwargs)
     # Enable WAL mode for SQLite - allows concurrent reads
@@ -54,6 +54,16 @@ def _create_engine():
             cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.execute("PRAGMA busy_timeout=30000")
             cursor.close()
+    else:
+        from sqlalchemy import event
+        @event.listens_for(eng, "connect")
+        def _set_postgres_search_path(dbapi_conn, connection_record):
+            try:
+                cursor = dbapi_conn.cursor()
+                cursor.execute("SET search_path TO tradeai, public")
+                cursor.close()
+            except Exception:
+                pass
     return eng
 
 
