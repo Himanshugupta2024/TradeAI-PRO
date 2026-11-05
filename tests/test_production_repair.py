@@ -50,11 +50,13 @@ async def test_health_check_endpoint():
 
 
 @pytest.mark.asyncio
-async def test_ready_check_endpoint():
+async def test_ready_check_endpoint(monkeypatch):
     """Verify /api/ready returns ready status for container probes."""
+    import api.service as svc
+    monkeypatch.setattr(svc, "_loading_status", {"ready": True, "phase": "ready"})
     from api.routes import readiness_check
     res = await readiness_check()
-    assert res["status"] == "ready"
+    assert res["status"] == "ready" 
 
 
 # ── 2. System Data Health Endpoint ──────────────────────────────────────────
@@ -106,7 +108,9 @@ def test_subrupee_tick_precision_formatting():
 def test_short_paper_trade_geometry_validation():
     """Verify PaperTradingEngine correctly validates SHORT geometry for micro-priced assets."""
     engine = PaperTradingEngine()
-    engine.balance = 50000.0
+    engine.open_trades = []
+    engine.capital = 100000.0
+    engine.balance = 100000.0
 
     # Risk: 0.0743 - 0.0712 = 0.0031. Reward: 0.0712 - 0.0640 = 0.0072. RR = 2.32 (>= 2.0)
     trade = engine.execute(

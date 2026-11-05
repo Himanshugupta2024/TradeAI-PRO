@@ -281,6 +281,13 @@ def test_intraday_api_reports_scan_freshness():
 
 # ── Test 8: Stale scan results marked STALE and not actionable ─────────────────
 def test_stale_results_not_actionable():
+    # Clear existing scans so our older scan is guaranteed to be the latest row
+    s = intraday_store._session()
+    try:
+        s.query(intraday_store.IntradayScan).delete()
+        s.commit()
+    finally:
+        s.close()
     now_utc = datetime.now(UTC).replace(tzinfo=None)
     now_ist = datetime.now(_IST)
 

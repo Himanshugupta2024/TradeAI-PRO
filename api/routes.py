@@ -331,20 +331,17 @@ async def readiness_check():
     db_ok = check_db_connectivity()
     symbols_count = len(svc._market_data)
     is_lightweight = os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes")
-    feed_status = svc._get_feed_status()
 
     ready = db_ok and (
         symbols_count > 0
         or svc._loading_status.get("ready", False)
-        or is_lightweight
-        or feed_status.get("source") != "NONE"
     )
 
     if not ready:
         reasons = []
         if not db_ok:
             reasons.append("Database unavailable")
-        if symbols_count == 0 and not is_lightweight:
+        if symbols_count == 0:
             reasons.append("Zero market symbols loaded")
 
         return JSONResponse(
