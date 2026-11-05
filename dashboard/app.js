@@ -16253,126 +16253,42 @@ async function loadMarket() {
 
 
 
-    const loadScreenerData = async () => {
-
-
-
+        const loadScreenerData = async () => {
         try {
-
-
-
-            const [gainersRes, losersRes] = await Promise.all([
-
-
-
-                fetchWithTimeout(`${API}/api/screener/gainers`, {}, 20000),
-
-
-
-                fetchWithTimeout(`${API}/api/screener/losers`, {}, 20000),
-
-
-
+            const [gainersRes, losersRes] = await Promise.allSettled([
+                fetchWithTimeout(`${API}/api/screener/gainers`, {}, 40000),
+                fetchWithTimeout(`${API}/api/screener/losers`, {}, 40000),
             ]);
 
-
-
-
-
-
-
-            const gainers = await parseJsonResponse(gainersRes);
-
-
-
-            const losers = await parseJsonResponse(losersRes);
-
-
-
-
-
-
-
-            screenerData.gainers = gainers.data || [];
-
-
-
-            screenerData.losers  = losers.data  || [];
-
-
-
-
-
-
-
-            renderScreener(screenerData[currentScreenerMode]);
-
-
-
-            const screenerUpd = document.getElementById('screenerUpdatedTime');
-
-
-
-            if (screenerUpd) {
-
-
-
-                const now = new Date();
-
-
-
-                screenerUpd.textContent = `Updated ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
-
-
-
+            if (gainersRes.status === 'fulfilled' && gainersRes.value.ok) {
+                const gainers = await parseJsonResponse(gainersRes.value);
+                screenerData.gainers = gainers.data || [];
+            }
+            if (losersRes.status === 'fulfilled' && losersRes.value.ok) {
+                const losers = await parseJsonResponse(losersRes.value);
+                screenerData.losers = losers.data || [];
             }
 
-
-
-        } catch (err) {
-
-
-
-            if (err.name === 'AbortError') {
-
-
-
-                console.warn('Screener timed out — showing retry state');
-
-
-
+            if (screenerData.gainers.length || screenerData.losers.length) {
+                renderScreener(screenerData[currentScreenerMode]);
+                const screenerUpd = document.getElementById('screenerUpdatedTime');
+                if (screenerUpd) {
+                    const now = new Date();
+                    screenerUpd.textContent = `Updated ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+                }
             } else {
-
-
-
-                console.error('Screener load error:', err);
-
-
-
+                const tbody = document.getElementById('screenerBody');
+                if (tbody) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="color:var(--text-muted)">⚠️ Screener data unavailable — <a href="#" onclick="loadMarket();return false;" style="color:var(--cyan);text-decoration:underline;cursor:pointer;">Retry</a></td></tr>';
+                }
             }
-
-
-
+        } catch (err) {
+            console.error('Screener load error:', err);
             const tbody = document.getElementById('screenerBody');
-
-
-
             if (tbody) {
-
-
-
                 tbody.innerHTML = '<tr><td colspan="5" class="empty-row" style="color:var(--text-muted)">⚠️ Screener data unavailable — <a href="#" onclick="loadMarket();return false;" style="color:var(--cyan);text-decoration:underline;cursor:pointer;">Retry</a></td></tr>';
-
-
-
             }
-
-
-
         }
-
-
-
     };
 
 

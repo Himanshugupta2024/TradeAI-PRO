@@ -4386,313 +4386,204 @@ async def get_symbol_news(symbol: str, limit: int = Query(10, ge=1, le=30)):
 # ── Market Intelligence Endpoints ───────────────────────
 
 @router.get("/api/screener/gainers")
-
 async def screener_gainers():
-
     """
-
     Top NSE gainers with X-Factor multiplier.
-
-    Primary: fetch from NSE screener API.
-
-    Fallback: compute from svc._market_data cache if API fails/times out.
-
+    1. In-memory movers cache (0ms)
+    2. Direct in-memory market data if available (0ms)
+    3. Durable DB snapshot from runtime_state (20ms)
+    4. On-demand batch fetch with 35s timeout, persisting to DB runtime_state
     """
-
-    # Try precomputed cache first for instant response
-
     if svc._movers_cache.get("gainers"):
-
         data = svc._movers_cache.get("gainers")
-
         if data:
-
             logger.info("Screener gainers from precomputed cache: %d stocks", len(data))
-
             return {
-
                 "data": data,
-
                 "real_data": True,
-
                 "source": "cache",
-
                 "updated_at": svc._movers_cache.get("updated_at"),
-
             }
-
-    # Fallback to direct cache computation
 
     if svc._market_data:
-
         data = svc._compute_gainers_losers_from_cache("gainers")
-
         if data:
-
             logger.info("Screener gainers from cache: %d stocks", len(data))
-
             return {
-
                 "data": data,
-
                 "real_data": True,
-
                 "source": "cache",
-
                 "updated_at": datetime.now().isoformat(),
-
             }
 
-    # Cache empty — try yFinance batch (with 15s timeout)
-
+    # Durable DB runtime_state check BEFORE network fetch to ensure instant response
     try:
-
-        data = await asyncio.wait_for(
-
-            asyncio.to_thread(fetch_nse_gainers_losers, "gainers"),
-
-            timeout=15.0,
-
-        )
-
-        if data:
-
-            svc._movers_cache["gainers"] = data
-
+        from db.runtime_state import get_runtime_state
+        db_data = await asyncio.to_thread(get_runtime_state, "screener_gainers")
+        if db_data and isinstance(db_data, list) and len(db_data) > 0:
+            logger.info("Screener gainers served from DB runtime_state: %d stocks", len(db_data))
+            svc._movers_cache["gainers"] = db_data
             svc._movers_cache["updated_at"] = datetime.now().isoformat()
+            return {
+                "data": db_data,
+                "real_data": True,
+                "source": "durable_snapshot",
+                "updated_at": datetime.now().isoformat(),
+            }
+    except Exception as exc:
+        logger.debug("Runtime state lookup for gainers failed: %s", exc)
 
+    # Cache & DB empty — run yFinance batch download with 35s timeout
+    try:
+        data = await asyncio.wait_for(
+            asyncio.to_thread(fetch_nse_gainers_losers, "gainers"),
+            timeout=35.0,
+        )
+        if data:
+            svc._movers_cache["gainers"] = data
+            svc._movers_cache["updated_at"] = datetime.now().isoformat()
+            try:
+                from db.runtime_state import set_runtime_state
+                await asyncio.to_thread(set_runtime_state, "screener_gainers", data)
+            except Exception:
+                pass
     except asyncio.TimeoutError:
-
-        logger.warning("Screener gainers timed out (15s) — checking DB fallback")
-
+        logger.warning("Screener gainers timed out (35s) — returning empty fallback")
         data = []
-
     except Exception as e:
-
         logger.error("Screener gainers fetch failed: %s", e)
-
         data = []
-
-    # Durable DB runtime_state fallback if network failed/empty
-
-    if not data:
-
-        try:
-
-            from db.runtime_state import get_runtime_state
-
-            db_data = await asyncio.to_thread(get_runtime_state, "screener_gainers")
-
-            if db_data and isinstance(db_data, list) and len(db_data) > 0:
-
-                logger.info("Screener gainers restored from DB runtime_state: %d stocks", len(db_data))
-
-                data = db_data
-
-                svc._movers_cache["gainers"] = data
-
-        except Exception as exc:
-
-            logger.debug("Runtime state fallback for gainers failed: %s", exc)
 
     return {
-
         "data": data or [],
-
         "real_data": bool(data),
-
         "updated_at": datetime.now().isoformat(),
-
     }
 
 @router.get("/api/screener/losers")
-
 async def screener_losers():
-
     """
-
     Top NSE losers with X-Factor multiplier.
-
-    Primary: fetch from NSE screener API.
-
-    Fallback: compute from svc._market_data cache if API fails/times out.
-
+    1. In-memory movers cache (0ms)
+    2. Direct in-memory market data if available (0ms)
+    3. Durable DB snapshot from runtime_state (20ms)
+    4. On-demand batch fetch with 35s timeout, persisting to DB runtime_state
     """
-
-    # Try precomputed cache first for instant response
-
     if svc._movers_cache.get("losers"):
-
         data = svc._movers_cache.get("losers")
-
         if data:
-
             logger.info("Screener losers from precomputed cache: %d stocks", len(data))
-
             return {
-
                 "data": data,
-
                 "real_data": True,
-
                 "source": "cache",
-
                 "updated_at": svc._movers_cache.get("updated_at"),
-
             }
-
-    # Fallback to direct cache computation
 
     if svc._market_data:
-
         data = svc._compute_gainers_losers_from_cache("losers")
-
         if data:
-
             logger.info("Screener losers from cache: %d stocks", len(data))
-
             return {
-
                 "data": data,
-
                 "real_data": True,
-
                 "source": "cache",
-
                 "updated_at": datetime.now().isoformat(),
-
             }
 
-    # Cache empty — try yFinance batch (with 15s timeout)
-
+    # Durable DB runtime_state check BEFORE network fetch
     try:
-
-        data = await asyncio.wait_for(
-
-            asyncio.to_thread(fetch_nse_gainers_losers, "losers"),
-
-            timeout=15.0,
-
-        )
-
-        if data:
-
-            svc._movers_cache["losers"] = data
-
+        from db.runtime_state import get_runtime_state
+        db_data = await asyncio.to_thread(get_runtime_state, "screener_losers")
+        if db_data and isinstance(db_data, list) and len(db_data) > 0:
+            logger.info("Screener losers served from DB runtime_state: %d stocks", len(db_data))
+            svc._movers_cache["losers"] = db_data
             svc._movers_cache["updated_at"] = datetime.now().isoformat()
+            return {
+                "data": db_data,
+                "real_data": True,
+                "source": "durable_snapshot",
+                "updated_at": datetime.now().isoformat(),
+            }
+    except Exception as exc:
+        logger.debug("Runtime state lookup for losers failed: %s", exc)
 
+    # Cache & DB empty — run yFinance batch download with 35s timeout
+    try:
+        data = await asyncio.wait_for(
+            asyncio.to_thread(fetch_nse_gainers_losers, "losers"),
+            timeout=35.0,
+        )
+        if data:
+            svc._movers_cache["losers"] = data
+            svc._movers_cache["updated_at"] = datetime.now().isoformat()
+            try:
+                from db.runtime_state import set_runtime_state
+                await asyncio.to_thread(set_runtime_state, "screener_losers", data)
+            except Exception:
+                pass
     except asyncio.TimeoutError:
-
-        logger.warning("Screener losers timed out (15s) — checking DB fallback")
-
+        logger.warning("Screener losers timed out (35s) — returning empty fallback")
         data = []
-
     except Exception as e:
-
         logger.error("Screener losers fetch failed: %s", e)
-
         data = []
-
-    # Durable DB runtime_state fallback if network failed/empty
-
-    if not data:
-
-        try:
-
-            from db.runtime_state import get_runtime_state
-
-            db_data = await asyncio.to_thread(get_runtime_state, "screener_losers")
-
-            if db_data and isinstance(db_data, list) and len(db_data) > 0:
-
-                logger.info("Screener losers restored from DB runtime_state: %d stocks", len(db_data))
-
-                data = db_data
-
-                svc._movers_cache["losers"] = data
-
-        except Exception as exc:
-
-            logger.debug("Runtime state fallback for losers failed: %s", exc)
 
     return {
-
         "data": data or [],
-
         "real_data": bool(data),
-
         "updated_at": datetime.now().isoformat(),
-
     }
 
 @router.get("/api/sectors")
-
 async def sector_heatmap():
-
     """
-
     Sectoral performance heatmap data.
-
-    Cache-first: compute from svc._market_data for instant response.
-
-    Fallback: fetch from yFinance if cache is empty.
-
+    1. In-memory cache from svc._market_data (0ms)
+    2. Durable DB snapshot from runtime_state (20ms)
+    3. Batch yFinance download across sector proxies (2-3s)
     """
-
-    # Try cache first for instant response
-
     if svc._market_data:
-
         sectors = svc._compute_sectors_from_cache()
-
         if sectors:
-
             logger.info("Sector heatmap from cache: %d sectors", len(sectors))
-
             return {
-
                 "sectors": sectors,
-
                 "real_data": True,
-
                 "source": "cache",
-
                 "updated_at": datetime.now().isoformat(),
-
             }
 
-    # Cache empty — try yFinance (with short timeout)
+    # Check durable DB snapshot first
+    try:
+        from db.runtime_state import get_runtime_state
+        db_sectors = await asyncio.to_thread(get_runtime_state, "sector_heatmap")
+        if db_sectors and isinstance(db_sectors, list) and len(db_sectors) > 0:
+            return {
+                "sectors": db_sectors,
+                "real_data": True,
+                "source": "durable_snapshot",
+                "updated_at": datetime.now().isoformat(),
+            }
+    except Exception as exc:
+        logger.debug("Runtime state lookup for sectors failed: %s", exc)
 
     try:
-
         sectors = await asyncio.wait_for(
-
             asyncio.to_thread(fetch_sector_performance),
-
-            timeout=8.0,
-
+            timeout=20.0,
         )
-
     except asyncio.TimeoutError:
-
-        logger.warning("Sector fetch timed out (8s)")
-
+        logger.warning("Sector fetch timed out (20s)")
         sectors = []
-
     except Exception as e:
-
         logger.error("Sector fetch failed: %s", e)
-
         sectors = []
 
     return {
-
         "sectors": sectors or [],
-
         "real_data": bool(sectors),
-
         "updated_at": datetime.now().isoformat(),
-
     }
 
 @router.get("/api/analytics/scorecard")

@@ -828,10 +828,9 @@ def fetch_nse_gainers_losers(mode: str = "gainers", force_refresh: bool = False)
 
 def fetch_sector_performance() -> list[dict]:
     """
-    Fetch real sector performance using index proxies.
-    Uses sector ETFs / representative stocks.
+    Fetch real sector performance using index proxies in a SINGLE batch download.
+    Caches to DB runtime_state for durable instant fallback.
     """
-    # Sector proxy symbols on NSE
     SECTOR_PROXIES = {
         "IT":       ["TCS.NS", "INFY.NS", "WIPRO.NS"],
         "Finance":  ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS"],
@@ -852,41 +851,78 @@ def fetch_sector_performance() -> list[dict]:
         "Consumer": "🛍️", "Realty": "🏢", "Media": "📺",
     }
 
+    unique_tickers = list({t for tickers in SECTOR_PROXIES.values() for t in tickers})
     sectors = []
-    for sector_name, tickers in SECTOR_PROXIES.items():
-        changes = []
-        for ticker in tickers:
-            try:
-                raw = yf.Ticker(ticker).history(period="2d", interval="1d", auto_adjust=True)
-                if raw.empty or len(raw) < 2:
-                    continue
-                df = _normalise_df(raw)
-                if df.empty or len(df) < 2:
-                    continue
-                pct = (df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2] * 100
-                changes.append(float(pct))
-            except Exception:
-                continue
 
-        if not changes:
-            # Skip sectors where no proxy data was fetched — never show random data
-            logger.debug("Skipping sector %s — no real data available", sector_name)
-            continue
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            raw = yf.download(
+                unique_tickers,
+                period="2d",
+                interval="1d",
+                progress=False,
+                auto_adjust=True,
+                group_by="ticker",
+            )
 
-        pct_change = round(np.mean(changes), 2)
-        total_stocks = len(tickers) * 3
-        adv = int(total_stocks * max(0.1, (pct_change + 3.5) / 7.0))
-        dec = total_stocks - adv
+        if raw is not None and not raw.empty:
+            for sector_name, tickers in SECTOR_PROXIES.items():
+                changes = []
+                for ticker in tickers:
+                    try:
+                        if isinstance(raw.columns, pd.MultiIndex):
+                            if ticker in raw.columns.get_level_values(0):
+                                sub = raw.xs(ticker, axis=1, level=0)
+                            elif ticker in raw.columns.get_level_values(1):
+                                sub = raw.xs(ticker, axis=1, level=1)
+                            else:
+                                continue
+                        else:
+                            sub = raw
+                        sub = sub.dropna(subset=["Close"])
+                        if len(sub) >= 2 and float(sub["Close"].iloc[-2]) > 0:
+                            c1 = float(sub["Close"].iloc[-1])
+                            c0 = float(sub["Close"].iloc[-2])
+                            changes.append((c1 - c0) / c0 * 100)
+                    except Exception:
+                        continue
 
-        sectors.append({
-            "name": sector_name,
-            "pct_change": pct_change,
-            "stocks": total_stocks,
-            "adv": adv,
-            "dec": dec,
-            "icons": SECTOR_ICONS.get(sector_name, "📊"),
-            "real_data": True,
-        })
+                if changes:
+                    pct_change = round(float(np.mean(changes)), 2)
+                    total_stocks = len(tickers) * 3
+                    adv = int(total_stocks * max(0.1, (pct_change + 3.5) / 7.0))
+                    dec = total_stocks - adv
+                    sectors.append({
+                        "name": sector_name,
+                        "pct_change": pct_change,
+                        "stocks": total_stocks,
+                        "adv": adv,
+                        "dec": dec,
+                        "icons": SECTOR_ICONS.get(sector_name, "📊"),
+                        "real_data": True,
+                    })
+
+            if sectors:
+                try:
+                    from db.runtime_state import set_runtime_state
+                    set_runtime_state("sector_heatmap", sectors)
+                except Exception as exc:
+                    logger.debug("Failed to persist sector_heatmap: %s", exc)
+                return sectors
+
+    except Exception as exc:
+        logger.error("Batch sector download failed: %s", exc)
+
+    # Fallback to DB runtime_state if network failed or empty
+    try:
+        from db.runtime_state import get_runtime_state
+        saved = get_runtime_state("sector_heatmap")
+        if saved and isinstance(saved, list) and len(saved) > 0:
+            logger.info("Serving sector_heatmap from DB fallback (%d sectors)", len(saved))
+            return list(saved)
+    except Exception as exc:
+        logger.debug("Failed to read sector_heatmap fallback: %s", exc)
 
     return sectors
 
