@@ -29,7 +29,10 @@ export default {
       // Check Edge Cache for GET requests
       const isGet = request.method === "GET";
       const cache = caches.default;
-      const cacheKey = new Request(targetUrl.toString(), request);
+      // cacheKey must use the Worker's own request URL for Cloudflare edge cache persistence
+      const cacheKey = new Request(request.url, {
+        method: "GET"
+      });
 
       if (isGet) {
         const cachedResponse = await cache.match(cacheKey);
@@ -43,17 +46,22 @@ export default {
       }
 
       // Forward request to Render Origin
+      const originHeaders = new Headers(request.headers);
+      originHeaders.set("Host", BACKEND_HOST);
+      // Remove any client caching bypass headers so origin isn't forced to recompute unnecessarily
+      originHeaders.delete("if-none-match");
+      originHeaders.delete("if-modified-since");
+
       const originRequest = new Request(targetUrl, {
         method: request.method,
-        headers: request.headers,
+        headers: originHeaders,
         body: request.method !== "GET" && request.method !== "HEAD" ? request.body : undefined,
         redirect: "follow",
       });
-      originRequest.headers.set("Host", BACKEND_HOST);
 
-      let response;
+      let originResponse;
       try {
-        response = await fetch(originRequest);
+        originResponse = await fetch(originRequest);
       } catch (err) {
         return new Response(JSON.stringify({ error: "Backend origin unavailable", detail: String(err) }), {
           status: 502,
@@ -64,19 +72,33 @@ export default {
         });
       }
 
-      // Clone response to inspect and cache
-      const responseToReturn = new Response(response.body, response);
-      responseToReturn.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
-      responseToReturn.headers.set("Access-Control-Allow-Origin", "*");
-
       // Cache eligible GET responses with 200 OK status
-      if (isGet && response.status === 200) {
-        responseToReturn.headers.set("CF-Cache-Status", "MISS");
-        // Store in Cloudflare Edge Cache if response allows caching
-        ctx.waitUntil(cache.put(cacheKey, responseToReturn.clone()));
+      const cacheControl = originResponse.headers.get("cache-control") || "";
+      const isCacheable = isGet && originResponse.status === 200 && (
+        cacheControl.includes("public") ||
+        url.pathname.startsWith("/api/overview/") ||
+        url.pathname.startsWith("/api/signals/")
+      );
+
+      if (isCacheable) {
+        const responseToCache = originResponse.clone();
+        const cacheHeaders = new Headers(responseToCache.headers);
+        if (!cacheControl.includes("public")) {
+          cacheHeaders.set("Cache-Control", "public, max-age=5, s-maxage=15, stale-while-revalidate=30");
+        }
+        const cachedRes = new Response(responseToCache.body, {
+          status: responseToCache.status,
+          statusText: responseToCache.statusText,
+          headers: cacheHeaders,
+        });
+        ctx.waitUntil(cache.put(cacheKey, cachedRes));
       }
 
-      return responseToReturn;
+      const clientResponse = new Response(originResponse.body, originResponse);
+      clientResponse.headers.set("CF-Cache-Status", isCacheable ? "MISS" : "BYPASS");
+      clientResponse.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+      clientResponse.headers.set("Access-Control-Allow-Origin", "*");
+      return clientResponse;
     }
 
     // 2. Fallback to Static Asset delivery
