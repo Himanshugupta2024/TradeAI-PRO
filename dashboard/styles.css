@@ -2749,3 +2749,41 @@ body::before {
         font-size: 1.18rem;
     }
 }
+
+
+/* Light Theme adaptations for More Menu Hub */
+[data-theme="light"] .more-menu {
+    background: #ffffff !important;
+    border-top: 1px solid #e2e8f0 !important;
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.15) !important;
+}
+[data-theme="light"] .more-menu-title {
+    color: #0f172a !important;
+}
+[data-theme="light"] .more-menu-subtitle {
+    color: #64748b !important;
+}
+[data-theme="light"] .more-menu-close {
+    background: #f1f5f9 !important;
+    border-color: #cbd5e1 !important;
+    color: #475569 !important;
+}
+[data-theme="light"] .more-menu-item {
+    background: #f8fafc !important;
+    border: 1px solid #e2e8f0 !important;
+}
+[data-theme="light"] .more-menu-item:hover {
+    background: #eff6ff !important;
+    border-color: #3b82f6 !important;
+}
+[data-theme="light"] .more-menu-item-name {
+    color: #0f172a !important;
+}
+[data-theme="light"] .more-menu-item-desc {
+    color: #64748b !important;
+}
+[data-theme="light"] .more-menu-disclaimer {
+    background: #f8fafc !important;
+    border-color: #e2e8f0 !important;
+    color: #64748b !important;
+}
