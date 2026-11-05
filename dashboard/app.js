@@ -43,8 +43,10 @@ const API = (() => {
         return 'http://127.0.0.1:8000';
     }
     const host = window.location.hostname;
+    if (host.endsWith('workers.dev')) {
+        return '';
+    }
     if (
-        host.endsWith('workers.dev') ||
         host.endsWith('pages.dev') ||
         host.endsWith('vercel.app') ||
         host.includes('tradeai')
