@@ -8705,7 +8705,7 @@ async def get_crypto_prediction(timeframe: str = Query(default="1h")):
 
         if avg_l == 0:
 
-            return 100.0
+            return 100.0 if avg_g > 0 else 50.0
 
         rs = avg_g / avg_l
 

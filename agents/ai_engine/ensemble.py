@@ -120,16 +120,18 @@ class _ModelPerformanceTracker:
 
         try:
             import sqlite3
-            conn = sqlite3.connect("trading.db")
+            conn = sqlite3.connect(str(_db_path()))
             c = conn.cursor()
-            rows = c.execute("SELECT result FROM trade_outcomes ORDER BY id DESC LIMIT 50").fetchall()
+            rows = c.execute(
+                "SELECT model_name, predicted, actual FROM model_performance ORDER BY id DESC LIMIT 200"
+            ).fetchall()
             if rows:
                 for r in reversed(rows):
-                    is_win = 1 if r[0] == "WIN" else 0
-                    for m in self._history:
-                        self._history[m].append(is_win)
+                    m_name, pred, act = str(r[0]), str(r[1]), str(r[2])
+                    if m_name in self._history and pred in ("UP", "DOWN") and act in ("UP", "DOWN"):
+                        self._history[m_name].append(int(pred == act))
         except Exception as e:
-            log.debug("Could not restore model performance history: %s", e)
+            log.debug("Could not restore model performance history from SQLite: %s", e)
 
     def record(self, model_name: str, predicted_up: bool, actual_up: bool):
         """Record a prediction outcome for a model."""
@@ -878,7 +880,12 @@ def get_model_status() -> dict:
     except Exception:
         pass
 
-    lstm_fitted = os.path.exists("models/best_model.pt")
+    lstm_fitted = False
+    try:
+        from agents.ai_engine.lstm_model import is_lstm_available
+        lstm_fitted = is_lstm_available(model_path="models/best_model.pt", input_size=13)
+    except Exception:
+        pass
 
     logit_fitted = False
     try:

@@ -447,7 +447,7 @@ class PaperTradingEngine:
                 return None
 
         # Risk check: portfolio heat (projected risk after this trade)
-        projected_heat = self._projected_portfolio_heat_pct(entry, sl, qty)
+        projected_heat = self._projected_portfolio_heat_pct(entry, sl, qty, fx_rate=fx_rate)
         if projected_heat > settings.MAX_PORTFOLIO_HEAT_PCT:
             self.last_rejection_reason = (
                 f"Portfolio heat {projected_heat * 100:.2f}% exceeds max {settings.MAX_PORTFOLIO_HEAT_PCT * 100:.2f}%"
@@ -887,17 +887,19 @@ class PaperTradingEngine:
         }
 
     def get_portfolio_heat_pct(self) -> float:
-        """Current portfolio heat = open risk / capital (protects trailing-profit positions)."""
+        """Current portfolio heat = open risk (converted to base currency) / capital."""
         if self.capital <= 0:
             return 0.0
-        open_risk = 0.0
+        open_risk_base = 0.0
         for trade in self.open_trades:
             if trade.direction in ("LONG", "BUY"):
                 risk_per_unit = max(trade.entry_price - trade.stop_loss, 0.0)
             else:
                 risk_per_unit = max(trade.stop_loss - trade.entry_price, 0.0)
-            open_risk += risk_per_unit * max(trade.quantity, 0.0)
-        return max(open_risk / self.capital, 0.0)
+            native_risk = risk_per_unit * max(trade.quantity, 0.0)
+            fx = float(getattr(trade, "fx_rate_entry", 1.0) or 1.0)
+            open_risk_base += native_risk * fx
+        return max(open_risk_base / self.capital, 0.0)
 
     def get_risk_state(self) -> dict:
         """Expose live risk guard state for API consumers."""
@@ -1003,12 +1005,13 @@ class PaperTradingEngine:
             return round(qty * 0.5, 6)
         return qty
 
-    def _projected_portfolio_heat_pct(self, entry: float, stop_loss: float, qty: float) -> float:
+    def _projected_portfolio_heat_pct(self, entry: float, stop_loss: float, qty: float, fx_rate: float = 1.0) -> float:
         if self.capital <= 0:
             return 1.0
-        existing_risk = self.get_portfolio_heat_pct() * self.capital
-        new_risk = abs(entry - stop_loss) * max(qty, 0.0)
-        return max((existing_risk + new_risk) / self.capital, 0.0)
+        existing_risk_base = self.get_portfolio_heat_pct() * self.capital
+        new_risk_native = abs(entry - stop_loss) * max(qty, 0.0)
+        new_risk_base = new_risk_native * fx_rate
+        return max((existing_risk_base + new_risk_base) / self.capital, 0.0)
 
     @staticmethod
     def _trade_total_pnl(trade: PaperTrade) -> float:
@@ -1045,19 +1048,33 @@ class PaperTradingEngine:
         if close_qty <= 0:
             return False
 
-        realized = pnl_per_unit * close_qty
+        realized_native = pnl_per_unit * close_qty
         trade.partial_taken = True
         trade.partial_exit_price = trigger
         trade.partial_exit_time = _now_ist_isoformat()
         trade.partial_closed_qty = close_qty
-        trade.realized_pnl += realized
+        trade.realized_pnl_native = float(getattr(trade, "realized_pnl_native", 0.0) or 0.0) + realized_native
+        trade.total_pnl_native = trade.realized_pnl_native
+
+        from agents.execution.currency import FXRateService, to_decimal, quantize_inr
+        try:
+            fx_rec = FXRateService.get_instance().get_fx_rate(
+                getattr(trade, "quote_currency", "INR"),
+                getattr(trade, "base_currency", "INR"),
+            )
+            fx_rate_partial = float(fx_rec.rate)
+        except Exception:
+            fx_rate_partial = float(getattr(trade, "fx_rate_entry", 1.0) or 1.0)
+
+        realized_base = float(quantize_inr(to_decimal(realized_native) * to_decimal(fx_rate_partial)))
+        trade.realized_pnl = float(getattr(trade, "realized_pnl", 0.0) or 0.0) + realized_base
         trade.total_pnl = trade.realized_pnl
         trade.quantity = max(0.0, trade.quantity - close_qty)
 
-        # Capital/equity updates for realized partial leg.
-        self.capital += realized
+        # Capital/equity updates in base currency INR
+        self.capital += realized_base
         today = _today_ist()
-        self._daily_pnl[today] = self._daily_pnl.get(today, 0.0) + realized
+        self._daily_pnl[today] = self._daily_pnl.get(today, 0.0) + realized_base
         self.equity_history.append({
             "timestamp": trade.partial_exit_time,
             "equity": round(self.capital, 2),
@@ -1079,7 +1096,7 @@ class PaperTradingEngine:
             trade.id,
             trigger,
             close_qty,
-            realized,
+            realized_base,
             trade.quantity,
         )
         return True
@@ -1313,20 +1330,21 @@ class PaperTradingEngine:
             raise RuntimeError(f"Database error while loading paper trading state: {dse}") from dse
 
         if data is None:
-            legacy_key = f"paper_trading_state:{os.path.abspath(self.log_file)}"
-            try:
-                legacy_data = get_runtime_state(legacy_key)
-            except DatabaseStateError as dse:
-                log.critical("Failed to read legacy paper trading state due to DB error: %s", dse)
-                raise RuntimeError(f"Database error while reading legacy paper trading state: {dse}") from dse
-
-            if isinstance(legacy_data, dict):
-                data = legacy_data
+            if self.log_file:
+                legacy_key = f"paper_trading_state:{os.path.abspath(self.log_file)}"
                 try:
-                    set_runtime_state(self._state_key, data)
-                    log.info("Migrated paper trading state to logical key: %s", self._state_key)
-                except Exception as m_err:
-                    log.warning("Could not persist migrated state: %s", m_err)
+                    legacy_data = get_runtime_state(legacy_key)
+                except DatabaseStateError as dse:
+                    log.critical("Failed to read legacy paper trading state due to DB error: %s", dse)
+                    raise RuntimeError(f"Database error while reading legacy paper trading state: {dse}") from dse
+
+                if isinstance(legacy_data, dict):
+                    data = legacy_data
+                    try:
+                        set_runtime_state(self._state_key, data)
+                        log.info("Migrated paper trading state to logical key: %s", self._state_key)
+                    except Exception as m_err:
+                        log.warning("Could not persist migrated state: %s", m_err)
 
         if isinstance(data, dict):
             try:
@@ -1337,7 +1355,7 @@ class PaperTradingEngine:
                 log.error("Could not load DB paper trading state: %s", exc)
                 raise RuntimeError(f"Corrupt paper trading state in database: {exc}") from exc
 
-        if not os.path.exists(self.log_file):
+        if not self.log_file or not os.path.exists(self.log_file):
             return
 
         try:

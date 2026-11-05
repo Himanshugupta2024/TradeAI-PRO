@@ -34,10 +34,15 @@ def get_current_ist_time() -> datetime:
 def is_nse_market_open(dt: Optional[datetime] = None) -> Tuple[bool, str]:
     """
     Check if the National Stock Exchange (NSE) cash market is currently open.
+    Ensures input datetime is strictly normalized to Asia/Kolkata timezone.
     Returns:
       (True, "SESSION_ACTIVE") or (False, reason)
     """
     now = dt or get_current_ist_time()
+    if now.tzinfo is not None:
+        now = now.astimezone(_IST)
+    else:
+        now = now.replace(tzinfo=_IST)
 
     # 1. Weekend check (Monday = 0, Sunday = 6)
     if now.weekday() >= 5:

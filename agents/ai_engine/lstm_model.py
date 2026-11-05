@@ -8,6 +8,11 @@ When PyTorch is unavailable (Python 3.14), the system falls back to
 the statistical predictor in `fallback_predictor.py`.
 """
 
+import os
+import logging
+
+log = logging.getLogger(__name__)
+
 try:
     import torch
     import torch.nn as nn
@@ -143,5 +148,19 @@ def get_lstm_model(input_size: int, model_path: str = "models/best_model.pt"):
         model.eval()
         _LSTM_CACHE[cache_key] = model
         return model
-    except Exception:
+    except Exception as exc:
+        log.debug("Failed to load LSTM model from %s: %s", model_path, exc)
         return None
+
+
+def is_lstm_available(model_path: str = "models/best_model.pt", input_size: int = 13) -> bool:
+    """Verify that PyTorch is installed, model file exists, and weights load successfully."""
+    if not TORCH_AVAILABLE:
+        return False
+    if not os.path.exists(model_path):
+        return False
+    try:
+        model = get_lstm_model(input_size=input_size, model_path=model_path)
+        return model is not None
+    except Exception:
+        return False

@@ -39,6 +39,8 @@ def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
     rsi = 100.0 - (100.0 / (1.0 + rs))
     zero_loss_mask = (avg_loss == 0) & (avg_gain > 0)
     rsi = rsi.where(~zero_loss_mask, 100.0)
+    flat_mask = (avg_loss == 0) & (avg_gain == 0) & avg_gain.notna()
+    rsi = rsi.where(~flat_mask, 50.0)
     return rsi
 
 

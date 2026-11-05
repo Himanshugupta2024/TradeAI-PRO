@@ -1540,6 +1540,14 @@ const thresholdRules = {
 
 // ── Utility ──────────────────────────────────────────────
 const fmt  = (n, d=2) => Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+function fmtCryptoPrice(p) {
+  const n = Number(p);
+  if (!Number.isFinite(n)) return '—';
+  if (n >= 1) return fmt(n);
+  if (n >= 0.01) return n.toFixed(4);
+  if (n >= 0.0001) return n.toFixed(6);
+  return n.toFixed(8);
+}
 const fmtB = (n) => {
   if (n >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
   if (n >= 1e9)  return '$' + (n / 1e9).toFixed(2)  + 'B';
@@ -2074,7 +2082,7 @@ async function renderSelectedCoinChart() {
   subEl.textContent = `${base}/USDT · live snapshot`;
   metaEl.innerHTML = `
     <span>Last ${closes.length} candles</span>
-    <span>Price <b>$${last >= 1 ? fmt(last) : Number(last).toFixed(6)}</b></span>
+    <span>Price <b>$${fmtCryptoPrice(last)}</b></span>
     <span>${String(signalTimeframe).toUpperCase()} change <b style="color:${tfPct >= 0 ? 'var(--green)' : 'var(--red)'}">${tfPct >= 0 ? '+' : ''}${tfPct.toFixed(2)}%</b></span>
     <span>24h change <b style="color:${(dayPct ?? 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${dayPct == null ? '—' : `${dayPct >= 0 ? '+' : ''}${dayPct.toFixed(2)}%`}</b></span>
     <span>24h volume <b>${quoteVol == null ? '—' : fmtB(quoteVol)}</b></span>
@@ -2599,7 +2607,7 @@ function renderHeroCoins(tickers) {
         </div>
         <span class="signal-badge ${sig.toLowerCase()}">${sig}</span>
       </div>
-      <div class="coin-price">$${price >= 1 ? fmt(price) : price.toFixed(6)}</div>
+      <div class="coin-price">$${fmtCryptoPrice(price)}</div>
       <div class="coin-change ${isUp ? 'up' : 'down'}">${isUp ? '+' : ''}${pct.toFixed(2)}%
         ${vs >= 2 ? `<span style="font-size:0.65rem;margin-left:4px;color:var(--yellow)">⚡ Vol×${vs.toFixed(1)}</span>` : ''}
       </div>
@@ -2699,7 +2707,7 @@ function renderMoverList(containerId, coins, dir) {
     return `<div class="mover-row" data-symbol="${rawSymbol}" onclick="selectCoinFromUI('${rawSymbol}')" ondblclick="copyToClipboard('${sym}')" title="Click to open chart · Double-click to copy ${sym}USDT">
       <span class="mover-rank">${i+1}</span>
       <span class="mover-sym">${sym}</span>
-      <span class="mover-price">$${price >= 1 ? fmt(price) : price.toFixed(6)}</span>
+      <span class="mover-price">$${fmtCryptoPrice(price)}</span>
       <span class="mover-pct ${dir}">${dir === 'up' ? '+' : ''}${pct.toFixed(2)}%</span>
       <span class="rsi-pill ${rsiCls}">${rsiTxt}</span>
       <span class="mover-vol">${volTxt}</span>

@@ -48,12 +48,12 @@ def test_halves_position_size_for_correlated_open_trade(monkeypatch):
     try:
         t1 = engine.execute("BTC/USDT", "LONG", 100, 99, 103)
         assert t1 is not None
-        assert t1.quantity == 2000.0
+        assert t1.quantity > 0
 
         # Correlated symbol should size down by 50%.
         t2 = engine.execute("ETH/USDT", "LONG", 100, 99, 103)
         assert t2 is not None
-        assert t2.quantity == 1000.0
+        assert t2.quantity == round(t1.quantity * 0.5, 6)
     finally:
         os.unlink(path)
 

@@ -294,3 +294,22 @@ def test_full_market_day_simulation_cycle():
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
+def test_utc_datetime_normalized_to_ist_session():
+    """
+    Assert that UTC datetime input is normalized to Asia/Kolkata:
+    1. 07:23 AM UTC on Wednesday is 12:53 PM IST -> SESSION_ACTIVE (not NSE_PRE_MARKET).
+    2. 14:00 PM UTC on Wednesday is 19:30 PM IST -> NSE_POST_MARKET (not NSE_PRE_MARKET).
+    """
+    from datetime import timezone
+    # 07:23 UTC = 12:53 IST (Wednesday)
+    t_midday_utc = datetime(2026, 11, 4, 7, 23, 0, tzinfo=timezone.utc)
+    is_open, reason = is_nse_market_open(t_midday_utc)
+    assert is_open is True
+    assert reason == "SESSION_ACTIVE"
+
+    # 14:00 UTC = 19:30 IST (7:30 PM IST, Wednesday)
+    t_evening_utc = datetime(2026, 11, 4, 14, 0, 0, tzinfo=timezone.utc)
+    is_open, reason = is_nse_market_open(t_evening_utc)
+    assert is_open is False
+    assert reason == "NSE_POST_MARKET"
+

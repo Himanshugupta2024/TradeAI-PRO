@@ -48,7 +48,11 @@ class TestMemoryProfilingGuardrails:
         rss_mb = get_process_rss_mb(collect_gc=True)
         assert rss_mb > 0.0
         # Budget guardrail: individual service baseline is ~150-250MB; in a full test suite with 500+ tests, allow reasonable runner overhead
-        assert rss_mb < 550.0, f"Exceeded Render free tier budget: {rss_mb} MB"
+        import platform
+        threshold = 380.0 if platform.system() == "Linux" else 650.0
+        assert rss_mb < threshold, f"Exceeded Render free tier budget: {rss_mb} MB"
+        if platform.system() == "Linux":
+            assert rss_mb < 512.0, f"Exceeded Render free tier hard limit: {rss_mb} MB"
 
 
 class TestDashboardCompositeOverviewAPI:

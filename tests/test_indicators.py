@@ -89,3 +89,30 @@ class TestCalculateIndicators:
         original_close = df["close"].copy()
         result = calculate_indicators(df)
         pd.testing.assert_series_equal(result["close"], original_close)
+    def test_rsi_explicit_warmup_monotonic_rising_falling_and_flat(self):
+        """
+        Wilder's RSI mathematical edge cases:
+        1. Pure rising series -> 100.0 after warmup, NaNs during warmup.
+        2. Pure falling series -> 0.0 after warmup, NaNs during warmup.
+        3. Pure flat series -> 50.0 after warmup, NaNs during warmup.
+        """
+        from agents.feature_engine.indicators import _rsi
+        
+        # 1. Monotonic rising
+        s_rise = pd.Series(range(1, 31), dtype=float)
+        rsi_rise = _rsi(s_rise, period=14)
+        assert rsi_rise.iloc[:13].isna().all(), "Warmup period must contain NaNs"
+        assert (rsi_rise.iloc[13:] == 100.0).all(), "Monotonically rising price RSI must be 100.0"
+
+        # 2. Monotonic falling
+        s_fall = pd.Series(range(30, 0, -1), dtype=float)
+        rsi_fall = _rsi(s_fall, period=14)
+        assert rsi_fall.iloc[:13].isna().all(), "Warmup period must contain NaNs"
+        assert (rsi_fall.iloc[13:] == 0.0).all(), "Monotonically falling price RSI must be 0.0"
+
+        # 3. Monotonic flat
+        s_flat = pd.Series([100.0] * 30, dtype=float)
+        rsi_flat = _rsi(s_flat, period=14)
+        assert rsi_flat.iloc[:13].isna().all(), "Warmup period must contain NaNs"
+        assert (rsi_flat.iloc[13:] == 50.0).all(), "Flat price RSI must be neutral 50.0"
+

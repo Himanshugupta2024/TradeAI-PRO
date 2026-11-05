@@ -122,6 +122,10 @@ def record_autonomous_decision_to_db(
                     meta_json=meta_json,
                 )
                 session.add(record)
+            elif action in ("MARKET_CLOSED", "SYSTEM_STANDBY"):
+                existing.timestamp = now
+                existing.run_id = run_id
+                existing.reason = reason
     except Exception as exc:
         log.warning("[Idempotency] Database persist error for decision %s: %s", signal_id, exc)
     finally:

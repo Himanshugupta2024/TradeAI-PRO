@@ -3035,7 +3035,7 @@ async function loadAllData({ background = false } = {}) {
 
 
 
-        renderOverviewActiveTrades(openTradesResult.value.open_trades || []);
+        renderOverviewActiveTrades(openTradesResult.value.open_trades || [], openTradesResult.value.summary || {});
 
 
 
@@ -6661,106 +6661,50 @@ function exportDecisionPackJson() {
     showToast(`Exported ${activeList.length} signals to JSON`, 'success');
 }
 
+function sanitizeCsvCell(v) {
+    if (v == null) return '';
+    if (typeof v === 'number' && Number.isFinite(v)) {
+        return String(v);
+    }
+    let s = String(v).trim();
+    if (!isNaN(Number(s)) && !isNaN(parseFloat(s))) {
+        return s;
+    }
+    if (/^[=+\-@\t\r]/.test(s)) {
+        s = "'" + s;
+    }
+    if (/[",\n\r]/.test(s)) {
+        return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+}
+
 function exportDecisionPackCsv() {
+    const activeList = (window._lastFilteredSignals && window._lastFilteredSignals.length > 0)
+        ? window._lastFilteredSignals
+        : ((_lastCockpitData && _lastCockpitData.top_setups) ? _lastCockpitData.top_setups : []);
 
-
-
-    const setups = (_lastCockpitData && _lastCockpitData.top_setups) ? _lastCockpitData.top_setups : [];
-
-
-
-    if (!setups.length) {
-
-
-
-        showToast('No top setups to export yet.', 'info');
-
-
-
+    if (!activeList.length) {
+        showToast('No signals or cockpit data to export yet.', 'info');
         return;
-
-
-
     }
 
-
-
-    const escCell = v => {
-
-
-
-        const s = String(v ?? '');
-
-
-
-        if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-
-
-
-        return s;
-
-
-
-    };
-
-
-
     const headers = ['symbol', 'signal', 'quality_score', 'confidence', 'composite_rank', 'confluence_score', 'thesis'];
-
-
-
     const rows = [headers.join(',')];
 
-
-
-    setups.forEach(s => {
-
-
-
+    activeList.forEach(s => {
         rows.push([
-
-
-
-            escCell(s.symbol),
-
-
-
-            escCell(s.signal),
-
-
-
-            s.quality_score,
-
-
-
-            s.confidence,
-
-
-
-            s.composite_rank,
-
-
-
-            s.confluence_score != null ? s.confluence_score : '',
-
-
-
-            escCell(s.thesis || ''),
-
-
-
+            sanitizeCsvCell(s.symbol),
+            sanitizeCsvCell(s.signal || s.direction),
+            sanitizeCsvCell(s.quality_score),
+            sanitizeCsvCell(s.confidence),
+            sanitizeCsvCell(s.composite_rank || s.rank),
+            sanitizeCsvCell(s.confluence_score != null ? s.confluence_score : (s.score != null ? s.score : '')),
+            sanitizeCsvCell(s.thesis || s.why_ranked || s.rationale || ''),
         ].join(','));
-
-
-
     });
 
-
-
     const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
-
-
-
     const a = document.createElement('a');
 
 
@@ -7700,7 +7644,7 @@ async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, s
 
 
 
-function renderOverviewActiveTrades(openTrades) {
+function renderOverviewActiveTrades(openTrades, summary) {
     _lastOpenTrades = Array.isArray(openTrades) ? openTrades : [];
     const card = document.getElementById('overviewActiveTradesCard');
     const badge = document.getElementById('overviewOpenCountBadge');
@@ -7713,7 +7657,16 @@ function renderOverviewActiveTrades(openTrades) {
     }
 
     card.style.display = 'block';
-    if (badge) badge.textContent = `${openTrades.length} Open`;
+    const missingCount = (summary && summary.missing_quotes_count) || openTrades.filter(t => t.is_entry_fallback).length;
+    if (badge) {
+        if (missingCount > 0) {
+            badge.innerHTML = `${openTrades.length} Open <span style="color:#f59e0b;font-weight:700;">(⚠️ ${missingCount} Unquoted)</span>`;
+            badge.title = `${missingCount} trade(s) using entry reference price due to unquoted live feed`;
+        } else {
+            badge.textContent = `${openTrades.length} Open`;
+            badge.title = 'All open positions valued with live market quotes';
+        }
+    }
 
     list.innerHTML = openTrades.map(t => {
         const isLong = t.direction === 'LONG' || t.direction === 'BUY';
@@ -7722,6 +7675,7 @@ function renderOverviewActiveTrades(openTrades) {
         const sl = Number(t.stop_loss || 0);
         const tp = Number(t.target || 0);
         const qty = Number(t.quantity || 1);
+        const isFallback = Boolean(t.is_entry_fallback);
 
         // Resolve current price from ticket or cached marketData
         const cachedTick = marketDataCache[t.symbol];
@@ -7746,12 +7700,20 @@ function renderOverviewActiveTrades(openTrades) {
         }
 
         const currSym = _symCurr(t.symbol);
+        const fallbackBadge = isFallback
+            ? `<span class="pos-fallback-badge" style="font-size:0.65rem;font-weight:700;color:#f59e0b;background:rgba(245,158,11,0.15);padding:1px 5px;border-radius:4px;border:1px solid rgba(245,158,11,0.3);margin-left:6px;" title="Real-time quote unavailable. Entry price used as reference.">⚠️ Unquoted Ref</span>`
+            : '';
+        const statusPulse = isFallback
+            ? `<span class="pos-status-pulse" style="color:#f59e0b;">⚠️ UNQUOTED REF</span>`
+            : `<span class="pos-status-pulse">● RUNNING</span>`;
+
         return `
             <div class="pos-ticket ${sideClass}" data-symbol="${t.symbol}" data-id="${t.id}" data-entry="${entry}" data-qty="${qty}" data-dir="${t.direction}" data-tp="${tp}" data-sl="${sl}" onclick="openPositionDetail(${t.id})" style="cursor:pointer;" title="Click to view full position details">
                 <div class="pos-ticket-top">
                     <div class="pos-symbol-group">
                         <span class="pos-dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${t.direction}</span>
                         <span class="pos-symbol-name">${t.symbol}</span>
+                        ${fallbackBadge}
                     </div>
                     <button class="pos-exit-btn" onclick="event.stopPropagation(); closePaperTrade(${t.id}, ${ltp})" type="button">
                         Exit
@@ -7778,7 +7740,7 @@ function renderOverviewActiveTrades(openTrades) {
                 <div class="pos-live-bar">
                     <div class="pos-live-left">
                         <span class="pos-live-lbl">LTP</span>
-                        <span class="pos-live-price" id="posLtp-${t.id}">${currSym}${ltp.toFixed(2)}</span>
+                        <span class="pos-live-price" id="posLtp-${t.id}">${currSym}${ltp.toFixed(2)}${isFallback ? ' <small style="color:#f59e0b;">(Ref)</small>' : ''}</span>
                     </div>
                     <div class="pos-pnl-pill ${pnlClass}" id="posPnlPill-${t.id}">
                         <span id="posPnlVal-${t.id}">${pnlSign}${currSym}${Math.abs(pnl).toFixed(2)}</span>
@@ -7787,7 +7749,7 @@ function renderOverviewActiveTrades(openTrades) {
                 </div>
                 <div class="pos-ticket-footer">
                     <span class="pos-dist-hint" id="posDist-${t.id}">${distText}</span>
-                    <span class="pos-status-pulse">● RUNNING</span>
+                    ${statusPulse}
                 </div>
             </div>
         `;
@@ -7975,6 +7937,12 @@ async function openPositionDetail(tradeId) {
     const bodyEl = document.getElementById('posModalBody');
     if (bodyEl) {
         bodyEl.innerHTML = `
+            ${trade.is_entry_fallback ? `
+            <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.75rem;color:#f59e0b;display:flex;align-items:center;gap:10px;">
+                <span style="font-size:1.1rem;">⚠️</span>
+                <span><strong>Unquoted Entry Fallback:</strong> Real-time quote unavailable. Valuation computed from entry reference price (${currSym}${entry.toFixed(2)}) and will update automatically once market quotes resume.</span>
+            </div>
+            ` : ''}
             <!-- Live P&L Card -->
             <div style="background:${pnlBg};border:1px solid ${pnlBorder};border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
                 <div>
@@ -9261,7 +9229,7 @@ function renderSignals(signals) {
 
 
 
-        const fmtPrice = (v) => { if (v == null) return '—'; const num = Number(v); const digits = (num !== 0 && Math.abs(num) < 0.1) ? 6 : (Math.abs(num) < 10 ? 4 : 2); return `${curr}${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: digits })}`; };
+        const fmtPrice = (v) => { if (v == null) return '—'; const num = Number(v); if (isNaN(num)) return String(v); const digits = (num !== 0 && Math.abs(num) < 0.001) ? 8 : ((num !== 0 && Math.abs(num) < 0.1) ? 6 : (Math.abs(num) < 10 ? 4 : 2)); return `${curr}${num.toLocaleString('en-US', { minimumFractionDigits: digits < 2 ? digits : 2, maximumFractionDigits: digits })}`; };
 
 
 
@@ -10773,7 +10741,14 @@ async function loadPortfolio() {
 
 
 
-        if (openCountEl) openCountEl.textContent = `${portfolio.total_open || 0} open`;
+        if (openCountEl) {
+            const missingQ = portfolio.missing_quotes_count || 0;
+            if (missingQ > 0) {
+                openCountEl.innerHTML = `${portfolio.total_open || 0} open <span style="color:#f59e0b;font-weight:700;">(⚠️ ${missingQ} Unquoted)</span>`;
+            } else {
+                openCountEl.textContent = `${portfolio.total_open || 0} open`;
+            }
+        }
 
 
 
@@ -11038,10 +11013,13 @@ async function loadPortfolio() {
                     const pnlSign = pnl >= 0 ? '+' : '';
                     return `
                         <tr onclick="openPositionDetail(${p.id})" style="cursor:pointer;" title="Click to view detailed position analytics">
-                            <td><b>${p.symbol}</b></td>
+                            <td>
+                                <b>${p.symbol}</b>
+                                ${p.is_entry_fallback ? `<span style="font-size:0.65rem;color:#f59e0b;background:rgba(245,158,11,0.15);padding:1px 4px;border-radius:3px;margin-left:4px;" title="Unquoted entry reference price">⚠️ Ref</span>` : ''}
+                            </td>
                             <td><span class="${sideClass}">${sideText}</span></td>
                             <td>${currSym}${Number(p.entry_price || 0).toFixed(2)}</td>
-                            <td>${currSym}${currentPx.toFixed(2)}</td>
+                            <td>${currSym}${currentPx.toFixed(2)}${p.is_entry_fallback ? ' <small style="color:#f59e0b;">(Ref)</small>' : ''}</td>
                             <td class="${pnlClass}"><b>${pnlSign}${currSym}${Math.abs(pnl).toFixed(2)}</b></td>
                             <td class="${rClass}">${rMult.toFixed(2)}R</td>
                             <td>${heat.toFixed(1)}%</td>
