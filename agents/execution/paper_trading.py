@@ -95,6 +95,10 @@ class PaperTrade:
     rsi_at_entry: float = 0.0       # RSI value at signal bar
     volume_above_avg: bool = False   # was volume > 1.5x avg at entry?
     confidence: float = 0.0         # AI confidence score at signal time
+    # ── Raw vs Final Geometry Audit ───────────────────────────────────────
+    entry_raw: float = 0.0
+    stop_raw: float = 0.0
+    target_raw: float = 0.0
 
 
 class PaperTradingEngine:
@@ -274,11 +278,33 @@ class PaperTradingEngine:
             log.warning("BLOCKED: Invalid direction '%s' for %s", direction, symbol)
             return None
 
-        # Risk check: minimum RR (validated on incoming raw target)
+        from agents.intraday_engine.types import normalize_price_to_tick, format_price_by_magnitude
+
+        entry_raw, sl_raw, tp_raw = float(entry), float(sl), float(tp)
+
+        # Normalize execution prices strictly to instrument/exchange tick rules
         if direction == "LONG":
+            entry = normalize_price_to_tick(symbol, entry_raw, "ROUND")
+            sl = normalize_price_to_tick(symbol, sl_raw, "FLOOR")
+            tp = normalize_price_to_tick(symbol, tp_raw, "CEIL")
+            if not (sl < entry < tp):
+                self.last_rejection_reason = (
+                    f"SKIP_INVALID_GEOMETRY: Stop Loss ({sl}) < Entry ({entry}) < Target ({tp}) required for LONG on {symbol}"
+                )
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
             risk = entry - sl
             reward = tp - entry
-        else:
+        else:  # SHORT
+            entry = normalize_price_to_tick(symbol, entry_raw, "ROUND")
+            sl = normalize_price_to_tick(symbol, sl_raw, "CEIL")
+            tp = normalize_price_to_tick(symbol, tp_raw, "FLOOR")
+            if not (tp < entry < sl):
+                self.last_rejection_reason = (
+                    f"SKIP_INVALID_GEOMETRY: Target ({tp}) < Entry ({entry}) < Stop Loss ({sl}) required for SHORT on {symbol}"
+                )
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
             risk = sl - entry
             reward = entry - tp
 
@@ -307,6 +333,7 @@ class PaperTradingEngine:
         # Regime-aware target scaling for better exit fit across market states.
         target_multiplier = self._target_multiplier_for_regime(regime=regime, direction=direction)
         adjusted_tp = self._scale_target(entry=entry, target=tp, direction=direction, multiplier=target_multiplier)
+        adjusted_tp = normalize_price_to_tick(symbol, adjusted_tp, "CEIL" if direction == "LONG" else "FLOOR")
 
         # Recompute and validate RR after regime target scaling (never allow target to shrink below required RR)
         if direction == "LONG":
@@ -418,6 +445,9 @@ class PaperTradingEngine:
             rsi_at_entry=rsi_at_entry,
             volume_above_avg=volume_above_avg,
             confidence=confidence,
+            entry_raw=entry_raw,
+            stop_raw=sl_raw,
+            target_raw=tp_raw,
         )
 
         self.trades.append(trade)

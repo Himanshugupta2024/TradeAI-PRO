@@ -354,22 +354,33 @@ class TradeJournal:
         )
 
         # ── Overall stats ──
-        wins   = sum(1 for r in resolved if r.outcome == 1)
+        wins = sum(1 for r in resolved if r.outcome == 1)
         losses = sum(1 for r in resolved if r.outcome == -1)
+        timeouts = sum(1 for r in resolved if r.outcome == 0)
+        decided = wins + losses
+        pending = sum(1 for r in self._records if r.outcome == _PENDING)
+
+        resolved_win_rate = round(wins / decided, 4) if decided > 0 else 0.0
+        resolution_rate = round(decided / total, 4) if total > 0 else 0.0
+        sample_status = "SUFFICIENT (n>=30)" if decided >= 30 else "INSUFFICIENT RESOLVED SAMPLE"
 
         return {
             "total_signals":       total,
-            "overall_win_rate":    round(wins / total, 4) if total else 0.0,
+            "resolved":            decided,
+            "pending_count":       pending,
             "wins":                wins,
             "losses":              losses,
-            "timeouts":            total - wins - losses,
+            "timeouts":            timeouts,
+            "resolved_win_rate":   resolved_win_rate,
+            "overall_win_rate":    resolved_win_rate,  # Win rate strictly on resolved outcomes
+            "resolution_rate":     resolution_rate,
+            "sample_status":       sample_status,
             "by_regime":           by_regime,
             "by_symbol":           by_symbol,
             "by_hour":             by_hour,
             "by_confidence":       by_confidence,
             "by_quality_grade":    by_quality_grade,
             "false_signal_reasons": false_reasons_sorted,
-            "pending_count":       sum(1 for r in self._records if r.outcome == _PENDING),
             "generated_at":        datetime.now().isoformat(),
         }
 
@@ -468,12 +479,16 @@ def _group_winrate(
     out = {}
     for k, v in groups.items():
         t = v["total"]
+        decided = v["win"] + v["loss"]
         out[k] = {
-            "win":      v["win"],
-            "loss":     v["loss"],
-            "timeout":  v["timeout"],
-            "total":    t,
-            "win_rate": round(v["win"] / t, 4) if t else 0.0,
+            "win":                  v["win"],
+            "loss":                 v["loss"],
+            "timeout":              v["timeout"],
+            "resolved":             decided,
+            "total":                t,
+            "resolved_win_rate":    round(v["win"] / decided, 4) if decided > 0 else 0.0,
+            "win_rate":             round(v["win"] / decided, 4) if decided > 0 else 0.0,
+            "resolution_rate":      round(decided / t, 4) if t > 0 else 0.0,
         }
     return out
 
@@ -502,7 +517,11 @@ def _infer_false_reason(row, signal: str) -> str:
 def _empty_scorecard() -> dict:
     return {
         "total_signals":        0,
+        "resolved":             0,
         "overall_win_rate":     0.0,
+        "resolved_win_rate":    0.0,
+        "resolution_rate":      0.0,
+        "sample_status":        "NO DATA",
         "wins":                 0,
         "losses":               0,
         "timeouts":             0,

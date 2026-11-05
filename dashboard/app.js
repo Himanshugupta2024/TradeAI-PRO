@@ -7430,28 +7430,14 @@ async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, s
         return Number(p).toFixed(2);
     };
 
-    // Auto-heal collapsed or invalid geometry for penny/crypto tokens
-    if (numEntry > 0) {
-        if (numSl === numEntry || numTp === numEntry || (cleanDir === 'LONG' && numSl >= numEntry) || (cleanDir === 'SHORT' && numSl <= numEntry)) {
-            if (cleanDir === 'LONG' || cleanDir === 'BUY') {
-                numSl = Number((numEntry * 0.985).toFixed(6));
-                numTp = Number((numEntry * 1.030).toFixed(6));
-            } else {
-                numSl = Number((numEntry * 1.015).toFixed(6));
-                numTp = Number((numEntry * 0.970).toFixed(6));
-            }
-        }
-    }
-
-    const eps = 1e-6;
     if (cleanDir === 'LONG' || cleanDir === 'BUY') {
-        if (!((numSl + eps) < numEntry && (numEntry + eps) < numTp)) {
-            showToast(`⚠️ Invalid geometry for LONG: Stop Loss (${_formatPriceDebug(numSl)}) < Entry (${_formatPriceDebug(numEntry)}) < Target (${_formatPriceDebug(numTp)}) required`, 'warn');
+        if (!(numSl < numEntry && numEntry < numTp)) {
+            showToast(⚠️ Invalid geometry for LONG: Stop Loss () < Entry () < Target () required, 'warn');
             return;
         }
     } else if (cleanDir === 'SHORT' || cleanDir === 'SELL') {
-        if (!((numTp + eps) < numEntry && (numEntry + eps) < numSl)) {
-            showToast(`⚠️ Invalid geometry for SHORT: Target (${_formatPriceDebug(numTp)}) < Entry (${_formatPriceDebug(numEntry)}) < Stop Loss (${_formatPriceDebug(numSl)}) required`, 'warn');
+        if (!(numTp < numEntry && numEntry < numSl)) {
+            showToast(⚠️ Invalid geometry for SHORT: Target () < Entry () < Stop Loss () required, 'warn');
             return;
         }
     }
@@ -17113,38 +17099,60 @@ async function loadScorecard() {
 
 
 function renderScorecard(data) {
-
-
-
-    // ── Top KPI row ──────────────────────────────────────
-
-
-
-    const total   = data.total_signals || 0;
-
-
-
-    const wr      = total > 0 ? (data.overall_win_rate * 100).toFixed(1) + '%' : '—';
-
-
-
+    // ── Top KPI row with strict mathematical separation ──
+    const total = data.total_signals || 0;
+    const wins = data.wins || 0;
+    const losses = data.losses || 0;
+    const timeouts = data.timeouts || 0;
+    const resolved = data.resolved ?? (wins + losses);
     const pending = data.pending_count ?? 0;
-
-
-
-
-
-
+    const resolvedWr = resolved > 0 ? ((wins / resolved) * 100).toFixed(1) + '%' : '—';
+    const resRate = total > 0 ? ((resolved / total) * 100).toFixed(1) + '%' : '—';
+    const isSmallSample = resolved < 30;
 
     _scKpi('scTotalSignals', total || '—');
+    _scKpi('scWinRate', resolvedWr, resolved > 0 ? (wins / resolved >= 0.5 ? 'var(--green)' : 'var(--yellow)') : null);
+    _scKpi('scPending', pending || timeouts);
 
+    const winRateCard = document.getElementById('scWinRate');
+    if (winRateCard) {
+        const lbl = winRateCard.querySelector('.kpi-lbl');
+        if (lbl) lbl.textContent = `Win Rate on Resolved (${wins}W / ${losses}L)`;
+    }
+    const pendingCard = document.getElementById('scPending');
+    if (pendingCard) {
+        const lbl = pendingCard.querySelector('.kpi-lbl');
+        if (lbl) lbl.textContent = `Pending / Timeouts (${pending + timeouts})`;
+    }
+    const totalCard = document.getElementById('scTotalSignals');
+    if (totalCard) {
+        const lbl = totalCard.querySelector('.kpi-lbl');
+        if (lbl) lbl.textContent = `Total Logged (${resolved} Resolved · ${resRate} Res.)`;
+    }
 
-
-    _scKpi('scWinRate', wr, total > 0 ? (data.overall_win_rate >= 0.55 ? 'var(--green)' : data.overall_win_rate >= 0.4 ? 'var(--yellow)' : 'var(--red)') : null);
-
-
-
-    _scKpi('scPending', pending);
+    let statusBanner = document.getElementById('scSampleStatusBanner');
+    if (!statusBanner) {
+        statusBanner = document.createElement('div');
+        statusBanner.id = 'scSampleStatusBanner';
+        statusBanner.style.cssText = 'padding:6px 12px;margin-bottom:12px;border-radius:6px;font-size:0.75rem;font-weight:600;display:flex;align-items:center;gap:8px;';
+        const kpiRow = document.getElementById('scKpiRow');
+        if (kpiRow && kpiRow.parentNode) {
+            kpiRow.parentNode.insertBefore(statusBanner, kpiRow);
+        }
+    }
+    if (statusBanner) {
+        if (isSmallSample) {
+            statusBanner.style.background = 'rgba(245, 158, 11, 0.12)';
+            statusBanner.style.border = '1px solid rgba(245, 158, 11, 0.3)';
+            statusBanner.style.color = '#f59e0b';
+            statusBanner.innerHTML = `⚠️ <span>INSUFFICIENT RESOLVED SAMPLE (n=${resolved} < 30) — Strategy win rate is evaluated strictly on resolved trades.</span>`;
+        } else {
+            statusBanner.style.background = 'rgba(16, 185, 129, 0.12)';
+            statusBanner.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+            statusBanner.style.color = '#10b981';
+            statusBanner.innerHTML = `✅ <span>STATISTICALLY VALID SAMPLE (n=${resolved} >= 30) — Resolution rate: ${resRate}.</span>`;
+        }
+    }
 
 
 

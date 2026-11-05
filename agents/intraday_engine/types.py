@@ -1,39 +1,86 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
 
-def format_price_by_magnitude(val: float | None, symbol: str = "") -> float | None:
-    """Format price dynamically based on asset class and price magnitude to prevent rounding collapse."""
-    if val is None:
+def get_instrument_tick_size(symbol: str) -> float:
+    """Return exchange-standard minimum tick size for instrument."""
+    sym = (symbol or "").upper().replace(".NS", "").replace(".BO", "")
+
+    # Forex
+    if "/" in sym or sym.endswith("=X"):
+        if "JPY" in sym:
+            return 0.001
+        if "INR" in sym:
+            return 0.0025  # NSE Currency Derivatives standard tick
+        return 0.0001
+
+    # Crypto
+    if any(c in sym for c in ("USDT", "BUSD", "USDC")) or "/" in symbol:
+        if "BTC" in sym:
+            return 0.10
+        if any(m in sym for m in ("ETH", "SOL", "BNB")):
+            return 0.01
+        if any(m in sym for m in ("DOGE", "SHIB", "PEPE")):
+            return 0.00001
+        return 0.0001
+
+    # Indian Equities (NSE cash market standard tick size is ₹0.05)
+    return 0.05
+
+
+def normalize_price_to_tick(
+    symbol: str, raw_price: float | None, direction: str = "ROUND"
+) -> float | None:
+    """
+    Normalize price strictly to exchange/instrument tick boundaries.
+    direction:
+      - 'ROUND': round to nearest valid tick
+      - 'FLOOR': round down to nearest valid tick (e.g. SL for LONG, TP for SHORT)
+      - 'CEIL':  round up to nearest valid tick (e.g. TP for LONG, SL for SHORT)
+    """
+    if raw_price is None:
         return None
     try:
-        f = float(val)
+        price = float(raw_price)
     except (ValueError, TypeError):
         return None
 
-    abs_f = abs(f)
-    if abs_f == 0.0:
+    if price <= 0:
         return 0.0
 
-    # Forex pairs (e.g. EUR/USD, GBP/USD, USD/INR)
-    if "/" in symbol:
-        if "JPY" in symbol:
-            return round(f, 3)
-        return round(f, 5)
+    tick = get_instrument_tick_size(symbol)
+    if tick <= 0:
+        return price
 
-    # Sub-rupee or micro-price crypto / penny tokens
-    if abs_f < 0.001:
-        return round(f, 8)
-    elif abs_f < 0.1:
-        return round(f, 6)
-    elif abs_f < 1.0:
-        return round(f, 4)
-    elif abs_f < 50.0:
-        return round(f, 3)
+    steps = price / tick
+
+    if direction == "FLOOR":
+        norm = math.floor(steps + 1e-9) * tick
+    elif direction == "CEIL":
+        norm = math.ceil(steps - 1e-9) * tick
     else:
-        return round(f, 2)
+        norm = round(steps) * tick
+
+    if tick >= 1.0:
+        return round(norm, 1)
+    elif tick >= 0.01:
+        return round(norm, 2)
+    elif tick >= 0.001:
+        return round(norm, 3)
+    elif tick >= 0.0001:
+        return round(norm, 4)
+    elif tick >= 0.00001:
+        return round(norm, 5)
+    else:
+        return round(norm, 8)
+
+
+def format_price_by_magnitude(val: float | None, symbol: str = "") -> float | None:
+    """Format price for display based on instrument tick size and price magnitude."""
+    return normalize_price_to_tick(symbol, val, "ROUND")
 
 
 @dataclass

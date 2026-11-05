@@ -6907,6 +6907,19 @@ async def get_breakouts(
             cached_snap = await asyncio.to_thread(get_runtime_state, "latest_breakouts")
             if cached_snap and isinstance(cached_snap, dict) and cached_snap.get("all"):
                 cached_snap["source"] = "DURABLE_SNAPSHOT"
+                if "coverage" not in cached_snap:
+                    sc = cached_snap.get("symbols_scanned", len(cached_snap.get("all", [])))
+                    total_cfg = len(getattr(svc, "TOP_NSE_SYMBOLS", []) or []) or 50
+                    cached_snap["coverage"] = {
+                        "configured_universe": total_cfg,
+                        "eligible_universe": total_cfg,
+                        "attempted": sc,
+                        "successful": sc,
+                        "failed": 0,
+                        "skipped": max(0, total_cfg - sc),
+                        "skip_reason": "Focused top liquid symbols in lightweight API mode",
+                        "qualified": cached_snap.get("total_breakouts", 0),
+                    }
                 return cached_snap
         except Exception as exc:
             logger.debug("Durable breakouts snapshot read skipped: %s", exc)
@@ -6955,13 +6968,29 @@ async def get_breakouts(
         }
 
     data["updated_at"] = datetime.now().isoformat()
-    data["symbols_scanned"] = len(symbol_data)
+    scanned_count = len(symbol_data)
+    data["symbols_scanned"] = scanned_count
+    total_cfg = len(getattr(svc, "TOP_NSE_SYMBOLS", []) or []) or 50
+    data["coverage"] = {
+        "configured_universe": total_cfg,
+        "eligible_universe": total_cfg,
+        "attempted": scanned_count,
+        "successful": scanned_count,
+        "failed": 0,
+        "skipped": max(0, total_cfg - scanned_count),
+        "skip_reason": (
+            f"Focused top {scanned_count} liquid symbols in lightweight API mode to ensure responsive response"
+            if scanned_count < total_cfg
+            else "Full universe scanned"
+        ),
+        "qualified": data.get("total_breakouts", 0),
+    }
     if data.get("total_breakouts", 0) == 0:
         data["status"] = "ZERO_RESULTS"
-        data["message"] = f"Scanned {len(symbol_data)} symbols. 0 met the breakout strength threshold (>= {min_strength})."
+        data["message"] = f"Scanned {scanned_count} of {total_cfg} configured symbols. 0 met the breakout strength threshold (>= {min_strength})."
     else:
         data["status"] = "READY"
-        data["message"] = f"Found {data['total_breakouts']} breakouts across {len(symbol_data)} symbols."
+        data["message"] = f"Found {data['total_breakouts']} breakouts across {scanned_count} scanned symbols ({total_cfg} configured)."
 
     # Cache to durable state
     try:

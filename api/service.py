@@ -687,12 +687,18 @@ def _get_feed_status() -> dict[str, object]:
                 w_age = max((now_utc - w_dt).total_seconds(), 0.0)
                 if w_status_code in ("FAILED", "ERROR"):
                     worker_health = "WORKER_FAILED"
-                elif w_age <= 1800:
-                    worker_health = "WORKER_OK"
-                elif w_age <= 3600:
-                    worker_health = "WORKER_LATE"
+                elif is_mkt_open:
+                    if w_age <= 2700:
+                        worker_health = "WORKER_OK"
+                    elif w_age <= 5400:
+                        worker_health = "WORKER_LATE"
+                    else:
+                        worker_health = "WORKER_STALE"
                 else:
-                    worker_health = "NO_RECENT_RUN"
+                    if w_age <= 86400:
+                        worker_health = "WORKER_OK"
+                    else:
+                        worker_health = "WORKER_STALE"
             except Exception:
                 worker_health = "NO_RECENT_RUN"
 

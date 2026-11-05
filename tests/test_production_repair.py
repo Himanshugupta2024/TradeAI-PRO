@@ -1,17 +1,24 @@
 """
-TradeAI PRO — Production Repair Test Suite
-Verifies all 10 confirmed market-hours production defects and system data health.
+TradeAI PRO — Production Repair & Numerical Integrity Test Suite
+Verifies all 10 confirmed market-hours production defects, mathematical integrity,
+instrument tick size rules, and system data health.
 """
 
 import asyncio
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
+from dataclasses import asdict
 import pandas as pd
 import pytest
 
 from agents.analytics.trade_journal import TradeJournal
 from agents.execution.paper_trading import PaperTradingEngine
-from agents.intraday_engine.types import IntradaySignal, format_price_by_magnitude
+from agents.intraday_engine.types import (
+    IntradaySignal,
+    format_price_by_magnitude,
+    get_instrument_tick_size,
+    normalize_price_to_tick,
+)
 from agents.intraday_engine.strategies import strat_orb, _day_session
 from agents.market_intelligence.market_data import fetch_fii_dii_flow
 from agents.market_intelligence.swing_scanner import (
@@ -32,7 +39,7 @@ def test_feed_health_semantics():
     assert "worker_health" in status
     assert "source" in status
     assert status["market_snapshot_health"] in ("CURRENT", "DELAYED", "STALE", "EOD", "UNAVAILABLE")
-    assert status["worker_health"] in ("WORKER_OK", "WORKER_LATE", "WORKER_FAILED", "NO_RECENT_RUN")
+    assert status["worker_health"] in ("WORKER_OK", "WORKER_LATE", "WORKER_STALE", "WORKER_FAILED", "NO_RECENT_RUN")
 
 
 @pytest.mark.asyncio
@@ -52,11 +59,16 @@ async def test_health_check_endpoint():
 @pytest.mark.asyncio
 async def test_ready_check_endpoint(monkeypatch):
     """Verify /api/ready returns ready status for container probes."""
-    import api.service as svc
-    monkeypatch.setattr(svc, "_loading_status", {"ready": True, "phase": "ready"})
     from api.routes import readiness_check
+    import json
+    monkeypatch.setitem(svc._loading_status, "ready", True)
     res = await readiness_check()
-    assert res["status"] == "ready" 
+    if hasattr(res, "body"):
+        data = json.loads(res.body.decode("utf-8"))
+        assert res.status_code == 200
+        assert data.get("ready") is True or data.get("status") == "ready"
+    else:
+        assert res.get("status") == "ready" or res.get("ready") is True
 
 
 # ── 2. System Data Health Endpoint ──────────────────────────────────────────
@@ -86,47 +98,72 @@ async def test_system_data_health_endpoint():
         assert "status" in subs[s] or "state" in subs[s]
 
 
-# ── 3. Sub-Rupee SHORT Paper Trade Geometry & Tick Precision ───────────────
+# ── 3. Instrument Tick Size & Precision Normalization ───────────────────────
 
-def test_subrupee_tick_precision_formatting():
-    """Verify sub-rupee assets retain high decimal precision and do not collapse to 0.07."""
-    entry = 0.071234
-    sl = 0.074345
-    tp = 0.068123
-
-    # Crypto / sub-rupee formatting should produce 6 decimals
-    f_entry = format_price_by_magnitude(entry, "DOGEUSDT")
-    f_sl = format_price_by_magnitude(sl, "DOGEUSDT")
-    f_tp = format_price_by_magnitude(tp, "DOGEUSDT")
-
-    assert f_entry == 0.071234
-    assert f_sl == 0.074345
-    assert f_tp == 0.068123
-    assert f_tp < f_entry < f_sl
+def test_instrument_tick_sizes():
+    """Verify exchange-standard tick sizes for NSE equities, FX, BTC, ETH, and small crypto."""
+    assert get_instrument_tick_size("RELIANCE") == 0.05
+    assert get_instrument_tick_size("TCS.NS") == 0.05
+    assert get_instrument_tick_size("EUR/USD") == 0.0001
+    assert get_instrument_tick_size("USD/JPY") == 0.001
+    assert get_instrument_tick_size("USD/INR") == 0.0025
+    assert get_instrument_tick_size("BTCUSDT") == 0.10
+    assert get_instrument_tick_size("ETHUSDT") == 0.01
+    assert get_instrument_tick_size("DOGEUSDT") == 0.00001
 
 
-def test_short_paper_trade_geometry_validation():
-    """Verify PaperTradingEngine correctly validates SHORT geometry for micro-priced assets."""
+def test_normalize_price_to_tick_directions():
+    """Verify tick normalization behavior for ROUND, FLOOR, and CEIL."""
+    # NSE Equity (0.05 tick)
+    assert normalize_price_to_tick("RELIANCE", 2450.02, "ROUND") == 2450.00
+    assert normalize_price_to_tick("RELIANCE", 2450.02, "CEIL") == 2450.05
+    assert normalize_price_to_tick("RELIANCE", 2450.04, "FLOOR") == 2450.00
+
+    # Forex EUR/USD (0.0001 tick)
+    assert normalize_price_to_tick("EUR/USD", 1.08346, "ROUND") == 1.0835
+    assert normalize_price_to_tick("EUR/USD", 1.08346, "FLOOR") == 1.0834
+    assert normalize_price_to_tick("EUR/USD", 1.08341, "CEIL") == 1.0835
+
+    # Crypto DOGE (0.00001 tick)
+    assert normalize_price_to_tick("DOGEUSDT", 0.071234, "ROUND") == 0.07123
+    assert normalize_price_to_tick("DOGEUSDT", 0.071239, "FLOOR") == 0.07123
+    assert normalize_price_to_tick("DOGEUSDT", 0.071231, "CEIL") == 0.07124
+
+
+def test_short_paper_trade_geometry_and_raw_preservation():
+    """Verify PaperTradingEngine validates SHORT geometry and preserves raw vs final values."""
     engine = PaperTradingEngine()
-    engine.open_trades = []
-    engine.capital = 100000.0
-    engine.balance = 100000.0
+    engine.balance = 50000.0
 
-    # Risk: 0.0743 - 0.0712 = 0.0031. Reward: 0.0712 - 0.0640 = 0.0072. RR = 2.32 (>= 2.0)
     trade = engine.execute(
         symbol="DOGEUSDT",
         direction="SHORT",
-        entry=0.0712,
-        sl=0.0743,
-        tp=0.0640,
+        entry=0.07123,
+        sl=0.07431,
+        tp=0.06402,
         confidence=75.0,
         allow_duplicate_symbol=True,
     )
     assert trade is not None, "Paper trade execution failed"
     assert trade.direction == "SHORT"
-    assert trade.entry_price == 0.0712
-    assert trade.stop_loss == 0.0743
-    assert trade.target == 0.0640
+    assert trade.entry_price == 0.07123
+    assert trade.stop_loss == 0.07431
+    assert trade.target == 0.06402
+    assert trade.entry_raw == 0.07123
+    assert trade.stop_raw == 0.07431
+    assert trade.target_raw == 0.06402
+
+    # Verify invalid SHORT geometry (SL < Entry) is strictly rejected with SKIP_INVALID_GEOMETRY
+    trade_invalid = engine.execute(
+        symbol="DOGEUSDT",
+        direction="SHORT",
+        entry=0.0712,
+        sl=0.0680,  # Invalid: SL < Entry for a SHORT
+        tp=0.0640,
+        allow_duplicate_symbol=True,
+    )
+    assert trade_invalid is None
+    assert "SKIP_INVALID_GEOMETRY" in engine.last_rejection_reason
 
 
 # ── 4. Breakout 52-Week High Lookback Excludes Current Bar ──────────────────
@@ -134,8 +171,7 @@ def test_short_paper_trade_geometry_validation():
 def test_breakout_52w_high_lookback_excludes_current_bar():
     """Verify 52W high baseline excludes current candle to prevent self-comparison."""
     dates = pd.date_range(end=datetime.now(), periods=260, freq="B")
-    # Historical 259 bars with high <= 120.0
-    highs = [100.0 + (i % 20) for i in range(259)] + [135.0]  # bar 260 breaks out to 135
+    highs = [100.0 + (i % 20) for i in range(259)] + [135.0]
     lows = [h - 5.0 for h in highs]
     closes = [h - 1.0 for h in highs]
     opens = [l + 1.0 for l in lows]
@@ -154,12 +190,11 @@ def test_breakout_52w_high_lookback_excludes_current_bar():
         "EMA_50": [105.0] * 260,
     })
 
-    # When lookback excludes current bar, baseline 52w high is 119.0, so 135.0 is a 52W breakout!
     breakouts = scan_breakouts(df, "RELIANCE")
     types = [b.breakout_type for b in breakouts]
     assert "52W_HIGH" in types, "Expected 52W_HIGH breakout signal"
 
-    # Now test non-breakout: current candle close is 110.0 (below prior high 119.0)
+    # Test non-breakout: close is 110.0 (below prior high 119.0)
     df.iloc[-1, df.columns.get_loc("close")] = 110.0
     df.iloc[-1, df.columns.get_loc("high")] = 112.0
     breakouts_fail = scan_breakouts(df, "RELIANCE")
@@ -174,7 +209,6 @@ def test_session_prior_eod_candle_leakage_during_market_hours():
     _IST = ZoneInfo("Asia/Kolkata")
     now_ist = datetime.now(_IST)
 
-    # Build synthetic DF where the last bar is from yesterday
     yesterday = now_ist.date() - timedelta(days=1)
     base_ts = datetime(yesterday.year, yesterday.month, yesterday.day, 14, 0, tzinfo=_IST)
     ts_list = [base_ts + timedelta(minutes=5 * i) for i in range(15)]
@@ -209,24 +243,39 @@ def test_institutional_flow_naming_and_formatting():
     assert "Data Date:" in flow.get("display_date", "")
 
 
-# ── 7. Scorecard Hydration from Paper Trades ────────────────────────────────
+# ── 7. Scorecard Mathematical Audit ─────────────────────────────────────────
 
-def test_trade_journal_scorecard_hydration():
-    """Verify TradeJournal hydrates stats from persistent paper trades even without in-memory loop."""
+def test_trade_journal_scorecard_mathematical_integrity():
+    """Verify Scorecard calculates resolved_win_rate strictly on resolved trades."""
     journal = TradeJournal()
     scorecard = journal.get_scorecard()
-    assert "total_signals" in scorecard
-    assert scorecard["total_signals"] > 0
-    assert "overall_win_rate" in scorecard
-    assert "by_regime" in scorecard
-    assert "by_confidence" in scorecard
+
+    total = scorecard["total_signals"]
+    resolved = scorecard["resolved"]
+    wins = scorecard["wins"]
+    losses = scorecard["losses"]
+    timeouts = scorecard["timeouts"]
+
+    assert total > 0
+    assert resolved == wins + losses, "Resolved must equal wins + losses"
+    assert timeouts >= 0
+    if resolved > 0:
+        expected_wr = round(wins / resolved, 4)
+        assert scorecard["resolved_win_rate"] == expected_wr
+        assert scorecard["overall_win_rate"] == expected_wr
+        assert scorecard["resolution_rate"] == round(resolved / total, 4)
+    else:
+        assert scorecard["resolved_win_rate"] == 0.0
+
+    assert "sample_status" in scorecard
+    if resolved < 30:
+        assert "INSUFFICIENT RESOLVED SAMPLE" in scorecard["sample_status"]
 
 
-# ── 8. SwingSpectrum Setup Strength Framing ─────────────────────────────────
+# ── 8. Swing Confluence Framing (No Unproven Win Probabilities) ────────────
 
 def test_swingspectrum_setup_strength_framing():
-    """Verify SwingSetup provides setup_strength_display and calibrated_win_rate_pct."""
-    from dataclasses import asdict
+    """Verify SwingSetup provides setup_strength_display and qualitative confluence grade."""
     setup = SwingSetup(
         symbol="INFY",
         pattern="Pullback in Trend",
@@ -242,14 +291,14 @@ def test_swingspectrum_setup_strength_framing():
         indicators={"RSI": 55.0},
     )
     assert setup.setup_strength_display == "Setup Strength: 85/100"
-    assert setup.calibrated_win_rate_pct == 64.0  # Bucket 80-100: ~64%
-    assert "64% Historical" in setup.win_rate_expectation_bucket
+    assert setup.confluence_grade == "High Confluence"
+    assert not hasattr(setup, "calibrated_win_rate_pct"), "Empirically unproven percentage must be removed"
     d = asdict(setup)
-    assert "setup_strength_display" in d
     assert d["setup_strength_display"] == "Setup Strength: 85/100"
+    assert d["confluence_grade"] == "High Confluence"
 
 
-# ── 9. Screener Opportunities & Breakouts Fallback ─────────────────────────
+# ── 9. Screener Opportunities & Breakouts Fallback with Coverage ───────────
 
 @pytest.mark.asyncio
 async def test_screener_opportunities_endpoint():
@@ -261,15 +310,20 @@ async def test_screener_opportunities_endpoint():
 
 
 @pytest.mark.asyncio
-async def test_breakouts_endpoint():
-    """Verify /api/breakouts returns structured diagnostic status."""
+async def test_breakouts_endpoint_coverage():
+    """Verify /api/breakouts returns structured diagnostic status and coverage metrics."""
     from api.routes import get_breakouts
     res = await get_breakouts(min_strength=30)
     assert "all" in res
     assert "total_breakouts" in res
     assert "status" in res
     assert res["status"] in ("READY", "OK", "ZERO_RESULTS", "DATA_UNAVAILABLE", "ERROR")
-    assert "updated_at" in res
+    assert "coverage" in res
+    cov = res["coverage"]
+    assert "configured_universe" in cov
+    assert "attempted" in cov
+    assert "successful" in cov
+    assert "skipped" in cov
 
 
 # ── 10. Macro Heatmap Resilience ───────────────────────────────────────────

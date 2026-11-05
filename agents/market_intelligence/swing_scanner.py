@@ -105,48 +105,44 @@ class SwingSetup:
     # ── 1H MTF Confirmation ──────────────────────────────────────────────────
     mtf_confirmed: bool = True  # False if 1H indicators oppose the LONG setup
     mtf_reason: str = ""  # Human-readable reason from _check_1h_mtf_bullish
-    # ── Calibrated Win-Rate & Setup Strength Framing ────────────────────────
+    # ── Confluence Grading & Setup Strength Framing ──────────────────────────
     setup_strength_display: str = ""
-    calibrated_win_rate_pct: float = 0.0
-    win_rate_expectation_bucket: str = ""
+    confluence_grade: str = ""
     confidence_disclaimer: str = (
-        "Setup Strength reflects technical pattern confluence (0-100), not a guaranteed win probability. Risk management and SL discipline are mandatory."
+        "Setup Strength reflects technical pattern confluence (0-100), not a probability of profit. Risk management and SL discipline are mandatory."
     )
 
     def __post_init__(self):
         st = int(getattr(self, "strength", 50) or 50)
         if st >= 80:
-            c_rate, bucket = 64.0, "80-100 Strength: ~64% Historical Win-Rate Expectation"
+            grade = "High Confluence"
         elif st >= 66:
-            c_rate, bucket = 56.0, "66-79 Strength: ~56% Historical Win-Rate Expectation"
+            grade = "Moderate Confluence"
         elif st >= 50:
-            c_rate, bucket = 48.0, "50-65 Strength: ~48% Historical Win-Rate Expectation"
+            grade = "Watchlist / Emerging Confluence"
         else:
-            c_rate, bucket = 40.0, "<50 Strength: ~40% Watchlist / Speculative"
+            grade = "Speculative"
 
         if not self.setup_strength_display:
             self.setup_strength_display = f"Setup Strength: {st}/100"
-        if not self.calibrated_win_rate_pct:
-            self.calibrated_win_rate_pct = c_rate
-        if not self.win_rate_expectation_bucket:
-            self.win_rate_expectation_bucket = bucket
+        if not self.confluence_grade:
+            self.confluence_grade = grade
 
 
 def assign_calibrated_winrate(s: SwingSetup) -> SwingSetup:
-    """Map setup strength confluence score to forward outcome calibrated win-rate expectations."""
+    """Map setup strength confluence score to qualitative confluence grading."""
     st = int(getattr(s, "strength", 50) or 50)
     if st >= 80:
-        c_rate, bucket = 64.0, "80-100 Strength: ~64% Historical Win-Rate Expectation"
+        grade = "High Confluence"
     elif st >= 66:
-        c_rate, bucket = 56.0, "66-79 Strength: ~56% Historical Win-Rate Expectation"
+        grade = "Moderate Confluence"
     elif st >= 50:
-        c_rate, bucket = 48.0, "50-65 Strength: ~48% Historical Win-Rate Expectation"
+        grade = "Watchlist / Emerging Confluence"
     else:
-        c_rate, bucket = 40.0, "<50 Strength: ~40% Watchlist / Speculative"
+        grade = "Speculative"
 
     s.setup_strength_display = f"Setup Strength: {st}/100"
-    s.calibrated_win_rate_pct = c_rate
-    s.win_rate_expectation_bucket = bucket
+    s.confluence_grade = grade
     return s
 
 
