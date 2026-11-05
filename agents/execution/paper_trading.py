@@ -1319,7 +1319,10 @@ class PaperTradingEngine:
                 td.setdefault("pnl_native", td.get("pnl", 0.0))
                 td.setdefault("realized_pnl_native", td.get("realized_pnl", 0.0))
                 td.setdefault("fx_status", "ACTIVE")
-            trade = PaperTrade(**td)
+            from dataclasses import fields as _dc_fields
+            _valid_trade_fields = {f.name for f in _dc_fields(PaperTrade)}
+            td_clean = {k: v for k, v in td.items() if k in _valid_trade_fields}
+            trade = PaperTrade(**td_clean)
             self.trades.append(trade)
             if trade.status == "OPEN":
                 self.open_trades.append(trade)
