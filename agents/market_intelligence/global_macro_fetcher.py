@@ -127,21 +127,27 @@ class GlobalMacroFetcher:
         self._last_fetch_ts: float = 0.0
 
     def get_intelligence(self, force_refresh: bool = False) -> GlobalMacroIntelligence:
-        """Fetch global macro intelligence with 15-minute caching."""
+        """Fetch global macro intelligence with 15-minute caching and resilient timeout protection."""
         now = time.time()
         if not force_refresh and self._cached_intel is not None and (now - self._last_fetch_ts) < self.cache_ttl:
             return self._cached_intel
 
+        import concurrent.futures
         try:
-            intel = self._fetch_live()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self._fetch_live)
+                intel = future.result(timeout=4.0)
             self._cached_intel = intel
             self._last_fetch_ts = now
             return intel
         except Exception as e:
-            logger.error("Error fetching live global macro data: %s", e)
+            logger.warning("Live global macro fetch timed out or failed (%s) — using fallback intelligence", e)
             if self._cached_intel is not None:
                 return self._cached_intel
-            return self._build_fallback_intel()
+            fallback = self._build_fallback_intel()
+            self._cached_intel = fallback
+            self._last_fetch_ts = now
+            return fallback
 
     def _fetch_live(self) -> GlobalMacroIntelligence:
         """Fetch real data from Yahoo Finance and Google News RSS."""
