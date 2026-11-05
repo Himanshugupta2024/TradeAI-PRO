@@ -123,7 +123,7 @@ class GlobalMacroFetcher:
 
     def __init__(self, cache_ttl_sec: float = 900.0):
         self.cache_ttl = cache_ttl_sec
-        self._cached_intel: Optional[GlobalMacroIntelligence] = None
+        self._cached_intel: Optional[GlobalMacroIntelligence] = self._build_fallback_intel()
         self._last_fetch_ts: float = 0.0
 
     def get_intelligence(self, force_refresh: bool = False) -> GlobalMacroIntelligence:
@@ -156,7 +156,7 @@ class GlobalMacroFetcher:
         quotes: Dict[str, CommodityQuote] = {}
 
         try:
-            df = yf.download(symbols, period="5d", interval="1d", progress=False)
+            df = yf.download(symbols, period="5d", interval="1d", progress=False, timeout=3.0)
             if not df.empty and "Close" in df.columns:
                 close_df = df["Close"]
                 for key, (sym, name, unit) in self.TICKERS.items():
@@ -270,7 +270,7 @@ class GlobalMacroFetcher:
             url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-                with urllib.request.urlopen(req, timeout=3.5) as resp:
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
                     xml_data = resp.read()
                     root = ET.fromstring(xml_data)
                     rss_items = root.findall(".//item")[:2]
