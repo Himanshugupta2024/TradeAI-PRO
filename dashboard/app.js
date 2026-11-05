@@ -8117,6 +8117,16 @@ function updateStatsStrip(stats) {
     const effectiveOpen = Math.max(openTrades, liveOpenCount);
 
     document.getElementById('statWinRate').textContent = (closedTrades > 0 && stats.win_rate != null) ? `${Number(stats.win_rate).toFixed(1)}%` : '—';
+    const wrSub = document.getElementById('statWinRateSub');
+    if (wrSub) {
+        const wins = Number(stats?.winning_trades || 0);
+        const losses = Number(stats?.losing_trades || Math.max(0, closedTrades - wins));
+        if (closedTrades > 0) {
+            wrSub.textContent = `${wins}W / ${losses}L • ${closedTrades} trades`;
+        } else {
+            wrSub.textContent = '0 closed trades';
+        }
+    }
 
     // Hero metric tile is "Open Positions", so the primary number is ALWAYS the count of active open positions!
     const tradesEl = document.getElementById('statTrades');
@@ -8610,7 +8620,7 @@ function updateMarketSessionBanner() {
 
 
 
-    banner.style.display = 'block';
+    banner.style.display = 'flex';
 
 
 
@@ -22942,29 +22952,22 @@ function updateMoodStripUI(data) {
 
 
 
+    const moodEventContainer = document.getElementById('moodEvent');
     if (eventLabel && data.active_event_risk) {
-
-
-
-        eventLabel.textContent = '⚠ EVENT RISK';
-
-
-
-    } else if (eventLabel && data.next_event) {
-
-
-
+        if (moodEventContainer) moodEventContainer.style.display = 'flex';
+        eventLabel.textContent = 'EVENT RISK';
+        eventLabel.style.color = '#ef4444';
+    } else if (eventLabel && data.next_event && Number(data.next_event.days_away || 99) <= 1) {
+        if (moodEventContainer) moodEventContainer.style.display = 'flex';
         const evt = data.next_event;
-
-
-
-        eventLabel.textContent = evt.event_name ? `${evt.event_name} · ${evt.days_away ?? '?'}d` : 'No event';
-
-
-
-    } else if (eventLabel) {
-        eventLabel.textContent = 'Calendar Clear';
-        eventLabel.style.color = '#10b981';
+        eventLabel.textContent = evt.event_name ? ${evt.event_name} · d : 'Event Imminent';
+        eventLabel.style.color = '#f59e0b';
+    } else {
+        if (moodEventContainer) moodEventContainer.style.display = 'none';
+        if (eventLabel) {
+            eventLabel.textContent = 'Calendar Clear';
+            eventLabel.style.color = '#10b981';
+        }
     }
 
 
@@ -25704,7 +25707,7 @@ async function updateAiModelHealthBadge() {
 
 
 
-            pipelineText.textContent = `V2: YAHOO (${lat}) | UDIFF | GDELT`;
+            pipelineText.textContent = `V2 (${lat})`;
 
 
 

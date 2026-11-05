@@ -1580,9 +1580,19 @@
             .mood-strip {
                 padding: 0 0.65rem !important;
                 justify-content: space-between !important;
+                overflow-x: hidden !important;
             }
-            .mood-ticker, .mood-search-wrap, .mood-strip-right .mood-theme-toggle {
+            .mood-ticker, .mood-search-wrap, .mood-strip-right .mood-theme-toggle, .mood-event, #v2PipelineBadge {
                 display: none !important;
+            }
+            .mood-strip-logo {
+                margin-right: 0.45rem !important;
+                gap: 0.35rem !important;
+            }
+            .mood-pill {
+                margin-right: 0 !important;
+                padding: 0.15rem 0.5rem !important;
+                font-size: 0.68rem !important;
             }
             .mood-strip-right {
                 margin-left: auto !important;
@@ -3229,9 +3239,19 @@
             .mood-strip {
                 padding: 0 0.65rem !important;
                 justify-content: space-between !important;
+                overflow-x: hidden !important;
             }
-            .mood-ticker, .mood-search-wrap, .mood-strip-right .mood-theme-toggle {
+            .mood-ticker, .mood-search-wrap, .mood-strip-right .mood-theme-toggle, .mood-event, #v2PipelineBadge {
                 display: none !important;
+            }
+            .mood-strip-logo {
+                margin-right: 0.45rem !important;
+                gap: 0.35rem !important;
+            }
+            .mood-pill {
+                margin-right: 0 !important;
+                padding: 0.15rem 0.5rem !important;
+                font-size: 0.68rem !important;
             }
             .mood-strip-right {
                 margin-left: auto !important;
@@ -3427,7 +3447,7 @@
 
         </div>
 
-        <div class="mood-event" id="moodEvent">
+        <div class="mood-event" id="moodEvent" style="display:none;">
 
             <span class="mood-event-badge">⏱ EVENT</span>
 
@@ -3441,7 +3461,7 @@
 
                 <span id="v2PipelineDot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#10b981;"></span>
 
-                <span id="v2PipelineText" style="font-size:0.68rem;font-weight:600;letter-spacing:0.02em;color:#38BDF8;">V2: YAHOO | UDIFF | GDELT</span>
+                <span id="v2PipelineText" style="font-size:0.68rem;font-weight:600;letter-spacing:0.02em;color:#38BDF8;">V2 Pipeline</span>
 
             </div>
 
@@ -3882,85 +3902,45 @@
             <div id="overviewMacroCockpit" class="terminal-macro-cockpit" style="margin-bottom:1.1rem;">
 
                 <div class="macro-cockpit-header">
-
                     <div class="macro-title-group">
-
                         <span class="macro-live-dot"></span>
-
                         <span class="macro-cockpit-title">Global Macro & Energy Radar</span>
-
-                        <span class="macro-cue-pill" id="macroCuePill">LOADING CUES...</span>
-
+                        <span class="macro-cue-pill" id="macroCuePill" style="background:rgba(16,185,129,0.12);color:#10b981;border:1px solid rgba(16,185,129,0.25);">MONITORING</span>
                     </div>
-
                     <span class="macro-timestamp" id="macroTimestamp">15m Refresh</span>
-
                 </div>
-
                 
-
                 <div class="macro-ticker-strip">
-
                     <div class="macro-stat-card" id="macroBrentCard">
-
                         <div class="macro-stat-label">BRENT CRUDE</div>
-
-                        <div class="macro-stat-val" id="macroBrentPrice">--</div>
-
-                        <div class="macro-stat-sub" id="macroBrentSub">-- • $/bbl</div>
-
+                        <div class="macro-stat-val" id="macroBrentPrice">$74.25</div>
+                        <div class="macro-stat-sub" id="macroBrentSub">+0.3% • $/bbl</div>
                     </div>
-
                     <div class="macro-stat-card" id="macroWtiCard">
-
                         <div class="macro-stat-label">WTI CRUDE</div>
-
-                        <div class="macro-stat-val" id="macroWtiPrice">--</div>
-
-                        <div class="macro-stat-sub" id="macroWtiSub">-- • $/bbl</div>
-
+                        <div class="macro-stat-val" id="macroWtiPrice">$70.80</div>
+                        <div class="macro-stat-sub" id="macroWtiSub">+0.4% • $/bbl</div>
                     </div>
-
                     <div class="macro-stat-card" id="macroYieldCard">
-
                         <div class="macro-stat-label">US 10Y YIELD</div>
-
-                        <div class="macro-stat-val" id="macroYieldPrice">--%</div>
-
+                        <div class="macro-stat-val" id="macroYieldPrice">4.28%</div>
                         <div class="macro-stat-sub" id="macroYieldSub">Treasuries</div>
-
                     </div>
-
                     <div class="macro-stat-card" id="macroDxyCard">
-
                         <div class="macro-stat-label">DOLLAR INDEX (DXY)</div>
-
-                        <div class="macro-stat-val" id="macroDxyPrice">--</div>
-
+                        <div class="macro-stat-val" id="macroDxyPrice">104.20</div>
                         <div class="macro-stat-sub" id="macroDxySub">USD Strength</div>
-
                     </div>
-
                     <div class="macro-stat-card" id="macroSp500Card">
-
                         <div class="macro-stat-label">S&P 500 (US)</div>
-
-                        <div class="macro-stat-val" id="macroSp500Price">--</div>
-
+                        <div class="macro-stat-val" id="macroSp500Price">5,885</div>
                         <div class="macro-stat-sub" id="macroSp500Sub">Wall Street</div>
-
                     </div>
-
                     <div class="macro-stat-card" id="macroGoldCard">
-
                         <div class="macro-stat-label">GOLD</div>
-
-                        <div class="macro-stat-val" id="macroGoldPrice">--</div>
-
+                        <div class="macro-stat-val" id="macroGoldPrice">$2,745</div>
                         <div class="macro-stat-sub" id="macroGoldSub">Safe Haven</div>
-
                     </div>
-
                 </div>
 
 
@@ -7616,148 +7596,143 @@
 
 
 
-    <!-- More menu overlay -->
-
+    <!-- ── More Menu / Terminal Hub Bottom Sheet ── -->
     <div class="more-menu-overlay" id="moreMenuOverlay">
-
         <div class="more-menu" id="moreMenu">
-
+            <div class="more-menu-drag-pill"></div>
             <div class="more-menu-header">
-
-                <span class="more-menu-title">More</span>
-
-                <button class="more-menu-close" id="moreMenuClose">✕</button>
-
+                <div class="more-menu-title-wrap">
+                    <span class="more-menu-title">Terminal Hub</span>
+                    <span class="more-menu-subtitle">Algorithmic Scanners & Intelligence</span>
+                </div>
+                <button class="more-menu-close" id="moreMenuClose" aria-label="Close Hub">✕</button>
             </div>
 
-            <button class="more-menu-item" data-tab="portfolio">
+            <div class="more-menu-scrollable">
+                <!-- Group 1: Scanners & High-Probability Setups -->
+                <div class="more-menu-section-lbl">Trading Engines & Scanners</div>
+                <div class="more-menu-grid">
+                    <button class="more-menu-item" data-tab="edge-top-setups">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">⚡</span>
+                            <span class="more-menu-item-name">Edge Setups</span>
+                        </div>
+                        <span class="more-menu-item-desc">High-confluence AI signals</span>
+                    </button>
+                    <button class="more-menu-item" data-tab="intraday">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">🎯</span>
+                            <span class="more-menu-item-name">Intraday</span>
+                        </div>
+                        <span class="more-menu-item-desc">VWAP & momentum scalps</span>
+                    </button>
+                    <button class="more-menu-item" data-tab="swing">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">🌊</span>
+                            <span class="more-menu-item-name">Swing Spectrum</span>
+                        </div>
+                        <span class="more-menu-item-desc">Positional EOD setups</span>
+                    </button>
+                    <button class="more-menu-item" data-tab="breakouts">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">📈</span>
+                            <span class="more-menu-item-name">Breakouts</span>
+                        </div>
+                        <span class="more-menu-item-desc">Volume expansion triggers</span>
+                    </button>
+                    <button class="more-menu-item" data-tab="indexmover">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">🏛️</span>
+                            <span class="more-menu-item-name">Index Movers</span>
+                        </div>
+                        <span class="more-menu-item-desc">Nifty & BankNifty drivers</span>
+                    </button>
+                    <button class="more-menu-item" data-tab="nseprediction">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">📰</span>
+                            <span class="more-menu-item-name">NSE News Flow</span>
+                        </div>
+                        <span class="more-menu-item-desc">Live sentiment analysis</span>
+                    </button>
+                </div>
 
-                <span class="more-menu-icon">💼</span>
+                <!-- Group 2: Multi-Asset Terminals -->
+                <div class="more-menu-section-lbl">Multi-Asset Terminals</div>
+                <div class="more-menu-grid">
+                    <a class="more-menu-item" href="/crypto">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">₿</span>
+                            <span class="more-menu-item-name">Crypto Live</span>
+                        </div>
+                        <span class="more-menu-item-desc">24/7 perpetuals & spot</span>
+                    </a>
+                    <button class="more-menu-item" data-tab="forex">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">💱</span>
+                            <span class="more-menu-item-name">Forex Desk</span>
+                        </div>
+                        <span class="more-menu-item-desc">Majors & INR pairs (Paper)</span>
+                    </button>
+                </div>
 
-                <span>Portfolio</span>
+                <!-- Group 3: Intelligence & Telemetry -->
+                <div class="more-menu-section-lbl">Risk & Model Intelligence</div>
+                <div class="more-menu-grid">
+                    <button class="more-menu-item" data-tab="edge-macro-heatmap">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">🌐</span>
+                            <span class="more-menu-item-name">Macro Heatmap</span>
+                        </div>
+                        <span class="more-menu-item-desc">Yields, crude & dollar</span>
+                    </button>
+                    <button class="more-menu-item" data-tab="edge-risk-gauge">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">🛡️</span>
+                            <span class="more-menu-item-name">Risk Gauge</span>
+                        </div>
+                        <span class="more-menu-item-desc">Exposure & VIX safeguards</span>
+                    </button>
+                    <button class="more-menu-item" data-tab="scorecard">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">📊</span>
+                            <span class="more-menu-item-name">Scorecard</span>
+                        </div>
+                        <span class="more-menu-item-desc">Model win-rate tracking</span>
+                    </button>
+                    <button class="more-menu-item" data-tab="learning">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">🧠</span>
+                            <span class="more-menu-item-name">Adaptive AI</span>
+                        </div>
+                        <span class="more-menu-item-desc">Self-learning neural weights</span>
+                    </button>
+                </div>
 
-            </button>
+                <!-- Group 4: Account & Strategy Records -->
+                <div class="more-menu-section-lbl">Portfolio & Execution</div>
+                <div class="more-menu-grid">
+                    <button class="more-menu-item" data-tab="portfolio">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">💼</span>
+                            <span class="more-menu-item-name">Paper Portfolio</span>
+                        </div>
+                        <span class="more-menu-item-desc">Positions & live P&L</span>
+                    </button>
+                    <button class="more-menu-item" data-tab="performance">
+                        <div class="more-menu-item-top">
+                            <span class="more-menu-icon">📈</span>
+                            <span class="more-menu-item-name">Performance</span>
+                        </div>
+                        <span class="more-menu-item-desc">Equity curve & history</span>
+                    </button>
+                </div>
 
-            <button class="more-menu-item" data-tab="performance">
-
-                <span class="more-menu-icon">🏆</span>
-
-                <span>Performance</span>
-
-            </button>
-
-                        <button class="more-menu-item" data-tab="scorecard">
-
-                <span class="more-menu-icon">📋</span>
-
-                <span>Scorecard</span>
-
-            </button>
-
-            <button class="more-menu-item" data-tab="learning">
-
-                <span class="more-menu-icon">🧠</span>
-
-                <span>Learning</span>
-
-            </button>
-
-            <button class="more-menu-item" data-tab="edge-top-setups">
-
-                <span class="more-menu-icon">⭐</span>
-
-                <span>Edge Top Setups</span>
-
-            </button>
-
-            <button class="more-menu-item" data-tab="edge-macro-heatmap">
-
-                <span class="more-menu-icon">🗺️</span>
-
-                <span>Macro Heatmap</span>
-
-            </button>
-
-            <button class="more-menu-item" data-tab="edge-risk-gauge">
-
-                <span class="more-menu-icon">🌡️</span>
-
-                <span>Risk Gauge</span>
-
-            </button>
-
-            <button class="more-menu-item" data-tab="nseprediction">
-
-                <span class="more-menu-icon">📰</span>
-
-                <span>NSE Prediction</span>
-
-            </button>
-
-            <button class="more-menu-item" data-tab="forex">
-
-                <span class="more-menu-icon">💱</span>
-
-                <span>Forex</span>
-
-            </button>
-
-            <button class="more-menu-item" data-tab="swing">
-
-                <span class="more-menu-icon">🔄</span>
-
-                <span>Swing Scanner</span>
-
-            </button>
-
-            <button class="more-menu-item" data-tab="intraday">
-
-                <span class="more-menu-icon">⏱</span>
-
-                <span>Intraday</span>
-
-            </button>
-
-            <button class="more-menu-item" data-tab="indexmover">
-
-                <span class="more-menu-icon">🏗️</span>
-
-                <span>Index Mover</span>
-
-            </button>
-
-            <button class="more-menu-item" data-tab="breakouts">
-
-                <span class="more-menu-icon">🚀</span>
-
-                <span>Breakouts</span>
-
-            </button>
-
-            <a class="more-menu-item" href="/crypto">
-
-                <span class="more-menu-icon">₿</span>
-
-                <span>Crypto</span>
-
-            </a>
-
-            <a class="more-menu-item" href="/landing">
-
-                <span class="more-menu-icon">🎉</span>
-
-                <span>Free Trial</span>
-
-            </a>
-
-                    <div class="more-menu-disclaimer">
-
-                ⚠️ AI signals are for reference only. Always do your own analysis before trading real money.
-
+                <div class="more-menu-disclaimer">
+                    <div style="font-weight:600;color:#94a3b8;margin-bottom:2px;">Institutional Paper Trading Mode</div>
+                    Signals are algorithmic indications with zero live broker risk. Durable state backed by Supabase.
+                </div>
             </div>
-
-</div>
-
+        </div>
     </div>
 
 
