@@ -133,7 +133,9 @@ def test_normalize_price_to_tick_directions():
 def test_short_paper_trade_geometry_and_raw_preservation():
     """Verify PaperTradingEngine validates SHORT geometry and preserves raw vs final values."""
     engine = PaperTradingEngine()
-    engine.balance = 50000.0
+    engine.trades = []
+    engine.capital = 500000.0
+    engine.balance = 500000.0
 
     trade = engine.execute(
         symbol="DOGEUSDT",
