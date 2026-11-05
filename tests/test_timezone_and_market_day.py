@@ -313,3 +313,45 @@ def test_utc_datetime_normalized_to_ist_session():
     assert is_open is False
     assert reason == "NSE_POST_MARKET"
 
+
+
+def test_session_state_resolution_evening_post_market_and_midnight_pre_market():
+    """
+    Assert that:
+    1. 19:23:12 IST (evening, Thursday) produces (False, 'NSE_POST_MARKET').
+    2. 00:53:12 IST (midnight, Thursday) produces (False, 'NSE_PRE_MARKET').
+    3. 19:23:12 UTC on Wednesday is 00:53:12 IST on Thursday -> (False, 'NSE_PRE_MARKET').
+    4. Next session descriptors distinguish 'today at 09:15 IST' from 'tomorrow at 09:15 IST'
+       and 'Monday at 09:15 IST', preventing any misleading 09:15 references in evening sessions.
+    """
+    from datetime import timezone
+    from agents.execution.session_guard import get_next_nse_session
+
+    # 1. 19:23:12 IST Thursday -> POST_MARKET
+    t_evening_ist = datetime(2026, 11, 5, 19, 23, 12, tzinfo=_IST)
+    is_open, reason = is_nse_market_open(t_evening_ist)
+    assert is_open is False
+    assert reason == "NSE_POST_MARKET"
+    _, next_desc = get_next_nse_session(t_evening_ist)
+    assert "tomorrow (2026-11-06) at 09:15 IST" in next_desc
+
+    # 2. 00:53:12 IST Thursday -> PRE_MARKET
+    t_midnight_ist = datetime(2026, 11, 5, 0, 53, 12, tzinfo=_IST)
+    is_open, reason = is_nse_market_open(t_midnight_ist)
+    assert is_open is False
+    assert reason == "NSE_PRE_MARKET"
+    _, next_desc = get_next_nse_session(t_midnight_ist)
+    assert "today (2026-11-05) at 09:15 IST" in next_desc
+
+    # 3. 19:23:12 UTC on Nov 4 = 00:53:12 IST on Nov 5 -> PRE_MARKET
+    t_utc = datetime(2026, 11, 4, 19, 23, 12, tzinfo=timezone.utc)
+    is_open, reason = is_nse_market_open(t_utc)
+    assert is_open is False
+    assert reason == "NSE_PRE_MARKET"
+    _, next_desc = get_next_nse_session(t_utc)
+    assert "today (2026-11-05) at 09:15 IST" in next_desc
+
+    # 4. Friday evening -> next session is Monday
+    t_friday_evening = datetime(2026, 11, 6, 18, 0, 0, tzinfo=_IST)
+    _, next_desc_fri = get_next_nse_session(t_friday_evening)
+    assert "Monday (2026-11-09) at 09:15 IST" in next_desc_fri

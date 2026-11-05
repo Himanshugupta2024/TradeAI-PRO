@@ -2997,17 +2997,16 @@ async def get_autonomous_feed(limit: int = 25):
             "asset_class": "SYSTEM",
         }]
 
-    # Deduplicate consecutive standby/closed entries so the feed never spams duplicate rows
+    # Deduplicate consecutive standby/closed entries while strictly preserving intervening executions
     cleaned_feed = []
-    seen_standby = False
+    last_action = None
     for item in feed:
         act = (item.get("action") or "").upper()
-        if act in ("MARKET_CLOSED", "SYSTEM_STANDBY"):
-            if not seen_standby:
-                cleaned_feed.append(item)
-                seen_standby = True
+        is_standby = act in ("MARKET_CLOSED", "SYSTEM_STANDBY")
+        if is_standby and last_action in ("MARKET_CLOSED", "SYSTEM_STANDBY"):
             continue
         cleaned_feed.append(item)
+        last_action = act
 
     final_feed = cleaned_feed[:min(limit, 100)]
     return {"ok": True, "feed": final_feed, "count": len(final_feed)}

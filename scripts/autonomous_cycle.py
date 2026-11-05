@@ -130,6 +130,13 @@ def resolve_universe(universe_arg: str, max_symbols: int = 20) -> list[str]:
     else:
         symbols = [s.strip().upper() for s in universe_arg.split(",") if s.strip()]
 
+    # When NSE cash market is closed, prioritize 24/7 crypto symbols to the front across ALL universe inputs
+    # so leading NSE blocks can never push crypto symbols past max_symbols
+    if not is_nse_open:
+        crypto_syms = [s for s in symbols if "/" in s]
+        other_syms = [s for s in symbols if "/" not in s]
+        symbols = crypto_syms + other_syms
+
     return symbols[:max_symbols]
 
 
@@ -216,13 +223,15 @@ async def run_single_autonomous_cycle(
             from db.runtime_state import get_runtime_state
             existing = get_runtime_state("autonomous_feed:v1", []) or []
             if not existing or existing[0].get("action") not in ("MARKET_CLOSED", "SYSTEM_STANDBY"):
+                from agents.execution.session_guard import get_next_nse_session
+                _, next_desc = get_next_nse_session(now_ist)
                 record_autonomous_decision_to_db(
                     signal_id=f"mc-{today_str}",
                     run_id=run_id,
                     symbol="NSE",
                     action="MARKET_CLOSED",
                     direction="NEUTRAL",
-                    reason=f"NSE cash market closed ({nse_reason}). Next session: 09:15 IST.",
+                    reason=f"NSE cash market closed ({nse_reason}). Next session: {next_desc}.",
                 )
             summary["status"] = "MARKET_CLOSED"
             summary["reason"] = nse_reason

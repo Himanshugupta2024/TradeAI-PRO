@@ -2526,14 +2526,15 @@ async function loadAutonomousFeed() {
 
         const listEl = document.getElementById('autonomousDecisionFeedList');
         if (listEl && feedData && Array.isArray(feedData.feed)) {
-            // Deduplicate consecutive standby/closed items so user never sees a wall of duplicate closed rows
-            let seenStandby = false;
+            // Deduplicate consecutive standby/closed items while strictly preserving intervening executions
+            let lastAction = null;
             const displayFeed = feedData.feed.filter(item => {
                 const act = (item.action || '').toUpperCase();
-                if (act === 'MARKET_CLOSED' || act === 'SYSTEM_STANDBY') {
-                    if (seenStandby) return false;
-                    seenStandby = true;
+                const isStandby = (act === 'MARKET_CLOSED' || act === 'SYSTEM_STANDBY');
+                if (isStandby && (lastAction === 'MARKET_CLOSED' || lastAction === 'SYSTEM_STANDBY')) {
+                    return false;
                 }
+                lastAction = act;
                 return true;
             });
 
@@ -2567,7 +2568,8 @@ async function loadAutonomousFeed() {
                     bgBadge = 'rgba(148,163,184,0.15)';
                 }
 
-                const timeStr = item.timestamp ? new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+                const tsStr = item.timestamp ? (item.timestamp.endsWith('Z') || item.timestamp.includes('+') ? item.timestamp : item.timestamp + 'Z') : null;
+                const timeStr = tsStr ? new Date(tsStr).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
                 const pnlText = (item.pnl_pct !== null && item.pnl_pct !== undefined) ? `<span style="color:${item.pnl_pct >= 0 ? '#10b981' : '#f43f5e'};font-weight:600;">(${item.pnl_pct >= 0 ? '+' : ''}${item.pnl_pct}%)</span>` : '';
                 const priceText = item.price ? `₹${Number(item.price).toLocaleString('en-IN')}` : '';
                 const scorePill = item.qs_score > 0 ? `<span style="font-size:10px;color:#38bdf8;background:rgba(56,189,248,0.1);padding:1px 4px;border-radius:3px;">QS ${item.qs_score}</span>` : '';

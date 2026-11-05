@@ -354,3 +354,94 @@ def test_reconcile_stored_outcomes_vs_eligible_forward_trades():
         ).fetchone()[0]
         assert legacy_count >= 3, f"Expected at least 3 LEGACY_INCOMPLETE trades, found {legacy_count}"
 
+
+
+def test_section_6_independent_deterministic_fixture():
+    """
+    Independent deterministic fixture specified in Release Verification Prompt Section 6:
+    Base capital: INR 100,000
+    Rate: 84.50 INR / USDT (zero fees)
+
+    Position 1: LONG USDT instrument
+      Entry: 100, Stop: 95, Qty: 2
+      Native risk: (100 - 95) * 2 = 10 USDT
+      INR risk: 10 * 84.50 = 845.00 INR
+      Heat: 845 / 100,000 = 0.8450% (0.00845)
+
+    Position 2: SHORT USDT instrument
+      Entry: 100, Stop: 105, Qty: 3
+      Native risk: (105 - 100) * 3 = 15 USDT
+      INR risk: 15 * 84.50 = 1,267.50 INR
+      Heat: 1,267.50 / 100,000 = 1.2675% (0.012675)
+
+    Combined heat: 0.8450% + 1.2675% = 2.1125% (0.021125)
+
+    Adding another LONG USDT qty 1 at entry 100, stop 95:
+      Adds 1 * 5 * 84.50 = 422.50 INR risk.
+      Projected heat: (845 + 1267.50 + 422.50) / 100,000 = 2,535 / 100,000 = 2.5350% (0.02535)
+
+    Execution / Closure of Pos 1 (qty 2):
+      Leg 1: Partial close qty 1 at 110 -> (110 - 100) * 1 = 10 USDT = 845.00 INR
+      Leg 2: Final close remaining qty 1 at 105 -> (105 - 100) * 1 = 5 USDT = 422.50 INR
+      Gross realized profit: 15 USDT = INR 1,267.50
+      Final capital: 100,000 + 1,267.50 = INR 101,267.50
+      Repeated close or repeated hydration does not double book.
+    """
+    fx_svc = FXRateService.get_instance()
+    fx_svc.clear_test_rates()
+    fx_svc.set_test_rate("USDT", "INR", 84.5)
+
+    engine = PaperTradingEngine(
+        initial_capital=100000.0,
+        state_key=f"test_section_6_{uuid.uuid4().hex[:8]}",
+        log_file=None,
+    )
+    engine.trades = []
+    engine.open_trades = []
+    engine.capital = 100000.0
+
+    t1 = PaperTrade(
+        id=1, symbol="BTC/USDT", direction="LONG",
+        entry_price=100.0, stop_loss=95.0, target=120.0,
+        entry_time="2026-11-05T10:00:00+05:30", quantity=2.0, initial_quantity=2.0,
+        quote_currency="USDT", base_currency="INR", fx_rate_entry=84.5,
+        partial_target=110.0,
+    )
+
+    t2 = PaperTrade(
+        id=2, symbol="ETH/USDT", direction="SHORT",
+        entry_price=100.0, stop_loss=105.0, target=80.0,
+        entry_time="2026-11-05T10:05:00+05:30", quantity=3.0, initial_quantity=3.0,
+        quote_currency="USDT", base_currency="INR", fx_rate_entry=84.5,
+    )
+
+    engine.open_trades = [t1]
+    heat_1 = engine.get_portfolio_heat_pct()
+    assert round(heat_1, 6) == 0.00845
+
+    engine.open_trades = [t1, t2]
+    heat_combined = engine.get_portfolio_heat_pct()
+    assert round(heat_combined, 6) == 0.021125
+
+    # Projected heat adding LONG USDT qty 1, entry 100, stop 95
+    proj_heat = engine._projected_portfolio_heat_pct(entry=100.0, stop_loss=95.0, qty=1.0, fx_rate=84.5)
+    assert round(proj_heat, 6) == 0.02535
+
+    # Closure: Leg 1 partial close qty 1 at 110
+    engine.trades = [t1, t2]
+    res_partial = engine._maybe_take_partial_profit(t1, high=111.0, low=100.0, atr=1.0)
+    assert res_partial is True
+    assert t1.quantity == 1.0
+    assert t1.realized_pnl_native == 10.0
+    assert t1.realized_pnl == 845.0
+    assert engine.capital == 100845.0
+
+    # Closure: Leg 2 close remaining qty 1 at 105
+    engine._close_trade(t1, exit_price=105.0, status="CLOSED_TP")
+    assert t1.total_pnl_native == 15.0
+    assert t1.total_pnl == 1267.50
+    assert engine.capital == 101267.50
+
+    # Idempotency check: repeated close attempt does not double book
+    engine._close_trade(t1, exit_price=105.0, status="CLOSED_TP")
+    assert engine.capital == 101267.50

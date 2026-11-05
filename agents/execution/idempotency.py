@@ -89,7 +89,8 @@ def record_autonomous_decision_to_db(
       1. Relational database (autonomous_decision_records)
       2. Memory/Cache key-value store (runtime_state autonomous_feed:v1)
     """
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now_utc = datetime.now(timezone.utc)
+    now_naive = now_utc.replace(tzinfo=None)
     meta_json = json.dumps(meta or {})
 
     # 1. Database record
@@ -105,7 +106,7 @@ def record_autonomous_decision_to_db(
                 record = AutonomousDecisionRecord(
                     signal_id=signal_id,
                     run_id=run_id,
-                    timestamp=now,
+                    timestamp=now_naive,
                     symbol=symbol,
                     action=action,
                     direction=direction,
@@ -135,7 +136,7 @@ def record_autonomous_decision_to_db(
     feed_entry = {
         "id": signal_id,
         "run_id": run_id,
-        "timestamp": now.isoformat(),
+        "timestamp": now_utc.isoformat(),
         "action": action,
         "symbol": symbol,
         "direction": direction or "HOLD",
@@ -154,7 +155,7 @@ def record_autonomous_decision_to_db(
         feed = get_runtime_state("autonomous_feed:v1", []) or []
         # Deduplicate consecutive MARKET_CLOSED / SYSTEM_STANDBY entries
         if feed and feed[0].get("action") in ("MARKET_CLOSED", "SYSTEM_STANDBY") and action in ("MARKET_CLOSED", "SYSTEM_STANDBY"):
-            feed[0]["timestamp"] = now.isoformat()
+            feed[0]["timestamp"] = now_utc.isoformat()
             feed[0]["reason"] = reason or feed[0].get("reason", "")
         else:
             feed.insert(0, feed_entry)

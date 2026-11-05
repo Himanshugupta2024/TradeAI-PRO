@@ -66,3 +66,28 @@ def test_trigger_autonomous_cycle_endpoint(client):
         assert data["method"] in ("local_async", "github_actions")
     else:
         assert data.get("error") == "RATE_LIMITED"
+
+
+def test_consecutive_standby_deduplication_preserves_intervening_executions(client):
+    """
+    Verify that:
+    1. Consecutive duplicate MARKET_CLOSED or SYSTEM_STANDBY entries are collapsed into one.
+    2. Intervening real trades / actions (e.g. Standby -> AUTO_ENTER -> Standby) are fully preserved.
+    """
+    from db.runtime_state import set_runtime_state
+
+    synthetic_feed = [
+        {"id": "s1", "action": "MARKET_CLOSED", "symbol": "NSE", "timestamp": "2026-11-05T19:00:00Z"},
+        {"id": "s2", "action": "MARKET_CLOSED", "symbol": "NSE", "timestamp": "2026-11-05T18:50:00Z"},
+        {"id": "s3", "action": "AUTO_ENTER", "symbol": "BTC/USDT", "timestamp": "2026-11-05T18:40:00Z"},
+        {"id": "s4", "action": "SYSTEM_STANDBY", "symbol": "SYSTEM", "timestamp": "2026-11-05T18:30:00Z"},
+        {"id": "s5", "action": "SYSTEM_STANDBY", "symbol": "SYSTEM", "timestamp": "2026-11-05T18:20:00Z"},
+    ]
+    set_runtime_state("autonomous_feed:v1", synthetic_feed)
+
+    res = client.get("/api/autonomous/feed?limit=10")
+    assert res.status_code == 200
+    feed = res.json()["feed"]
+
+    actions = [x["action"] for x in feed]
+    assert actions == ["MARKET_CLOSED", "AUTO_ENTER", "SYSTEM_STANDBY"]

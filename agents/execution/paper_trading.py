@@ -1113,6 +1113,10 @@ class PaperTradingEngine:
 
     def _close_trade(self, trade: PaperTrade, exit_price: float, status: str):
         """Close a trade and update metrics."""
+        if trade.status in ("CLOSED_TP", "CLOSED_SL", "CLOSED_TRAIL", "CLOSED_MANUAL"):
+            log.warning("Trade #%s is already closed (%s). Skipping duplicate close.", trade.id, trade.status)
+            return
+
         trade.exit_price = exit_price
         trade.exit_time = _now_ist_isoformat()
         trade.status = status
@@ -1159,7 +1163,8 @@ class PaperTradingEngine:
 
         # Capital & Daily PnL updated in base currency INR
         self.capital += remaining_leg_pnl_base
-        self.open_trades.remove(trade)
+        if trade in self.open_trades:
+            self.open_trades.remove(trade)
 
         # Remove from trailing manager
         self.trailing_manager.remove(trade.id)

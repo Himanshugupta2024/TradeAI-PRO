@@ -68,6 +68,52 @@ def is_nse_market_open(dt: Optional[datetime] = None) -> Tuple[bool, str]:
     return True, "SESSION_ACTIVE"
 
 
+def get_next_nse_session(dt: Optional[datetime] = None) -> Tuple[datetime, str]:
+    """
+    Calculate the next official NSE trading session open (09:15 IST).
+    Skips weekends and exchange holidays.
+    Returns:
+      (next_session_datetime_ist, description_string)
+      e.g. (datetime, "today (2026-11-05) at 09:15 IST") or ("tomorrow (2026-11-06) at 09:15 IST")
+    """
+    from datetime import timedelta
+    try:
+        from agents.market_intelligence.nse_holidays import is_holiday
+    except Exception:
+        def is_holiday(d): return False
+
+    now = dt or get_current_ist_time()
+    if now.tzinfo is not None:
+        now = now.astimezone(_IST)
+    else:
+        now = now.replace(tzinfo=_IST)
+
+    market_open_today = now.replace(hour=_NSE_OPEN_HOUR, minute=_NSE_OPEN_MINUTE, second=0, microsecond=0)
+    candidate_date = now.date()
+
+    # If today is a trading day and market has not yet opened
+    if now < market_open_today and candidate_date.weekday() < 5 and not is_holiday(candidate_date):
+        return market_open_today, f"today ({candidate_date.isoformat()}) at 09:15 IST"
+
+    # Otherwise forward-scan day by day for the next valid trading business day
+    candidate_date += timedelta(days=1)
+    while candidate_date.weekday() >= 5 or is_holiday(candidate_date):
+        candidate_date += timedelta(days=1)
+
+    next_dt = datetime(
+        candidate_date.year, candidate_date.month, candidate_date.day,
+        _NSE_OPEN_HOUR, _NSE_OPEN_MINUTE, 0, tzinfo=_IST
+    )
+    days_ahead = (candidate_date - now.date()).days
+    if days_ahead == 1:
+        desc = f"tomorrow ({candidate_date.isoformat()}) at 09:15 IST"
+    else:
+        day_name = candidate_date.strftime("%A")
+        desc = f"{day_name} ({candidate_date.isoformat()}) at 09:15 IST"
+
+    return next_dt, desc
+
+
 def check_session_gate(asset_class: str, dt: Optional[datetime] = None) -> Tuple[bool, str]:
     """
     Verify whether the target asset class is permitted to trade at the current time.

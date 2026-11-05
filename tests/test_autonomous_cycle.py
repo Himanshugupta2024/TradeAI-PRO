@@ -231,3 +231,31 @@ def test_data_freshness_evaluation():
     # 4. Empty dataframe -> UNAVAILABLE
     freshness, _ = evaluate_data_freshness(pd.DataFrame(), "BTC/USDT")
     assert freshness == "UNAVAILABLE"
+
+
+def test_resolve_universe_crypto_prioritization_under_any_input(monkeypatch):
+    """
+    Assert that when NSE is closed, 24/7 crypto symbols are prioritized to the front,
+    even if a user passes a custom comma-separated list with dozens of leading NSE symbols,
+    ensuring crypto is never truncated by max_symbols.
+    """
+    from scripts.autonomous_cycle import resolve_universe
+    import agents.execution.session_guard as sg
+
+    # Mock NSE as closed (e.g. evening or weekend)
+    monkeypatch.setattr(sg, "is_nse_market_open", lambda dt=None: (False, "NSE_POST_MARKET"))
+
+    # Case 1: Custom comma-separated list where BTC/USDT is at the end of 25 NSE symbols
+    custom_input = "RELIANCE,TCS,INFY,HDFCBANK,ICICIBANK,SBIN,BHARTIARTL,ITC,KOTAKBANK,LT,AXISBANK,MARUTI,SUNPHARMA,TITAN,ULTRACEMCO,WIPRO,BAJFINANCE,NESTLEIND,TATACONSUM,JSWSTEEL,TATASTEEL,ADANIENT,NTPC,POWERGRID,ONGC,BTC/USDT,ETH/USDT"
+    res = resolve_universe(custom_input, max_symbols=5)
+    # Crypto must be in the top 5!
+    assert "BTC/USDT" in res
+    assert "ETH/USDT" in res
+    assert res[0] == "BTC/USDT"
+    assert res[1] == "ETH/USDT"
+
+    # Case 2: Tier1 universe when NSE closed
+    res_tier1 = resolve_universe("tier1", max_symbols=5)
+    assert res_tier1[0] == "BTC/USDT"
+    assert res_tier1[1] == "ETH/USDT"
+    assert res_tier1[2] == "SOL/USDT"
