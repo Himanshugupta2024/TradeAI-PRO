@@ -6,8 +6,9 @@
 
 <head>
     <script>
-        window.__TRADEAI_CONFIG__ = window.__TRADEAI_CONFIG__ || {
-            API_BASE_URL: 'https://trading-api-n1wt.onrender.com'
+        const isWorker = window.location.hostname.endsWith('workers.dev');
+        window.__TRADEAI_CONFIG__ = {
+            API_BASE_URL: isWorker ? '' : (window.location.port === '5500' || window.location.port === '3000' || window.location.port === '5173') ? 'http://127.0.0.1:8000' : 'https://trading-api-n1wt.onrender.com'
         };
     </script>
 
