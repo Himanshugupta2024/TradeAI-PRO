@@ -351,13 +351,32 @@ def _lifespan_context():
 
 
 
+def _docs_enabled() -> bool:
+    """Expose /docs, /redoc and /openapi.json only when explicitly allowed.
+
+    In production the schema enumerates every route and request model, which is a
+    free map for an attacker. Enable with ENABLE_API_DOCS=true for a debug session.
+    """
+    raw = os.getenv("ENABLE_API_DOCS")
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return not bool(getattr(settings, "IS_PRODUCTION", False))
+
+
 def create_app() -> FastAPI:
 
     settings.validate_runtime_config()
 
     lifespan = _lifespan_context()
 
-    app = FastAPI(title="AI Trading System — Live", version="4.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="AI Trading System — Live",
+        version="4.1.0",
+        lifespan=lifespan,
+        docs_url="/docs" if _docs_enabled() else None,
+        redoc_url="/redoc" if _docs_enabled() else None,
+        openapi_url="/openapi.json" if _docs_enabled() else None,
+    )
 
     cors_origins_raw = os.getenv(
 
@@ -391,6 +410,10 @@ def create_app() -> FastAPI:
         if any(k in path for k in ("/portfolio", "/trades", "/paper", "/capital", "/journal", "/risk", "/admin", "/orders", "/positions")) or request.method != "GET":
             response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
+        # Baseline hardening for JSON responses served directly from Render.
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-Frame-Options"] = "DENY"
         return response
 
     app.include_router(router)

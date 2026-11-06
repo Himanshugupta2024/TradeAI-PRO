@@ -29,6 +29,57 @@
 
         content="AI-powered autonomous trading dashboard with signals, portfolio, sectoral heatmap, PCR analysis and institutional trade flow">
 
+    <meta name="theme-color" content="#0b1120">
+
+    <link rel="canonical" href="https://tradeai-pro.tradingpro.workers.dev/">
+
+    <meta property="og:type" content="website">
+
+    <meta property="og:site_name" content="TradeAI PRO">
+
+    <meta property="og:title" content="TradeAI PRO — Autonomous Trading Dashboard">
+
+    <meta property="og:description" content="Paper-trading research dashboard for NSE equities, indices, crypto and forex. Delayed data. Not investment advice.">
+
+    <meta property="og:url" content="https://tradeai-pro.tradingpro.workers.dev/">
+
+    <meta property="og:image" content="https://tradeai-pro.tradingpro.workers.dev/static/logo-512.png">
+
+    <meta name="twitter:card" content="summary_large_image">
+
+    <meta name="twitter:title" content="TradeAI PRO — Autonomous Trading Dashboard">
+
+    <meta name="twitter:description" content="Paper-trading research dashboard for NSE equities, indices, crypto and forex. Delayed data. Not investment advice.">
+
+    <meta name="twitter:image" content="https://tradeai-pro.tradingpro.workers.dev/static/logo-512.png">
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "TradeAI PRO",
+      "url": "https://tradeai-pro.tradingpro.workers.dev/",
+      "applicationCategory": "FinanceApplication",
+      "operatingSystem": "Web",
+      "description": "Paper-trading research dashboard for NSE equities, indices, crypto and forex.",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "INR" }
+    }
+    </script>
+
+    <style>
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+    </style>
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
 
     <link
@@ -61,7 +112,7 @@
 
     </script>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="/static/vendor/chart.umd.min.js"></script>
 
     <link rel="stylesheet" href="/static/styles.css?v=mw_15">
 
@@ -3379,6 +3430,8 @@
 
 <body>
 
+    <h1 class="sr-only">TradeAI PRO — AI trading research dashboard for NSE equities, indices, crypto and forex</h1>
+
 
 
     <!-- ── Market Mood Strip (Top Bar) ── -->
@@ -3501,9 +3554,9 @@
 
             </button>
 
-            <div id="aiEngineStatusBadge" class="ai-engine-badge" title="AI Engine: Ensemble V2 (4/4 ML + Calibrated)" style="display:flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;font-size:0.65rem;font-weight:700;background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.3);white-space:nowrap;cursor:help;">
+            <div id="aiEngineStatusBadge" class="ai-engine-badge" title="AI engine status (loaded from /api/health)" style="display:flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;font-size:0.65rem;font-weight:700;background:rgba(148,163,184,0.15);color:#94a3b8;border:1px solid rgba(148,163,184,0.3);white-space:nowrap;cursor:help;">
 
-                <span>🧠 Ensemble 4/4 • Calibrated</span>
+                <span>🧠 AI Engine —</span>
 
             </div>
 
@@ -3934,33 +3987,33 @@
                 <div class="macro-ticker-strip">
                     <div class="macro-stat-card" id="macroBrentCard">
                         <div class="macro-stat-label">BRENT CRUDE</div>
-                        <div class="macro-stat-val" id="macroBrentPrice">$74.25</div>
-                        <div class="macro-stat-sub" id="macroBrentSub">+0.3% • $/bbl</div>
+                        <div class="macro-stat-val" id="macroBrentPrice">—</div>
+                        <div class="macro-stat-sub" id="macroBrentSub">Awaiting data</div>
                     </div>
                     <div class="macro-stat-card" id="macroWtiCard">
                         <div class="macro-stat-label">WTI CRUDE</div>
-                        <div class="macro-stat-val" id="macroWtiPrice">$70.80</div>
-                        <div class="macro-stat-sub" id="macroWtiSub">+0.4% • $/bbl</div>
+                        <div class="macro-stat-val" id="macroWtiPrice">—</div>
+                        <div class="macro-stat-sub" id="macroWtiSub">Awaiting data</div>
                     </div>
                     <div class="macro-stat-card" id="macroYieldCard">
                         <div class="macro-stat-label">US 10Y YIELD</div>
-                        <div class="macro-stat-val" id="macroYieldPrice">4.28%</div>
-                        <div class="macro-stat-sub" id="macroYieldSub">Treasuries</div>
+                        <div class="macro-stat-val" id="macroYieldPrice">—</div>
+                        <div class="macro-stat-sub" id="macroYieldSub">Awaiting data</div>
                     </div>
                     <div class="macro-stat-card" id="macroDxyCard">
                         <div class="macro-stat-label">DOLLAR INDEX (DXY)</div>
-                        <div class="macro-stat-val" id="macroDxyPrice">104.20</div>
-                        <div class="macro-stat-sub" id="macroDxySub">USD Strength</div>
+                        <div class="macro-stat-val" id="macroDxyPrice">—</div>
+                        <div class="macro-stat-sub" id="macroDxySub">Awaiting data</div>
                     </div>
                     <div class="macro-stat-card" id="macroSp500Card">
-                        <div class="macro-stat-label">S&P 500 (US)</div>
-                        <div class="macro-stat-val" id="macroSp500Price">5,885</div>
-                        <div class="macro-stat-sub" id="macroSp500Sub">Wall Street</div>
+                        <div class="macro-stat-label">S&amp;P 500 (US)</div>
+                        <div class="macro-stat-val" id="macroSp500Price">—</div>
+                        <div class="macro-stat-sub" id="macroSp500Sub">Awaiting data</div>
                     </div>
                     <div class="macro-stat-card" id="macroGoldCard">
                         <div class="macro-stat-label">GOLD</div>
-                        <div class="macro-stat-val" id="macroGoldPrice">$2,745</div>
-                        <div class="macro-stat-sub" id="macroGoldSub">Safe Haven</div>
+                        <div class="macro-stat-val" id="macroGoldPrice">—</div>
+                        <div class="macro-stat-sub" id="macroGoldSub">Awaiting data</div>
                     </div>
                 </div>
 
@@ -4660,7 +4713,7 @@
 
                 <div class="opportunity-grid" id="opportunityGrid" style="display:grid;grid-template-columns:repeat(5, 1fr);gap:0.75rem;margin-top:0.5rem;">
 
-                    <div style="font-size:0.8rem;color:var(--text-muted);">Screener is analyzing 200 stocks...</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">Screener is analyzing the tracked universe...</div>
 
                 </div>
 
@@ -6169,7 +6222,7 @@
                 <div>
                     <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
                         <h2 class="section-title" style="margin:0;font-size:1.35rem;font-weight:800;letter-spacing:-0.02em;background:linear-gradient(135deg,#ffffff 0%,#cbd5e1 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">⚡ Intraday Command Center</h2>
-                        <span style="font-size:0.65rem;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);padding:2px 8px;border-radius:4px;font-weight:700;letter-spacing:0.04em;">PAPER ONLY · SEBI COMPLIANT</span>
+                        <span style="font-size:0.65rem;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);padding:2px 8px;border-radius:4px;font-weight:700;letter-spacing:0.04em;">PAPER ONLY · NOT SEBI REGISTERED</span>
                         <span id="idSessionBadge" style="font-size:0.65rem;background:rgba(148,163,184,0.15);color:#cbd5e1;border:1px solid rgba(148,163,184,0.3);padding:2px 8px;border-radius:4px;font-weight:700;display:inline-flex;align-items:center;gap:4px;">
                             <span id="idSessionDot" style="width:6px;height:6px;border-radius:50%;background:#94a3b8;display:inline-block;"></span>
                             <span id="idSessionText">CHECKING SESSION...</span>
@@ -7921,8 +7974,13 @@
                 </div>
 
                 <div class="more-menu-disclaimer">
-                    <div style="font-weight:700;margin-bottom:3px;letter-spacing:0.02em;">Institutional Paper Trading Mode</div>
-                    Algorithmic advisory indications with zero broker capital risk. Durable telemetry synced with Supabase.
+                    <div style="font-weight:700;margin-bottom:3px;letter-spacing:0.02em;">Paper Trading &amp; Research Mode</div>
+                    Simulation only — no broker connection, no real orders. Data is delayed and may be incomplete. Not investment advice. This site is not a SEBI-registered research analyst or investment adviser.
+                    <div style="margin-top:6px;display:flex;gap:10px;">
+                        <a href="/legal.html#terms" style="color:var(--text-muted);text-decoration:underline;">Terms</a>
+                        <a href="/legal.html#privacy" style="color:var(--text-muted);text-decoration:underline;">Privacy</a>
+                        <a href="/legal.html#disclaimer" style="color:var(--text-muted);text-decoration:underline;">Disclaimer</a>
+                    </div>
                 </div>
             </div>
         </div>
@@ -8067,6 +8125,8 @@
     <script src="/static/config.js"></script>
 
     <script src="/static/app.js?v=mw_18"></script>
+
+    <script src="/static/honesty.js" defer></script>
 
     <!-- Section 6A: Market Control Password Verification Modal -->
     <div id="marketControlPasswordModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 10000; align-items: center; justify-content: center; backdrop-filter: blur(4px);">

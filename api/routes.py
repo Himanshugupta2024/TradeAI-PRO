@@ -8554,6 +8554,17 @@ async def serve_crypto():
 
     )
 
+
+@router.get("/legal.html", include_in_schema=False)
+@router.get("/legal", include_in_schema=False)
+async def serve_legal():
+    """Serve the legal, terms and privacy disclaimer page."""
+    legal_path = os.path.join(STATIC_DIR, "legal.html")
+    if os.path.exists(legal_path):
+        return FileResponse(legal_path, headers=_DASH_HTML_HEADERS)
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=_DASH_HTML_HEADERS)
+
+
 @router.get("/api/crypto/news")
 
 async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):

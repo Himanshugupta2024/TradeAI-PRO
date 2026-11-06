@@ -19,6 +19,52 @@ const PHYSICAL_EDGE_TTL_SEC = EDGE_FRESH_TTL_SEC + EDGE_SWR_WINDOW_SEC; // 45 se
 
 const UNIFIED_CACHE_CONTROL = `public, max-age=${BROWSER_TTL_SEC}, s-maxage=${EDGE_FRESH_TTL_SEC}, stale-while-revalidate=${EDGE_SWR_WINDOW_SEC}`;
 
+// Security headers applied to every static asset response.
+// NOTE: the dashboard ships inline <script> blocks and inline event handlers, so
+// 'unsafe-inline' is required until those are extracted. Chart.js is self-hosted
+// from /static/vendor to avoid a third-party script origin.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob: https://api.qrserver.com https://*.githubusercontent.com",
+  "connect-src 'self' wss://tradeai-pro.tradingpro.workers.dev https://tradeai-pro.tradingpro.workers.dev https://trading-api-n1wt.onrender.com wss://trading-api-n1wt.onrender.com",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+const SECURITY_HEADERS = {
+  "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "geolocation=(), microphone=(), camera=(), payment=()",
+  "Cross-Origin-Opener-Policy": "same-origin",
+};
+
+function harden(response) {
+  const headers = new Headers(response.headers);
+  for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+    headers.set(key, value);
+  }
+  if (response.status === 204 || response.status === 304) {
+    return new Response(null, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 // Strict Allowlist of Public Market-Data Endpoints eligible for shared edge caching
 const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/overview/intelligence",
@@ -265,11 +311,49 @@ export default {
       });
     }
 
-    // 3. Fallback to Static Asset delivery
+    // 3. Static asset delivery with SPA fallback + security headers
     if (env.ASSETS) {
-      return env.ASSETS.fetch(request);
+      let assetResponse = await env.ASSETS.fetch(request);
+
+      // If requested under /static/ and not found, retry without /static/ prefix
+      if (assetResponse.status === 404 && url.pathname.startsWith("/static/")) {
+        const strippedPath = url.pathname.replace(/^\/static/, "");
+        const strippedReq = new Request(new URL(strippedPath + url.search, url), request);
+        const retryRes = await env.ASSETS.fetch(strippedReq);
+        if (retryRes.status === 200) {
+          assetResponse = retryRes;
+        }
+      }
+
+      // Client-side tab routes (/performance, /portfolio, ...) must deep-link to
+      // the dashboard shell instead of returning a blank 404.
+      const wantsHtml = (request.headers.get("accept") || "").includes("text/html");
+      if (assetResponse.status === 404 && request.method === "GET" && wantsHtml) {
+        const indexResponse = await env.ASSETS.fetch(
+          new Request(new URL("/index.html", url), request)
+        );
+        if (indexResponse.status === 200) {
+          const htmlHeaders = new Headers(indexResponse.headers);
+          htmlHeaders.set("Content-Type", "text/html; charset=utf-8");
+          htmlHeaders.set("Cache-Control", "public, max-age=0, must-revalidate");
+          return harden(
+            new Response(indexResponse.body, {
+              status: 200,
+              statusText: "OK",
+              headers: htmlHeaders,
+            })
+          );
+        }
+      }
+
+      return harden(assetResponse);
     }
 
-    return new Response("Not Found", { status: 404 });
+    return harden(
+      new Response("Not Found", {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      })
+    );
   },
 };
