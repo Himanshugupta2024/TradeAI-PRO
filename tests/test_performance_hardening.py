@@ -55,6 +55,7 @@ class TestMemoryProfilingGuardrails:
             assert rss_mb < 512.0, f"Exceeded Render free tier hard limit: {rss_mb} MB"
 
 
+@pytest.mark.integration
 class TestDashboardCompositeOverviewAPI:
     def test_overview_endpoint_schema_and_speed(self):
         from server import app

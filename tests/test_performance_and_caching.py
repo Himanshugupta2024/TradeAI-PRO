@@ -138,6 +138,7 @@ def test_health_endpoints_speed_and_structure():
     assert "yahoo" in (prov_data.get("providers") or prov_data)
 
 
+@pytest.mark.integration
 def test_dashboard_overview_composite_endpoint():
     """Verify /api/dashboard/overview returns consolidated dashboard state in sub-150ms."""
     client = TestClient(app)

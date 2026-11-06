@@ -1669,7 +1669,11 @@ def _get_signal_for_symbol(symbol: str) -> dict:
 
     # Always use current-bar values for these live fields
     current_close = round(float(last["close"]), 2)
-    first_open = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else current_close
+    first_open_raw = df.iloc[0].get("open", current_close) if "open" in df.columns else current_close
+    try:
+        first_open = float(first_open_raw) if float(first_open_raw) != 0 else current_close
+    except (ValueError, TypeError):
+        first_open = current_close
     day_chg_pct = round(((current_close - first_open) / first_open) * 100.0, 2) if first_open else 0.0
     current_rsi = (
         round(float(last["RSI_14"]), 1) if pd.notna(last.get("RSI_14")) else None
@@ -2831,6 +2835,24 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             if risk_dist > 0 and reward_dist > 0:
                 rr_label = f"1:{reward_dist / risk_dist:.1f}"
 
+        # Distance from current price to the proposed entry — chasing guard
+        entry_distance_pct = None
+        chase_risk = False
+        close_val = sig.get("close")
+        try:
+            if entry_val is not None and close_val is not None:
+                entry_f = float(entry_val)
+                close_f = float(close_val)
+                if entry_f > 0:
+                    entry_distance_pct = round((close_f - entry_f) / entry_f * 100.0, 2)
+                    if signal_label == "LONG":
+                        chase_risk = entry_distance_pct >= 1.0
+                    elif signal_label == "SHORT":
+                        chase_risk = entry_distance_pct <= -1.0
+        except (TypeError, ValueError):
+            entry_distance_pct = None
+            chase_risk = False
+
         cal = _calibration_for_setup(
             regime, float(quality_score), confidence, insights_for_cal
         )
@@ -2859,6 +2881,8 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             "rank_explain": rank_explain,
             "calibration": cal,
             "rr": rr_label,
+            "entry_distance_pct": entry_distance_pct,
+            "chase_risk": chase_risk,
             "entry": entry_val,
             "stop_loss": sl_val,
             "target": tp_val,
@@ -2894,7 +2918,7 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             entry_data["blockers"] = blockers
             avoid_list.append(entry_data)
 
-    top_setups.sort(key=lambda x: x["composite_rank"], reverse=True)
+    top_setups.sort(key=lambda x: (0 if x.get("stale") else 1, x["composite_rank"]), reverse=True)
     avoid_list.sort(key=lambda x: x["composite_rank"], reverse=True)
 
     fallback_applied = False
