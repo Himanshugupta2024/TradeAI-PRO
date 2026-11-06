@@ -2487,18 +2487,22 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
     }
 
     try {
+        const reqHeaders = {};
+        const adminKey = (typeof localStorage !== 'undefined') ? (localStorage.getItem('tradeai_admin_key') || localStorage.getItem('admin_api_key')) : null;
+        if (adminKey && adminKey.trim()) reqHeaders['X-API-Key'] = adminKey.trim();
+
         let targetUrl = `${API}/api/autonomous/status?_ts=${Date.now()}`;
         let res;
         try {
             res = await fetchWithTimeout(targetUrl, {
                 signal: _autonomousStatusController.signal,
-                headers: _getAuthHeaders(),
+                headers: reqHeaders,
             }, 15000);
         } catch (netErr) {
             if (!API || String(targetUrl).startsWith('/') || String(targetUrl).includes('workers.dev')) {
                 res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`, {
                     signal: _autonomousStatusController.signal,
-                    headers: _getAuthHeaders(),
+                    headers: reqHeaders,
                 }, 15000);
             } else {
                 throw netErr;
@@ -2509,7 +2513,7 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
             // Anti-bot edge challenge fallback directly to origin
             res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`, {
                 signal: _autonomousStatusController.signal,
-                headers: _getAuthHeaders(),
+                headers: reqHeaders,
             }, 15000);
         }
 
@@ -2617,18 +2621,22 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
     _autonomousFeedController = new AbortController();
 
     try {
+        const reqHeaders = {};
+        const adminKey = (typeof localStorage !== 'undefined') ? (localStorage.getItem('tradeai_admin_key') || localStorage.getItem('admin_api_key')) : null;
+        if (adminKey && adminKey.trim()) reqHeaders['X-API-Key'] = adminKey.trim();
+
         let targetUrl = `${API}/api/autonomous/feed?limit=25&_ts=${Date.now()}`;
         let res;
         try {
             res = await fetchWithTimeout(targetUrl, {
                 signal: _autonomousFeedController.signal,
-                headers: _getAuthHeaders(),
+                headers: reqHeaders,
             }, 15000);
         } catch (netErr) {
             if (!API || String(targetUrl).startsWith('/') || String(targetUrl).includes('workers.dev')) {
                 res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`, {
                     signal: _autonomousFeedController.signal,
-                    headers: _getAuthHeaders(),
+                    headers: reqHeaders,
                 }, 15000);
             } else {
                 throw netErr;
@@ -2639,7 +2647,7 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
             // Anti-bot edge challenge fallback directly to origin
             res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`, {
                 signal: _autonomousFeedController.signal,
-                headers: _getAuthHeaders(),
+                headers: reqHeaders,
             }, 15000);
         }
 
