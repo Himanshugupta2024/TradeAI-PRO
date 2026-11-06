@@ -25,8 +25,10 @@ def _as_float(value: Any, default: float = 0.0) -> float:
 
 
 def trade_pnl(trade: dict) -> float:
-    """Rupee P&L for one closed trade, tolerating older payload shapes."""
-    for key in ("total_pnl", "net_pnl", "pnl_inr", "realized_pnl"):
+    """Rupee P&L for one closed trade, net of estimated costs when available."""
+    if trade.get("cost_profile") and trade.get("net_pnl") is not None:
+        return _as_float(trade.get("net_pnl"))
+    for key in ("net_pnl", "total_pnl", "pnl_inr", "realized_pnl"):
         if trade.get(key) is not None:
             return _as_float(trade.get(key))
     return _as_float(trade.get("pnl")) * _as_float(trade.get("quantity"), 1.0)
@@ -52,6 +54,9 @@ def _normalise_trade(trade: dict) -> dict:
         "exit_price": _as_float(trade.get("exit_price")),
         "quantity": _as_float(trade.get("quantity"), 1.0),
         "pnl": round(trade_pnl(trade), 2),
+        "gross_pnl": round(_as_float(trade.get("total_pnl")), 2),
+        "estimated_costs": round(_as_float(trade.get("estimated_costs")), 2),
+        "net_pnl": round(trade_pnl(trade), 2),
         "return_pct": _trade_return_pct(trade),
         "exit_reason": trade.get("exit_reason") or trade.get("status") or "",
         "entry_time": trade.get("entry_time"),

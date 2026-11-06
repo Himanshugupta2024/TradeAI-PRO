@@ -111,6 +111,10 @@ class PaperTrade:
     pnl_native: float = 0.0
     realized_pnl_native: float = 0.0
     fx_status: str = "ACTIVE" 
+    # ── Cost-aware accounting (gross stays in total_pnl) ──────────────────
+    estimated_costs: float = 0.0
+    cost_profile: str = ""
+    net_pnl: float = 0.0
 
 
 class PaperTradingEngine:
@@ -1160,6 +1164,27 @@ class PaperTradingEngine:
         trade.pnl_native = trade.total_pnl_native / initial_qty
         trade.pnl = trade.total_pnl / initial_qty
         trade.pnl_pct = round((total_pnl_native / (trade.entry_price * initial_qty)) * 100, 3)
+
+        # Cost-aware accounting: total_pnl stays gross so existing capital and
+        # equity maths do not move; net_pnl is the honest, tradeable number.
+        try:
+            from agents.execution.trade_costs import estimate_trade_costs
+
+            cost_est = estimate_trade_costs(
+                entry_price=float(trade.entry_price),
+                exit_price=float(exit_price),
+                quantity=float(getattr(trade, "initial_quantity", 0.0) or remaining_qty or 1.0),
+                symbol=str(trade.symbol),
+                signal_type=str(getattr(trade, "signal_type", "") or ""),
+            )
+            trade.estimated_costs = round(float(cost_est["total_cost"]), 2)
+            trade.cost_profile = str(cost_est["profile"])
+            trade.net_pnl = round(float(trade.total_pnl) - trade.estimated_costs, 2)
+        except Exception as cost_err:
+            log.debug("Cost estimate failed for trade #%s: %s", trade.id, cost_err)
+            trade.estimated_costs = 0.0
+            trade.cost_profile = "UNAVAILABLE"
+            trade.net_pnl = float(trade.total_pnl)
 
         # Capital & Daily PnL updated in base currency INR
         self.capital += remaining_leg_pnl_base

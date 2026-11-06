@@ -111,6 +111,8 @@
             var exitTime = t.exit_time ? new Date(t.exit_time).toLocaleDateString('en-IN', {
                 day: '2-digit', month: 'short', year: '2-digit'
             }) : '—';
+            var costs = Number(t.estimated_costs || 0);
+            var pnlTitle = costs > 0 ? ' title="Net of ~₹' + costs.toFixed(2) + ' estimated statutory costs"' : '';
             return '<tr>' +
                 '<td>' + esc(exitTime) + '</td>' +
                 '<td><b>' + esc(t.symbol) + '</b></td>' +
@@ -119,7 +121,7 @@
                 '<td>' + Number(t.quantity || 0).toFixed(2) + '</td>' +
                 '<td>' + money(t.entry_price) + '</td>' +
                 '<td>' + money(t.exit_price) + '</td>' +
-                '<td class="' + (Number(t.pnl) >= 0 ? 'pos' : 'neg') + '"><b>' + signedMoney(t.pnl) + '</b></td>' +
+                '<td class="' + (Number(t.pnl) >= 0 ? 'pos' : 'neg') + '"' + pnlTitle + '><b>' + signedMoney(t.pnl) + '</b></td>' +
                 '<td class="' + (Number(t.pnl) >= 0 ? 'pos' : 'neg') + '">' + (t.return_pct == null ? '—' : pct(t.return_pct)) + '</td>' +
                 '<td>' + esc(t.exit_reason || '—') + '</td>' +
                 '</tr>';

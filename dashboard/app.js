@@ -11467,7 +11467,7 @@ async function loadPortfolio() {
 
                 hBody.innerHTML = sortedTrades.slice(0, 50).map(t => {
                     const qty = Number(t.initial_quantity || t.quantity || 1);
-                    const pnlVal = Number(t.total_pnl != null ? t.total_pnl : ((t.pnl || 0) * qty));
+                    const pnlVal = Number(t.cost_profile && t.net_pnl != null ? t.net_pnl : (t.total_pnl != null ? t.total_pnl : ((t.pnl || 0) * qty)));
                     const pnlClass = pnlVal >= 0 ? 'pnl-positive' : 'pnl-negative';
                     const isLong = t.direction === 'BUY' || t.direction === 'LONG';
                     const sideClass = isLong ? 'badge-buy' : 'badge-sell';
