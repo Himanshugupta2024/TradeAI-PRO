@@ -327,17 +327,18 @@ export default {
 
       // Client-side tab routes (/performance, /portfolio, ...) must deep-link to
       // the dashboard shell instead of returning a blank 404.
-      const wantsHtml = (request.headers.get("accept") || "").includes("text/html");
-      if (assetResponse.status === 404 && request.method === "GET" && wantsHtml) {
+      const isGetOrHead = request.method === "GET" || request.method === "HEAD";
+      const wantsHtml = (request.headers.get("accept") || "").includes("text/html") || !url.pathname.includes(".");
+      if (assetResponse.status === 404 && isGetOrHead && wantsHtml) {
         const indexResponse = await env.ASSETS.fetch(
-          new Request(new URL("/index.html", url), request)
+          new Request(new URL("/index.html", url), { method: "GET", headers: request.headers })
         );
         if (indexResponse.status === 200) {
           const htmlHeaders = new Headers(indexResponse.headers);
           htmlHeaders.set("Content-Type", "text/html; charset=utf-8");
           htmlHeaders.set("Cache-Control", "public, max-age=0, must-revalidate");
           return harden(
-            new Response(indexResponse.body, {
+            new Response(request.method === "HEAD" ? null : indexResponse.body, {
               status: 200,
               statusText: "OK",
               headers: htmlHeaders,
