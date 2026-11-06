@@ -1,0 +1,372 @@
+/* ============================================================================
+   TradeAI PRO — Liquid Glass skin (opt-in)
+   ----------------------------------------------------------------------------
+   Scope:  html[data-skin="glass"]  →  nothing changes unless the skin is on.
+   Enable: ?skin=glass  (persists in localStorage) or the ✦ button in the top bar.
+
+   Design intent (Apple "Liquid Glass" / glassmorphism):
+   - ambient colour field behind the UI, never a flat black page
+   - frosted panels with a 1px light edge and an inner top highlight
+   - layered depth: shadow below, specular highlight above
+   - restrained: data tables and charts stay readable, blur is not everywhere
+
+   Performance: each backdrop-filter surface is a compositor layer. The list
+   below is deliberately capped; mobile and reduced-transparency users get
+   solid surfaces instead.
+   ========================================================================== */
+
+html[data-skin="glass"] {
+    --bg-primary: #05070f;
+    --bg-secondary: #0a0f1d;
+    --bg-card: rgba(15, 23, 42, 0.55);
+    --bg-card-hover: rgba(30, 41, 59, 0.68);
+    --bg-glass: rgba(15, 23, 42, 0.55);
+    --bg-glass-hover: rgba(30, 41, 59, 0.7);
+    --bg-input: rgba(2, 6, 23, 0.55);
+
+    --border-color: rgba(148, 197, 255, 0.16);
+    --border-glow: rgba(96, 165, 250, 0.45);
+
+    --text-primary: #f8fafc;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+
+    --accent: #60a5fa;
+    --accent-light: #93c5fd;
+    --accent-glow: rgba(96, 165, 250, 0.3);
+
+    --radius-md: 14px;
+    --radius-lg: 20px;
+    --radius-xl: 26px;
+
+    --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.35);
+    --shadow-md: 0 18px 45px -20px rgba(0, 0, 0, 0.8);
+    --shadow-lg: 0 30px 80px -30px rgba(0, 0, 0, 0.85);
+}
+
+/* ── Ambient light field ─────────────────────────────────────────────────── */
+html[data-skin="glass"] body {
+    background:
+        radial-gradient(900px 620px at 12% -8%, rgba(59, 130, 246, 0.30), transparent 62%),
+        radial-gradient(760px 520px at 88% 2%, rgba(168, 85, 247, 0.20), transparent 60%),
+        radial-gradient(820px 620px at 50% 112%, rgba(34, 211, 238, 0.16), transparent 62%),
+        #05070f;
+    background-attachment: fixed;
+}
+
+/* Very light grain so large gradients do not band. */
+html[data-skin="glass"] body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>");
+}
+
+/* ── Core glass recipe ───────────────────────────────────────────────────── */
+html[data-skin="glass"] .sidebar,
+html[data-skin="glass"] .mood-strip,
+html[data-skin="glass"] .modal,
+html[data-skin="glass"] .more-menu,
+html[data-skin="glass"] .signal-card,
+html[data-skin="glass"] .kpi-card,
+html[data-skin="glass"] .perf-kpi-card,
+html[data-skin="glass"] .macro-stat-card,
+html[data-skin="glass"] .chart-card,
+html[data-skin="glass"] .ee-metric-card,
+html[data-skin="glass"] .intel-card,
+html[data-skin="glass"] .nse-chart-card,
+html[data-skin="glass"] .more-menu-card {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.025)),
+        rgba(15, 23, 42, 0.55);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    backdrop-filter: blur(18px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow:
+        0 22px 55px -26px rgba(0, 0, 0, 0.9),
+        inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    border-radius: var(--radius-lg);
+}
+
+html[data-skin="glass"] .mood-strip {
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    border-top: 0;
+}
+
+html[data-skin="glass"] .sidebar {
+    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+    border-left: 0;
+}
+
+/* ── Interaction states ──────────────────────────────────────────────────── */
+html[data-skin="glass"] .signal-card:hover,
+html[data-skin="glass"] .kpi-card:hover,
+html[data-skin="glass"] .perf-kpi-card:hover,
+html[data-skin="glass"] .macro-stat-card:hover,
+html[data-skin="glass"] .chart-card:hover {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04)),
+        rgba(30, 41, 59, 0.62);
+    border-color: rgba(255, 255, 255, 0.22);
+    box-shadow:
+        0 26px 65px -28px rgba(0, 0, 0, 0.95),
+        inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    transform: translateY(-1px);
+}
+
+html[data-skin="glass"] .sidebar-item {
+    border-radius: var(--radius-md);
+}
+
+html[data-skin="glass"] .sidebar-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-skin="glass"] .sidebar-item.active {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05)),
+        rgba(37, 99, 235, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* ── Controls ────────────────────────────────────────────────────────────── */
+html[data-skin="glass"] .theme-toggle,
+html[data-skin="glass"] .telemetry-pill,
+html[data-skin="glass"] .ai-engine-badge,
+html[data-skin="glass"] .macro-cue-pill {
+    background: rgba(255, 255, 255, 0.07);
+    -webkit-backdrop-filter: blur(12px) saturate(150%);
+    backdrop-filter: blur(12px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+html[data-skin="glass"] .theme-toggle:hover {
+    background: rgba(255, 255, 255, 0.13);
+}
+
+html[data-skin="glass"] .btn:not(.btn-primary) {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+html[data-skin="glass"] .btn-primary {
+    box-shadow:
+        0 10px 30px -12px rgba(59, 130, 246, 0.7),
+        inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+html[data-skin="glass"] input,
+html[data-skin="glass"] select,
+html[data-skin="glass"] textarea {
+    background: rgba(2, 6, 23, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+html[data-skin="glass"] input:focus,
+html[data-skin="glass"] select:focus,
+html[data-skin="glass"] textarea:focus {
+    border-color: var(--border-glow);
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
+    outline: none;
+}
+
+/* ── Data density stays readable ─────────────────────────────────────────── */
+html[data-skin="glass"] table {
+    background: rgba(6, 10, 20, 0.45);
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+html[data-skin="glass"] thead th {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+html[data-skin="glass"] tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.018);
+}
+
+html[data-skin="glass"] tbody tr:hover {
+    background: rgba(96, 165, 250, 0.08);
+}
+
+/* ── Scrollbars ──────────────────────────────────────────────────────────── */
+html[data-skin="glass"] ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+html[data-skin="glass"] ::-webkit-scrollbar-track {
+    background: transparent;
+}
+html[data-skin="glass"] ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.28);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+html[data-skin="glass"] ::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.45);
+    background-clip: content-box;
+}
+
+/* ── Accessibility + performance fallbacks ───────────────────────────────── */
+@media (prefers-reduced-transparency: reduce) {
+    html[data-skin="glass"] .sidebar,
+    html[data-skin="glass"] .mood-strip,
+    html[data-skin="glass"] .modal,
+    html[data-skin="glass"] .more-menu,
+    html[data-skin="glass"] .signal-card,
+    html[data-skin="glass"] .kpi-card,
+    html[data-skin="glass"] .perf-kpi-card,
+    html[data-skin="glass"] .macro-stat-card,
+    html[data-skin="glass"] .chart-card,
+    html[data-skin="glass"] .ee-metric-card,
+    html[data-skin="glass"] .intel-card,
+    html[data-skin="glass"] .nse-chart-card,
+    html[data-skin="glass"] .more-menu-card,
+    html[data-skin="glass"] .theme-toggle,
+    html[data-skin="glass"] .telemetry-pill {
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        background: #0f172a;
+    }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    html[data-skin="glass"] .signal-card,
+    html[data-skin="glass"] .kpi-card,
+    html[data-skin="glass"] .perf-kpi-card,
+    html[data-skin="glass"] .macro-stat-card,
+    html[data-skin="glass"] .chart-card,
+    html[data-skin="glass"] .sidebar,
+    html[data-skin="glass"] .mood-strip {
+        background: rgba(15, 23, 42, 0.94);
+    }
+}
+
+/* Phones: blur is the single most expensive effect on a low-end GPU. */
+@media (max-width: 900px) {
+    html[data-skin="glass"] .sidebar,
+    html[data-skin="glass"] .mood-strip,
+    html[data-skin="glass"] .signal-card,
+    html[data-skin="glass"] .kpi-card,
+    html[data-skin="glass"] .perf-kpi-card,
+    html[data-skin="glass"] .macro-stat-card,
+    html[data-skin="glass"] .chart-card,
+    html[data-skin="glass"] .ee-metric-card,
+    html[data-skin="glass"] .intel-card,
+    html[data-skin="glass"] .nse-chart-card {
+        -webkit-backdrop-filter: blur(10px) saturate(140%);
+        backdrop-filter: blur(10px) saturate(140%);
+    }
+    html[data-skin="glass"] body::after {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html[data-skin="glass"] .signal-card:hover,
+    html[data-skin="glass"] .kpi-card:hover,
+    html[data-skin="glass"] .perf-kpi-card:hover,
+    html[data-skin="glass"] .macro-stat-card:hover {
+        transform: none;
+    }
+}
+
+/* ── Light mode glass ───────────────────────────────────────────────────── */
+html[data-skin="glass"][data-theme="light"] {
+    --bg-primary: #eef2f9;
+    --bg-secondary: #f8fafc;
+    --bg-card: rgba(255, 255, 255, 0.62);
+    --bg-card-hover: rgba(255, 255, 255, 0.80);
+    --bg-glass: rgba(255, 255, 255, 0.62);
+    --bg-glass-hover: rgba(255, 255, 255, 0.82);
+    --bg-input: rgba(255, 255, 255, 0.72);
+
+    --border-color: rgba(15, 23, 42, 0.10);
+    --border-glow: rgba(37, 99, 235, 0.35);
+
+    --text-primary: #0b1220;
+    --text-secondary: #334155;
+    --text-muted: #64748b;
+
+    --accent: #2563eb;
+    --accent-light: #3b82f6;
+    --accent-glow: rgba(37, 99, 235, 0.22);
+
+    --shadow-md: 0 18px 45px -22px rgba(15, 23, 42, 0.35);
+    --shadow-lg: 0 30px 80px -32px rgba(15, 23, 42, 0.40);
+}
+
+html[data-skin="glass"][data-theme="light"] body {
+    background:
+        radial-gradient(900px 620px at 12% -8%, rgba(96, 165, 250, 0.38), transparent 62%),
+        radial-gradient(760px 520px at 88% 2%, rgba(196, 181, 253, 0.32), transparent 60%),
+        radial-gradient(820px 620px at 50% 112%, rgba(125, 211, 252, 0.30), transparent 62%),
+        #eef2f9;
+    background-attachment: fixed;
+}
+
+html[data-skin="glass"][data-theme="light"] body::after {
+    opacity: 0.02;
+    mix-blend-mode: multiply;
+}
+
+html[data-skin="glass"][data-theme="light"] .sidebar,
+html[data-skin="glass"][data-theme="light"] .mood-strip,
+html[data-skin="glass"][data-theme="light"] .modal,
+html[data-skin="glass"][data-theme="light"] .more-menu,
+html[data-skin="glass"][data-theme="light"] .signal-card,
+html[data-skin="glass"][data-theme="light"] .kpi-card,
+html[data-skin="glass"][data-theme="light"] .perf-kpi-card,
+html[data-skin="glass"][data-theme="light"] .macro-stat-card,
+html[data-skin="glass"][data-theme="light"] .chart-card,
+html[data-skin="glass"][data-theme="light"] .ee-metric-card,
+html[data-skin="glass"][data-theme="light"] .intel-card,
+html[data-skin="glass"][data-theme="light"] .nse-chart-card,
+html[data-skin="glass"][data-theme="light"] .more-menu-card {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.90), rgba(255, 255, 255, 0.52)),
+        rgba(255, 255, 255, 0.58);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow:
+        0 22px 55px -30px rgba(15, 23, 42, 0.40),
+        inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+html[data-skin="glass"][data-theme="light"] .theme-toggle,
+html[data-skin="glass"][data-theme="light"] .telemetry-pill,
+html[data-skin="glass"][data-theme="light"] .ai-engine-badge,
+html[data-skin="glass"][data-theme="light"] .macro-cue-pill,
+html[data-skin="glass"][data-theme="light"] .btn:not(.btn-primary) {
+    background: rgba(255, 255, 255, 0.65);
+    border-color: rgba(15, 23, 42, 0.10);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+html[data-skin="glass"][data-theme="light"] table {
+    background: rgba(255, 255, 255, 0.55);
+}
+
+html[data-skin="glass"][data-theme="light"] thead th {
+    background: rgba(15, 23, 42, 0.04);
+    border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+html[data-skin="glass"][data-theme="light"] tbody tr:hover {
+    background: rgba(37, 99, 235, 0.06);
+}
+
+/* Charts: let the glass surface show through the canvas. */
+html[data-skin="glass"] canvas {
+    background: transparent !important;
+}
