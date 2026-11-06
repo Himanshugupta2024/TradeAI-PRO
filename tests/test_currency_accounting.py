@@ -344,6 +344,10 @@ def test_reconcile_stored_outcomes_vs_eligible_forward_trades():
         if "trade_outcomes_pg" not in tables:
             pytest.skip("trade_outcomes_pg table not in trading.db")
 
+        total_count = conn.execute("SELECT count(*) FROM trade_outcomes_pg").fetchone()[0]
+        if total_count == 0:
+            pytest.skip("trade_outcomes_pg is empty in clean/CI environment")
+
         forward_count = conn.execute(
             "SELECT count(*) FROM trade_outcomes_pg WHERE environment = 'PAPER_FORWARD'"
         ).fetchone()[0]

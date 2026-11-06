@@ -80,6 +80,7 @@ def _df_with_last_bar_age_minutes(age_mins: int) -> pd.DataFrame:
 def test_scan_skips_stale_bars(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_MAX_BAR_AGE_MINUTES", 120, raising=False)
     monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_CONFLUENCE_ENABLED", False, raising=False)
+    monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_INDEX_CONFLUENCE_GATE", False, raising=False)
     monkeypatch.setattr(intraday_scanner, "should_square_off_now", lambda: False, raising=True)
     monkeypatch.setattr(intraday_scanner, "fetch_5m", lambda _sym: _df_with_last_bar_age_minutes(180), raising=True)
 
@@ -94,6 +95,7 @@ def test_scan_skips_stale_bars(monkeypatch: pytest.MonkeyPatch):
 def test_scan_accepts_fresh_bars(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_MAX_BAR_AGE_MINUTES", 120, raising=False)
     monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_CONFLUENCE_ENABLED", False, raising=False)
+    monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_INDEX_CONFLUENCE_GATE", False, raising=False)
     monkeypatch.setattr(intraday_scanner, "should_square_off_now", lambda: False, raising=True)
     monkeypatch.setattr(intraday_scanner, "fetch_5m", lambda _sym: _df_with_last_bar_age_minutes(10), raising=True)
 

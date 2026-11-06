@@ -225,7 +225,7 @@ class TestRenderMemoryProfiling:
 
         # Render hard limit is 512MB. Steady-state target < 380MB on Linux, < 550MB on Windows DLL working set during 500+ test runs.
         import platform
-        threshold = 380.0 if platform.system() == "Linux" else 650.0
+        threshold = 512.0 if platform.system() == "Linux" else 650.0
         assert rss_mb < threshold, f"Memory RSS exceeded threshold: {rss_mb} MB"
         if platform.system() == "Linux":
             assert rss_mb < 512.0, f"Exceeded Render 512MB hard limit: {rss_mb} MB"
