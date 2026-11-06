@@ -517,3 +517,27 @@ html[data-skin="glass"][data-theme="light"] tbody tr:hover {
 html[data-skin="glass"] canvas {
     background: transparent !important;
 }
+
+/* ── Top Bar Responsiveness & Anti-Collision ────────────────────────────── */
+html[data-skin="glass"] .mood-strip {
+    gap: 0.75rem !important;
+}
+
+html[data-skin="glass"] .mood-clock {
+    color: #cbd5e1 !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .mood-clock {
+    color: #334155 !important;
+    font-weight: 600 !important;
+}
+
+@media (max-width: 900px) {
+    html[data-skin="glass"] #aiEngineStatusBadge,
+    #aiEngineStatusBadge {
+        display: none !important;
+    }
+    html[data-skin="glass"] .mood-strip {
+        gap: 0.4rem !important;
+    }
+}

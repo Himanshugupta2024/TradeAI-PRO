@@ -2621,7 +2621,7 @@ function renderAutonomousStatusUI(statusData) {
 
     if (badge) {
         if (st.enabled) {
-            badge.textContent = '100% Zero-Click Active';
+            badge.textContent = 'Autonomous Active';
             badge.style.background = 'rgba(16,185,129,0.15)';
             badge.style.color = '#10b981';
             badge.style.borderColor = 'rgba(16,185,129,0.3)';
@@ -6446,7 +6446,7 @@ function _renderCryptoMiniPanel(data) {
 
 
 
-    const fgLabel = fg != null ? (fg <= 25 ? '😨 Fear' : fg >= 75 ? '🤑 Greed' : `⚖ ${fg}`) : '—';
+    const fgLabel = fg != null ? (fg <= 25 ? 'Extreme Fear' : fg <= 45 ? 'Fear' : fg >= 75 ? 'Extreme Greed' : fg >= 55 ? 'Greed' : `Neutral (${fg})`) : '—';
 
 
 
@@ -11422,13 +11422,13 @@ async function loadPortfolio() {
 
                     const rawReason = t.exit_reason || t.status || '';
                     const reason = {
-                        'CLOSED_TP': '🎯 Target',
-                        'TARGET': '🎯 Target',
-                        'CLOSED_SL': '🛑 Stop Loss',
-                        'STOP_LOSS': '🛑 Stop Loss',
-                        'CLOSED_TRAIL': '📐 Trailing SL',
-                        'TRAILING_STOP': '📐 Trailing SL',
-                        'CLOSED_MANUAL': '✋ Manual',
+                        'CLOSED_TP': 'Target Hit',
+                        'TARGET': 'Target Hit',
+                        'CLOSED_SL': 'Stop Loss',
+                        'STOP_LOSS': 'Stop Loss',
+                        'CLOSED_TRAIL': 'Trailing SL',
+                        'TRAILING_STOP': 'Trailing SL',
+                        'CLOSED_MANUAL': 'Manual Exit',
                     }[rawReason] || rawReason || '—';
 
                     const pnlPct = Number(t.pnl_pct || 0);
@@ -12355,7 +12355,7 @@ function _renderExitReasons(reasons) {
 
 
 
-    const iconMap = { CLOSED_TP: '🎯', CLOSED_SL: '🛑', CLOSED_TRAIL: '📐', CLOSED_MANUAL: '✋', UNKNOWN: '❓' };
+    const iconMap = { CLOSED_TP: 'TP', CLOSED_SL: 'SL', CLOSED_TRAIL: 'Trail', CLOSED_MANUAL: 'Manual', UNKNOWN: 'Other' };
 
 
 
@@ -13647,7 +13647,7 @@ function _renderTradeHistory(trades) {
 
 
 
-    const exitIcon = { CLOSED_TP: '🎯', CLOSED_SL: '🛑', CLOSED_TRAIL: '📐', CLOSED_MANUAL: '✋' };
+    const exitIcon = { CLOSED_TP: 'TP', CLOSED_SL: 'SL', CLOSED_TRAIL: 'Trail', CLOSED_MANUAL: 'Manual' };
 
 
 
@@ -19355,7 +19355,7 @@ async function fetchAndShowQuote(symbol) {
                     <div style="color:var(--red);font-weight:600;margin-bottom:0.5rem;">Symbol Not Found</div>
                     <div style="color:var(--text-muted);font-size:0.8rem;">${err.error || resObj.error || 'Symbol not found on NSE or yFinance'}</div>
                     <div style="margin-top:1rem;font-size:0.75rem;color:var(--text-muted);">
-                        💡 Make sure the NSE symbol is correct (e.g. <code style="color:var(--cyan)">PRECWIRE</code>, <code style="color:var(--cyan)">VEDL</code>)
+                        Make sure the NSE symbol is correct (e.g. <code style="color:var(--cyan)">PRECWIRE</code>, <code style="color:var(--cyan)">VEDL</code>)
                     </div>
                 </div>`;
             return;
@@ -23674,7 +23674,7 @@ function renderEdgeTable() {
             <td style="font-family:var(--font-mono);color:#60a5fa;font-weight:700;">${confStr}</td>
             <td style="text-align:center;">
                 <button class="ee-action-btn" onclick="openEdgeResearchDrawer('${sym}', '${cls}')" style="padding:0.25rem 0.55rem;font-size:0.7rem;margin:0 auto;">
-                    <span>🔬 Deep-Dive</span>
+                    <span>Deep-Dive</span>
                 </button>
             </td>
         </tr>`;
@@ -25935,11 +25935,11 @@ async function updateAiModelHealthBadge() {
 
 
 
-                ? '🧠 Ensemble 4/4 • Calibrated' 
+                ? 'Models: 4/4 Active' 
 
 
 
-                : (ai.fitted_count > 0 ? `🧠 AI: Hybrid (${ai.fitted_count}/4 ML)` : '🧠 AI: Heuristic (0/4 ML)'));
+                : (ai.fitted_count > 0 ? `Hybrid (${ai.fitted_count}/4 Models)` : 'Rule-Based Engine'));
 
 
 

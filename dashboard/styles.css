@@ -3179,3 +3179,14 @@ body::before {
 [data-theme="light"] .pill-pink    { background: #FDF2F8 !important; color: #DB2777 !important; border: 1px solid #F9A8D4 !important; }
 [data-theme="light"] .pill-purple  { background: #FAF5FF !important; color: #9333EA !important; border: 1px solid #D8B4FE !important; }
 [data-theme="light"] .pill-slate   { background: #F1F5F9 !important; color: #475569 !important; border: 1px solid #CBD5E1 !important; }
+
+/* Top Bar Anti-Collision on Mobile/Tablet */
+@media (max-width: 900px) {
+    #aiEngineStatusBadge {
+        display: none !important;
+    }
+}
+[data-theme="light"] .mood-clock {
+    color: #334155 !important;
+    font-weight: 600 !important;
+}
