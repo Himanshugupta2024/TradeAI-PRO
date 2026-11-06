@@ -102,8 +102,11 @@ export default {
     if (url.pathname.startsWith("/ws/")) {
       const targetWsUrl = new URL(url.pathname + url.search, BACKEND_ORIGIN);
       if (request.headers.get("Upgrade") === "websocket") {
-        const wsRequest = new Request(targetWsUrl, request);
-        wsRequest.headers.set("Host", BACKEND_HOST);
+        const cleanWsHeaders = createCleanOriginHeaders(request.headers);
+        const wsRequest = new Request(targetWsUrl, {
+          method: "GET",
+          headers: cleanWsHeaders,
+        });
         return fetch(wsRequest);
       }
       return new Response("Expected WebSocket Upgrade", { status: 426 });

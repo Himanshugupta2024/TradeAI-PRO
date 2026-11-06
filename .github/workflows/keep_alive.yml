@@ -3,10 +3,8 @@ name: Production Backend Keep-Alive
 on:
   schedule:
     # Public Repo: Free unlimited Linux runner minutes
-    # Every 10 minutes during pre-market & market hours (03:00 to 10:30 UTC = 08:30 to 16:00 IST)
-    - cron: '*/10 3-10 * * 1-5'
-    # Off-hours & weekends: Every 2 hours
-    - cron: '0 */2 * * 0,6'
+    # Keep Render Free container 100% warm 24/7 (Render sleeps after 15m idle)
+    - cron: '*/14 * * * *'
   workflow_dispatch:
     inputs:
       target_url:
