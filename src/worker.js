@@ -90,6 +90,19 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/health/live",
 ]);
 
+function isPathCacheable(pathname) {
+  if (PUBLIC_CACHEABLE_PATHS.has(pathname)) return true;
+  if (
+    pathname.startsWith("/api/backtest/") ||
+    pathname.startsWith("/api/news/") ||
+    pathname.startsWith("/api/search/") ||
+    pathname.startsWith("/api/swing/symbol/")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 // Helper to sanitize headers forwarded to Render origin.
 // Crucial: Strip cf-* and x-forwarded-* headers because Render's Cloudflare edge
 // treats incoming CF-Connecting-IP / CF-Ray from an external caller as spoofing and blocks with HTTP 403 / 429.
@@ -110,12 +123,10 @@ function createCleanOriginHeaders(incomingHeaders) {
     clean.set(key, value);
   }
   clean.set("Host", BACKEND_HOST);
-  if (!clean.has("user-agent")) {
-    clean.set(
-      "User-Agent",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    );
-  }
+  clean.set(
+    "User-Agent",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+  );
   return clean;
 }
 
@@ -164,7 +175,7 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       const targetUrl = new URL(url.pathname + url.search, BACKEND_ORIGIN);
       const isGet = request.method === "GET";
-      const isPublicCacheable = isGet && PUBLIC_CACHEABLE_PATHS.has(url.pathname);
+      const isPublicCacheable = isGet && isPathCacheable(url.pathname);
       const cache = caches.default;
 
       // Check Edge Cache only for approved public GET endpoints
@@ -280,6 +291,27 @@ export default {
           statusText: originResponse.statusText,
           headers: clientHeaders,
         });
+      }
+
+      // Ensure API endpoints NEVER return HTML challenge pages to JSON consumers
+      const originContentType = (originResponse.headers.get("content-type") || "").toLowerCase();
+      if (!originContentType.includes("application/json") && originResponse.status >= 400) {
+        return new Response(
+          JSON.stringify({
+            error: originResponse.status === 429 
+              ? "Rate limit in effect. Retrying shortly..." 
+              : `Origin returned error status ${originResponse.status}`,
+            status: originResponse.status
+          }),
+          {
+            status: originResponse.status,
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+              "X-Edge-Proxy": "TradeAI-Cloudflare-Worker"
+            }
+          }
+        );
       }
 
       // Non-public / Private / Mutating endpoints: Explicit BYPASS & Private Caching

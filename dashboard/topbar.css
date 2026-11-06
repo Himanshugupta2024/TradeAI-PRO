@@ -39,7 +39,7 @@
     backdrop-filter: blur(16px) saturate(150%);
     border-bottom: 1px solid var(--tb-border) !important;
     box-sizing: border-box !important;
-    overflow: hidden !important;
+    overflow: visible !important;
 }
 
 .mood-strip-logo {
@@ -186,7 +186,16 @@
 
 /* ── Search ───────────────────────────────────────────────────────────────── */
 .mood-search-wrap {
+    position: relative !important;
     flex-shrink: 0 !important;
+}
+
+.search-dropdown {
+    right: 0 !important;
+    left: auto !important;
+    min-width: 320px !important;
+    max-width: 90vw !important;
+    z-index: 300 !important;
 }
 
 .mood-search-input,
