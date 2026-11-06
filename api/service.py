@@ -639,11 +639,13 @@ def _get_feed_status() -> dict[str, object]:
         except Exception:
             pass
 
-    if snap_dt is None and _last_feed_update != datetime.min:
-        snap_dt = _last_feed_update
-        if snap_dt.tzinfo is None:
-            snap_dt = snap_dt.replace(tzinfo=timezone.utc)
-        source = "LOCAL_CACHE"
+    if _last_feed_update != datetime.min:
+        lfu = _last_feed_update
+        if lfu.tzinfo is None:
+            lfu = lfu.replace(tzinfo=timezone.utc)
+        if snap_dt is None or lfu > snap_dt:
+            snap_dt = lfu
+            source = "LIVE_TICK"
 
     if snap_dt is None:
         return {
