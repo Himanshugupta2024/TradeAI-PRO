@@ -2573,7 +2573,7 @@ async function runAutonomousCycleNow() {
             btn.disabled = true;
             btn.textContent = '⏳ Starting...';
         }
-        const targetApi = (typeof API !== 'undefined' && API) ? API : (window.__TRADEAI_CONFIG__?.API_BASE_URL || 'https://trading-api-n1wt.onrender.com');
+        const targetApi = (typeof API === 'string') ? API : (window.__TRADEAI_CONFIG__?.API_BASE_URL ?? '');
         const res = await fetchWithTimeout(targetApi + '/api/autonomous/run-cycle', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
