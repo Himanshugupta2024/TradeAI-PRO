@@ -687,6 +687,66 @@ async def toggle_market_control_route(req: MarketControlToggleRequest, request: 
         }
     )
 
+# ── Section 6B: Next Trading Day Picks Research Endpoints ─────────────────────
+
+class NextDayGenerateRequest(BaseModel):
+    force: bool = False
+    max_picks: int = 5
+
+class NextDayResolveRequest(BaseModel):
+    report_id: str
+    actual_candles: Dict[str, Dict[str, float]]
+
+@router.get("/api/research/next-day-picks")
+async def get_next_day_picks_route():
+    """Return latest published Next Trading Day Picks research report."""
+    from agents.market_intelligence.next_day_picks import get_latest_next_day_picks
+    return await asyncio.to_thread(get_latest_next_day_picks)
+
+@router.post("/api/research/next-day-picks/generate")
+async def generate_next_day_picks_route(
+    req: NextDayGenerateRequest = NextDayGenerateRequest()
+):
+    """
+    Operator trigger to execute bounded post-close equity research.
+    Rate-limited, idempotent, and enforces Section 6A zero-work for crypto/forex.
+    """
+    from agents.market_intelligence.next_day_picks import generate_next_day_picks
+    report = await asyncio.to_thread(
+        generate_next_day_picks,
+        force_refresh=req.force,
+        max_picks=min(10, max(1, req.max_picks))
+    )
+    return JSONResponse(status_code=200, content=report)
+
+@router.get("/api/research/next-day-picks/history")
+async def get_next_day_picks_history_route():
+    """Return historical archive index of published research reports."""
+    from agents.market_intelligence.next_day_picks import get_next_day_picks_history
+    history = await asyncio.to_thread(get_next_day_picks_history)
+    return {"ok": True, "count": len(history), "history": history}
+
+@router.get("/api/research/next-day-picks/{report_id}")
+async def get_next_day_pick_by_id_route(report_id: str):
+    """Fetch specific historical Next-Day Picks report by report_id."""
+    from agents.market_intelligence.next_day_picks import get_next_day_pick_by_id
+    report = await asyncio.to_thread(get_next_day_pick_by_id, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"Report {report_id} not found.")
+    return report
+
+@router.post("/api/research/next-day-picks/resolve")
+async def resolve_next_day_picks_route(req: NextDayResolveRequest):
+    """Independently resolve post-session trade outcomes for a published report."""
+    from agents.market_intelligence.next_day_picks import resolve_report_outcomes
+    result = await asyncio.to_thread(
+        resolve_report_outcomes,
+        report_id=req.report_id,
+        actual_session_candles=req.actual_candles
+    )
+    status_code = 200 if result.get("ok") else 400
+    return JSONResponse(status_code=status_code, content=result)
+
 @router.get("/api/dashboard/overview")
 
 async def get_dashboard_overview():

@@ -38,6 +38,8 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/macro/intelligence",
   "/api/edge/macro-heatmap",
   "/api/edge/risk-gauge",
+  "/api/research/next-day-picks",
+  "/api/research/next-day-picks/history",
   "/api/health",
   "/api/health/live",
 ]);

@@ -43,8 +43,10 @@ const API = (() => {
         return 'http://127.0.0.1:8000';
     }
     const host = window.location.hostname;
+    if (host.endsWith('workers.dev')) {
+        return '';
+    }
     if (
-        host.endsWith('workers.dev') ||
         host.endsWith('pages.dev') ||
         host.endsWith('vercel.app') ||
         host.includes('tradeai')
@@ -53,6 +55,65 @@ const API = (() => {
     }
     return '';
 })();
+
+// ── Resilient JSON Fetcher with Dual-Origin Fallback & Content-Type Safety ──
+async function fetchSafeJSON(url, options = {}, timeoutMs = 12000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const opts = { ...options, signal: controller.signal };
+        let res = await fetch(url, opts);
+
+        // Fallback between Cloudflare Worker proxy and direct Render origin
+        if ((!res.ok || res.status === 429 || res.status === 502 || res.status === 503) && (url.startsWith('/') || !url.startsWith('http'))) {
+            try {
+                const directUrl = `https://trading-api-n1wt.onrender.com${url.startsWith('/') ? '' : '/'}${url}`;
+                const fbRes = await fetch(directUrl, opts);
+                if (fbRes.ok) res = fbRes;
+            } catch (_) {}
+        } else if ((!res.ok || res.status === 429) && url.includes('onrender.com')) {
+            try {
+                const pathOnly = new URL(url).pathname + new URL(url).search;
+                const fbRes = await fetch(pathOnly, opts);
+                if (fbRes.ok) res = fbRes;
+            } catch (_) {}
+        }
+
+        const ct = res.headers.get('content-type') || '';
+        if (!res.ok) {
+            return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+        }
+        if (!ct.includes('application/json')) {
+            return { ok: false, status: res.status, error: 'Non-JSON response' };
+        }
+        const data = await res.json();
+        return { ok: true, status: res.status, data };
+    } catch (err) {
+        return { ok: false, status: 0, error: err.name === 'AbortError' ? 'Timeout' : (err.message || 'Network error') };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+// Pre-loaded top NSE symbols for 0ms instant client-side search autocomplete
+const _STATIC_NSE_SYMBOLS = [
+    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "BHARTIARTL", "KOTAKBANK",
+    "LT", "ITC", "AXISBANK", "HINDUNILVR", "BAJFINANCE", "MARUTI", "TITAN", "WIPRO",
+    "TATAMOTORS", "SUNPHARMA", "ULTRACEMCO", "ADANIENT", "ADANIPORTS", "ADANIPOWER", "ADANIGREEN",
+    "TATASTEEL", "JSWSTEEL", "HINDALCO", "COALINDIA", "NTPC", "POWERGRID", "ONGC", "BPCL",
+    "IOC", "GAIL", "TECHM", "HCLTECH", "DRREDDY", "CIPLA", "DIVISLAB", "APOLLOHOSP",
+    "ASIANPAINT", "NESTLEIND", "BRITANNIA", "DABUR", "GODREJCP", "PIDILITIND", "BERGEPAINT",
+    "HAVELLS", "VOLTAS", "SIEMENS", "ABB", "BHEL", "M&M", "EICHERMOT", "HEROMOTOCO",
+    "BAJAJ-AUTO", "TVSMOTOR", "INDUSINDBK", "BANDHANBNK", "PNB", "BANKBARODA", "IDFCFIRSTB",
+    "SBILIFE", "HDFCLIFE", "ICICIGI", "BAJAJFINSV", "CHOLAFIN", "SHRIRAMFIN", "MUTHOOTFIN",
+    "HAL", "BEL", "IRCTC", "NYKAA", "OLAELEC", "POLICYBZR", "DELHIVERY", "TATAPOWER",
+    "TATAELXSI", "PERSISTENT", "LTIM", "MPHASIS", "COFORGE", "VEDL", "JINDALSTEL", "SAIL",
+    "NMDC", "DLF", "GODREJPROP", "OBEROIRLTY", "PRESTIGE", "INDIGO", "TRENT", "DMART",
+    "PAGEIND", "DIXON", "POLYCAB", "KALYANKJIL", "CUPID", "PRECWIRE", "PREMIERENE",
+    "WELSPUNIND", "WELSPUNLIV", "RAILVIKAS", "IRFC", "MAZDOCK", "COCHINSHIP", "NATIONALUM",
+    "JINDALSAW", "MOLDTKPAC", "TIINDIA", "GRINDWELL", "ELECON", "DYNAMATECH", "GMDCLTD",
+    "RITES", "HGINFRA", "CAPLIPOINT"
+];
 
 // ── TradeAI-PRO Currency & Market Display Helpers ──────────────────────────
 function _symCurr(sym) {
@@ -15195,12 +15256,16 @@ async function loadModalBacktest(symbol) {
 
     try {
         const encodedSymbol = symbol.replace('/', '-');
-        const res = await fetch(`${API}/api/backtest/${encodedSymbol}`);
-        if (res.status === 429) {
-            section.innerHTML = '<p style="color:var(--yellow);font-size:0.8rem">⚠️ Rate limit in effect. Retrying shortly...</p>';
+        const res = await fetchSafeJSON(`${API}/api/backtest/${encodedSymbol}`, {}, 12000);
+        if (!res.ok) {
+            if (res.status === 429) {
+                section.innerHTML = '<p style="color:var(--yellow);font-size:0.8rem">⚠️ Rate limit in effect. Retrying shortly...</p>';
+            } else {
+                section.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem">${_escHtml(res.error || 'Backtest unavailable')}</p>`;
+            }
             return;
         }
-        const data = await res.json();
+        const data = res.data;
 
         if (data.error) {
             section.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem">${_escHtml(data.error)}</p>`;
@@ -15281,13 +15346,18 @@ async function loadModalNews(symbol) {
 
     try {
         const encodedSymbol = symbol.replace('/', '-');
-        const res = await fetch(`${API}/api/news/${encodedSymbol}?limit=6`);
-        if (res.status === 429) {
-            list.innerHTML = '<p style="color:var(--yellow);font-size:0.75rem;">⚠️ Rate limit in effect. Retrying shortly...</p>';
-            if (freshEl) freshEl.textContent = 'Rate limited';
+        const res = await fetchSafeJSON(`${API}/api/news/${encodedSymbol}?limit=6`, {}, 10000);
+        if (!res.ok) {
+            if (res.status === 429) {
+                list.innerHTML = '<p style="color:var(--yellow);font-size:0.75rem;">⚠️ Rate limit in effect. Retrying shortly...</p>';
+                if (freshEl) freshEl.textContent = 'Rate limited';
+            } else {
+                list.innerHTML = '<p style="color:var(--text-muted);font-size:0.75rem;">No recent company-specific announcements.</p>';
+                if (freshEl) freshEl.textContent = 'Up to date';
+            }
             return;
         }
-        const data = await res.json();
+        const data = res.data;
 
         if (!data || !data.items || data.items.length === 0) {
             list.innerHTML = '<p style="color:var(--text-muted);font-size:0.75rem;">No recent company-specific announcements.</p>';
@@ -18783,47 +18853,40 @@ async function searchSymbols(query) {
 
 
 
-    // Show "searching..." state immediately
+    const q = (query || '').toUpperCase().trim();
+    if (!q) {
+        closeSearchDropdown();
+        return;
+    }
 
+    // 1. Instant client-side matches for immediate 0ms UI feedback
+    const quickMatches = (typeof _STATIC_NSE_SYMBOLS !== 'undefined' ? _STATIC_NSE_SYMBOLS : [])
+        .filter(sym => sym.includes(q))
+        .slice(0, 5)
+        .map(sym => ({ symbol: sym, ticker: `${sym}.NS`, type: 'NSE', tracked: sym in (marketDataCache || {}) }));
 
-
-    resultsEl.innerHTML = '<div class="search-empty" style="opacity:0.6">🔍 Searching NSE...</div>';
-
-
-
+    if (quickMatches.length > 0) {
+        resultsEl.innerHTML = quickMatches.map(r => `
+            <div class="search-item" onclick="fetchAndShowQuote('${r.symbol.replace(/'/g, '')}')" title="Load ${r.symbol} signal card">
+                <span class="search-item-icon">📈</span>
+                <div class="search-item-info">
+                    <span class="search-item-sym">${r.symbol}</span>
+                    <span class="search-item-sub">${r.ticker} · NSE</span>
+                </div>
+                <span class="search-item-arrow">→</span>
+            </div>
+        `).join('');
+    } else {
+        resultsEl.innerHTML = `<div class="search-empty" style="opacity:0.6">🔍 Searching NSE for "${q}"...</div>`;
+    }
     dropdown.classList.add('visible');
-
-
-
     searchDropdownVisible = true;
 
-
-
-
-
-
-
     try {
-
-
-
-        const res = await fetch(`${API}/api/search/symbols?q=${encodeURIComponent(query)}`);
-
-
-
-        const data = await res.json();
-
-
-
+        const resObj = await fetchSafeJSON(`${API}/api/search/symbols?q=${encodeURIComponent(query)}`, {}, 6000);
+        if (!resObj.ok) throw new Error(resObj.error || 'Server error');
+        const data = resObj.data || {};
         const results = data.results || [];
-
-
-
-
-
-
-
-        const q = query.toUpperCase().trim();
 
 
 
@@ -19108,25 +19171,37 @@ async function searchSymbols(query) {
 
 
     } catch (err) {
-
-
-
         console.error('Search error:', err);
+        const staticMatches = (typeof _STATIC_NSE_SYMBOLS !== 'undefined' ? _STATIC_NSE_SYMBOLS : [])
+            .filter(sym => sym.includes(q))
+            .slice(0, 5)
+            .map(sym => ({ symbol: sym, ticker: `${sym}.NS`, type: 'NSE', tracked: false }));
 
-
-
-        resultsEl.innerHTML = '<div class="search-empty">Search failed — server error</div>';
-
-
-
+        if (staticMatches.length > 0) {
+            resultsEl.innerHTML = staticMatches.map(r => `
+                <div class="search-item" onclick="fetchAndShowQuote('${r.symbol.replace(/'/g, '')}')" title="Load ${r.symbol} signal card">
+                    <span class="search-item-icon">📈</span>
+                    <div class="search-item-info">
+                        <span class="search-item-sym">${r.symbol}</span>
+                        <span class="search-item-sub">${r.ticker} · NSE</span>
+                    </div>
+                    <span class="search-item-arrow">→</span>
+                </div>
+            `).join('');
+            if (!staticMatches.some(r => r.symbol === q)) {
+                resultsEl.innerHTML += nseDirectHTML;
+            }
+        } else {
+            resultsEl.innerHTML = `
+                <div class="search-empty" style="color:var(--text-muted);font-size:0.75rem;">
+                    Offline search for "<strong>${_escHtml(q)}</strong>"
+                </div>
+                ${nseDirectHTML}
+                ${yfDirectHTML}
+            `;
+        }
         dropdown.classList.add('visible');
-
-
-
         searchDropdownVisible = true;
-
-
-
     }
 
 
@@ -19260,77 +19335,24 @@ async function fetchAndShowQuote(symbol) {
 
 
         const urlSym = symbol.replace(/\//g, '-');
+        const resObj = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(urlSym)}`, {}, 20000);
 
-
-
-        const res = await fetch(`${API}/api/search/quote/${encodeURIComponent(urlSym)}`);
-
-
-
-        if (!res.ok) {
-
-
-
-            const err = await res.json();
-
-
-
+        if (!resObj.ok) {
+            const err = resObj.data || {};
             titleEl.textContent = symbol.toUpperCase();
-
-
-
             infoGrid.innerHTML = `
-
-
-
                 <div style="grid-column:1/-1;text-align:center;padding:2rem;">
-
-
-
                     <div style="font-size:2rem;margin-bottom:0.75rem;">⚠️</div>
-
-
-
                     <div style="color:var(--red);font-weight:600;margin-bottom:0.5rem;">Symbol Not Found</div>
-
-
-
-                    <div style="color:var(--text-muted);font-size:0.8rem;">${err.error || 'Symbol not found on NSE or yFinance'}</div>
-
-
-
+                    <div style="color:var(--text-muted);font-size:0.8rem;">${err.error || resObj.error || 'Symbol not found on NSE or yFinance'}</div>
                     <div style="margin-top:1rem;font-size:0.75rem;color:var(--text-muted);">
-
-
-
-                        💡 Make sure the NSE symbol is correct (e.g. <code style="color:var(--cyan)">PRECWIRE</code>, <code style="color:var(--cyan)">NAUKRI</code>)
-
-
-
+                        💡 Make sure the NSE symbol is correct (e.g. <code style="color:var(--cyan)">PRECWIRE</code>, <code style="color:var(--cyan)">VEDL</code>)
                     </div>
-
-
-
                 </div>`;
-
-
-
             return;
-
-
-
         }
 
-
-
-
-
-
-
-        const data = await res.json();
-
-
-
+        const data = resObj.data;
         titleEl.textContent = data.symbol;
 
 
