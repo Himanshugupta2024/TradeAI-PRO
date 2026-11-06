@@ -26420,7 +26420,26 @@ async function submitMarketControlPassword() {
             headers: { "Content-Type": "application/json", ..._getAuthHeaders() },
             body: JSON.stringify({ enabled: true, password: pwd, reason: "Operator activated Crypto/Forex override" }),
         });
-        const data = await res.json();
+
+        let data = {};
+        const ct = res.headers.get("content-type") || "";
+        if (ct.includes("application/json")) {
+            try {
+                data = await res.json();
+            } catch (jsonErr) {
+                data = { success: false, message: "Response parse error." };
+            }
+        } else {
+            const rawText = await res.text();
+            if (res.status === 503 || rawText.includes("hibernate-wake-error")) {
+                data = { success: false, message: "Backend is warming up from sleep. Please wait 10 seconds and retry." };
+            } else if (res.status === 429 || rawText.includes("Just a moment")) {
+                data = { success: false, message: "Security rate limit active. Please wait a moment and retry." };
+            } else {
+                data = { success: false, message: `Server error (HTTP ${res.status}). Please try again.` };
+            }
+        }
+
         if (res.ok && data.success) {
             closeMarketControlModal();
             _marketControlState = data.state;
@@ -26452,7 +26471,26 @@ async function executeMarketControlToggle(enabled, password) {
             headers: { "Content-Type": "application/json", ..._getAuthHeaders() },
             body: JSON.stringify({ enabled: enabled, password: password, reason: enabled ? "Operator ON" : "Operator OFF" }),
         });
-        const data = await res.json();
+
+        let data = {};
+        const ct = res.headers.get("content-type") || "";
+        if (ct.includes("application/json")) {
+            try {
+                data = await res.json();
+            } catch (jsonErr) {
+                data = { success: false, message: "Response parse error." };
+            }
+        } else {
+            const rawText = await res.text();
+            if (res.status === 503 || rawText.includes("hibernate-wake-error")) {
+                data = { success: false, message: "Backend is warming up from sleep. Please wait 10 seconds and retry." };
+            } else if (res.status === 429 || rawText.includes("Just a moment")) {
+                data = { success: false, message: "Security rate limit active. Please wait a moment and retry." };
+            } else {
+                data = { success: false, message: `Server error (HTTP ${res.status}).` };
+            }
+        }
+
         if (res.ok && data.success) {
             _marketControlState = data.state;
             renderMarketControlUI(data.state);

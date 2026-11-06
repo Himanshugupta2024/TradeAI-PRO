@@ -10876,33 +10876,3 @@ async def get_context_snapshot(symbol: str):
         logger.error("Context snapshot failed for %s: %s", symbol, exc)
 
         return {"error": str(exc), "symbol": symbol}
-
-# ── Section 6A: Market Control & Protected Crypto/Forex Switch ─────────────────
-
-class MarketControlToggleRequest(BaseModel):
-    enabled: bool
-    password: Optional[str] = None
-
-
-@router.get("/api/market-control/status")
-async def get_market_control_status_route():
-    from agents.execution.market_control import get_market_control_status
-    return await asyncio.to_thread(get_market_control_status)
-
-
-@router.post("/api/market-control/toggle")
-async def toggle_market_control_route(req: MarketControlToggleRequest, request: FastApiRequest):
-    from agents.execution.market_control import set_market_control_state, get_market_control_status
-    client_ip = request.client.host if request.client else "unknown"
-    success, message = await asyncio.to_thread(
-        set_market_control_state,
-        enabled=req.enabled,
-        password=req.password,
-        client_ip=client_ip,
-    )
-    if not success:
-        return JSONResponse(
-            status_code=403,
-            content={"ok": False, "error": message, "status": get_market_control_status()}
-        )
-    return {"ok": True, "message": message, "status": get_market_control_status()}
