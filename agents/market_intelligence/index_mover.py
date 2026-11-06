@@ -13,6 +13,7 @@ This is updated quarterly and is accurate to ±0.5%.
 """
 
 import logging
+import math
 from typing import Optional
 
 import numpy as np
@@ -136,9 +137,14 @@ def calculate_index_movers(
     try:
         idx_data = yf.Ticker(index_ticker).history(period="2d", interval="1d", auto_adjust=True)
         if idx_data is not None and len(idx_data) >= 2:
-            index_level = float(idx_data["Close"].iloc[-1])
-            index_prev = float(idx_data["Close"].iloc[-2])
-            index_actual_change = index_level - index_prev
+            c = float(idx_data["Close"].iloc[-1])
+            p = float(idx_data["Close"].iloc[-2])
+            if math.isfinite(c) and math.isfinite(p):
+                index_level = c
+                index_actual_change = c - p
+            else:
+                index_level = 24500 if index_name == "NIFTY 50" else 52000
+                index_actual_change = None
         else:
             index_level = 24500 if index_name == "NIFTY 50" else 52000
             index_actual_change = None
@@ -160,31 +166,34 @@ def calculate_index_movers(
                     curr = float(df["close"].iloc[-1])
                     # For intraday, compare with day open or first bar
                     prev = float(df["close"].iloc[-2])
-                    if prev > 0:
+                    if prev > 0 and math.isfinite(curr) and math.isfinite(prev):
                         pct_change = (curr - prev) / prev * 100
                 except Exception:
                     pass
 
         # Fallback: fetch from yFinance
-        if pct_change is None:
+        if pct_change is None or not math.isfinite(pct_change):
             try:
                 yf_ticker = f"{symbol}{_NSE_SUFFIX}"
                 raw = yf.Ticker(yf_ticker).history(period="2d", interval="1d", auto_adjust=True)
                 if raw is not None and len(raw) >= 2:
                     curr = float(raw["Close"].iloc[-1])
                     prev = float(raw["Close"].iloc[-2])
-                    if prev > 0:
+                    if prev > 0 and math.isfinite(curr) and math.isfinite(prev):
                         pct_change = (curr - prev) / prev * 100
             except Exception:
                 continue
 
-        if pct_change is None:
+        if pct_change is None or not math.isfinite(pct_change):
             continue
 
         # Points contribution = (weight% / 100) * index_level * (stock_pct_change / 100)
         # Simplified: points = weight_pct * pct_change / total_weight * index_level / 100
         normalized_weight = weight / total_weight
         points_contribution = normalized_weight * (pct_change / 100) * index_level
+
+        if not math.isfinite(points_contribution):
+            continue
 
         movers.append({
             "symbol": symbol,
