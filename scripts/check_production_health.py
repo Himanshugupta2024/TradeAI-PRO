@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -50,6 +51,25 @@ def _fetch(url: str, timeout: float = 15.0, accept: str = "*/*"):
         return exc.code, dict(exc.headers or {}), ""
     except Exception as exc:  # timeout, DNS, TLS
         return 0, {}, str(exc)
+
+
+def _fetch_with_retry(
+    url: str,
+    accept: str = "*/*",
+    delays: tuple[float, ...] = (0.0, 10.0, 25.0),
+) -> tuple[int, dict, str]:
+    """Retry transient Render cold-start responses (0/429/502/503/504)."""
+    result: tuple[int, dict, str] = (0, {}, "")
+    for delay in delays:
+        if delay:
+            time.sleep(delay)
+        result = _fetch(url, accept=accept)
+        status = result[0]
+        if status == 200:
+            return result
+        if status not in (0, 429, 502, 503, 504):
+            return result
+    return result
 
 
 def _result(level: str, check: str, detail: str) -> dict:
@@ -190,34 +210,47 @@ def run(base_url: str, max_age_min: float) -> tuple[int, str, list[dict]]:
     base = base_url.rstrip("/")
     results: list[dict] = []
 
-    status, headers, body = _fetch(f"{base}/api/health", accept="application/json")
+    status, headers, body = _fetch_with_retry(f"{base}/api/health", accept="application/json")
     try:
         health_payload = json.loads(body) if body else {}
     except json.JSONDecodeError:
         health_payload = {}
+
+    # Render's free tier spins down when idle. The first request after a wake
+    # can beat the DB pool by a few seconds, so retry once before calling it a
+    # database outage.
+    if not (health_payload.get("database") or {}).get("connected"):
+        time.sleep(20)
+        status, headers, body = _fetch_with_retry(f"{base}/api/health", accept="application/json")
+        try:
+            health_payload = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            health_payload = {}
+        health_payload["_retried_after_cold_start"] = True
+
     results += evaluate_health(status, health_payload)
 
-    status, _, body = _fetch(f"{base}/api/signals/all", accept="application/json")
+    status, _, body = _fetch_with_retry(f"{base}/api/signals/all", accept="application/json")
     try:
         signals_payload = json.loads(body) if body else {}
     except json.JSONDecodeError:
         signals_payload = {}
     results += evaluate_signals(status, signals_payload, max_age_min=max_age_min)
 
-    status, _, body = _fetch(f"{base}/api/overview/intelligence", accept="application/json")
+    status, _, body = _fetch_with_retry(f"{base}/api/overview/intelligence", accept="application/json")
     try:
         overview_payload = json.loads(body) if body else {}
     except json.JSONDecodeError:
         overview_payload = {}
     results += evaluate_setups(status, overview_payload)
 
-    status, headers_asset, _ = _fetch(f"{base}/static/health-probe-missing.css")
+    status, headers_asset, _ = _fetch_with_retry(f"{base}/static/health-probe-missing.css")
     results += evaluate_asset_probe(status, headers_asset.get("Content-Type", ""))
 
-    status, _, _ = _fetch(f"{base}/openapi.json", accept="application/json")
+    status, _, _ = _fetch_with_retry(f"{base}/openapi.json", accept="application/json")
     results += evaluate_docs(status)
 
-    status, home_headers, _ = _fetch(f"{base}/", accept="text/html")
+    status, home_headers, _ = _fetch_with_retry(f"{base}/", accept="text/html")
     if status != 200:
         results.append(_result("critical", "home", f"HTTP {status}"))
     else:

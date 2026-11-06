@@ -48,6 +48,24 @@ from api.schemas import PaperTradeRequest, ClosePaperTradeRequest
 
 from db.connection import check_db_connectivity
 
+
+async def _check_db_connectivity_with_retry() -> bool:
+    """Retry the DB probe so a Render cold start is not reported as an outage.
+
+    The first connection to the Supabase pooler after an idle spin-down often
+    needs more than the old 2.0s budget; a second, wider attempt avoids a
+    false ``database: false`` on the health endpoint.
+    """
+    for timeout in (2.5, 6.0):
+        try:
+            if await asyncio.wait_for(
+                asyncio.to_thread(check_db_connectivity), timeout=timeout
+            ):
+                return True
+        except Exception:
+            continue
+    return False
+
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from agents.analytics.trade_journal import get_journal
@@ -303,7 +321,7 @@ async def health_check():
         ai_engine_info = {"mode": "Statistical Heuristic (fallback)", "badge_text": "AI Engine: Statistical Heuristic (0/3 models fitted)", "fitted_count": 0}
 
     try:
-        db_ok = await asyncio.wait_for(asyncio.to_thread(check_db_connectivity), timeout=2.0)
+        db_ok = await _check_db_connectivity_with_retry()
     except Exception:
         db_ok = False
     feed_status = svc._get_feed_status()
@@ -348,7 +366,7 @@ async def health_check():
 async def readiness_check():
     """Readiness probe: verifies DB connectivity and that market data or snapshots are available."""
     try:
-        db_ok = await asyncio.wait_for(asyncio.to_thread(check_db_connectivity), timeout=2.0)
+        db_ok = await _check_db_connectivity_with_retry()
     except Exception:
         db_ok = False
     symbols_count = len(svc._market_data)
@@ -396,7 +414,7 @@ async def get_system_data_health():
     """
     now_utc = datetime.now(timezone.utc)
     try:
-        db_ok = await asyncio.wait_for(asyncio.to_thread(check_db_connectivity), timeout=2.0)
+        db_ok = await _check_db_connectivity_with_retry()
     except Exception:
         db_ok = False
 
@@ -7089,7 +7107,10 @@ async def get_index_movers(index_name: str):
 
         # Remove internal cache key before sending to client
 
-        data.pop("_fetched_at", None)
+        if isinstance(data, dict):
+            data.pop("_fetched_at", None)
+        else:
+            data = {"error": f"Failed to compute index movers for {clean_name}"}
 
     except Exception as e:
 
