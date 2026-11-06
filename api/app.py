@@ -174,10 +174,9 @@ def _lifespan_context():
 
 
     @asynccontextmanager
-
     async def lifespan(app: FastAPI):
-
         svc._SERVER_START_TIME = time.time()
+        is_lightweight = _env_flag("LIGHTWEIGHT_API_MODE", False) or not _env_flag("BACKGROUND_REFRESH_ENABLED", True)
 
         # Run DB hydration and model warmup in a non-blocking background task so
         # Uvicorn binds the port immediately (<0.1s). This prevents Render free-tier
