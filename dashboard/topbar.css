@@ -1,0 +1,316 @@
+/* ============================================================================
+   Top bar polish
+   ----------------------------------------------------------------------------
+   Loaded after styles.css and glass.css. Goals:
+   - one visual rhythm: 42px bar, 24px pills, 8px radii for controls
+   - fewer colours: status pills use neutral surfaces, colour only for meaning
+   - tickers get separators and a fade mask instead of hard clipping
+   - priority-based hiding on narrow screens (BTC, then SENSEX, then tickers)
+   ========================================================================== */
+
+:root {
+    --tb-h: 42px;
+    --tb-pill-h: 24px;
+    --tb-radius: 999px;
+    --tb-control-radius: 8px;
+    --tb-gap: 10px;
+    --tb-surface: rgba(255, 255, 255, 0.05);
+    --tb-surface-hover: rgba(255, 255, 255, 0.10);
+    --tb-border: rgba(255, 255, 255, 0.12);
+    --tb-text: #e2e8f0;
+    --tb-muted: #8b97ad;
+}
+
+/* ── Bar ─────────────────────────────────────────────────────────────────── */
+.mood-strip {
+    gap: var(--tb-gap) !important;
+    padding: 0 12px !important;
+    background: rgba(8, 12, 22, 0.78) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    backdrop-filter: blur(16px) saturate(150%);
+    border-bottom: 1px solid var(--tb-border) !important;
+}
+
+.mood-strip-logo {
+    margin-right: 4px !important;
+    gap: 7px !important;
+}
+
+.mood-strip-logo .logo-text {
+    font-size: 0.92rem !important;
+    letter-spacing: -0.02em;
+}
+
+.mood-strip-logo .logo-badge {
+    font-size: 0.5rem !important;
+    padding: 2px 5px !important;
+    border-radius: 4px !important;
+}
+
+/* ── Status pill (market mood) ───────────────────────────────────────────── */
+.mood-pill {
+    height: var(--tb-pill-h);
+    padding: 0 10px !important;
+    margin-right: 0 !important;
+    border-radius: var(--tb-radius) !important;
+    border: 1px solid var(--tb-border) !important;
+    background: var(--tb-surface) !important;
+    color: var(--tb-text) !important;
+    font-size: 0.64rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.07em !important;
+    text-transform: uppercase;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px !important;
+}
+
+.mood-pill .mood-dot {
+    width: 6px !important;
+    height: 6px !important;
+}
+
+/* ── Tickers ─────────────────────────────────────────────────────────────── */
+.mood-ticker {
+    display: flex;
+    align-items: center;
+    gap: 0 !important;
+    padding: 0 4px !important;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+}
+
+.mood-ticker-item {
+    position: relative;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 0 14px;
+    white-space: nowrap;
+}
+
+.mood-ticker-item + .mood-ticker-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1px;
+    height: 14px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.mood-ticker-sym {
+    font-size: 0.6rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.08em !important;
+    color: var(--tb-muted) !important;
+}
+
+.mood-ticker-val {
+    font-size: 0.76rem !important;
+    font-weight: 600 !important;
+    color: var(--tb-text) !important;
+    font-variant-numeric: tabular-nums;
+}
+
+.mood-ticker-chg {
+    font-size: 0.68rem !important;
+    font-weight: 600 !important;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Right cluster ───────────────────────────────────────────────────────── */
+.mood-strip-right {
+    gap: 8px !important;
+    margin-left: 4px !important;
+}
+
+.telemetry-pill {
+    height: var(--tb-pill-h);
+    padding: 0 9px !important;
+    border-radius: var(--tb-radius) !important;
+    border: 1px solid var(--tb-border) !important;
+    background: var(--tb-surface) !important;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px !important;
+    font-size: 0.6rem !important;
+}
+
+#v2PipelineText {
+    font-size: 0.6rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.04em;
+    color: #7dd3fc !important;
+}
+
+.mood-clock {
+    font-size: 0.7rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.03em !important;
+    color: var(--tb-muted) !important;
+    font-variant-numeric: tabular-nums;
+    padding: 0 2px;
+}
+
+/* ── Search ──────────────────────────────────────────────────────────────── */
+.mood-search-input,
+.global-search-input {
+    height: 30px;
+    width: 210px;
+    padding: 0 10px !important;
+    border-radius: var(--tb-control-radius) !important;
+    border: 1px solid var(--tb-border) !important;
+    background: rgba(2, 6, 23, 0.55) !important;
+    color: var(--tb-text) !important;
+    font-size: 0.72rem !important;
+}
+
+.mood-search-input::placeholder,
+.global-search-input::placeholder {
+    color: var(--tb-muted) !important;
+}
+
+.mood-search-input:focus,
+.global-search-input:focus {
+    outline: none;
+    border-color: rgba(96, 165, 250, 0.55) !important;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+}
+
+.search-kbd {
+    font-size: 0.58rem !important;
+    padding: 1px 5px !important;
+    border-radius: 4px !important;
+    border: 1px solid var(--tb-border) !important;
+    background: var(--tb-surface) !important;
+    color: var(--tb-muted) !important;
+}
+
+/* ── Icon buttons ────────────────────────────────────────────────────────── */
+.mood-strip .theme-toggle {
+    width: 30px !important;
+    height: 30px !important;
+    border-radius: var(--tb-control-radius) !important;
+    border: 1px solid var(--tb-border) !important;
+    background: var(--tb-surface) !important;
+    font-size: 0.82rem !important;
+    color: var(--tb-text) !important;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.mood-strip .theme-toggle:hover {
+    background: var(--tb-surface-hover) !important;
+    border-color: rgba(255, 255, 255, 0.22) !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* ── AI status + market status pills ────────────────────────────────────── */
+.ai-engine-badge {
+    height: var(--tb-pill-h);
+    padding: 0 10px !important;
+    border-radius: var(--tb-radius) !important;
+    border: 1px solid var(--tb-border) !important;
+    background: var(--tb-surface) !important;
+    color: var(--tb-muted) !important;
+    font-size: 0.6rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.04em;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px !important;
+    white-space: nowrap;
+}
+
+.market-status {
+    height: var(--tb-pill-h);
+    padding: 0 10px;
+    border-radius: var(--tb-radius);
+    border: 1px solid var(--tb-border);
+    background: var(--tb-surface);
+    font-size: 0.6rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.07em;
+    gap: 6px !important;
+    color: var(--tb-muted) !important;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.market-status .status-dot {
+    width: 6px !important;
+    height: 6px !important;
+}
+
+.market-status .status-dot.live {
+    animation: none;
+}
+
+/* Keyboard focus */
+.mood-strip button:focus-visible,
+.mood-strip input:focus-visible {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
+}
+
+/* ── Light theme ─────────────────────────────────────────────────────────── */
+[data-theme="light"] .mood-strip {
+    background: rgba(248, 250, 252, 0.92) !important;
+    border-bottom-color: rgba(15, 23, 42, 0.10) !important;
+}
+
+[data-theme="light"] {
+    --tb-surface: rgba(15, 23, 42, 0.05);
+    --tb-surface-hover: rgba(15, 23, 42, 0.09);
+    --tb-border: rgba(15, 23, 42, 0.12);
+    --tb-text: #0f172a;
+    --tb-muted: #64748b;
+}
+
+[data-theme="light"] .mood-ticker-item + .mood-ticker-item::before {
+    background: rgba(15, 23, 42, 0.10);
+}
+
+[data-theme="light"] .mood-search-input,
+[data-theme="light"] .global-search-input {
+    background: #ffffff !important;
+    color: #0f172a !important;
+}
+
+/* ── Priority-based hiding ───────────────────────────────────────────────── */
+@media (max-width: 1360px) {
+    .mood-ticker-item:nth-child(3) { display: none; } /* BTC — least relevant on an NSE desk */
+}
+
+@media (max-width: 1200px) {
+    .mood-ticker-item:nth-child(2) { display: none; } /* SENSEX */
+    .mood-clock { display: none; }
+}
+
+@media (max-width: 1060px) {
+    .mood-ticker { display: none; }
+    .mood-search-input,
+    .global-search-input { width: 160px; }
+}
+
+@media (max-width: 860px) {
+    .ai-engine-badge { display: none; }
+    .mood-search-wrap { display: none; }
+}
+
+@media (max-width: 560px) {
+    .market-status { display: none; }
+    .mood-strip { padding: 0 8px !important; }
+}
+
+/* Solid fallback when blur is unavailable or unwanted */
+@media (prefers-reduced-transparency: reduce) {
+    .mood-strip {
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        background: #0b1220 !important;
+    }
+}
