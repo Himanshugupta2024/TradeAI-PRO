@@ -307,13 +307,10 @@ def _lifespan_context():
 
 
 
-        if _env_flag("NIGHTLY_SCAN_ENABLED", True):
-
+        if not is_lightweight and _env_flag("NIGHTLY_SCAN_ENABLED", False):
             _spawn_task(svc._nightly_swing_scan_background(), name="nightly_swing_scan")
-
         else:
-
-            svc.logger.info("NIGHTLY_SCAN_ENABLED=false -> skipping nightly SwingSpectrum scan")
+            svc.logger.info("NIGHTLY_SCAN_ENABLED=false (or lightweight mode) -> skipping nightly SwingSpectrum scan")
 
 
 

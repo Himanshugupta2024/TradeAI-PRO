@@ -44,7 +44,9 @@ services:
       - key: INITIAL_LOAD_ENABLED
         value: "false"
       - key: BACKGROUND_REFRESH_ENABLED
-        value: true
+        value: false
+      - key: LIGHTWEIGHT_API_MODE
+        value: "true"
       - key: SCREENER_TASK_ENABLED
         value: false
       - key: MORNING_SCAN_TASK_ENABLED

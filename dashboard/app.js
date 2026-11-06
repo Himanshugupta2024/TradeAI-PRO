@@ -2499,22 +2499,30 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
                 headers: reqHeaders,
             }, 10000, 0);
         } catch (netErr) {
-            if (!API || String(targetUrl).startsWith('/') || String(targetUrl).includes('workers.dev')) {
-                res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`, {
+            const fallbackUrl = String(targetUrl).startsWith('http') && String(targetUrl).includes('onrender.com')
+                ? `/api/autonomous/status?_ts=${Date.now()}`
+                : `https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`;
+            try {
+                res = await fetchWithTimeout(fallbackUrl, {
                     signal: _autonomousStatusController.signal,
                     headers: reqHeaders,
                 }, 10000, 0);
-            } else {
+            } catch (_) {
                 throw netErr;
             }
         }
 
-        if (res && (res.status === 429 || res.status === 403 || res.status === 502)) {
-            // Anti-bot edge challenge fallback directly to origin
-            res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`, {
-                signal: _autonomousStatusController.signal,
-                headers: reqHeaders,
-            }, 10000, 0);
+        if (res && (!res.ok || res.status === 429 || res.status === 403 || res.status === 502 || res.status === 503)) {
+            const altUrl = String(targetUrl).startsWith('http') && String(targetUrl).includes('onrender.com')
+                ? `/api/autonomous/status?_ts=${Date.now()}`
+                : `https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`;
+            try {
+                const altRes = await fetchWithTimeout(altUrl, {
+                    signal: _autonomousStatusController.signal,
+                    headers: reqHeaders,
+                }, 10000, 0);
+                if (altRes && altRes.ok) res = altRes;
+            } catch (_) {}
         }
 
         if (currentGen !== _autonomousStatusGen) return; // Stale response discarded
@@ -2633,22 +2641,30 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
                 headers: reqHeaders,
             }, 10000, 0);
         } catch (netErr) {
-            if (!API || String(targetUrl).startsWith('/') || String(targetUrl).includes('workers.dev')) {
-                res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`, {
+            const fallbackUrl = String(targetUrl).startsWith('http') && String(targetUrl).includes('onrender.com')
+                ? `/api/autonomous/feed?limit=25&_ts=${Date.now()}`
+                : `https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`;
+            try {
+                res = await fetchWithTimeout(fallbackUrl, {
                     signal: _autonomousFeedController.signal,
                     headers: reqHeaders,
                 }, 10000, 0);
-            } else {
+            } catch (_) {
                 throw netErr;
             }
         }
 
-        if (res && (res.status === 429 || res.status === 403 || res.status === 502)) {
-            // Anti-bot edge challenge fallback directly to origin
-            res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`, {
-                signal: _autonomousFeedController.signal,
-                headers: reqHeaders,
-            }, 10000, 0);
+        if (res && (!res.ok || res.status === 429 || res.status === 403 || res.status === 502 || res.status === 503)) {
+            const altUrl = String(targetUrl).startsWith('http') && String(targetUrl).includes('onrender.com')
+                ? `/api/autonomous/feed?limit=25&_ts=${Date.now()}`
+                : `https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`;
+            try {
+                const altRes = await fetchWithTimeout(altUrl, {
+                    signal: _autonomousFeedController.signal,
+                    headers: reqHeaders,
+                }, 10000, 0);
+                if (altRes && altRes.ok) res = altRes;
+            } catch (_) {}
         }
 
         if (currentGen !== _autonomousFeedGen) return;
