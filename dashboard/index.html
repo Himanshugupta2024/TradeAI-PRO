@@ -4068,6 +4068,14 @@
 
                     </div>
 
+                    <button class="terminal-ghost-btn" onclick="bulkClosePaperTrades('zombie')" type="button" title="Close intraday positions that missed EOD square-off">
+                        Close stale
+                    </button>
+
+                    <button class="terminal-ghost-btn" onclick="bulkClosePaperTrades('intraday')" type="button" title="Close all intraday equity positions at last known price">
+                        Square off intraday
+                    </button>
+
                     <button class="terminal-ghost-btn" onclick="switchTab('portfolio')" type="button">
 
                         View Full Portfolio ➔

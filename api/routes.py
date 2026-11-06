@@ -2955,6 +2955,17 @@ async def get_open_paper_trades_endpoint():
     val = await resolve_open_trades_valuation(engine, svc, refresh_stale=True)
     trades = [mark_trade_pricing(t) for t in val["open_trades"]]
     summary = dict(val["summary"])
+    from api.trade_hygiene import is_zombie
+
+    zombie_count = 0
+    for t in trades:
+        zombie, reason = is_zombie(t)
+        t["zombie"] = bool(zombie)
+        t["zombie_reason"] = reason
+        if zombie:
+            zombie_count += 1
+    if zombie_count:
+        summary["zombie_positions"] = zombie_count
     unpriced = sum(1 for t in trades if not t.get("priced", True))
     if unpriced:
         summary["unpriced_positions"] = unpriced
@@ -3009,6 +3020,68 @@ async def close_paper_trade_endpoint(trade_id: int, payload: dict | None = None)
     trade_dict = trade.__dict__ if hasattr(trade, "__dict__") else dict(trade)
 
     return {"status": "closed", "trade": trade_dict, "stats": engine.get_stats()}
+
+@router.post("/api/paper/close-bulk", dependencies=[Depends(require_admin)])
+async def close_paper_trades_bulk(payload: dict | None = None):
+    """Close a group of open paper trades at the last known price.
+
+    Modes: ``intraday`` (default), ``zombie``, ``all``, ``ids``.
+    Requires ``{"confirm": true}``; ``dry_run`` previews without closing.
+    """
+    from api.trade_hygiene import select_bulk_targets
+
+    payload = payload or {}
+    if not bool(payload.get("confirm")):
+        return JSONResponse(status_code=400, content={"error": "confirm:true required"})
+
+    mode = str(payload.get("mode") or "intraday").lower()
+    dry_run = bool(payload.get("dry_run"))
+    engine = svc._get_engine()
+    targets = select_bulk_targets(engine.open_trades, mode=mode, ids=payload.get("ids"))
+
+    closed: list[dict] = []
+    total_pnl = 0.0
+
+    for trade in targets:
+        symbol = str(getattr(trade, "symbol", "") or "")
+        data = svc._market_data.get(symbol)
+        exit_price = 0.0
+        if isinstance(data, dict) and data.get("close"):
+            exit_price = float(data["close"])
+        elif hasattr(data, "iloc") and not data.empty and "close" in data.columns:
+            exit_price = float(data["close"].iloc[-1])
+        if exit_price <= 0:
+            exit_price = float(getattr(trade, "entry_price", 0.0) or 0.0)
+
+        if dry_run:
+            closed.append({
+                "id": getattr(trade, "id", None),
+                "symbol": symbol,
+                "exit_price": round(exit_price, 4),
+            })
+            continue
+
+        result = engine.close_manual(trade_id=getattr(trade, "id", 0), exit_price=exit_price)
+        if result is None:
+            continue
+        pnl = float(getattr(result, "total_pnl", 0.0) or 0.0)
+        total_pnl += pnl
+        closed.append({
+            "id": getattr(result, "id", None),
+            "symbol": getattr(result, "symbol", symbol),
+            "exit_price": round(float(getattr(result, "exit_price", exit_price) or exit_price), 4),
+            "pnl": round(pnl, 2),
+        })
+
+    return {
+        "status": "ok",
+        "mode": mode,
+        "dry_run": dry_run,
+        "matched": len(targets),
+        "closed": len(closed),
+        "total_pnl": round(total_pnl, 2),
+        "trades": closed,
+    }
 
 @router.post("/api/paper/capital")
 async def set_paper_capital_endpoint(payload: dict | None = None):

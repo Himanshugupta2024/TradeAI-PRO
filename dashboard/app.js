@@ -8069,6 +8069,9 @@ function renderOverviewActiveTrades(openTrades, summary) {
         const fallbackBadge = isFallback
             ? `<span class="pos-fallback-badge" style="font-size:0.65rem;font-weight:700;color:#f59e0b;background:rgba(245,158,11,0.15);padding:1px 5px;border-radius:4px;border:1px solid rgba(245,158,11,0.3);margin-left:6px;" title="Real-time quote unavailable. Entry price used as reference.">⚠️ Unquoted Ref</span>`
             : '';
+        const zombieBadge = t.zombie
+            ? `<span class="pos-fallback-badge" style="font-size:0.65rem;font-weight:700;color:#f87171;background:rgba(239,68,68,0.12);padding:1px 5px;border-radius:4px;border:1px solid rgba(239,68,68,0.35);margin-left:6px;" title="Missed scheduled exit: ${(t.zombie_reason || '').replace(/_/g, ' ')}">STALE</span>`
+            : '';
         const statusPulse = isFallback
             ? `<span class="pos-status-pulse" style="color:#f59e0b;">⚠️ UNQUOTED REF</span>`
             : `<span class="pos-status-pulse">● RUNNING</span>`;
@@ -8079,7 +8082,7 @@ function renderOverviewActiveTrades(openTrades, summary) {
                     <div class="pos-symbol-group">
                         <span class="pos-dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${t.direction}</span>
                         <span class="pos-symbol-name">${t.symbol}</span>
-                        ${fallbackBadge}
+                        ${fallbackBadge}${zombieBadge}
                     </div>
                     <button class="pos-exit-btn" onclick="event.stopPropagation(); closePaperTrade(${t.id}, ${ltp})" type="button">
                         Exit
@@ -11539,6 +11542,38 @@ async function loadPortfolio() {
 // ── Manual Paper Trade Exit ───────────────────────────────
 
 
+
+async function bulkClosePaperTrades(mode) {
+    const labels = {
+        intraday: 'all intraday equity positions',
+        zombie: 'stale / zombie positions',
+        all: 'ALL open positions',
+    };
+    const label = labels[mode] || mode;
+    if (!confirm(`Close ${label} at the last known price? This cannot be undone.`)) return;
+
+    try {
+        const res = await fetchWithTimeout(`${API}/api/paper/close-bulk`, {
+            method: 'POST',
+            headers: _getAuthHeaders(),
+            body: JSON.stringify({ mode, confirm: true }),
+        }, 15000);
+
+        if (res.status === 401 || res.status === 403) {
+            _handleAuthChallenge(res.status);
+            return;
+        }
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Bulk close failed');
+
+        alert(`Closed ${data.closed} of ${data.matched} position(s).\nP&L: ₹${Number(data.total_pnl || 0).toFixed(2)}`);
+        await loadAllData();
+    } catch (err) {
+        alert('Bulk close failed: ' + err.message);
+    }
+}
+window.bulkClosePaperTrades = bulkClosePaperTrades;
 
 async function closePaperTrade(tradeId, currentPrice) {
 
