@@ -295,7 +295,10 @@ async def health_check():
 
         ai_engine_info = {"mode": "Statistical Heuristic (fallback)", "badge_text": "AI Engine: Statistical Heuristic (0/3 models fitted)", "fitted_count": 0}
 
-    db_ok = check_db_connectivity()
+    try:
+        db_ok = await asyncio.wait_for(asyncio.to_thread(check_db_connectivity), timeout=2.0)
+    except Exception:
+        db_ok = False
     feed_status = svc._get_feed_status()
     api_health = "API_UP" if db_ok else "API_DEGRADED"
 
@@ -337,7 +340,10 @@ async def health_check():
 @router.api_route("/api/ready", methods=["GET", "HEAD"])
 async def readiness_check():
     """Readiness probe: verifies DB connectivity and that market data or snapshots are available."""
-    db_ok = check_db_connectivity()
+    try:
+        db_ok = await asyncio.wait_for(asyncio.to_thread(check_db_connectivity), timeout=2.0)
+    except Exception:
+        db_ok = False
     symbols_count = len(svc._market_data)
     is_lightweight = os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes")
 
@@ -382,7 +388,10 @@ async def get_system_data_health():
     Returns operational health, snapshot age, data freshness, and diagnostics across 9 core subsystems.
     """
     now_utc = datetime.now(timezone.utc)
-    db_ok = check_db_connectivity()
+    try:
+        db_ok = await asyncio.wait_for(asyncio.to_thread(check_db_connectivity), timeout=2.0)
+    except Exception:
+        db_ok = False
 
     # 1. Feed / Market Snapshot
     feed_status = svc._get_feed_status()
@@ -648,7 +657,7 @@ class MarketControlToggleRequest(BaseModel):
 async def get_market_control_status_route():
     """Return Section 6A Market Control status and NSE Focus Mode telemetry."""
     from agents.execution.market_control import get_market_control_status
-    return get_market_control_status()
+    return await asyncio.to_thread(get_market_control_status)
 
 from starlette.requests import Request as FastApiRequest
 @router.post("/api/market-control/toggle")
