@@ -30,7 +30,7 @@ import numpy as np
 
 import pandas as pd
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from starlette.requests import Request as FastApiRequest
 from starlette.responses import JSONResponse
