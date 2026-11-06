@@ -10730,28 +10730,39 @@ async def get_market_mood_api():
 
         return _CONTEXT_MOOD_CACHE
 
+    def _get_idx(sym_candidates: list[str]) -> tuple[float | None, float | None]:
+        for sym in sym_candidates:
+            df = svc._market_data.get(sym)
+            if df is None or len(df) < 2:
+                df = svc._signal_cache.get(sym)
+            if df is not None and len(df) >= 2:
+                latest = float(df.iloc[-1]["close"])
+                first = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else float(df.iloc[0]["close"])
+                chg = ((latest - first) / first) * 100.0 if first else 0.0
+                return round(latest, 2), round(chg, 2)
+        return None, None
+
+    nifty_close, nifty_change = _get_idx(["NIFTY 50", "NIFTY", "^NSEI"])
+    sensex_close, sensex_change = _get_idx(["SENSEX", "^BSESN", "BSE_SENSEX"])
+    banknifty_close, banknifty_change = _get_idx(["BANKNIFTY", "^NSEBANK", "BANK_NIFTY"])
+
     # During startup warmup return neutral immediately — avoids 503 on first hit.
-
     if not svc._loading_status.get("ready"):
-
         return {
-
             "crypto_mood": "NEUTRAL",
-
             "btc_dominance": None,
-
             "btc_dominance_source": "warming_up",
-
             "btc_24hr_change": 0.0,
-
-            "nifty_24hr_change": 0.0,
-
+            "btc_price": None,
+            "nifty_close": nifty_close,
+            "nifty_24hr_change": nifty_change if nifty_change is not None else 0.0,
+            "sensex_close": sensex_close,
+            "sensex_24hr_change": sensex_change,
+            "banknifty_close": banknifty_close,
+            "banknifty_24hr_change": banknifty_change,
             "avg_news_sentiment": 0.0,
-
             "active_event_risk": False,
-
             "next_event": None,
-
         }
 
     try:
@@ -10798,27 +10809,22 @@ async def get_market_mood_api():
                     context_score=0.0,
                 )
 
-        # Nifty from cached 5m stream if available.
+        # Major indices from cached 5m streams or signal cache
+        def _get_idx(sym_candidates: list[str]) -> tuple[float | None, float | None]:
+            for sym in sym_candidates:
+                df = svc._market_data.get(sym)
+                if df is None or len(df) < 2:
+                    df = svc._signal_cache.get(sym)
+                if df is not None and len(df) >= 2:
+                    latest = float(df.iloc[-1]["close"])
+                    first = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else float(df.iloc[0]["close"])
+                    chg = ((latest - first) / first) * 100.0 if first else 0.0
+                    return round(latest, 2), round(chg, 2)
+            return None, None
 
-        nifty_change = 0.0
-
-        if "NIFTY 50" in svc._market_data and len(svc._market_data["NIFTY 50"]) >= 2:
-
-            nifty_df = svc._market_data["NIFTY 50"]
-
-            latest = float(nifty_df.iloc[-1]["close"])
-
-            first = (
-
-                float(nifty_df.iloc[0]["open"])
-
-                if float(nifty_df.iloc[0]["open"]) != 0
-
-                else latest
-
-            )
-
-            nifty_change = ((latest - first) / first) * 100.0 if first else 0.0
+        nifty_close, nifty_change = _get_idx(["NIFTY 50", "NIFTY", "^NSEI"])
+        sensex_close, sensex_change = _get_idx(["SENSEX", "^BSESN", "BSE_SENSEX"])
+        banknifty_close, banknifty_change = _get_idx(["BANKNIFTY", "^NSEBANK", "BANK_NIFTY"])
 
         # Cache-first context sentiment over active symbols (0ms non-blocking)
 
@@ -10912,7 +10918,13 @@ async def get_market_mood_api():
 
             ),
 
-            "nifty_24hr_change": round(float(nifty_change), 2),
+            "btc_price": round(float(btc_snapshot.price), 2) if getattr(btc_snapshot, "price", None) else None,
+            "nifty_close": nifty_close,
+            "nifty_24hr_change": nifty_change if nifty_change is not None else 0.0,
+            "sensex_close": sensex_close,
+            "sensex_24hr_change": sensex_change,
+            "banknifty_close": banknifty_close,
+            "banknifty_24hr_change": banknifty_change,
 
             "avg_news_sentiment": round(avg_sent, 3),
 

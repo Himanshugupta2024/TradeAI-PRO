@@ -3154,6 +3154,17 @@ async function loadAllData({ background = false } = {}) {
 
 
         allSignals = nextSignals;
+        if (Array.isArray(nextSignals) && nextSignals.length > 0) {
+            nextSignals.forEach(s => {
+                if (s && s.symbol && s.close != null) {
+                    marketDataCache[s.symbol] = {
+                        close: s.close,
+                        change_pct: s.change_pct ?? null,
+                    };
+                }
+            });
+            updateMoodStripFromCache();
+        }
 
 
 
@@ -23243,51 +23254,23 @@ function updateMoodStripUI(data) {
 
 
 
-    const btcChgEl = document.getElementById('moodBtcChg');
-
-
-
-    const niftyChgEl = document.getElementById('moodNiftyChg');
-
-
-
-    if (btcChgEl) {
-
-
-
-        const v = Number(data.btc_24hr_change || 0);
-
-
-
-        btcChgEl.textContent = `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
-
-
-
-        btcChgEl.className = 'mood-ticker-chg ' + (v >= 0 ? 'up' : 'dn');
-
-
-
+        function _setTickerSlot(valId, chgId, price, chg) {
+        const valEl = document.getElementById(valId);
+        const chgEl = document.getElementById(chgId);
+        if (valEl && price != null && !isNaN(price) && Number(price) > 0) {
+            valEl.textContent = Number(price).toLocaleString('en-IN', { maximumFractionDigits: (valId === 'moodBtc' ? 2 : 0) });
+        }
+        if (chgEl && chg != null && !isNaN(chg)) {
+            const v = Number(chg);
+            chgEl.textContent = `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+            chgEl.className = 'mood-ticker-chg ' + (v >= 0 ? 'up' : 'dn');
+        }
     }
 
-
-
-    if (niftyChgEl) {
-
-
-
-        const v = Number(data.nifty_24hr_change || 0);
-
-
-
-        niftyChgEl.textContent = `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
-
-
-
-        niftyChgEl.className = 'mood-ticker-chg ' + (v >= 0 ? 'up' : 'dn');
-
-
-
-    }
+    _setTickerSlot('moodNifty', 'moodNiftyChg', data.nifty_close, data.nifty_24hr_change);
+    _setTickerSlot('moodSensex', 'moodSensexChg', data.sensex_close, data.sensex_24hr_change);
+    _setTickerSlot('moodBtc', 'moodBtcChg', data.btc_price, data.btc_24hr_change);
+    _setTickerSlot('moodBanknifty', 'moodBankniftyChg', data.banknifty_close, data.banknifty_24hr_change);
 
 
 

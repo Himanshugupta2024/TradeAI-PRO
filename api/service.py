@@ -1669,6 +1669,8 @@ def _get_signal_for_symbol(symbol: str) -> dict:
 
     # Always use current-bar values for these live fields
     current_close = round(float(last["close"]), 2)
+    first_open = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else current_close
+    day_chg_pct = round(((current_close - first_open) / first_open) * 100.0, 2) if first_open else 0.0
     current_rsi = (
         round(float(last["RSI_14"]), 1) if pd.notna(last.get("RSI_14")) else None
     )
@@ -1697,6 +1699,7 @@ def _get_signal_for_symbol(symbol: str) -> dict:
             "confidence": current_conf,
             "entry": current_close,
             "close": current_close,
+            "change_pct": day_chg_pct,
             "stop_loss": None,
             "target": None,
             "rsi": current_rsi,
@@ -1831,6 +1834,7 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         ),
         "entry": entry_price,
         "close": current_close,  # always current price
+        "change_pct": day_chg_pct,
         "stop_loss": sl,
         "target": tp,
         "rsi": current_rsi,  # always current RSI
@@ -3972,8 +3976,11 @@ class SnapshotBroadcaster:
             for sym, df in _market_data.items():
                 if isinstance(df, pd.DataFrame) and not df.empty:
                     last = df.iloc[-1]
+                    b_first = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else float(last["close"])
+                    b_chg = round(((float(last["close"]) - b_first) / b_first) * 100.0, 2) if b_first else 0.0
                     prices[sym] = {
                         "close": round(float(last["close"]), 2),
+                        "change_pct": b_chg,
                         "high": round(float(last["high"]), 2),
                         "low": round(float(last["low"]), 2),
                         "rsi": round(float(last["RSI_14"]), 1) if pd.notna(last.get("RSI_14")) else None,

@@ -81,7 +81,7 @@ MEME_MAX_TRACKED_COINS = int(os.getenv("MEME_MAX_TRACKED_COINS", "60"))
 
 _nse_env = os.getenv("NSE_SYMBOLS", "")
 NSE_SYMBOLS = [s.strip() for s in _nse_env.split(",") if s.strip()] if _nse_env else [
-    "NIFTY 50", "BANKNIFTY", "RELIANCE", "TCS",
+    "NIFTY 50", "BANKNIFTY", "SENSEX", "RELIANCE", "TCS",
     "HDFCBANK", "INFY", "ICICIBANK", "SBIN",
 ]
 
