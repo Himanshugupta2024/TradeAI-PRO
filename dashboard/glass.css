@@ -1,18 +1,15 @@
 /* ============================================================================
-   TradeAI PRO — Liquid Glass skin (opt-in)
+   TradeAI PRO — Liquid Glass skin
    ----------------------------------------------------------------------------
-   Scope:  html[data-skin="glass"]  →  nothing changes unless the skin is on.
-   Enable: ?skin=glass  (persists in localStorage) or the ✦ button in the top bar.
+   Scope:  html[data-skin="glass"]  ->  nothing changes unless the skin is on.
+   Enable: default active on initial load or via the ✦ button in the top bar.
 
    Design intent (Apple "Liquid Glass" / glassmorphism):
-   - ambient colour field behind the UI, never a flat black page
-   - frosted panels with a 1px light edge and an inner top highlight
-   - layered depth: shadow below, specular highlight above
-   - restrained: data tables and charts stay readable, blur is not everywhere
-
-   Performance: each backdrop-filter surface is a compositor layer. The list
-   below is deliberately capped; mobile and reduced-transparency users get
-   solid surfaces instead.
+   - ambient colour field behind the UI, never a flat black/white page
+   - frosted panels with a 1px specular light edge and an inner top highlight
+   - layered depth: soft diffuse shadow below, specular highlight above
+   - restrained: data tables and charts stay readable, blur is hardware-accelerated
+   - adaptive: crystal obsidian frosted glass in Dark Mode, luminous pearl glass in Light Mode
    ========================================================================== */
 
 html[data-skin="glass"] {
@@ -27,6 +24,7 @@ html[data-skin="glass"] {
     --border-color: rgba(148, 197, 255, 0.16);
     --border-glow: rgba(96, 165, 250, 0.45);
 
+    --text: #f8fafc;
     --text-primary: #f8fafc;
     --text-secondary: #cbd5e1;
     --text-muted: #94a3b8;
@@ -50,8 +48,8 @@ html[data-skin="glass"] body {
         radial-gradient(900px 620px at 12% -8%, rgba(59, 130, 246, 0.30), transparent 62%),
         radial-gradient(760px 520px at 88% 2%, rgba(168, 85, 247, 0.20), transparent 60%),
         radial-gradient(820px 620px at 50% 112%, rgba(34, 211, 238, 0.16), transparent 62%),
-        #05070f;
-    background-attachment: fixed;
+        #05070f !important;
+    background-attachment: fixed !important;
 }
 
 /* Very light grain so large gradients do not band. */
@@ -74,21 +72,26 @@ html[data-skin="glass"] .more-menu,
 html[data-skin="glass"] .signal-card,
 html[data-skin="glass"] .kpi-card,
 html[data-skin="glass"] .perf-kpi-card,
-html[data-skin="glass"] .macro-stat-card,
 html[data-skin="glass"] .chart-card,
 html[data-skin="glass"] .ee-metric-card,
 html[data-skin="glass"] .intel-card,
 html[data-skin="glass"] .nse-chart-card,
-html[data-skin="glass"] .more-menu-card {
+html[data-skin="glass"] .more-menu-card,
+html[data-skin="glass"] .terminal-hero-strip,
+html[data-skin="glass"] .terminal-macro-cockpit,
+html[data-skin="glass"] .terminal-positions-panel,
+html[data-skin="glass"] .terminal-hub-card,
+html[data-skin="glass"] .terminal-action-ribbon,
+html[data-skin="glass"] .bottom-nav {
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.025)),
-        rgba(15, 23, 42, 0.55);
-    -webkit-backdrop-filter: blur(18px) saturate(160%);
-    backdrop-filter: blur(18px) saturate(160%);
-    border: 1px solid rgba(255, 255, 255, 0.14);
+        linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+        rgba(15, 23, 42, 0.65) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
     box-shadow:
-        0 22px 55px -26px rgba(0, 0, 0, 0.9),
-        inset 0 1px 0 rgba(255, 255, 255, 0.22);
+        0 20px 50px -20px rgba(0, 0, 0, 0.7),
+        inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
     border-radius: var(--radius-lg);
 }
 
@@ -102,19 +105,61 @@ html[data-skin="glass"] .sidebar {
     border-left: 0;
 }
 
+/* ── Inner card tiles ────────────────────────────────────────────────────── */
+html[data-skin="glass"] .hero-metric-tile {
+    background: rgba(255, 255, 255, 0.02) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-skin="glass"] .hero-metric-tile:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-skin="glass"] .macro-stat-card,
+html[data-skin="glass"] .pos-ticket,
+html[data-skin="glass"] .cockpit-tile {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 8px;
+}
+
+html[data-skin="glass"] .terminal-session-alert {
+    background: rgba(245, 158, 11, 0.12) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    backdrop-filter: blur(16px) !important;
+    border: 1px solid rgba(245, 158, 11, 0.30) !important;
+    border-left: 4px solid #f59e0b !important;
+    color: #fbbf24 !important;
+    box-shadow: 0 8px 24px -6px rgba(245, 158, 11, 0.25) !important;
+    border-radius: var(--radius-md);
+}
+
+html[data-skin="glass"] #autonomousDecisionFeedList > div,
+html[data-skin="glass"] .decision-feed-row {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-skin="glass"] #autonomousDecisionFeedList strong {
+    color: #f8fafc !important;
+}
+
 /* ── Interaction states ──────────────────────────────────────────────────── */
 html[data-skin="glass"] .signal-card:hover,
 html[data-skin="glass"] .kpi-card:hover,
 html[data-skin="glass"] .perf-kpi-card:hover,
 html[data-skin="glass"] .macro-stat-card:hover,
-html[data-skin="glass"] .chart-card:hover {
+html[data-skin="glass"] .chart-card:hover,
+html[data-skin="glass"] .pos-ticket:hover,
+html[data-skin="glass"] .cockpit-tile:hover {
     background:
         linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04)),
-        rgba(30, 41, 59, 0.62);
-    border-color: rgba(255, 255, 255, 0.22);
+        rgba(30, 41, 59, 0.62) !important;
+    border-color: rgba(255, 255, 255, 0.22) !important;
     box-shadow:
         0 26px 65px -28px rgba(0, 0, 0, 0.95),
-        inset 0 1px 0 rgba(255, 255, 255, 0.28);
+        inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
     transform: translateY(-1px);
 }
 
@@ -129,9 +174,9 @@ html[data-skin="glass"] .sidebar-item:hover {
 html[data-skin="glass"] .sidebar-item.active {
     background:
         linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05)),
-        rgba(37, 99, 235, 0.35);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+        rgba(37, 99, 235, 0.35) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
 }
 
 /* ── Controls ────────────────────────────────────────────────────────────── */
@@ -233,11 +278,14 @@ html[data-skin="glass"] ::-webkit-scrollbar-thumb:hover {
     html[data-skin="glass"] .intel-card,
     html[data-skin="glass"] .nse-chart-card,
     html[data-skin="glass"] .more-menu-card,
+    html[data-skin="glass"] .terminal-hero-strip,
+    html[data-skin="glass"] .terminal-macro-cockpit,
+    html[data-skin="glass"] .terminal-positions-panel,
     html[data-skin="glass"] .theme-toggle,
     html[data-skin="glass"] .telemetry-pill {
         -webkit-backdrop-filter: none;
         backdrop-filter: none;
-        background: #0f172a;
+        background: #0f172a !important;
     }
 }
 
@@ -248,8 +296,11 @@ html[data-skin="glass"] ::-webkit-scrollbar-thumb:hover {
     html[data-skin="glass"] .macro-stat-card,
     html[data-skin="glass"] .chart-card,
     html[data-skin="glass"] .sidebar,
-    html[data-skin="glass"] .mood-strip {
-        background: rgba(15, 23, 42, 0.94);
+    html[data-skin="glass"] .mood-strip,
+    html[data-skin="glass"] .terminal-hero-strip,
+    html[data-skin="glass"] .terminal-macro-cockpit,
+    html[data-skin="glass"] .terminal-positions-panel {
+        background: rgba(15, 23, 42, 0.94) !important;
     }
 }
 
@@ -264,9 +315,12 @@ html[data-skin="glass"] ::-webkit-scrollbar-thumb:hover {
     html[data-skin="glass"] .chart-card,
     html[data-skin="glass"] .ee-metric-card,
     html[data-skin="glass"] .intel-card,
-    html[data-skin="glass"] .nse-chart-card {
-        -webkit-backdrop-filter: blur(10px) saturate(140%);
-        backdrop-filter: blur(10px) saturate(140%);
+    html[data-skin="glass"] .nse-chart-card,
+    html[data-skin="glass"] .terminal-hero-strip,
+    html[data-skin="glass"] .terminal-macro-cockpit,
+    html[data-skin="glass"] .terminal-positions-panel {
+        -webkit-backdrop-filter: blur(10px) saturate(140%) !important;
+        backdrop-filter: blur(10px) saturate(140%) !important;
     }
     html[data-skin="glass"] body::after {
         display: none;
@@ -277,7 +331,9 @@ html[data-skin="glass"] ::-webkit-scrollbar-thumb:hover {
     html[data-skin="glass"] .signal-card:hover,
     html[data-skin="glass"] .kpi-card:hover,
     html[data-skin="glass"] .perf-kpi-card:hover,
-    html[data-skin="glass"] .macro-stat-card:hover {
+    html[data-skin="glass"] .macro-stat-card:hover,
+    html[data-skin="glass"] .pos-ticket:hover,
+    html[data-skin="glass"] .cockpit-tile:hover {
         transform: none;
     }
 }
@@ -295,6 +351,7 @@ html[data-skin="glass"][data-theme="light"] {
     --border-color: rgba(15, 23, 42, 0.10);
     --border-glow: rgba(37, 99, 235, 0.35);
 
+    --text: #0b1220;
     --text-primary: #0b1220;
     --text-secondary: #334155;
     --text-muted: #64748b;
@@ -312,8 +369,9 @@ html[data-skin="glass"][data-theme="light"] body {
         radial-gradient(900px 620px at 12% -8%, rgba(96, 165, 250, 0.38), transparent 62%),
         radial-gradient(760px 520px at 88% 2%, rgba(196, 181, 253, 0.32), transparent 60%),
         radial-gradient(820px 620px at 50% 112%, rgba(125, 211, 252, 0.30), transparent 62%),
-        #eef2f9;
-    background-attachment: fixed;
+        #eef2f9 !important;
+    background-attachment: fixed !important;
+    color: #0b1220 !important;
 }
 
 html[data-skin="glass"][data-theme="light"] body::after {
@@ -328,19 +386,108 @@ html[data-skin="glass"][data-theme="light"] .more-menu,
 html[data-skin="glass"][data-theme="light"] .signal-card,
 html[data-skin="glass"][data-theme="light"] .kpi-card,
 html[data-skin="glass"][data-theme="light"] .perf-kpi-card,
-html[data-skin="glass"][data-theme="light"] .macro-stat-card,
 html[data-skin="glass"][data-theme="light"] .chart-card,
 html[data-skin="glass"][data-theme="light"] .ee-metric-card,
 html[data-skin="glass"][data-theme="light"] .intel-card,
 html[data-skin="glass"][data-theme="light"] .nse-chart-card,
-html[data-skin="glass"][data-theme="light"] .more-menu-card {
+html[data-skin="glass"][data-theme="light"] .more-menu-card,
+html[data-skin="glass"][data-theme="light"] .terminal-hero-strip,
+html[data-skin="glass"][data-theme="light"] .terminal-macro-cockpit,
+html[data-skin="glass"][data-theme="light"] .terminal-positions-panel,
+html[data-skin="glass"][data-theme="light"] .terminal-hub-card,
+html[data-skin="glass"][data-theme="light"] .terminal-action-ribbon,
+html[data-skin="glass"][data-theme="light"] .bottom-nav {
     background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.90), rgba(255, 255, 255, 0.52)),
-        rgba(255, 255, 255, 0.58);
-    border: 1px solid rgba(15, 23, 42, 0.08);
+        linear-gradient(180deg, rgba(255, 255, 255, 0.90), rgba(255, 255, 255, 0.55)),
+        rgba(255, 255, 255, 0.60) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08) !important;
     box-shadow:
-        0 22px 55px -30px rgba(15, 23, 42, 0.40),
-        inset 0 1px 0 rgba(255, 255, 255, 0.95);
+        0 22px 55px -30px rgba(15, 23, 42, 0.25),
+        inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .hero-metric-tile {
+    background: rgba(255, 255, 255, 0.45) !important;
+    border-right-color: rgba(15, 23, 42, 0.08) !important;
+    border-bottom-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .hero-metric-tile:hover {
+    background: rgba(255, 255, 255, 0.75) !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .macro-stat-card {
+    background: rgba(255, 255, 255, 0.60) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08) !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04) !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .pos-ticket {
+    background: rgba(255, 255, 255, 0.60) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08) !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04) !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .cockpit-tile {
+    background: rgba(255, 255, 255, 0.60) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08) !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04) !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .terminal-session-alert {
+    background: rgba(254, 243, 199, 0.85) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    backdrop-filter: blur(16px) !important;
+    border: 1px solid rgba(245, 158, 11, 0.35) !important;
+    border-left: 4px solid #d97706 !important;
+    color: #92400e !important;
+    box-shadow: 0 6px 18px -4px rgba(217, 119, 6, 0.15) !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .segmented-control {
+    background: rgba(15, 23, 42, 0.05) !important;
+    border: 1px solid rgba(15, 23, 42, 0.10) !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .seg-btn {
+    color: #64748b !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .seg-btn.active {
+    background: #ffffff !important;
+    color: #0284c7 !important;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08) !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .terminal-ghost-btn {
+    background: rgba(15, 23, 42, 0.04) !important;
+    border-color: rgba(15, 23, 42, 0.12) !important;
+    color: #475569 !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .terminal-ghost-btn:hover {
+    background: rgba(15, 23, 42, 0.08) !important;
+    color: #0f172a !important;
+}
+
+html[data-skin="glass"][data-theme="light"] #autonomousDecisionFeedList > div,
+html[data-skin="glass"][data-theme="light"] .decision-feed-row {
+    background: rgba(15, 23, 42, 0.03) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08) !important;
+}
+
+html[data-skin="glass"][data-theme="light"] #autonomousDecisionFeedList strong {
+    color: #0f172a !important;
+}
+
+html[data-skin="glass"][data-theme="light"] .macro-cockpit-title,
+html[data-skin="glass"][data-theme="light"] .terminal-panel-title,
+html[data-skin="glass"][data-theme="light"] .hero-metric-val,
+html[data-skin="glass"][data-theme="light"] .macro-stat-val,
+html[data-skin="glass"][data-theme="light"] .pos-symbol-name {
+    color: #0f172a !important;
 }
 
 html[data-skin="glass"][data-theme="light"] .theme-toggle,

@@ -1873,7 +1873,7 @@ function initTheme() {
 
 
 
-    const initial = saved || (prefersDark ? 'dark' : 'light');
+    const initial = saved || 'dark';
 
 
 
@@ -2818,11 +2818,11 @@ function renderAutonomousFeedUI(rawFeed, { isCached = false } = {}) {
         const scorePill = item.qs_score > 0 ? `<span style="font-size:10px;color:#38bdf8;background:rgba(56,189,248,0.1);padding:1px 4px;border-radius:3px;">QS ${item.qs_score}</span>` : '';
 
         return `
-            <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:6px;padding:6px 10px;font-size:12px;">
+            <div class="decision-feed-row" style="display:flex;align-items:center;justify-content:space-between;border-radius:6px;padding:6px 10px;font-size:12px;">
                 <div style="display:flex;align-items:center;gap:8px;">
                     <span style="font-family:monospace;font-size:10px;color:var(--text-muted,#94a3b8);">${timeStr}</span>
                     <span style="background:${bgBadge};color:${badgeColor};border:1px solid ${badgeColor}33;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">${escapeHtml(item.action)}</span>
-                    <strong style="color:var(--text,#f8fafc);">${escapeHtml(item.symbol)}</strong>
+                    <strong style="color:var(--text-primary,#f8fafc);">${escapeHtml(item.symbol)}</strong>
                     ${item.direction && item.direction !== 'HOLD' && item.direction !== 'NEUTRAL' ? `<span style="color:${item.direction === 'LONG' ? '#10b981' : '#f43f5e'};font-weight:600;font-size:11px;">${escapeHtml(item.direction)}</span>` : ''}
                     ${priceText ? `<span style="font-family:monospace;font-size:11px;color:var(--text-muted,#94a3b8);">${priceText}</span>` : ''}
                     ${scorePill}
@@ -24589,7 +24589,7 @@ function renderInrStrip(rates) {
 
             <div style="display:flex;flex-direction:column;gap:2px;">
 
-                <span style="font-size:0.75rem;font-weight:600;color:var(--text,#f8fafc);">${escapeHtml(sym)}</span>
+                <span style="font-size:0.75rem;font-weight:600;color:var(--text-primary,#f8fafc);">${escapeHtml(sym)}</span>
 
                 <span style="font-family:monospace;font-size:0.85rem;color:var(--cyan,#38bdf8);font-weight:600;">₹${rate.toFixed(decimals)}</span>
 

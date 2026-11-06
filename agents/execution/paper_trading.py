@@ -1266,6 +1266,8 @@ class PaperTradingEngine:
         self._circuit_breaker_active = bool(data.get("circuit_breaker_active", False))
         self._circuit_breaker_reason = str(data.get("circuit_breaker_reason", ""))
         self.equity_history = data.get("equity_history", [])
+        self.trades = []
+        self.open_trades = []
 
         for td in data.get("trades", []):
             # Handle older trade format without quantity
