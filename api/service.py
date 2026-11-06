@@ -2957,6 +2957,17 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
         if top_setups:
             fallback_applied = True
 
+    # ── Honesty gate: a setup with unusable risk geometry is not a setup ─────
+    from api.data_honesty import filter_valid_setups
+
+    top_setups, rejected_setups = filter_valid_setups(top_setups)
+    for rejected, reason in rejected_setups:
+        rejected["blockers"] = list(rejected.get("blockers") or []) + [reason]
+        rejected["invalid_levels"] = True
+        avoid_list.append(rejected)
+    if rejected_setups:
+        avoid_list.sort(key=lambda item: item.get("composite_rank") or 0.0, reverse=True)
+
     n_top = len(top_setups)
     for idx, t in enumerate(top_setups):
         if n_top <= 1:

@@ -97,6 +97,37 @@ class NSEBhavcopyProvider:
         logger.error("[NSEBhavcopy] Failed to locate valid bhavcopy within %d backtrack days from %s", max_backtrack_days, cur_date)
         return pd.DataFrame()
 
+    def fetch_daily_exact(self, target_date: date, allow_download: bool = True) -> pd.DataFrame:
+        """Fetch one specific trading date without backtracking.
+
+        Unlike :meth:`fetch_daily_bhavcopy`, a holiday or weekend returns an
+        empty frame instead of silently labelling an older day as this date.
+        Used by the historical panel builder, where dates must be truthful.
+        """
+        if target_date.weekday() >= 5:
+            return pd.DataFrame()
+
+        cache_file = self._get_cache_path(target_date)
+        if cache_file.exists():
+            try:
+                return pd.read_csv(cache_file, compression="gzip")
+            except Exception as read_err:
+                logger.warning("[NSEBhavcopy] Corrupt cache %s: %s", cache_file, read_err)
+                cache_file.unlink(missing_ok=True)
+
+        if not allow_download:
+            return pd.DataFrame()
+
+        df = self._download_and_parse(target_date)
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        try:
+            df.to_csv(cache_file, index=False, compression="gzip")
+        except Exception as save_err:
+            logger.debug("[NSEBhavcopy] Exact cache write failed for %s: %s", target_date, save_err)
+        return df
+
     def _download_and_parse(self, check_date: date) -> pd.DataFrame | None:
         """Stream and parse the UDiFF zip file for check_date."""
         date_str = check_date.strftime("%Y%m%d")

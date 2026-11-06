@@ -1,0 +1,48 @@
+name: Production Health Probe
+
+on:
+  schedule:
+    # Every 30 minutes. The probe itself is read-only.
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: production-health
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run probe
+        env:
+          HEALTH_WEBHOOK: ${{ secrets.HEALTH_WEBHOOK }}
+        run: |
+          set +e
+          if [ -n "$HEALTH_WEBHOOK" ]; then
+            python scripts/check_production_health.py --webhook "$HEALTH_WEBHOOK"
+          else
+            python scripts/check_production_health.py
+          fi
+          code=$?
+          set -e
+          echo "probe exit code: $code"
+          # 0 = healthy, 1 = degraded (allowed), 2 = critical (fails the job)
+          if [ "$code" -ge 2 ]; then
+            exit 1
+          fi
+          exit 0

@@ -168,6 +168,6 @@ def run_walk_forward(
         all_trades.extend(result.trades)
 
     # Compute combined OOS metrics
-    combined = backtester._compute_metrics(all_trades)
+    combined = backtester._compute_metrics(all_trades, backtester.initial_capital)
 
     return WalkForwardResult(windows=wf_windows, combined_result=combined)

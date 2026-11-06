@@ -313,7 +313,40 @@ export default {
 
     // 3. Static asset delivery with SPA fallback + security headers
     if (env.ASSETS) {
+      const isHtml = (response) =>
+        (response.headers.get("content-type") || "").toLowerCase().includes("text/html");
+      const looksLikeAsset = (pathname) =>
+        pathname.startsWith("/static/") || /\.[a-z0-9]{2,5}$/i.test(pathname);
+      const notFound = () =>
+        new Response("Not Found", {
+          status: 404,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+
       let assetResponse = await env.ASSETS.fetch(request);
+
+      // `not_found_handling: single-page-application` turns every missing path
+      // into a 200 index.html. For asset-looking requests that is a lie: a
+      // missing .css/.js must be a 404, not HTML (browsers reject it anyway).
+      if (
+        isHtml(assetResponse) &&
+        looksLikeAsset(url.pathname) &&
+        !url.pathname.endsWith(".html")
+      ) {
+        let resolved = null;
+        if (url.pathname.startsWith("/static/")) {
+          const strippedPath = url.pathname.replace(/^\/static/, "");
+          const strippedReq = new Request(new URL(strippedPath + url.search, url), request);
+          const retryRes = await env.ASSETS.fetch(strippedReq);
+          if (retryRes.status === 200 && !isHtml(retryRes)) {
+            resolved = retryRes;
+          }
+        }
+        if (!resolved) {
+          return harden(notFound());
+        }
+        assetResponse = resolved;
+      }
 
       // If requested under /static/ and not found, retry without /static/ prefix
       if (assetResponse.status === 404 && url.pathname.startsWith("/static/")) {

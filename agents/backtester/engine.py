@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from config import settings
+from agents.backtester.costs import CostModel, FlatCostModel, get_profile
 
 
 @dataclass
@@ -91,24 +92,50 @@ class Backtester:
     and look-ahead bias prevention.
 
     Usage:
-        bt = Backtester(initial_capital=100000, slippage_pct=0.05, cost_bps=10.0)
+        bt = Backtester(initial_capital=100000, cost_profile="delivery")
         result = bt.run(df_with_signals)
     """
 
     def __init__(
         self,
         initial_capital: float = 100_000.0,
-        slippage_pct: float = 0.05,
-        cost_bps: float = 10.0,  # 10 bps = 0.10% roundtrip brokerage + STT + turnover
+        slippage_pct: Optional[float] = None,
+        cost_bps: Optional[float] = None,
         risk_per_trade_pct: float = 2.0,
         min_sample_size: int = 30,
         max_consecutive_losses: int = settings.MAX_CONSECUTIVE_LOSSES,
         daily_loss_limit_pct: float = settings.DAILY_LOSS_LIMIT_PCT,
+        cost_profile: str = "delivery",
+        cost_model: Optional[CostModel] = None,
     ):
+        """
+        Args:
+            slippage_pct: adverse fill in percent per side (0.05 = 5 bps).
+                ``None`` uses the cost profile's slippage.
+            cost_bps: legacy flat round-trip charge in bps. When provided it
+                overrides the profile (kept for callers that pass an explicit
+                number). Prefer ``cost_profile``.
+            cost_profile: ``"delivery"`` (~30 bps round trip) or ``"intraday"``
+                (~8 bps round trip). See agents/backtester/costs.py.
+            cost_model: fully custom CostModel; wins over everything else.
+        """
         self.initial_capital = initial_capital
-        self.slippage_pct = slippage_pct / 100.0  # Convert to decimal
-        self.cost_bps = cost_bps
-        self.cost_pct = (cost_bps / 10000.0)  # Decimal (0.001)
+
+        profile = get_profile(cost_profile)
+        if cost_model is not None:
+            self.cost_model = cost_model
+            profile_slip_pct = cost_model.slippage_pct * 100.0
+        elif cost_bps is not None:
+            self.cost_model = FlatCostModel(cost_bps)
+            profile_slip_pct = 0.05
+        else:
+            self.cost_model = CostModel(profile)
+            profile_slip_pct = profile.slippage_bps_per_side / 100.0
+
+        slip_pct = profile_slip_pct if slippage_pct is None else slippage_pct
+        self.slippage_pct = slip_pct / 100.0  # percent → decimal
+        self.cost_bps = self.cost_model.profile.roundtrip_bps()
+        self.cost_pct = self.cost_bps / 10_000.0
         self.risk_per_trade_pct = risk_per_trade_pct / 100.0
         self.min_sample_size = min_sample_size
         self.max_consecutive_losses = max_consecutive_losses
@@ -189,7 +216,7 @@ class Backtester:
                         pts = exit_price - entry_price
                         pnl_pct = (pts / entry_price) * 100.0
                         gross_inr = pts * shares
-                        costs_inr = (entry_price * shares + exit_price * shares) * (self.cost_pct + self.slippage_pct)
+                        costs_inr = self.cost_model.trade_cost(entry_price * shares, exit_price * shares, direction)
                         net_inr = gross_inr - costs_inr
                         trades.append(TradeResult(
                             entry_time=entry_time, exit_time=row["timestamp"],
@@ -210,7 +237,7 @@ class Backtester:
                         pts = exit_price - entry_price
                         pnl_pct = (pts / entry_price) * 100.0
                         gross_inr = pts * shares
-                        costs_inr = (entry_price * shares + exit_price * shares) * (self.cost_pct + self.slippage_pct)
+                        costs_inr = self.cost_model.trade_cost(entry_price * shares, exit_price * shares, direction)
                         net_inr = gross_inr - costs_inr
                         trades.append(TradeResult(
                             entry_time=entry_time, exit_time=row["timestamp"],
@@ -236,7 +263,7 @@ class Backtester:
                         pts = entry_price - exit_price
                         pnl_pct = (pts / entry_price) * 100.0
                         gross_inr = pts * shares
-                        costs_inr = (entry_price * shares + exit_price * shares) * (self.cost_pct + self.slippage_pct)
+                        costs_inr = self.cost_model.trade_cost(entry_price * shares, exit_price * shares, direction)
                         net_inr = gross_inr - costs_inr
                         trades.append(TradeResult(
                             entry_time=entry_time, exit_time=row["timestamp"],
@@ -257,7 +284,7 @@ class Backtester:
                         pts = entry_price - exit_price
                         pnl_pct = (pts / entry_price) * 100.0
                         gross_inr = pts * shares
-                        costs_inr = (entry_price * shares + exit_price * shares) * (self.cost_pct + self.slippage_pct)
+                        costs_inr = self.cost_model.trade_cost(entry_price * shares, exit_price * shares, direction)
                         net_inr = gross_inr - costs_inr
                         trades.append(TradeResult(
                             entry_time=entry_time, exit_time=row["timestamp"],
@@ -316,7 +343,7 @@ class Backtester:
                 pts = entry_price - exit_price
             pnl_pct = (pts / entry_price) * 100.0
             gross_inr = pts * shares
-            costs_inr = (entry_price * shares + exit_price * shares) * (self.cost_pct + self.slippage_pct)
+            costs_inr = self.cost_model.trade_cost(entry_price * shares, exit_price * shares, direction)
             net_inr = gross_inr - costs_inr
             trades.append(TradeResult(
                 entry_time=entry_time, exit_time=last_row["timestamp"],
@@ -332,11 +359,12 @@ class Backtester:
 
     def _compute_metrics(self, trades: list[TradeResult], final_capital: float) -> BacktestResult:
         """Compute all performance metrics from a list of trade results."""
-        cost_info = {
-            "slippage_pct": round(self.slippage_pct * 100.0, 3),
-            "brokerage_stt_bps": self.cost_bps,
-            "roundtrip_cost_pct": round((self.slippage_pct * 2 + self.cost_pct) * 100.0, 3),
-        }
+        cost_info = dict(self.cost_model.summary())
+        cost_info["slippage_pct"] = round(self.slippage_pct * 100.0, 3)
+        cost_info["roundtrip_cost_pct"] = round(
+            (self.cost_model.profile.roundtrip_bps() / 100.0) + (self.slippage_pct * 200.0),
+            3,
+        )
         
         result = BacktestResult(
             trades=trades,

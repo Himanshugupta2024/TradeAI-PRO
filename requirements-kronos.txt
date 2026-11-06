@@ -1,0 +1,8 @@
+# Optional — only for offline Kronos inference.
+# Do NOT install these on the Render web service (512 MB free tier).
+#   pip install -r requirements-kronos.txt
+#   git clone https://github.com/shiyu-coder/Kronos third_party/Kronos
+torch>=2.1.0
+huggingface_hub>=0.23.0
+einops>=0.7.0
+safetensors>=0.4.0

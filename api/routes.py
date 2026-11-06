@@ -37,6 +37,13 @@ from starlette.responses import JSONResponse
 
 from api.security import require_admin
 
+from api.data_honesty import (
+    apply_signal_freshness,
+    disabled_scan_payload,
+    empty_scan_payload,
+    mark_trade_pricing,
+)
+
 from api.schemas import PaperTradeRequest, ClosePaperTradeRequest
 
 from db.connection import check_db_connectivity
@@ -963,7 +970,7 @@ async def get_all_signals(response: Response):
 
         return {
 
-            "signals": svc._persisted_signals_snapshot,
+            "signals": [apply_signal_freshness(s) for s in svc._persisted_signals_snapshot],
 
             "updated_at": getattr(svc, "_persisted_signals_updated_at", None) or datetime.now().isoformat(),
 
@@ -975,7 +982,7 @@ async def get_all_signals(response: Response):
     tracker.set_meta("cache_hit", bool(results))
     tracker.finish()
 
-    return {"signals": results, "updated_at": datetime.now().isoformat()}
+    return {"signals": [apply_signal_freshness(s) for s in results], "updated_at": datetime.now().isoformat()}
 
 _meme_cache: dict = {"payload": None, "timestamp": 0.0}
 
@@ -2946,7 +2953,12 @@ async def get_open_paper_trades_endpoint():
     from api.valuation import resolve_open_trades_valuation
     engine = svc._get_engine()
     val = await resolve_open_trades_valuation(engine, svc)
-    return {"open_trades": val["open_trades"], "summary": val["summary"]}
+    trades = [mark_trade_pricing(t) for t in val["open_trades"]]
+    summary = dict(val["summary"])
+    unpriced = sum(1 for t in trades if not t.get("priced", True))
+    if unpriced:
+        summary["unpriced_positions"] = unpriced
+    return {"open_trades": trades, "summary": summary}
 
 @router.post("/api/paper/close/{trade_id}")
 
@@ -4435,13 +4447,19 @@ async def run_backtest(
         start_at = str(df["timestamp"].iloc[0]) if "timestamp" in df.columns else ""
         end_at = str(df["timestamp"].iloc[-1]) if "timestamp" in df.columns else ""
 
-        bt = Backtester(initial_capital=100000, slippage_pct=0.05, cost_bps=10.0, min_sample_size=30)
+        cost_profile = "intraday" if interval_str == "15m" else "delivery"
+        bt = Backtester(
+            initial_capital=100000,
+            cost_profile=cost_profile,
+            min_sample_size=30,
+        )
         result = bt.run(df)
 
         payload = {
             "symbol": symbol,
             "provider": provider,
             "timeframe": interval_str,
+            "cost_profile": cost_profile,
             "start_at": start_at,
             "end_at": end_at,
             "bars": int(len(df)),
@@ -7400,7 +7418,9 @@ async def get_screener_opportunities():
         except Exception as exc:
             logger.debug("Screener opportunities snapshot fallback failed: %s", exc)
 
-    return {"opportunities": opps}
+    if not opps:
+        return empty_scan_payload("screener_opportunities", "no_candidates")
+    return {"opportunities": opps, "status": "ok", "count": len(opps)}
 
 @router.get("/api/morning-scan")
 
@@ -7424,15 +7444,7 @@ async def get_morning_scan():
 
         if not latest:
 
-            return {
-
-                "scan_time": None,
-
-                "count": 0,
-
-                "results": [],
-
-            }
+            return disabled_scan_payload("morning_scan", "no_scan_recorded")
 
         latest_scan_time = latest[0]
 
