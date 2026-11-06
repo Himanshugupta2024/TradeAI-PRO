@@ -57,7 +57,9 @@ def test_momentum_detects_direction():
 
 
 def _df_with_last_bar_age_minutes(age_mins: int) -> pd.DataFrame:
-    end = pd.Timestamp.now().floor("min") - pd.Timedelta(minutes=int(age_mins))
+    from datetime import datetime
+    now_ist = pd.Timestamp(datetime.now(intraday_scanner._IST).replace(tzinfo=None))
+    end = now_ist.floor("min") - pd.Timedelta(minutes=int(age_mins))
     start = end - pd.Timedelta(minutes=5 * 30)
     rows = []
     price = 100.0
