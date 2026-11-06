@@ -72,3 +72,16 @@ data/swing_history/
 data/intraday_scorecard.csv
 scratch/
 backups/
+
+# Patches and temporary reports
+*.patch
+reports/
+REMEDIATION_REPORT.md
+TOOLING.md
+scripts/patch_*.py
+scripts/clean_supabase_state.py
+scripts/migrate_live_to_supabase.py
+scripts/set_render_database_url.py
+scripts/update_worker_spa.py
+scripts/verify_render_supabase.py
+scripts/clean_supabase_state.py
