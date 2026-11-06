@@ -43,10 +43,8 @@ const API = (() => {
         return 'http://127.0.0.1:8000';
     }
     const host = window.location.hostname;
-    if (host.endsWith('workers.dev')) {
-        return '';
-    }
     if (
+        host.endsWith('workers.dev') ||
         host.endsWith('pages.dev') ||
         host.endsWith('vercel.app') ||
         host.includes('tradeai')
@@ -2489,10 +2487,31 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
     }
 
     try {
-        const res = await fetchWithTimeout(`${API}/api/autonomous/status?_ts=${Date.now()}`, {
-            signal: _autonomousStatusController.signal,
-            headers: _getAuthHeaders(),
-        }, 15000);
+        let targetUrl = `${API}/api/autonomous/status?_ts=${Date.now()}`;
+        let res;
+        try {
+            res = await fetchWithTimeout(targetUrl, {
+                signal: _autonomousStatusController.signal,
+                headers: _getAuthHeaders(),
+            }, 15000);
+        } catch (netErr) {
+            if (!API || String(targetUrl).startsWith('/') || String(targetUrl).includes('workers.dev')) {
+                res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`, {
+                    signal: _autonomousStatusController.signal,
+                    headers: _getAuthHeaders(),
+                }, 15000);
+            } else {
+                throw netErr;
+            }
+        }
+
+        if (res && (res.status === 429 || res.status === 403 || res.status === 502)) {
+            // Anti-bot edge challenge fallback directly to origin
+            res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`, {
+                signal: _autonomousStatusController.signal,
+                headers: _getAuthHeaders(),
+            }, 15000);
+        }
 
         if (currentGen !== _autonomousStatusGen) return; // Stale response discarded
 
@@ -2598,10 +2617,31 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
     _autonomousFeedController = new AbortController();
 
     try {
-        const res = await fetchWithTimeout(`${API}/api/autonomous/feed?limit=25&_ts=${Date.now()}`, {
-            signal: _autonomousFeedController.signal,
-            headers: _getAuthHeaders(),
-        }, 15000);
+        let targetUrl = `${API}/api/autonomous/feed?limit=25&_ts=${Date.now()}`;
+        let res;
+        try {
+            res = await fetchWithTimeout(targetUrl, {
+                signal: _autonomousFeedController.signal,
+                headers: _getAuthHeaders(),
+            }, 15000);
+        } catch (netErr) {
+            if (!API || String(targetUrl).startsWith('/') || String(targetUrl).includes('workers.dev')) {
+                res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`, {
+                    signal: _autonomousFeedController.signal,
+                    headers: _getAuthHeaders(),
+                }, 15000);
+            } else {
+                throw netErr;
+            }
+        }
+
+        if (res && (res.status === 429 || res.status === 403 || res.status === 502)) {
+            // Anti-bot edge challenge fallback directly to origin
+            res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`, {
+                signal: _autonomousFeedController.signal,
+                headers: _getAuthHeaders(),
+            }, 15000);
+        }
 
         if (currentGen !== _autonomousFeedGen) return;
 
@@ -26343,7 +26383,7 @@ let _marketControlState = { crypto_forex_enabled: false };
 
 async function fetchMarketControlStatus() {
     try {
-        const res = await fetchWithTimeout(`${API}/api/market-control/status`, {}, 6000);
+        const res = await fetchWithTimeout(`${API}/api/market-control/status`, {}, 12000);
         if (res.ok) {
             const data = await res.json();
             _marketControlState = data;
