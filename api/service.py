@@ -950,7 +950,11 @@ async def _background_refresh():
             task_name="Background refresh",
         )
     else:
-        logger.info("INITIAL_LOAD_ENABLED=false: performing immediate first refresh cycle in background refresh worker")
+        # On Render free tier with INITIAL_LOAD_ENABLED=false, give DB hydration,
+        # model warmup, and health probes 45s to complete and settle before
+        # starting the first refresh cycle. Prevents concurrent memory spikes.
+        logger.info("INITIAL_LOAD_ENABLED=false: waiting 45s for server warmup before first refresh cycle")
+        await asyncio.sleep(45)
         lock = _get_refresh_lock()
         if not lock.locked():
             try:
@@ -958,9 +962,9 @@ async def _background_refresh():
                     _refresh_market_data(),
                     timeout=REFRESH_CYCLE_TIMEOUT_SECONDS,
                 )
-                logger.info("Immediate first background refresh complete. %d symbols loaded.", len(_market_data))
+                logger.info("First background refresh complete. %d symbols loaded.", len(_market_data))
             except Exception as exc:
-                logger.error("Immediate first background refresh failed: %s", exc)
+                logger.error("First background refresh failed: %s", exc)
 
     try:
         while True:

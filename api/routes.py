@@ -10484,7 +10484,21 @@ async def get_market_mood_api():
 
                 from agents.data_ingestion.context_fetcher import ContextSnapshotData
 
-                btc_snapshot = ContextSnapshotData(symbol="BTCUSDT", fetched_at=datetime.now())
+                btc_snapshot = ContextSnapshotData(
+                    symbol="BTCUSDT",
+                    timestamp_utc=datetime.now(timezone.utc),
+                    price_change_24hr_pct=0.0,
+                    volume_change_24hr_pct=0.0,
+                    news_sentiment_24hr=0.0,
+                    news_sentiment_7d=0.0,
+                    news_volume_spike=False,
+                    weekly_trend_bias="NEUTRAL",
+                    oi_change_7d_pct=0.0,
+                    btc_dominance_7d_trend="FLAT",
+                    days_to_next_event=99,
+                    event_risk_active=False,
+                    context_score=0.0,
+                )
 
         # Nifty from cached 5m stream if available.
 
