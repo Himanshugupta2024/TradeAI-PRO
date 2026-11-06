@@ -24,10 +24,10 @@
         apiBase = 'http://127.0.0.1:8000';
         wsBase = '127.0.0.1:8000';
     } else if (isCloudflareWorkers) {
-        // Route through Cloudflare Worker edge reverse proxy with SWR caching & sanitized headers
+        // Route through Cloudflare Worker edge reverse proxy (/api/* and /ws/* proxied to Render with SWR caching & sanitized headers)
         apiBase = '';
         wsBase = window.location.host;
-        wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsProto = 'wss:';
     } else if (isCloudflarePages || isVercel) {
         apiBase = 'https://trading-api-n1wt.onrender.com';
         wsBase = 'trading-api-n1wt.onrender.com';

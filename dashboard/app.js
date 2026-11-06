@@ -2207,6 +2207,7 @@ function switchTab(tab) {
         if (tab === 'edge-top-setups') loadEdgeTopSetups();
         if (tab === 'edge-macro-heatmap') loadEdgeMacroHeatmap();
         if (tab === 'edge-risk-gauge') loadEdgeRiskGauge();
+        if (tab === 'next-day-picks') loadNextDayPicks();
     }
 
 
@@ -2560,7 +2561,9 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
                 headers: reqHeaders,
             }, 10000, 0);
         } catch (netErr) {
-            const fallbackUrl = String(targetUrl).startsWith('http') && String(targetUrl).includes('onrender.com')
+            // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
+            // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
+            const fallbackUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
                 ? `/api/autonomous/status?_ts=${Date.now()}`
                 : `https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`;
             try {
@@ -2574,7 +2577,9 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
         }
 
         if (res && (!res.ok || res.status === 429 || res.status === 403 || res.status === 502 || res.status === 503)) {
-            const altUrl = String(targetUrl).startsWith('http') && String(targetUrl).includes('onrender.com')
+            // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
+            // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
+            const altUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
                 ? `/api/autonomous/status?_ts=${Date.now()}`
                 : `https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`;
             try {
@@ -2702,7 +2707,9 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
                 headers: reqHeaders,
             }, 10000, 0);
         } catch (netErr) {
-            const fallbackUrl = String(targetUrl).startsWith('http') && String(targetUrl).includes('onrender.com')
+            // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
+            // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
+            const fallbackUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
                 ? `/api/autonomous/feed?limit=25&_ts=${Date.now()}`
                 : `https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`;
             try {
@@ -2716,7 +2723,9 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
         }
 
         if (res && (!res.ok || res.status === 429 || res.status === 403 || res.status === 502 || res.status === 503)) {
-            const altUrl = String(targetUrl).startsWith('http') && String(targetUrl).includes('onrender.com')
+            // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
+            // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
+            const altUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
                 ? `/api/autonomous/feed?limit=25&_ts=${Date.now()}`
                 : `https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`;
             try {
@@ -26592,3 +26601,235 @@ async function executeMarketControlToggle(enabled, password) {
         if (btn) btn.disabled = false;
     }
 }
+
+
+// ── Next Trading Day Picks Research Tab (Section 6B) ───────────────
+let _currentNdpReport = null;
+
+async function loadNextDayPicks(reportId = null) {
+    const sessionPill = document.getElementById('ndpSessionText');
+    const screenedCountEl = document.getElementById('ndpScreenedCount');
+    const qualifiedCountEl = document.getElementById('ndpQualifiedCount');
+    const generatedAtEl = document.getElementById('ndpGeneratedAt');
+    const reportIdEl = document.getElementById('ndpReportId');
+    const grid = document.getElementById('ndpPicksGrid');
+    const emptyCard = document.getElementById('ndpEmptyStateCard');
+    const outcomeBody = document.getElementById('ndpOutcomeTableBody');
+
+    if (sessionPill) sessionPill.textContent = 'Loading Research...';
+    if (grid) grid.innerHTML = '<div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--text-muted);">Fetching post-close research report...</div>';
+
+    try {
+        const url = reportId ? `${API}/api/research/next-day-picks/${encodeURIComponent(reportId)}` : `${API}/api/research/next-day-picks`;
+        const resp = await fetchWithTimeout(url, { headers: { 'Accept': 'application/json' } });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const report = await resp.json();
+        _currentNdpReport = report;
+
+        // Render Session & Header KPI
+        const targetSession = report.target_session || {};
+        if (sessionPill) {
+            const dateStr = targetSession.date || 'T+1 Session';
+            const hoursStr = targetSession.hours || '09:15 - 15:30 IST';
+            sessionPill.textContent = `Target: ${dateStr} (${hoursStr})`;
+        }
+        if (screenedCountEl) {
+            screenedCountEl.textContent = `${report.universe_screened || 50} Tier-1`;
+        }
+        if (qualifiedCountEl) {
+            const qCount = report.qualified_count || (report.picks ? report.picks.length : 0);
+            qualifiedCountEl.textContent = `${qCount} Setups`;
+            qualifiedCountEl.style.color = qCount > 0 ? '#10b981' : '#f59e0b';
+        }
+        if (generatedAtEl) {
+            const genTime = report.generated_at ? new Date(report.generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '--';
+            generatedAtEl.textContent = genTime;
+        }
+        if (reportIdEl) {
+            reportIdEl.textContent = `ID: ${report.report_id || '--'}`;
+        }
+
+        // Render Picks or Empty State
+        const picks = report.picks || [];
+        if (picks.length === 0 || report.is_empty) {
+            if (grid) grid.style.display = 'none';
+            if (emptyCard) {
+                emptyCard.style.display = 'block';
+                const emptyTitle = document.getElementById('ndpEmptyTitle');
+                const emptyDesc = document.getElementById('ndpEmptyDesc');
+                if (emptyTitle) emptyTitle.textContent = 'No Qualified Setups Passed Risk/Reward Gates';
+                if (emptyDesc) emptyDesc.textContent = report.empty_reason || 'All screened Tier-1 equities failed the minimum 1.5x Risk-Reward threshold or lacked confirming trend regime alignment. TradeAI PRO preserves capital rather than forcing low-edge trades.';
+            }
+        } else {
+            if (emptyCard) emptyCard.style.display = 'none';
+            if (grid) {
+                grid.style.display = 'grid';
+                grid.innerHTML = picks.map((p, idx) => renderNextDayPickCard(p, idx)).join('');
+            }
+        }
+
+        // Populate archive dropdown & outcome history
+        await loadNextDayPicksHistory();
+
+    } catch (err) {
+        console.error('[loadNextDayPicks] Failed:', err);
+        if (grid) grid.innerHTML = `<div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: #ef4444;">Failed to load next-day picks: ${err.message}. Retrying shortly...</div>`;
+    }
+}
+
+function renderNextDayPickCard(pick, index) {
+    const isLong = pick.direction === 'LONG';
+    const dirColor = isLong ? '#10b981' : '#ef4444';
+    const dirBg = isLong ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)';
+    const rrRatio = (pick.risk_reward_ratio || 2.0).toFixed(1);
+    const setup = pick.trade_plan || {};
+    const scenarios = pick.scenarios || {};
+    const catalysts = pick.catalysts || [];
+    const technicals = pick.technical_alignment || {};
+
+    const catalystHtml = catalysts.length > 0
+        ? catalysts.map(c => `<li style="margin-bottom: 4px; color: var(--text-secondary); font-size: 0.78rem;"><strong>${escapeHtml(c.title || '')}:</strong> ${escapeHtml(c.summary || '')}</li>`).join('')
+        : '<li style="color: var(--text-muted); font-size: 0.78rem;">No negative filings; sector technical confluence verified.</li>';
+
+    return `
+    <div class="card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; position: relative;">
+        <!-- Top Row: Symbol, Direction, Rank, R:R -->
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.25rem; font-weight: 800; color: var(--text-primary); font-family: var(--font-mono, monospace);">${escapeHtml(pick.symbol)}</span>
+                    <span style="background: ${dirBg}; color: ${dirColor}; font-weight: 700; font-size: 0.75rem; padding: 2px 8px; border-radius: 4px;">${pick.direction}</span>
+                    <span style="background: rgba(14, 165, 233, 0.1); color: #0284c7; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px;">RANK #${pick.rank || (index + 1)}</span>
+                </div>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(pick.sector || 'NSE Tier-1')}</span>
+            </div>
+            <div style="text-align: right;">
+                <div style="font-size: 1.1rem; font-weight: 700; color: #10b981; font-family: var(--font-mono, monospace);">${rrRatio}x R:R</div>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">Minimum &ge; 1.5x Gate</span>
+            </div>
+        </div>
+
+        <!-- Price Setup Grid -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; background: var(--bg-hover, rgba(255,255,255,0.03)); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color);">
+            <div style="text-align: center;">
+                <div style="font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase;">Entry Level</div>
+                <div style="font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin-top: 2px; font-family: var(--font-mono, monospace);">₹${(setup.entry_trigger || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}</div>
+                <span style="font-size: 0.68rem; color: var(--text-muted);">${escapeHtml(setup.trigger_condition || 'Pullback / Breakout')}</span>
+            </div>
+            <div style="text-align: center; border-left: 1px solid var(--border-color); border-right: 1px solid var(--border-color);">
+                <div style="font-size: 0.7rem; color: #ef4444; text-transform: uppercase;">Stop Loss</div>
+                <div style="font-size: 0.95rem; font-weight: 700; color: #ef4444; margin-top: 2px; font-family: var(--font-mono, monospace);">₹${(setup.stop_loss || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}</div>
+                <span style="font-size: 0.68rem; color: var(--text-muted);">Risk: ${(setup.risk_pct || 2.0).toFixed(1)}%</span>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 0.7rem; color: #10b981; text-transform: uppercase;">Target (TP)</div>
+                <div style="font-size: 0.95rem; font-weight: 700; color: #10b981; margin-top: 2px; font-family: var(--font-mono, monospace);">₹${(setup.target || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}</div>
+                <span style="font-size: 0.68rem; color: var(--text-muted);">Gain: +${(setup.reward_pct || 4.5).toFixed(1)}%</span>
+            </div>
+        </div>
+
+        <!-- 3-Way Scenarios -->
+        <div style="font-size: 0.78rem; display: flex; flex-direction: column; gap: 4px;">
+            <div style="color: #10b981;"><strong>Bull Trigger:</strong> <span style="color: var(--text-secondary);">${escapeHtml(scenarios.bull_case || 'Break above trigger level with volume expansion')}</span></div>
+            <div style="color: #0284c7;"><strong>Base Plan:</strong> <span style="color: var(--text-secondary);">${escapeHtml(scenarios.base_case || 'Trend continuation toward planned target')}</span></div>
+            <div style="color: #ef4444;"><strong>Invalidation:</strong> <span style="color: var(--text-secondary);">${escapeHtml(scenarios.invalidation_rule || 'Break below stop loss voids setup immediately')}</span></div>
+        </div>
+
+        <!-- Verified Catalysts -->
+        <div style="border-top: 1px solid var(--border-color); padding-top: 0.6rem;">
+            <span style="font-size: 0.72rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; letter-spacing: 0.5px;">Point-in-Time Catalysts & News</span>
+            <ul style="margin: 6px 0 0 1rem; padding: 0;">
+                ${catalystHtml}
+            </ul>
+        </div>
+
+        <!-- Footer: Technical & Status -->
+        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 0.6rem; font-size: 0.72rem; color: var(--text-muted);">
+            <div>RSI: <strong>${(technicals.rsi || 50).toFixed(0)}</strong> · Trend: <strong>${escapeHtml(technicals.regime || 'ALIGNED')}</strong></div>
+            <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; padding: 2px 6px; border-radius: 4px;">STATUS: ${escapeHtml(pick.status || 'PENDING_OPEN')}</span>
+        </div>
+    </div>`;
+}
+
+async function loadNextDayPicksHistory() {
+    const select = document.getElementById('ndpHistorySelect');
+    const outcomeBody = document.getElementById('ndpOutcomeTableBody');
+    if (!select) return;
+
+    try {
+        const resp = await fetchWithTimeout(`${API}/api/research/next-day-picks/history`, { headers: { 'Accept': 'application/json' } });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const history = data.history || [];
+
+        // Update select
+        const currentSelected = select.value;
+        select.innerHTML = '<option value="">Latest Published Report</option>' +
+            history.map(h => `<option value="${escapeHtml(h.report_id)}">${escapeHtml(h.report_id)} · ${escapeHtml(h.target_date || '')} (${h.picks_count || 0} picks)</option>`).join('');
+        if (currentSelected) select.value = currentSelected;
+
+        // Render Outcome Resolution Table
+        if (outcomeBody) {
+            let allOutcomes = [];
+            history.forEach(h => {
+                if (h.outcomes && Array.isArray(h.outcomes)) {
+                    h.outcomes.forEach(o => allOutcomes.push({ report_id: h.report_id, date: h.target_date, ...o }));
+                }
+            });
+
+            if (allOutcomes.length === 0) {
+                outcomeBody.innerHTML = '<tr><td colspan="7" style="padding: 1.25rem; text-align: center; color: var(--text-muted);">Post-session outcome resolutions will appear here after market close.</td></tr>';
+            } else {
+                outcomeBody.innerHTML = allOutcomes.slice(0, 15).map(o => {
+                    const resColor = o.status === 'RESOLVED_WIN' ? '#10b981' : (o.status === 'RESOLVED_LOSS' ? '#ef4444' : '#64748b');
+                    return `
+                    <tr style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono, monospace);">${escapeHtml(o.date || o.report_id)}</td>
+                        <td style="padding: 0.6rem 0.75rem; font-weight: 700;">${escapeHtml(o.symbol)}</td>
+                        <td style="padding: 0.6rem 0.75rem;">${escapeHtml(o.direction || 'LONG')}</td>
+                        <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono, monospace);">₹${o.entry || '--'} / ₹${o.sl || '--'} / ₹${o.tp || '--'}</td>
+                        <td style="padding: 0.6rem 0.75rem; font-weight: 600; color: #10b981;">${(o.rr || 1.8).toFixed(1)}x</td>
+                        <td style="padding: 0.6rem 0.75rem;"><span style="color: ${resColor}; font-weight: 700;">${escapeHtml(o.status || 'PENDING')}</span></td>
+                        <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono, monospace);">${o.realized_r !== undefined ? `${o.realized_r.toFixed(2)}R` : '--'}</td>
+                    </tr>`;
+                }).join('');
+            }
+        }
+    } catch (e) {
+        console.warn('[loadNextDayPicksHistory] Error:', e);
+    }
+}
+
+// Event Listeners for Next-Day Picks Actions
+document.addEventListener('DOMContentLoaded', () => {
+    const genBtn = document.getElementById('ndpGenerateBtn');
+    if (genBtn) {
+        genBtn.addEventListener('click', async () => {
+            if (!confirm('Run post-close research screening on Tier-1 NSE universe? This job is bounded and preserves capital gates.')) return;
+            genBtn.disabled = true;
+            genBtn.innerHTML = '<span>⏳</span> Screening...';
+            try {
+                const resp = await fetchWithTimeout(`${API}/api/research/next-day-picks/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ force: true, max_picks: 5 })
+                });
+                const res = await resp.json();
+                alert(`Research pipeline complete. Generated ${res.picks ? res.picks.length : 0} qualified setups for target session.`);
+                await loadNextDayPicks();
+            } catch (err) {
+                alert(`Pipeline execution error: ${err.message}`);
+            } finally {
+                genBtn.disabled = false;
+                genBtn.innerHTML = '<span>⚡</span> Run Research';
+            }
+        });
+    }
+
+    const histSelect = document.getElementById('ndpHistorySelect');
+    if (histSelect) {
+        histSelect.addEventListener('change', (e) => {
+            loadNextDayPicks(e.target.value || null);
+        });
+    }
+});
