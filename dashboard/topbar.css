@@ -376,3 +376,11 @@
         background: #0b1220 !important;
     }
 }
+
+/* ── Stale setups: visible but de-prioritised ───────────────────────────── */
+.cockpit-setup-card.stale-card {
+    opacity: 0.62;
+}
+.cockpit-setup-card.stale-card:hover {
+    opacity: 0.85;
+}

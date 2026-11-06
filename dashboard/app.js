@@ -4509,7 +4509,8 @@ function _renderTopSetups(setups, meta) {
 
 
 
-        const cardClass = isShort ? 'short-card' : '';
+        let cardClass = isShort ? 'short-card' : '';
+        if (s.stale) cardClass += ' stale-card';
 
 
 
@@ -4651,9 +4652,21 @@ function _renderTopSetups(setups, meta) {
 
         let freshBadge = '';
 
+        const chaseBadge = s.chase_risk
+            ? `<span class="cs-fresh-badge" style="background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.45);" title="Price has moved ${Math.abs(Number(s.entry_distance_pct) || 0).toFixed(2)}% from the planned entry">CHASE ${Math.abs(Number(s.entry_distance_pct) || 0).toFixed(1)}%</span>`
+            : '';
 
 
-        if (s.data_age_min != null) {
+
+        if (s.stale) {
+
+
+
+            freshBadge = `<span class="cs-fresh-badge" style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.45);" title="Signal data is stale — last session">STALE</span>`;
+
+
+
+        } else if (s.data_age_min != null) {
 
 
 
@@ -4701,7 +4714,7 @@ function _renderTopSetups(setups, meta) {
 
 
 
-                    ${freshBadge}${s.session_badge ? `<span class="cs-pct-badge" style="background:rgba(99,102,241,0.22);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);font-size:8px;padding:1px 5px;border-radius:4px;margin-left:4px;">${s.session_badge}</span>` : ''}
+                    ${freshBadge}${chaseBadge}${s.session_badge ? `<span class="cs-pct-badge" style="background:rgba(99,102,241,0.22);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);font-size:8px;padding:1px 5px;border-radius:4px;margin-left:4px;">${s.session_badge}</span>` : ''}
 
 
 

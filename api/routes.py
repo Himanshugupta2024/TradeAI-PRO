@@ -2952,7 +2952,7 @@ async def get_open_paper_trades_endpoint():
     """Get all currently open paper trades with unified live pricing and valuation."""
     from api.valuation import resolve_open_trades_valuation
     engine = svc._get_engine()
-    val = await resolve_open_trades_valuation(engine, svc)
+    val = await resolve_open_trades_valuation(engine, svc, refresh_stale=True)
     trades = [mark_trade_pricing(t) for t in val["open_trades"]]
     summary = dict(val["summary"])
     unpriced = sum(1 for t in trades if not t.get("priced", True))
