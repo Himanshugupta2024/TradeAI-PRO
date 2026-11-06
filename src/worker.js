@@ -26,6 +26,8 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/signals/winrate",
   "/api/signals/leaderboard",
   "/api/market/mood",
+  "/api/context/market-mood",
+  "/api/context/events",
   "/api/screener/gainers",
   "/api/screener/losers",
   "/api/screener/opportunities",
@@ -36,8 +38,38 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/macro/intelligence",
   "/api/edge/macro-heatmap",
   "/api/edge/risk-gauge",
+  "/api/health",
   "/api/health/live",
 ]);
+
+// Helper to sanitize headers forwarded to Render origin.
+// Crucial: Strip cf-* and x-forwarded-* headers because Render's Cloudflare edge
+// treats incoming CF-Connecting-IP / CF-Ray from an external caller as spoofing and blocks with HTTP 403 / 429.
+function createCleanOriginHeaders(incomingHeaders) {
+  const clean = new Headers();
+  for (const [key, value] of incomingHeaders.entries()) {
+    const k = key.toLowerCase();
+    if (
+      k.startsWith("cf-") ||
+      k.startsWith("x-forwarded-") ||
+      k.startsWith("x-real-") ||
+      k === "host" ||
+      k === "if-none-match" ||
+      k === "if-modified-since"
+    ) {
+      continue;
+    }
+    clean.set(key, value);
+  }
+  clean.set("Host", BACKEND_HOST);
+  if (!clean.has("user-agent")) {
+    clean.set(
+      "User-Agent",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    );
+  }
+  return clean;
+}
 
 // Helper to store response in Cloudflare edge cache using exact request.url string
 async function storeInEdgeCache(cache, urlStr, originResponse) {
@@ -105,10 +137,7 @@ export default {
             // 1. Spawn asynchronous revalidation in background
             ctx.waitUntil((async () => {
               try {
-                const revalHeaders = new Headers(request.headers);
-                revalHeaders.set("Host", BACKEND_HOST);
-                revalHeaders.delete("if-none-match");
-                revalHeaders.delete("if-modified-since");
+                const revalHeaders = createCleanOriginHeaders(request.headers);
 
                 const revalReq = new Request(targetUrl, {
                   method: "GET",
@@ -136,11 +165,8 @@ export default {
         }
       }
 
-      // Forward request to Render Origin
-      const originHeaders = new Headers(request.headers);
-      originHeaders.set("Host", BACKEND_HOST);
-      originHeaders.delete("if-none-match");
-      originHeaders.delete("if-modified-since");
+      // Forward request to Render Origin with clean headers
+      const originHeaders = createCleanOriginHeaders(request.headers);
 
       const originRequest = new Request(targetUrl, {
         method: request.method,
@@ -175,7 +201,7 @@ export default {
       }
 
       // If origin returns 502 or 503, fallback to stale edge cache if available
-      if (isPublicCacheable && (originResponse.status === 502 || originResponse.status === 503)) {
+      if (isPublicCacheable && (originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 429 || originResponse.status === 403 || originResponse.status === 504)) {
         try {
           const stale = await cache.match(request.url);
           if (stale) {

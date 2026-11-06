@@ -256,6 +256,12 @@ _BTC_DOM_BACKOFF_UNTIL: float = 0.0
 
 _BTC_DOM_LAST_WARN_TS: float = 0.0
 
+_CONTEXT_MOOD_CACHE: dict = {}
+
+_CONTEXT_MOOD_CACHE_TS: float = 0.0
+
+_CONTEXT_MOOD_CACHE_TTL: float = 60.0
+
 @router.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
 
 async def favicon():
@@ -10414,11 +10420,17 @@ async def get_market_mood_api():
 
     """Return composite market mood payload for dashboard context strip.
 
-    Returns a neutral cached response immediately during server startup so the
-
-    frontend never receives a 503 — the real data populates once warmup is done.
+    Cached for 60 seconds with strict timeout protection and non-blocking cache-first reads.
 
     """
+
+    global _CONTEXT_MOOD_CACHE, _CONTEXT_MOOD_CACHE_TS, _BTC_DOM_BACKOFF_UNTIL, _BTC_DOM_LAST_WARN_TS
+
+    now_ts = time.time()
+
+    if _CONTEXT_MOOD_CACHE and (now_ts - _CONTEXT_MOOD_CACHE_TS) < _CONTEXT_MOOD_CACHE_TTL:
+
+        return _CONTEXT_MOOD_CACHE
 
     # During startup warmup return neutral immediately — avoids 503 on first hit.
 
@@ -10448,7 +10460,31 @@ async def get_market_mood_api():
 
         fetcher = build_context_fetcher()
 
-        btc_snapshot = await asyncio.to_thread(fetcher.get_snapshot_sync, "BTCUSDT")
+        # Cache-first or bounded fetch for BTCUSDT
+
+        cached_btc = fetcher._get_cached_snapshot("BTCUSDT")
+
+        if cached_btc and fetcher._is_fresh(cached_btc.get("cached_at"), 1800):
+
+            btc_snapshot = fetcher._snapshot_from_cache(cached_btc)
+
+        else:
+
+            try:
+
+                btc_snapshot = await asyncio.wait_for(
+
+                    asyncio.to_thread(fetcher.get_snapshot_sync, "BTCUSDT"),
+
+                    timeout=2.5,
+
+                )
+
+            except Exception:
+
+                from agents.data_ingestion.context_fetcher import ContextSnapshotData
+
+                btc_snapshot = ContextSnapshotData(symbol="BTCUSDT", fetched_at=datetime.now())
 
         # Nifty from cached 5m stream if available.
 
@@ -10472,7 +10508,7 @@ async def get_market_mood_api():
 
             nifty_change = ((latest - first) / first) * 100.0 if first else 0.0
 
-        # Average context sentiment over active symbols (cache-first, cheap after warmup).
+        # Cache-first context sentiment over active symbols (0ms non-blocking)
 
         sentiments: list[float] = []
 
@@ -10484,11 +10520,17 @@ async def get_market_mood_api():
 
             try:
 
-                snap = await asyncio.to_thread(fetcher.get_snapshot_sync, sym)
+                norm_sym = fetcher._normalize_symbol(sym)
 
-                sentiments.append(float(snap.news_sentiment_24hr or 0.0))
+                c_snap = fetcher._get_cached_snapshot(norm_sym)
 
-                active_event_risk = active_event_risk or bool(snap.event_risk_active)
+                if c_snap:
+
+                    snap = fetcher._snapshot_from_cache(c_snap)
+
+                    sentiments.append(float(snap.news_sentiment_24hr or 0.0))
+
+                    active_event_risk = active_event_risk or bool(snap.event_risk_active)
 
             except Exception:
 
@@ -10504,9 +10546,21 @@ async def get_market_mood_api():
 
         )
 
-        events = await asyncio.to_thread(fetcher.get_upcoming_events)
+        try:
 
-        next_event = events[0] if events else None
+            events = await asyncio.wait_for(
+
+                asyncio.to_thread(fetcher.get_upcoming_events),
+
+                timeout=1.5,
+
+            )
+
+            next_event = events[0] if events else None
+
+        except Exception:
+
+            next_event = None
 
         if active_event_risk or btc_snapshot.price_change_24hr_pct <= -1.0:
 
@@ -10522,91 +10576,17 @@ async def get_market_mood_api():
 
         dominance_source = "cache"
 
-        # Read BTC dominance from context fetcher global cache if available.
-
         btc_dominance = float(
 
             fetcher._global_cache.get("coingecko_global", {})
 
             .get("payload", {})
 
-            .get("btc_dominance", 0.0)  # type: ignore[attr-defined]
+            .get("btc_dominance", 0.0)
 
         )
 
-        # Fallback to direct CoinGecko global endpoint when cache is empty/stale.
-
-        global _BTC_DOM_BACKOFF_UNTIL, _BTC_DOM_LAST_WARN_TS
-
-        now_ts = time.time()
-
-        if btc_dominance <= 0 and now_ts >= _BTC_DOM_BACKOFF_UNTIL:
-
-            try:
-
-                req = Request(
-
-                    "https://api.coingecko.com/api/v3/global",
-
-                    headers={
-
-                        "User-Agent": (
-
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-
-                            "AppleWebKit/537.36 (KHTML, like Gecko) "
-
-                            "Chrome/124.0.0.0 Safari/537.36"
-
-                        )
-
-                    },
-
-                )
-
-                with urlopen(req, timeout=8) as resp:
-
-                    payload = json.loads(resp.read())
-
-                btc_dominance = float(
-
-                    ((payload or {}).get("data") or {})
-
-                    .get("market_cap_percentage", {})
-
-                    .get("btc", 0.0)
-
-                )
-
-                if btc_dominance > 0:
-
-                    dominance_source = "coingecko_live"
-
-            except Exception as exc:
-
-                msg = str(exc)
-
-                if "429" in msg or "Too Many Requests" in msg:
-
-                    _BTC_DOM_BACKOFF_UNTIL = now_ts + 300
-
-                else:
-
-                    _BTC_DOM_BACKOFF_UNTIL = now_ts + 120
-
-                if now_ts - _BTC_DOM_LAST_WARN_TS >= 300:
-
-                    logger.warning("BTC dominance fallback fetch failed: %s", exc)
-
-                    _BTC_DOM_LAST_WARN_TS = now_ts
-
-                dominance_source = "unavailable"
-
-        elif btc_dominance <= 0:
-
-            dominance_source = "backoff"
-
-        return {
+        payload = {
 
             "crypto_mood": crypto_mood,
 
@@ -10630,9 +10610,19 @@ async def get_market_mood_api():
 
         }
 
+        _CONTEXT_MOOD_CACHE = payload
+
+        _CONTEXT_MOOD_CACHE_TS = time.time()
+
+        return payload
+
     except Exception as e:
 
         logger.error("Error fetching market mood: %s", e)
+
+        if _CONTEXT_MOOD_CACHE:
+
+            return _CONTEXT_MOOD_CACHE
 
         return {
 
@@ -10701,4 +10691,3 @@ async def get_context_snapshot(symbol: str):
         logger.error("Context snapshot failed for %s: %s", symbol, exc)
 
         return {"error": str(exc), "symbol": symbol}
-
