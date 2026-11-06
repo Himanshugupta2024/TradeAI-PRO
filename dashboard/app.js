@@ -267,6 +267,18 @@ let _lastDashboardData = null;    // last good dashboard snapshot
 
 let _lastOppsData = null;         // last good opportunities snapshot
 
+let _unpricedPositions = 0;       // open paper trades valued at entry price
+
+function _applyUnpricedMtm() {
+    const uEl = document.getElementById('statUnrealizedPnl');
+    if (!uEl) return;
+    if (_unpricedPositions > 0) {
+        uEl.textContent = 'MTM: —';
+        uEl.title = _unpricedPositions + ' open position(s) valued at entry price — live quotes unavailable';
+        uEl.style.color = 'var(--text-muted, #8b949e)';
+    }
+}
+
 
 
 
@@ -2981,7 +2993,9 @@ async function loadOverviewFast() {
                 const seedEl = document.getElementById('statCapitalSeed');
                 if (seedEl) seedEl.textContent = 'Seed: ' + _fmtMoney(data.initial_capital);
             }
-            if (data.unrealized_pnl !== undefined) {
+            if (_unpricedPositions > 0) {
+                _applyUnpricedMtm();
+            } else if (data.unrealized_pnl !== undefined) {
                 const uEl = document.getElementById('statUnrealizedPnl');
                 if (uEl) {
                     const u = Number(data.unrealized_pnl);
@@ -3340,6 +3354,8 @@ async function loadAllData({ background = false } = {}) {
 
 
 
+        _unpricedPositions = Number((openTradesResult.value.summary || {}).unpriced_positions || 0);
+        _applyUnpricedMtm();
         renderOverviewActiveTrades(openTradesResult.value.open_trades || [], openTradesResult.value.summary || {});
 
 
@@ -3400,7 +3416,7 @@ async function loadAllData({ background = false } = {}) {
 
 
 
-        updateOpportunitiesGrid(oppsData.opportunities);
+        updateOpportunitiesGrid(oppsData.opportunities, { status: oppsData.status, reason: oppsData.reason });
 
 
 
@@ -3408,7 +3424,7 @@ async function loadAllData({ background = false } = {}) {
 
 
 
-        updateOpportunitiesGrid(_lastOppsData.opportunities);
+        updateOpportunitiesGrid(_lastOppsData.opportunities, { status: _lastOppsData.status, reason: _lastOppsData.reason });
 
 
 
@@ -5890,7 +5906,12 @@ function _renderMorningScan(data) {
 
 
 
-        el.innerHTML = '<span class="cockpit-skeleton">No morning scan data yet. Runs at market open.</span>';
+        const _msStatus = (data && data.status) || 'empty';
+        const _msReason = data && data.reason ? String(data.reason).replace(/_/g, ' ') : '';
+        const _msLabel = _msStatus === 'disabled'
+            ? ('Scan disabled' + (_msReason ? ' — ' + _msReason : '') + '.')
+            : (_msStatus === 'empty' ? 'Scan ran but found no setups.' : 'No morning scan data yet. Runs at market open.');
+        el.innerHTML = '<span class="cockpit-skeleton">' + _msLabel + '</span>';
 
 
 
@@ -8127,7 +8148,9 @@ function updateOverviewActiveTradesPrices(prices) {
 
     if (hasOpen) {
         const uEl = document.getElementById('statUnrealizedPnl');
-        if (uEl) {
+        if (uEl && _unpricedPositions > 0) {
+            _applyUnpricedMtm();
+        } else if (uEl) {
             uEl.textContent = `MTM: ${totalUnrealized >= 0 ? '+' : ''}₹${Number(totalUnrealized).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
             uEl.style.color = totalUnrealized > 0 ? 'var(--green, #10b981)' : (totalUnrealized < 0 ? 'var(--red, #ef4444)' : 'var(--text-muted, #8b949e)');
         }
@@ -8418,7 +8441,9 @@ function updateStatsStrip(stats) {
 
     const uEl = document.getElementById('statUnrealizedPnl');
 
-    if (uEl && stats && stats.unrealized_pnl != null) {
+    if (uEl && _unpricedPositions > 0) {
+        _applyUnpricedMtm();
+    } else if (uEl && stats && stats.unrealized_pnl != null) {
 
         const u = Number(stats.unrealized_pnl);
 
@@ -10684,7 +10709,7 @@ function updateMarketIntel(dashboardData) {
 
 
 
-function updateOpportunitiesGrid(opportunities) {
+function updateOpportunitiesGrid(opportunities, meta) {
 
 
 
@@ -10701,6 +10726,13 @@ function updateOpportunitiesGrid(opportunities) {
 
 
     if (!opportunities || opportunities.length === 0) {
+        const _scanStatus = meta && meta.status;
+        if (_scanStatus === 'disabled' || _scanStatus === 'empty') {
+            const _scanReason = meta.reason ? String(meta.reason).replace(/_/g, ' ') : 'no candidates';
+            const _scanLabel = (_scanStatus === 'disabled' ? 'Scan disabled' : 'No opportunities') + ' — ' + _scanReason + '.';
+            grid.innerHTML = '<div style="font-size:0.8rem;color:var(--text-muted);grid-column:1/-1;">' + _scanLabel + '</div>';
+            return;
+        }
 
 
 
@@ -11292,11 +11324,12 @@ async function loadPortfolio() {
 
 
 
+                    const unpriced = p.pnl_status === 'UNPRICED' || p.priced === false;
                     const pnl = Number(p.unrealized_pnl || 0);
 
 
 
-                    const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+                    const pnlClass = unpriced ? '' : (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
 
 
 
@@ -11351,8 +11384,10 @@ async function loadPortfolio() {
                             <td><span class="${sideClass}">${sideText}</span></td>
                             <td>${currSym}${Number(p.entry_price || 0).toFixed(2)}</td>
                             <td>${currSym}${currentPx.toFixed(2)}${p.is_entry_fallback ? ' <small style="color:#f59e0b;">(Ref)</small>' : ''}</td>
-                            <td class="${pnlClass}"><b>${pnlSign}${currSym}${Math.abs(pnl).toFixed(2)}</b></td>
-                            <td class="${rClass}">${rMult.toFixed(2)}R</td>
+                            <td class="${pnlClass}">${unpriced
+                                ? '<span style="color:var(--text-muted);" title="Entry-price reference — live quote unavailable">—</span>'
+                                : `<b>${pnlSign}${currSym}${Math.abs(pnl).toFixed(2)}</b>`}</td>
+                            <td class="${rClass}">${unpriced ? '—' : `${rMult.toFixed(2)}R`}</td>
                             <td>${heat.toFixed(1)}%</td>
                             <td>${timeInTrade}</td>
                             <td>${slDist.toFixed(1)}%</td>

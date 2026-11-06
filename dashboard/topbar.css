@@ -1,11 +1,11 @@
 /* ============================================================================
-   Top bar polish
+   Top bar polish — Collision-Free Clean Institutional Rhythm
    ----------------------------------------------------------------------------
    Loaded after styles.css and glass.css. Goals:
-   - one visual rhythm: 42px bar, 24px pills, 8px radii for controls
-   - fewer colours: status pills use neutral surfaces, colour only for meaning
-   - tickers get separators and a fade mask instead of hard clipping
-   - priority-based hiding on narrow screens (BTC, then SENSEX, then tickers)
+   - Zero collision: .mood-ticker has min-width: 0 and flex: 0 1 auto.
+   - Pinned right cluster: .mood-strip-right has margin-left: auto and flex-shrink: 0.
+   - Intelligent responsive hierarchy: hides secondary telemetry/tickers as width shrinks.
+   - One visual rhythm: 42px bar, 24px pills, 8px radii for controls.
    ========================================================================== */
 
 :root {
@@ -21,28 +21,44 @@
     --tb-muted: #8b97ad;
 }
 
-/* ── Bar ─────────────────────────────────────────────────────────────────── */
+/* ── Bar Container ────────────────────────────────────────────────────────── */
 .mood-strip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 200;
+    height: var(--tb-h) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
     gap: var(--tb-gap) !important;
-    padding: 0 12px !important;
-    background: rgba(8, 12, 22, 0.78) !important;
+    padding: 0 14px !important;
+    background: rgba(8, 12, 22, 0.85) !important;
     -webkit-backdrop-filter: blur(16px) saturate(150%);
     backdrop-filter: blur(16px) saturate(150%);
     border-bottom: 1px solid var(--tb-border) !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
 }
 
 .mood-strip-logo {
-    margin-right: 4px !important;
+    display: flex !important;
+    align-items: center !important;
     gap: 7px !important;
+    margin-right: 4px !important;
+    flex-shrink: 0 !important;
 }
 
 .mood-strip-logo .logo-text {
     font-size: 0.92rem !important;
+    font-weight: 800 !important;
     letter-spacing: -0.02em;
 }
 
 .mood-strip-logo .logo-badge {
     font-size: 0.5rem !important;
+    font-weight: 800 !important;
     padding: 2px 5px !important;
     border-radius: 4px !important;
 }
@@ -63,6 +79,7 @@
     display: inline-flex;
     align-items: center;
     gap: 6px !important;
+    flex-shrink: 0 !important;
 }
 
 .mood-pill .mood-dot {
@@ -70,15 +87,19 @@
     height: 6px !important;
 }
 
-/* ── Tickers ─────────────────────────────────────────────────────────────── */
+/* ── Tickers (Flexible, Masked, Strictly Bounded) ─────────────────────────── */
 .mood-ticker {
-    display: flex;
-    align-items: center;
+    display: flex !important;
+    align-items: center !important;
     gap: 0 !important;
-    padding: 0 4px !important;
-    overflow: hidden;
-    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
-    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 28px), transparent 100%);
+    flex: 0 1 auto !important;
+    min-width: 0 !important;
+    padding: 0 8px !important;
+    margin: 0 4px !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 24px), transparent 100%);
 }
 
 .mood-ticker-item {
@@ -86,8 +107,9 @@
     display: flex;
     align-items: baseline;
     gap: 6px;
-    padding: 0 14px;
+    padding: 0 12px;
     white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .mood-ticker-item + .mood-ticker-item::before {
@@ -121,10 +143,15 @@
     font-variant-numeric: tabular-nums;
 }
 
-/* ── Right cluster ───────────────────────────────────────────────────────── */
+/* ── Right Cluster (Pinned Right Edge, No Wrap, No Overlap) ──────────────── */
 .mood-strip-right {
+    display: flex !important;
+    align-items: center !important;
     gap: 8px !important;
-    margin-left: 4px !important;
+    margin-left: auto !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+    z-index: 2;
 }
 
 .telemetry-pill {
@@ -137,6 +164,7 @@
     align-items: center;
     gap: 6px !important;
     font-size: 0.6rem !important;
+    flex-shrink: 0 !important;
 }
 
 #v2PipelineText {
@@ -153,19 +181,25 @@
     color: var(--tb-muted) !important;
     font-variant-numeric: tabular-nums;
     padding: 0 2px;
+    flex-shrink: 0 !important;
 }
 
-/* ── Search ──────────────────────────────────────────────────────────────── */
+/* ── Search ───────────────────────────────────────────────────────────────── */
+.mood-search-wrap {
+    flex-shrink: 0 !important;
+}
+
 .mood-search-input,
 .global-search-input {
     height: 30px;
-    width: 210px;
+    width: 200px;
     padding: 0 10px !important;
     border-radius: var(--tb-control-radius) !important;
     border: 1px solid var(--tb-border) !important;
     background: rgba(2, 6, 23, 0.55) !important;
     color: var(--tb-text) !important;
     font-size: 0.72rem !important;
+    transition: width 0.2s ease, border-color 0.15s ease;
 }
 
 .mood-search-input::placeholder,
@@ -189,7 +223,7 @@
     color: var(--tb-muted) !important;
 }
 
-/* ── Icon buttons ────────────────────────────────────────────────────────── */
+/* ── Icon buttons ─────────────────────────────────────────────────────────── */
 .mood-strip .theme-toggle {
     width: 30px !important;
     height: 30px !important;
@@ -199,6 +233,7 @@
     font-size: 0.82rem !important;
     color: var(--tb-text) !important;
     transition: background 0.15s ease, border-color 0.15s ease;
+    flex-shrink: 0 !important;
 }
 
 .mood-strip .theme-toggle:hover {
@@ -208,7 +243,7 @@
     box-shadow: none !important;
 }
 
-/* ── AI status + market status pills ────────────────────────────────────── */
+/* ── AI status + market status pills ─────────────────────────────────────── */
 .ai-engine-badge {
     height: var(--tb-pill-h);
     padding: 0 10px !important;
@@ -223,6 +258,7 @@
     align-items: center;
     gap: 5px !important;
     white-space: nowrap;
+    flex-shrink: 0 !important;
 }
 
 .market-status {
@@ -238,6 +274,7 @@
     color: var(--tb-muted) !important;
     text-transform: uppercase;
     white-space: nowrap;
+    flex-shrink: 0 !important;
 }
 
 .market-status .status-dot {
@@ -258,7 +295,7 @@
 
 /* ── Light theme ─────────────────────────────────────────────────────────── */
 [data-theme="light"] .mood-strip {
-    background: rgba(248, 250, 252, 0.92) !important;
+    background: rgba(248, 250, 252, 0.94) !important;
     border-bottom-color: rgba(15, 23, 42, 0.10) !important;
 }
 
@@ -280,33 +317,49 @@
     color: #0f172a !important;
 }
 
-/* ── Priority-based hiding ───────────────────────────────────────────────── */
-@media (max-width: 1360px) {
-    .mood-ticker-item:nth-child(3) { display: none; } /* BTC — least relevant on an NSE desk */
+/* ── Proportional Responsive Hierarchy (Prevents All Collisions) ─────────── */
+
+/* 1. Large Laptops / Desktops (≤ 1600px): Hide dev telemetry and non-NSE crypto ticker */
+@media (max-width: 1600px) {
+    #v2PipelineBadge { display: none !important; }
+    .mood-ticker-item:nth-child(3) { display: none !important; } /* BTC */
 }
 
-@media (max-width: 1200px) {
-    .mood-ticker-item:nth-child(2) { display: none; } /* SENSEX */
-    .mood-clock { display: none; }
-}
-
-@media (max-width: 1060px) {
-    .mood-ticker { display: none; }
+/* 2. Standard 1080p Laptops with 125% OS scaling (≤ 1420px): Streamline indices */
+@media (max-width: 1420px) {
+    .mood-ticker-item:nth-child(2) { display: none !important; } /* SENSEX */
     .mood-search-input,
-    .global-search-input { width: 160px; }
+    .global-search-input { width: 160px !important; }
 }
 
-@media (max-width: 860px) {
-    .ai-engine-badge { display: none; }
-    .mood-search-wrap { display: none; }
+/* 3. Compact Laptops (≤ 1260px): Hide clock & BankNifty to keep core Nifty un-clipped */
+@media (max-width: 1260px) {
+    .mood-clock { display: none !important; }
+    .mood-ticker-item:nth-child(4) { display: none !important; } /* BankNifty */
+    .mood-search-input,
+    .global-search-input { width: 140px !important; }
 }
 
-@media (max-width: 560px) {
-    .market-status { display: none; }
+/* 4. Small screens / Tablets (≤ 1100px): Hide entire ticker, let search & status breathe */
+@media (max-width: 1100px) {
+    .mood-ticker { display: none !important; }
+}
+
+/* 5. Mobile & Small Tablets (≤ 880px): Streamline right cluster */
+@media (max-width: 880px) {
+    .ai-engine-badge { display: none !important; }
+    .mood-search-wrap { display: none !important; }
+    #skinToggle { display: none !important; }
+}
+
+/* 6. Phone screens (≤ 580px): Minimal essential header */
+@media (max-width: 580px) {
+    .market-status { display: none !important; }
     .mood-strip { padding: 0 8px !important; }
+    .mood-strip-logo .logo-text { font-size: 0.85rem !important; }
 }
 
-/* Solid fallback when blur is unavailable or unwanted */
+/* Solid fallback when blur is unavailable */
 @media (prefers-reduced-transparency: reduce) {
     .mood-strip {
         -webkit-backdrop-filter: none;
