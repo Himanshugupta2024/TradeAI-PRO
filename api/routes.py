@@ -2549,6 +2549,41 @@ async def get_trades(limit: int = Query(50, le=100)):
     # Return newest trades first
     return {"trades": list(reversed(enriched))}
 
+@router.get("/api/track-record")
+
+async def get_track_record(limit: int = Query(1000, le=2000)):
+
+    """Public, unfiltered paper-trading record — wins and losses together."""
+
+    from api.track_record import build_track_record
+
+    try:
+
+        engine = svc._get_engine()
+
+        history = await asyncio.to_thread(engine.get_history, limit)
+
+        record = build_track_record(
+            history,
+            initial_capital=getattr(engine, "initial_capital", None),
+        )
+
+        record["status"] = "ok"
+
+        return record
+
+    except Exception as exc:
+
+        logger.error("Track record unavailable: %s", exc)
+
+        fallback = build_track_record([], initial_capital=None)
+
+        fallback["status"] = "unavailable"
+
+        fallback["error"] = str(exc)
+
+        return fallback
+
 @router.get("/api/risk/state")
 
 async def get_risk_state():
