@@ -422,4 +422,30 @@ export default {
       })
     );
   },
+
+  /**
+   * Cloudflare Cron Trigger scheduled handler.
+   * Runs every 5 minutes to ping the Render backend health endpoint,
+   * keeping the Render free container warm even when GitHub Actions is disabled.
+   */
+  async scheduled(event, env, ctx) {
+    return handleScheduled(event, env, ctx);
+  },
 };
+
+export async function handleScheduled(event, env, ctx, fetchFn = fetch) {
+  const healthUrl = `${BACKEND_ORIGIN}/api/health`;
+  try {
+    const res = await fetchFn(healthUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent": "TradeAI-Cloudflare-Cron-KeepAlive/1.0",
+        "Accept": "application/json",
+      },
+    });
+    return { ok: res.ok, status: res.status, url: healthUrl };
+  } catch (err) {
+    console.error(`[cron] Health ping to ${healthUrl} failed:`, err);
+    throw err;
+  }
+}

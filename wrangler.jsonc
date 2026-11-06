@@ -3,6 +3,9 @@
   "name": "tradeai-pro",
   "main": "src/worker.js",
   "compatibility_date": "2026-11-03",
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "assets": {
     "directory": "./dashboard",
     "binding": "ASSETS",
