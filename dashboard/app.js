@@ -2631,13 +2631,13 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
             res = await fetchWithTimeout(targetUrl, {
                 signal: _autonomousFeedController.signal,
                 headers: reqHeaders,
-            }, 15000);
+            }, 10000, 0);
         } catch (netErr) {
             if (!API || String(targetUrl).startsWith('/') || String(targetUrl).includes('workers.dev')) {
                 res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`, {
                     signal: _autonomousFeedController.signal,
                     headers: reqHeaders,
-                }, 15000);
+                }, 10000, 0);
             } else {
                 throw netErr;
             }
@@ -2648,7 +2648,7 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
             res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`, {
                 signal: _autonomousFeedController.signal,
                 headers: reqHeaders,
-            }, 15000);
+            }, 10000, 0);
         }
 
         if (currentGen !== _autonomousFeedGen) return;
