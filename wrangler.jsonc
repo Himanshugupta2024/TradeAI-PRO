@@ -5,6 +5,10 @@
   "compatibility_date": "2026-11-03",
   "assets": {
     "directory": "./dashboard",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    // Run the Worker before the static-asset handler. Without this, asset
+    // requests (including "/") never reach src/worker.js, so security headers
+    // and the SPA deep-link fallback are skipped in production.
+    "run_worker_first": true
   }
 }

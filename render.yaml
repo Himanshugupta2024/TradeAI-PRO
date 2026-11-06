@@ -30,6 +30,10 @@ services:
       # Admin security key for protected routes (/api/paper/trade, /api/refresh, /api/risk/reset-circuit, etc.)
       - key: ADMIN_API_KEY
         sync: false
+      # Keep /docs, /redoc and /openapi.json closed in production. Set to "true"
+      # only for a deliberate debugging session.
+      - key: ENABLE_API_DOCS
+        value: "false"
       - key: HEALTH_FILE
         value: health.json
       - key: CONTEXT_CACHE_FILE
