@@ -1371,6 +1371,13 @@ async def _refresh_market_data_inner():
         await asyncio.gather(*nse_tasks)
 
         # ── Fetch crypto data concurrently (CCXT with Yahoo fallback) ──
+        from agents.execution.market_control import is_crypto_forex_enabled
+        if is_crypto_forex_enabled():
+            crypto_symbols_to_fetch = settings.CRYPTO_SYMBOLS
+        else:
+            crypto_symbols_to_fetch = []
+            logger.debug("[MARKET_CONTROL] Crypto & Forex refresh skipped under Section 6A policy")
+
         try:
             from agents.data_ingestion.binance_fetcher import fetch_historical
 
@@ -1462,14 +1469,15 @@ async def _refresh_market_data_inner():
 
             # Parallelize crypto processing with a fast timeout so crypto never blocks NSE
             await asyncio.gather(
-                *[_process_crypto_symbol(s) for s in settings.CRYPTO_SYMBOLS],
+                *[_process_crypto_symbol(s) for s in crypto_symbols_to_fetch],
                 return_exceptions=True
             )
         except ImportError:
             logger.warning("CCXT not available for crypto data")
 
         # ── Phase 6: Refresh futures context (advisory) ──────────
-        await _refresh_crypto_futures_context()
+        if crypto_symbols_to_fetch:
+            await _refresh_crypto_futures_context()
 
         # ── Fetch daily data for swing/breakout scanners (Asynchronous Background Task) ──
         # Offload 41-symbol 1y downloads & swing scan so intraday refresh completes in <5s.
@@ -3964,6 +3972,13 @@ class SnapshotBroadcaster:
                     }
             feed_status = _get_feed_status().get("status", "EOD")
             source = "IN_PROCESS"
+
+        try:
+            from agents.execution.market_control import is_crypto_forex_enabled
+            if not is_crypto_forex_enabled():
+                prices = {k: v for k, v in prices.items() if "/" not in k}
+        except Exception:
+            pass
 
         engine = _get_engine()
         stats = engine.get_stats()

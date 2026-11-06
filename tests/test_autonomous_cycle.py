@@ -187,7 +187,9 @@ def test_nse_market_open_time_windows():
     assert reason == "NSE_CLOSED_WEEKEND"
 
 
-def test_crypto_session_gate_always_active():
+def test_crypto_session_gate_always_active(monkeypatch):
+    import agents.execution.market_control as mc
+    monkeypatch.setattr(mc, "is_crypto_forex_enabled", lambda: True)
     sunday = datetime(2026, 11, 1, 11, 0, 0, tzinfo=_IST)
     is_open, reason = check_session_gate("CRYPTO", sunday)
     assert is_open is True
@@ -241,6 +243,10 @@ def test_resolve_universe_crypto_prioritization_under_any_input(monkeypatch):
     """
     from scripts.autonomous_cycle import resolve_universe
     import agents.execution.session_guard as sg
+    import agents.execution.market_control as mc
+
+    # Enable crypto for prioritization test under Section 6A policy
+    monkeypatch.setattr(mc, "is_crypto_forex_enabled", lambda: True)
 
     # Mock NSE as closed (e.g. evening or weekend)
     monkeypatch.setattr(sg, "is_nse_market_open", lambda dt=None: (False, "NSE_POST_MARKET"))

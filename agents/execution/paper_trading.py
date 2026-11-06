@@ -1277,6 +1277,12 @@ class PaperTradingEngine:
                 td["original_target"] = td.get("target", 0.0)
             if "target_multiplier" not in td:
                 td["target_multiplier"] = 1.0
+            td.setdefault("direction", "LONG")
+            if not td.get("entry_time"):
+                td["entry_time"] = datetime.now().isoformat()
+            td.setdefault("entry_price", 0.0)
+            td.setdefault("stop_loss", 0.0)
+            td.setdefault("target", 0.0)
             if "partial_target" not in td:
                 try:
                     td["partial_target"] = self._partial_target(
@@ -1286,6 +1292,8 @@ class PaperTradingEngine:
                     )
                 except Exception:
                     td["partial_target"] = 0.0
+            td.setdefault("direction", "LONG")
+            td.setdefault("entry_time", datetime.now().isoformat())
             td.setdefault("partial_taken", False)
             td.setdefault("partial_exit_price", 0.0)
             td.setdefault("partial_exit_time", "")

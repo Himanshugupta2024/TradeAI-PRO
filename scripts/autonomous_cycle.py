@@ -114,10 +114,27 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_universe(universe_arg: str, max_symbols: int = 20) -> list[str]:
+    from agents.execution.market_control import is_crypto_forex_enabled
+    crypto_enabled = is_crypto_forex_enabled()
+
     u = universe_arg.strip().lower()
     is_nse_open, _ = is_nse_market_open()
+
+    if not crypto_enabled:
+        # Strict Section 6A policy: Crypto/Forex disabled, zero instruments included
+        if u == "crypto":
+            return []
+        if u in ("tier1", "nse"):
+            symbols = list(TIER1_NSE)
+        elif u == "all":
+            nse_all = list(settings.NSE_SYMBOLS.keys()) if isinstance(settings.NSE_SYMBOLS, dict) else list(settings.NSE_SYMBOLS)
+            symbols = list(nse_all[:max_symbols])
+        else:
+            symbols = [s.strip().upper() for s in universe_arg.split(",") if s.strip() and "/" not in s]
+        return [s for s in symbols if "/" not in s][:max_symbols]
+
+    # When crypto is explicitly enabled under section 6A:
     if u == "tier1":
-        # When NSE is closed, prioritize 24/7 crypto symbols first so off-hours scanning executes
         symbols = (TIER1_CRYPTO + TIER1_NSE) if not is_nse_open else (TIER1_NSE + TIER1_CRYPTO)
     elif u == "nse":
         symbols = list(TIER1_NSE)
@@ -130,8 +147,6 @@ def resolve_universe(universe_arg: str, max_symbols: int = 20) -> list[str]:
     else:
         symbols = [s.strip().upper() for s in universe_arg.split(",") if s.strip()]
 
-    # When NSE cash market is closed, prioritize 24/7 crypto symbols to the front across ALL universe inputs
-    # so leading NSE blocks can never push crypto symbols past max_symbols
     if not is_nse_open:
         crypto_syms = [s for s in symbols if "/" in s]
         other_syms = [s for s in symbols if "/" not in s]
@@ -208,10 +223,16 @@ async def run_single_autonomous_cycle(
         raw_symbols = resolve_universe(universe_arg, max_symbols=max_symbols)
         active_symbols = []
 
+        from agents.execution.market_control import is_crypto_forex_enabled
+        crypto_enabled = is_crypto_forex_enabled()
+
         for sym in raw_symbols:
             is_crypto = "/" in sym
             if is_crypto:
-                active_symbols.append(sym)
+                if crypto_enabled:
+                    active_symbols.append(sym)
+                else:
+                    logger.debug("[Session] Skipping %s: Crypto/Forex disabled under Section 6A policy", sym)
             else:
                 if is_nse_open or force_scan:
                     active_symbols.append(sym)

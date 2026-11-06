@@ -31,6 +31,9 @@ import numpy as np
 import pandas as pd
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
+from starlette.requests import Request as FastApiRequest
+from starlette.responses import JSONResponse
 
 from api.security import require_admin
 
@@ -634,6 +637,47 @@ async def ai_ensemble_status():
 
     }
 
+# ── Section 6A: NSE Focus Mode & Protected Market Control ───────────────
+from pydantic import BaseModel
+class MarketControlToggleRequest(BaseModel):
+    enabled: bool
+    password: Optional[str] = None
+    reason: Optional[str] = None
+
+@router.get("/api/market-control/status")
+async def get_market_control_status_route():
+    """Return Section 6A Market Control status and NSE Focus Mode telemetry."""
+    from agents.execution.market_control import get_market_control_status
+    return get_market_control_status()
+
+from starlette.requests import Request as FastApiRequest
+@router.post("/api/market-control/toggle")
+async def toggle_market_control_route(req: MarketControlToggleRequest, request: FastApiRequest):
+    """
+    Operator control for Crypto / Forex processing under Section 6A policy.
+    - Turning ON requires server-side password verification.
+    - Turning OFF verifies open position safeguards; blocks if positions require management.
+    """
+    from agents.execution.market_control import set_market_control_state
+    client_ip = request.client.host if request.client else "unknown"
+    success, message, state = set_market_control_state(
+        enabled=req.enabled,
+        password=req.password,
+        client_id=client_ip,
+        operator="operator",
+        reason=req.reason or "",
+    )
+    invalidate_autonomous_status_cache()
+    status_code = 200 if success else (403 if any(w in message for w in ["Invalid", "Password", "lockout", "unconfigured"]) else 400)
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "success": success,
+            "message": message,
+            "state": state,
+        }
+    )
+
 @router.get("/api/dashboard/overview")
 
 async def get_dashboard_overview():
@@ -919,6 +963,12 @@ async def _refresh_meme_signals_bg():
 @router.get("/api/crypto/meme")
 
 async def get_meme_coin_signals():
+    from agents.execution.market_control import is_crypto_forex_enabled
+    if not is_crypto_forex_enabled():
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
+        )
 
     """
 
@@ -2873,10 +2923,29 @@ async def reset_paper_trading_endpoint(capital: float = Query(100000.0, ge=1000.
 
 _last_manual_cycle_dispatch_time: float = 0.0
 
+# ── Autonomous status snapshot cache & single-flight lock ─────────────────────
+_AUTONOMOUS_STATUS_CACHE: Optional[Dict[str, Any]] = None
+_AUTONOMOUS_STATUS_CACHE_TS: float = 0.0
+_AUTONOMOUS_STATUS_LOCK: Optional[asyncio.Lock] = None
+_AUTONOMOUS_STATUS_TTL_SEC: float = 10.0
 
-@router.get("/api/autonomous/status")
-async def get_autonomous_status():
-    """Return operational status, watchdog health, and worker lock state."""
+
+def _get_autonomous_status_lock() -> asyncio.Lock:
+    global _AUTONOMOUS_STATUS_LOCK
+    if _AUTONOMOUS_STATUS_LOCK is None:
+        _AUTONOMOUS_STATUS_LOCK = asyncio.Lock()
+    return _AUTONOMOUS_STATUS_LOCK
+
+
+def invalidate_autonomous_status_cache() -> None:
+    """Invalidate server-side snapshot cache on control-state mutations."""
+    global _AUTONOMOUS_STATUS_CACHE, _AUTONOMOUS_STATUS_CACHE_TS
+    _AUTONOMOUS_STATUS_CACHE = None
+    _AUTONOMOUS_STATUS_CACHE_TS = 0.0
+
+
+def _fetch_autonomous_status_sync():
+    """Fetch status and lock info in a thread to keep DB I/O off the event loop."""
     from agents.execution.autonomous_daemon import get_autonomous_daemon
     from agents.execution.distributed_lock import DistributedLockManager
     from agents.execution.session_guard import is_nse_market_open, get_current_ist_time
@@ -2886,14 +2955,11 @@ async def get_autonomous_status():
     engine = svc._get_engine()
     daemon_status = daemon.get_status(engine)
 
-    # Latest cycle status from worker
     worker_status = get_runtime_state("autonomous_worker:latest_status", {}) or {}
 
-    # Lock info
     lock_mgr = DistributedLockManager()
     lock_info = lock_mgr.get_lock_info("autonomous_paper_worker")
 
-    # Watchdog evaluation
     now_ist = get_current_ist_time()
     is_nse_open, nse_reason = is_nse_market_open(now_ist)
 
@@ -2930,10 +2996,9 @@ async def get_autonomous_status():
         watchdog_message = "No worker cycle runs recorded yet today."
 
     return {
-        "ok": True,
-        "status": daemon_status,
-        "worker": worker_status,
-        "lock": lock_info,
+        "daemon_status": daemon_status,
+        "worker_status": worker_status,
+        "lock_info": lock_info,
         "watchdog": {
             "status": watchdog_status,
             "message": watchdog_message,
@@ -2945,9 +3010,94 @@ async def get_autonomous_status():
     }
 
 
+@router.get("/api/autonomous/status")
+async def get_autonomous_status(response: Response):
+    """
+    Return operational status, watchdog health, and worker lock state.
+    Protected by 10s server-side snapshot cache and bounded query execution.
+    Sets private no-store headers to prevent edge caching of private operational state.
+    """
+    global _AUTONOMOUS_STATUS_CACHE, _AUTONOMOUS_STATUS_CACHE_TS
+    response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+
+    now_t = time.time()
+    if _AUTONOMOUS_STATUS_CACHE is not None and (now_t - _AUTONOMOUS_STATUS_CACHE_TS) < _AUTONOMOUS_STATUS_TTL_SEC:
+        cached_copy = dict(_AUTONOMOUS_STATUS_CACHE)
+        cached_copy["cache_hit"] = True
+        return cached_copy
+
+    async with _get_autonomous_status_lock():
+        now_t = time.time()
+        if _AUTONOMOUS_STATUS_CACHE is not None and (now_t - _AUTONOMOUS_STATUS_CACHE_TS) < _AUTONOMOUS_STATUS_TTL_SEC:
+            cached_copy = dict(_AUTONOMOUS_STATUS_CACHE)
+            cached_copy["cache_hit"] = True
+            return cached_copy
+
+        t0 = time.perf_counter()
+        raw = await asyncio.wait_for(
+            asyncio.to_thread(_fetch_autonomous_status_sync),
+            timeout=5.0,
+        )
+        measured_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+
+        payload = {
+            "ok": True,
+            "status": raw["daemon_status"],
+            "worker": raw["worker_status"],
+            "lock": raw["lock_info"],
+            "watchdog": raw["watchdog"],
+            "measured_query_ms": measured_ms,
+            "source_timestamp": datetime.now(timezone.utc).isoformat(),
+            "cache_hit": False,
+        }
+        _AUTONOMOUS_STATUS_CACHE = payload
+        _AUTONOMOUS_STATUS_CACHE_TS = time.time()
+        return payload
+
+
+def _fetch_feed_db_sync(limit: int):
+    items = []
+    try:
+        from db.connection import SessionLocal
+        from db.models import AutonomousDecisionRecord
+        with SessionLocal() as s:
+            records = s.query(AutonomousDecisionRecord).order_by(AutonomousDecisionRecord.id.desc()).limit(limit).all()
+            for r in records:
+                ts_str = None
+                if r.timestamp:
+                    ts = r.timestamp
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    ts_str = ts.isoformat()
+                items.append({
+                    "id": r.signal_id or f"rec-{r.id}",
+                    "run_id": r.run_id,
+                    "timestamp": ts_str,
+                    "action": r.action,
+                    "symbol": r.symbol,
+                    "direction": r.direction or "HOLD",
+                    "price": r.entry_price or 0.0,
+                    "qs_score": r.quality_score or 0.0,
+                    "ai_confidence": r.confluence_score or 0.0,
+                    "risk_reward": r.risk_reward or 0.0,
+                    "market_regime": r.market_regime or "UNKNOWN",
+                    "source_freshness": r.source_freshness or "UNKNOWN",
+                    "trade_id": r.paper_trade_id,
+                    "reason": r.reason or "",
+                    "asset_class": "CRYPTO" if "/" in (r.symbol or "") else "EQUITY",
+                })
+    except Exception as exc:
+        pass
+    return items
+
+
 @router.get("/api/autonomous/feed")
-async def get_autonomous_feed(limit: int = 25):
+async def get_autonomous_feed(response: Response, limit: int = 25):
     """Return live stream of autonomous trading decisions and management actions."""
+    response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+
     from agents.execution.autonomous_daemon import get_autonomous_daemon
     from db.runtime_state import get_runtime_state
 
@@ -2956,33 +3106,9 @@ async def get_autonomous_feed(limit: int = 25):
     # Priority 1: Check runtime state
     feed = get_runtime_state("autonomous_feed:v1", []) or []
 
-    # Priority 2: Fall back to PostgreSQL database records
+    # Priority 2: Fall back to PostgreSQL database records (non-blocking thread)
     if not feed:
-        try:
-            from db.connection import SessionLocal
-            from db.models import AutonomousDecisionRecord
-            with SessionLocal() as s:
-                records = s.query(AutonomousDecisionRecord).order_by(AutonomousDecisionRecord.id.desc()).limit(limit).all()
-                for r in records:
-                    feed.append({
-                        "id": r.signal_id or f"rec-{r.id}",
-                        "run_id": r.run_id,
-                        "timestamp": r.timestamp.isoformat() if r.timestamp else None,
-                        "action": r.action,
-                        "symbol": r.symbol,
-                        "direction": r.direction or "HOLD",
-                        "price": r.entry_price or 0.0,
-                        "qs_score": r.quality_score or 0.0,
-                        "ai_confidence": r.confluence_score or 0.0,
-                        "risk_reward": r.risk_reward or 0.0,
-                        "market_regime": r.market_regime or "UNKNOWN",
-                        "source_freshness": r.source_freshness or "UNKNOWN",
-                        "trade_id": r.paper_trade_id,
-                        "reason": r.reason or "",
-                        "asset_class": "CRYPTO" if "/" in (r.symbol or "") else "EQUITY",
-                    })
-        except Exception:
-            pass
+        feed = await asyncio.to_thread(_fetch_feed_db_sync, limit)
 
     # Priority 3: Fall back to daemon in-memory log
     if not feed and daemon.decision_log:
@@ -2990,10 +3116,10 @@ async def get_autonomous_feed(limit: int = 25):
 
     # Priority 4: If still empty, provide system standby event so feed is never blank
     if not feed:
-        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
         feed = [{
             "id": f"standby-{int(datetime.now(timezone.utc).timestamp())}",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": now_iso,
             "action": "SYSTEM_STANDBY",
             "symbol": "SYSTEM",
             "direction": "NEUTRAL",
@@ -3003,6 +3129,12 @@ async def get_autonomous_feed(limit: int = 25):
             "reason": "Autonomous worker initialized and standing by for scheduled market cycle.",
             "asset_class": "SYSTEM",
         }]
+
+    # Normalize all timestamps to guarantee explicit ISO UTC representation
+    for item in feed:
+        raw_ts = item.get("timestamp")
+        if raw_ts and isinstance(raw_ts, str) and not raw_ts.endswith("Z") and "+" not in raw_ts:
+            item["timestamp"] = raw_ts + "Z"
 
     # Deduplicate consecutive standby/closed entries while strictly preserving intervening executions
     cleaned_feed = []
@@ -3075,6 +3207,7 @@ async def trigger_autonomous_cycle(payload: dict | None = None):
                     dispatched_via = "github_actions"
                     dispatch_msg = f"Triggered GitHub Actions autonomous cycle workflow on {gh_repo}."
                     _last_manual_cycle_dispatch_time = now
+                    invalidate_autonomous_status_cache()
                     return {
                         "ok": True,
                         "method": dispatched_via,
@@ -3114,6 +3247,7 @@ async def trigger_autonomous_cycle(payload: dict | None = None):
 @router.post("/api/autonomous/toggle", dependencies=[Depends(require_admin)])
 async def toggle_autonomous(payload: dict | None = None):
     """Enable or disable autonomous trading mode."""
+    invalidate_autonomous_status_cache()
     from agents.execution.autonomous_daemon import get_autonomous_daemon
     daemon = get_autonomous_daemon()
     payload = payload or {}
@@ -3128,6 +3262,7 @@ async def toggle_autonomous(payload: dict | None = None):
 @router.post("/api/autonomous/review-now", dependencies=[Depends(require_admin)])
 async def trigger_eod_review_now():
     """Manually trigger immediate daily EOD self-learning review."""
+    invalidate_autonomous_status_cache()
     from agents.analytics.feedback_loop import FeedbackAnalyser
     from agents.execution.autonomous_daemon import get_autonomous_daemon
     analyser = FeedbackAnalyser()
@@ -7969,6 +8104,12 @@ async def retrain_status():
 @router.get("/api/forex/rates")
 
 async def get_forex_rates():
+    from agents.execution.market_control import is_crypto_forex_enabled
+    if not is_crypto_forex_enabled():
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
+        )
 
     """Return live rates for all configured forex pairs."""
 
@@ -7995,6 +8136,12 @@ async def get_forex_rates():
 @router.get("/api/forex/signals")
 
 async def get_forex_signals():
+    from agents.execution.market_control import is_crypto_forex_enabled
+    if not is_crypto_forex_enabled():
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
+        )
 
     """Return cached forex swing setups sorted by strength score, segregated by qualification."""
 
@@ -8053,6 +8200,12 @@ async def get_forex_signals():
 @router.get("/api/forex/intelligence")
 
 async def get_forex_intelligence():
+    from agents.execution.market_control import is_crypto_forex_enabled
+    if not is_crypto_forex_enabled():
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
+        )
 
     """Return relative currency strengths, risk sentiment, and session overlap liquidity."""
 
@@ -8335,6 +8488,12 @@ async def serve_crypto():
 @router.get("/api/crypto/news")
 
 async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
+    from agents.execution.market_control import is_crypto_forex_enabled
+    if not is_crypto_forex_enabled():
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
+        )
 
     """Fetch latest crypto headlines from multiple free/keyless RSS sources."""
 
@@ -8567,6 +8726,12 @@ async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
 @router.get("/api/crypto/intelligence")
 
 async def get_crypto_intelligence():
+    from agents.execution.market_control import is_crypto_forex_enabled
+    if not is_crypto_forex_enabled():
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
+        )
 
     """
 
@@ -8635,6 +8800,12 @@ async def get_crypto_intelligence():
 @router.get("/api/crypto/prediction")
 
 async def get_crypto_prediction(timeframe: str = Query(default="1h")):
+    from agents.execution.market_control import is_crypto_forex_enabled
+    if not is_crypto_forex_enabled():
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
+        )
 
     """Calculated crypto prediction from live market, news sentiment, and macro context."""
 
@@ -10705,3 +10876,33 @@ async def get_context_snapshot(symbol: str):
         logger.error("Context snapshot failed for %s: %s", symbol, exc)
 
         return {"error": str(exc), "symbol": symbol}
+
+# ── Section 6A: Market Control & Protected Crypto/Forex Switch ─────────────────
+
+class MarketControlToggleRequest(BaseModel):
+    enabled: bool
+    password: Optional[str] = None
+
+
+@router.get("/api/market-control/status")
+async def get_market_control_status_route():
+    from agents.execution.market_control import get_market_control_status
+    return await asyncio.to_thread(get_market_control_status)
+
+
+@router.post("/api/market-control/toggle")
+async def toggle_market_control_route(req: MarketControlToggleRequest, request: FastApiRequest):
+    from agents.execution.market_control import set_market_control_state, get_market_control_status
+    client_ip = request.client.host if request.client else "unknown"
+    success, message = await asyncio.to_thread(
+        set_market_control_state,
+        enabled=req.enabled,
+        password=req.password,
+        client_ip=client_ip,
+    )
+    if not success:
+        return JSONResponse(
+            status_code=403,
+            content={"ok": False, "error": message, "status": get_market_control_status()}
+        )
+    return {"ok": True, "message": message, "status": get_market_control_status()}

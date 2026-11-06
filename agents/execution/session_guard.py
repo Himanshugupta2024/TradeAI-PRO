@@ -2,8 +2,8 @@
 TradeAI-PRO — Market Session Guard & Data Freshness Gate.
 =========================================================
 Ensures:
-  1. Equities (NSE) execute only during active market hours in Asia/Kolkata.
-  2. Cryptocurrencies execute 24/7.
+  1. Equities (NSE) execute only during active custom activity window (09:15-15:30 IST).
+  2. Cryptocurrencies & Forex operate strictly according to operator switch (Section 6A).
   3. Stale or EOD historical candles never trigger live intraday autonomous trades.
 """
 
@@ -34,38 +34,15 @@ def get_current_ist_time() -> datetime:
 def is_nse_market_open(dt: Optional[datetime] = None) -> Tuple[bool, str]:
     """
     Check if the National Stock Exchange (NSE) cash market is currently open.
-    Ensures input datetime is strictly normalized to Asia/Kolkata timezone.
+    Delegates to the canonical custom NSE activity window engine (Section 6A):
+      - 09:15:00 inclusive to 15:30:00 exclusive IST.
+      - Monday through Friday.
+      - Intersected with cached official NSE holiday calendar.
     Returns:
       (True, "SESSION_ACTIVE") or (False, reason)
     """
-    now = dt or get_current_ist_time()
-    if now.tzinfo is not None:
-        now = now.astimezone(_IST)
-    else:
-        now = now.replace(tzinfo=_IST)
-
-    # 1. Weekend check (Monday = 0, Sunday = 6)
-    if now.weekday() >= 5:
-        return False, "NSE_CLOSED_WEEKEND"
-
-    # 2. Time window check: 09:15 to 15:30 IST
-    market_open = now.replace(hour=_NSE_OPEN_HOUR, minute=_NSE_OPEN_MINUTE, second=0, microsecond=0)
-    market_close = now.replace(hour=_NSE_CLOSE_HOUR, minute=_NSE_CLOSE_MINUTE, second=0, microsecond=0)
-
-    if now < market_open:
-        return False, "NSE_PRE_MARKET"
-    if now > market_close:
-        return False, "NSE_POST_MARKET"
-
-    # 3. Holiday check
-    try:
-        from agents.market_intelligence.nse_holidays import is_holiday
-        if is_holiday(now.date()):
-            return False, "NSE_MARKET_HOLIDAY"
-    except Exception:
-        pass
-
-    return True, "SESSION_ACTIVE"
+    from agents.execution.market_control import is_nse_activity_window_active
+    return is_nse_activity_window_active(dt)
 
 
 def get_next_nse_session(dt: Optional[datetime] = None) -> Tuple[datetime, str]:
@@ -76,7 +53,6 @@ def get_next_nse_session(dt: Optional[datetime] = None) -> Tuple[datetime, str]:
       (next_session_datetime_ist, description_string)
       e.g. (datetime, "today (2026-11-05) at 09:15 IST") or ("tomorrow (2026-11-06) at 09:15 IST")
     """
-    from datetime import timedelta
     try:
         from agents.market_intelligence.nse_holidays import is_holiday
     except Exception:
@@ -116,18 +92,32 @@ def get_next_nse_session(dt: Optional[datetime] = None) -> Tuple[datetime, str]:
 
 def check_session_gate(asset_class: str, dt: Optional[datetime] = None) -> Tuple[bool, str]:
     """
-    Verify whether the target asset class is permitted to trade at the current time.
+    Verify whether the target asset class is permitted to trade at the specified time.
+    Enforces Section 6A policy:
+      - Equities (NSE): Allowed strictly within 09:15:00-15:30:00 IST on trading days.
+      - Crypto / Forex: Requires explicit operator override (default OFF).
     """
+    from agents.execution.market_control import is_crypto_forex_enabled
+
     ac = asset_class.upper().strip()
     if ac in ("CRYPTO", "CRYPTOCURRENCY"):
+        if not is_crypto_forex_enabled():
+            return False, "DISABLED_BY_NSE_FOCUS_MODE"
         return True, "SESSION_ACTIVE"
 
     if ac in ("EQUITY", "NSE", "STOCK", "INDEX"):
         return is_nse_market_open(dt)
 
-    if ac == "FOREX":
+    if ac in ("FOREX", "FX"):
+        if not is_crypto_forex_enabled():
+            return False, "DISABLED_BY_NSE_FOCUS_MODE"
         # Forex operates 24/5 (Mon morning to Fri evening UTC)
-        now_utc = datetime.now(timezone.utc)
+        ref_dt = dt or datetime.now(timezone.utc)
+        if ref_dt.tzinfo is not None:
+            now_utc = ref_dt.astimezone(timezone.utc)
+        else:
+            now_utc = ref_dt.replace(tzinfo=timezone.utc)
+
         if now_utc.weekday() == 5 or (now_utc.weekday() == 6 and now_utc.hour < 21):
             return False, "FOREX_CLOSED_WEEKEND"
         return True, "SESSION_ACTIVE"

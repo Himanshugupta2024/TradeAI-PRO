@@ -574,6 +574,11 @@ def scan_all_forex(force_refresh: bool = False) -> list[ForexSetup]:
         logger.info("[FOREX] Scan already in progress; returning cached setups (count=%d)", len(_scan_cache["setups"]))
         return _scan_cache["setups"]
 
+    from agents.execution.market_control import is_crypto_forex_enabled
+    if not is_crypto_forex_enabled():
+        logger.debug("[FOREX] scan_all_forex skipped: Section 6A policy is OFF")
+        return _scan_cache["setups"] if _scan_cache["setups"] else []
+
     acquired = _scan_lock.acquire(blocking=False)
     if not acquired:
         return _scan_cache["setups"]

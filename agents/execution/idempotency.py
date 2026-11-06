@@ -124,7 +124,7 @@ def record_autonomous_decision_to_db(
                 )
                 session.add(record)
             elif action in ("MARKET_CLOSED", "SYSTEM_STANDBY"):
-                existing.timestamp = now
+                existing.timestamp = now_naive
                 existing.run_id = run_id
                 existing.reason = reason
     except Exception as exc:

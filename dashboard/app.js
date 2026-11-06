@@ -560,6 +560,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     updateMarketSessionBanner();
+    fetchMarketControlStatus();
 
 
 
@@ -576,6 +577,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     hydrateFromLocalStorageCache();
+    hydrateAutonomousFromStorage();
 
     loadOverviewFast();
     // Stagger peripheral requests by 200-800ms to stay within Render free-tier concurrent connection caps
@@ -2434,147 +2436,335 @@ async function parseJsonResponse(res) {
 
 
 
-async function loadAutonomousFeed() {
+// ── Autonomous Cockpit: Decoupled & Resilient Architecture ─────────────
+let _autonomousStatusInFlight = false;
+let _autonomousFeedInFlight = false;
+let _autonomousStatusGen = 0;
+let _autonomousFeedGen = 0;
+let _autonomousPollTimer = null;
+let _autonomousStatusController = null;
+let _autonomousFeedController = null;
+let _lastAutonomousStatusData = null;
+let _lastAutonomousFeedData = null;
+let _autonomousConsecutiveErrors = 0;
+
+const AUTO_FEED_STORAGE_KEY = 'tradeai_cached_autofeed_v2';
+const AUTO_FEED_MAX_CACHE_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function hydrateAutonomousFromStorage() {
     try {
-        const [feedRes, statusRes] = await Promise.all([
-            fetchWithTimeout(`${API}/api/autonomous/feed?limit=25`, {}, 10000),
-            fetchWithTimeout(`${API}/api/autonomous/status`, {}, 10000),
-        ]);
-        const feedData = await parseJsonResponse(feedRes);
-        const statusData = await parseJsonResponse(statusRes);
-
-        if (statusData && statusData.status) {
-            const st = statusData.status;
-            const badge = document.getElementById('autonomousModeBadge');
-            const workerBadge = document.getElementById('autonomousWorkerBadge');
-            const toggleBtn = document.getElementById('toggleAutonomousBtn');
-            const slotsBadge = document.getElementById('autonomousSlotsBadge');
-
-            if (badge) {
-                if (st.enabled) {
-                    badge.textContent = '100% Zero-Click Active';
-                    badge.style.background = 'rgba(16,185,129,0.15)';
-                    badge.style.color = '#10b981';
-                    badge.style.borderColor = 'rgba(16,185,129,0.3)';
-                } else {
-                    badge.textContent = 'Paused';
-                    badge.style.background = 'rgba(239,68,68,0.15)';
-                    badge.style.color = '#ef4444';
-                    badge.style.borderColor = 'rgba(239,68,68,0.3)';
-                }
+        const raw = localStorage.getItem(AUTO_FEED_STORAGE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.feed) && parsed.feed.length > 0) {
+            const age = Date.now() - (parsed.cached_at || 0);
+            if (age < AUTO_FEED_MAX_CACHE_AGE_MS) {
+                renderAutonomousFeedUI(parsed.feed, { isCached: true });
             }
-
-            if (workerBadge && statusData.watchdog) {
-                const wd = statusData.watchdog;
-                if (wd.status === 'RUNNING') {
-                    workerBadge.textContent = 'Worker: Running ⚡';
-                    workerBadge.style.background = 'rgba(56,189,248,0.2)';
-                    workerBadge.style.color = '#38bdf8';
-                    workerBadge.style.borderColor = 'rgba(56,189,248,0.4)';
-                } else if (wd.status === 'HEALTHY') {
-                    const ageText = wd.age_minutes != null ? `${wd.age_minutes}m ago` : 'active';
-                    workerBadge.textContent = `Worker: Healthy (${ageText})`;
-                    workerBadge.style.background = 'rgba(16,185,129,0.15)';
-                    workerBadge.style.color = '#10b981';
-                    workerBadge.style.borderColor = 'rgba(16,185,129,0.3)';
-                } else if (wd.status === 'WORKER_STALE') {
-                    workerBadge.textContent = `Worker: Stale (${wd.age_minutes}m)`;
-                    workerBadge.style.background = 'rgba(245,158,11,0.15)';
-                    workerBadge.style.color = '#f59e0b';
-                    workerBadge.style.borderColor = 'rgba(245,158,11,0.3)';
-                } else if (wd.status === 'MARKET_CLOSED') {
-                    workerBadge.textContent = 'Worker: Standby (Closed)';
-                    workerBadge.style.background = 'rgba(148,163,184,0.15)';
-                    workerBadge.style.color = '#94a3b8';
-                    workerBadge.style.borderColor = 'rgba(148,163,184,0.3)';
-                } else {
-                    workerBadge.textContent = 'Worker: Idle';
-                    workerBadge.style.background = 'rgba(148,163,184,0.15)';
-                    workerBadge.style.color = '#94a3b8';
-                    workerBadge.style.borderColor = 'rgba(148,163,184,0.3)';
-                }
-            }
-
-            if (toggleBtn) {
-                toggleBtn.textContent = st.enabled ? 'Pause Auto-Trade' : 'Resume Auto-Trade';
-            }
-            if (slotsBadge) {
-                slotsBadge.textContent = `Slots: ${st.open_positions || 0}/${st.max_positions || 8} Active`;
-            }
-        }
-
-        const listEl = document.getElementById('autonomousDecisionFeedList');
-        if (listEl && feedData && Array.isArray(feedData.feed)) {
-            // Deduplicate consecutive standby/closed items while strictly preserving intervening executions
-            let lastAction = null;
-            const displayFeed = feedData.feed.filter(item => {
-                const act = (item.action || '').toUpperCase();
-                const isStandby = (act === 'MARKET_CLOSED' || act === 'SYSTEM_STANDBY');
-                if (isStandby && (lastAction === 'MARKET_CLOSED' || lastAction === 'SYSTEM_STANDBY')) {
-                    return false;
-                }
-                lastAction = act;
-                return true;
-            });
-
-            if (displayFeed.length === 0) {
-                listEl.innerHTML = '<div style="color:var(--text-muted,#94a3b8);font-size:12px;padding:0.5rem;">Autonomous engine active. Monitoring candles for qualified entries...</div>';
-                return;
-            }
-
-            listEl.innerHTML = displayFeed.map(item => {
-                let badgeColor = '#38bdf8';
-                let bgBadge = 'rgba(56,189,248,0.15)';
-                const act = (item.action || '').toUpperCase();
-
-                if (act === 'AUTO_ENTER') {
-                    badgeColor = '#10b981';
-                    bgBadge = 'rgba(16,185,129,0.15)';
-                } else if (act.includes('TP') || act.includes('TARGET') || act.includes('TRAILING')) {
-                    badgeColor = '#10b981';
-                    bgBadge = 'rgba(16,185,129,0.15)';
-                } else if (act.includes('SL') || act.includes('STOP')) {
-                    badgeColor = '#f43f5e';
-                    bgBadge = 'rgba(244,63,94,0.15)';
-                } else if (act.includes('EOD') || act.includes('SQUAREOFF')) {
-                    badgeColor = '#f59e0b';
-                    bgBadge = 'rgba(245,158,11,0.15)';
-                } else if (act.includes('SKIP') || act.includes('DUPLICATE')) {
-                    badgeColor = '#a855f7';
-                    bgBadge = 'rgba(168,85,247,0.15)';
-                } else if (act === 'NO_TRADE' || act.includes('CLOSED')) {
-                    badgeColor = '#94a3b8';
-                    bgBadge = 'rgba(148,163,184,0.15)';
-                }
-
-                const tsStr = item.timestamp ? (item.timestamp.endsWith('Z') || item.timestamp.includes('+') ? item.timestamp : item.timestamp + 'Z') : null;
-                const timeStr = tsStr ? new Date(tsStr).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
-                const pnlText = (item.pnl_pct !== null && item.pnl_pct !== undefined) ? `<span style="color:${item.pnl_pct >= 0 ? '#10b981' : '#f43f5e'};font-weight:600;">(${item.pnl_pct >= 0 ? '+' : ''}${item.pnl_pct}%)</span>` : '';
-                const priceText = item.price ? `₹${Number(item.price).toLocaleString('en-IN')}` : '';
-                const scorePill = item.qs_score > 0 ? `<span style="font-size:10px;color:#38bdf8;background:rgba(56,189,248,0.1);padding:1px 4px;border-radius:3px;">QS ${item.qs_score}</span>` : '';
-
-                return `
-                    <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:6px;padding:6px 10px;font-size:12px;">
-                        <div style="display:flex;align-items:center;gap:8px;">
-                            <span style="font-family:monospace;font-size:10px;color:var(--text-muted,#94a3b8);">${timeStr}</span>
-                            <span style="background:${bgBadge};color:${badgeColor};border:1px solid ${badgeColor}33;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">${escapeHtml(item.action)}</span>
-                            <strong style="color:var(--text,#f8fafc);">${escapeHtml(item.symbol)}</strong>
-                            ${item.direction && item.direction !== 'HOLD' && item.direction !== 'NEUTRAL' ? `<span style="color:${item.direction === 'LONG' ? '#10b981' : '#f43f5e'};font-weight:600;font-size:11px;">${escapeHtml(item.direction)}</span>` : ''}
-                            ${priceText ? `<span style="font-family:monospace;font-size:11px;color:var(--text-muted,#94a3b8);">${priceText}</span>` : ''}
-                            ${scorePill}
-                            ${pnlText}
-                        </div>
-                        <div style="color:var(--text-muted,#94a3b8);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(item.reason || '')}">
-                            ${escapeHtml(item.reason || '')}
-                        </div>
-                    </div>
-                `;
-            }).join('');
         }
     } catch (e) {
-        console.debug('Failed to load autonomous feed:', e);
+        console.warn('Corrupt autonomous feed cache cleared:', e);
+        try { localStorage.removeItem(AUTO_FEED_STORAGE_KEY); } catch (_) {}
     }
 }
+
+function clearAutonomousCache() {
+    try { localStorage.removeItem(AUTO_FEED_STORAGE_KEY); } catch (_) {}
+}
+
+async function fetchAutonomousStatus({ isManual = false } = {}) {
+    if (_autonomousStatusInFlight && !isManual) return;
+    _autonomousStatusInFlight = true;
+    const currentGen = ++_autonomousStatusGen;
+
+    if (_autonomousStatusController) {
+        try { _autonomousStatusController.abort(); } catch (_) {}
+    }
+    _autonomousStatusController = new AbortController();
+
+    const workerBadge = document.getElementById('autonomousWorkerBadge');
+    if (isManual && workerBadge) {
+        workerBadge.textContent = 'Worker: Checking...';
+        workerBadge.style.color = '#94a3b8';
+    }
+
+    try {
+        const res = await fetchWithTimeout(`${API}/api/autonomous/status?_ts=${Date.now()}`, {
+            signal: _autonomousStatusController.signal,
+            headers: _getAuthHeaders(),
+        }, 15000);
+
+        if (currentGen !== _autonomousStatusGen) return; // Stale response discarded
+
+        const data = await parseJsonResponse(res);
+        if (data && data.ok) {
+            _lastAutonomousStatusData = data;
+            _autonomousConsecutiveErrors = 0;
+            renderAutonomousStatusUI(data);
+        } else {
+            renderAutonomousStatusError(new Error(data?.message || 'Status payload invalid'));
+        }
+    } catch (err) {
+        if (currentGen !== _autonomousStatusGen) return;
+        _autonomousConsecutiveErrors++;
+        renderAutonomousStatusError(err);
+    } finally {
+        _autonomousStatusInFlight = false;
+        _autonomousStatusController = null;
+    }
+}
+
+function renderAutonomousStatusUI(statusData) {
+    const st = statusData.status || {};
+    const wd = statusData.watchdog || {};
+    const badge = document.getElementById('autonomousModeBadge');
+    const workerBadge = document.getElementById('autonomousWorkerBadge');
+    const toggleBtn = document.getElementById('toggleAutonomousBtn');
+    const slotsBadge = document.getElementById('autonomousSlotsBadge');
+
+    if (badge) {
+        if (st.enabled) {
+            badge.textContent = '100% Zero-Click Active';
+            badge.style.background = 'rgba(16,185,129,0.15)';
+            badge.style.color = '#10b981';
+            badge.style.borderColor = 'rgba(16,185,129,0.3)';
+        } else {
+            badge.textContent = 'Paused';
+            badge.style.background = 'rgba(239,68,68,0.15)';
+            badge.style.color = '#ef4444';
+            badge.style.borderColor = 'rgba(239,68,68,0.3)';
+        }
+    }
+
+    if (workerBadge) {
+        if (wd.status === 'RUNNING') {
+            workerBadge.textContent = 'Worker: Running ⚡';
+            workerBadge.style.background = 'rgba(56,189,248,0.2)';
+            workerBadge.style.color = '#38bdf8';
+            workerBadge.style.borderColor = 'rgba(56,189,248,0.4)';
+        } else if (wd.status === 'HEALTHY') {
+            const ageText = wd.age_minutes != null ? `${wd.age_minutes}m ago` : 'active';
+            workerBadge.textContent = `Worker: Healthy (${ageText})`;
+            workerBadge.style.background = 'rgba(16,185,129,0.15)';
+            workerBadge.style.color = '#10b981';
+            workerBadge.style.borderColor = 'rgba(16,185,129,0.3)';
+        } else if (wd.status === 'WORKER_STALE') {
+            workerBadge.textContent = `Worker: Stale (${wd.age_minutes}m)`;
+            workerBadge.style.background = 'rgba(245,158,11,0.15)';
+            workerBadge.style.color = '#f59e0b';
+            workerBadge.style.borderColor = 'rgba(245,158,11,0.3)';
+        } else if (wd.status === 'MARKET_CLOSED') {
+            workerBadge.textContent = 'Worker: Standby (Closed)';
+            workerBadge.style.background = 'rgba(148,163,184,0.15)';
+            workerBadge.style.color = '#94a3b8';
+            workerBadge.style.borderColor = 'rgba(148,163,184,0.3)';
+        } else {
+            workerBadge.textContent = 'Worker: Idle';
+            workerBadge.style.background = 'rgba(148,163,184,0.15)';
+            workerBadge.style.color = '#94a3b8';
+            workerBadge.style.borderColor = 'rgba(148,163,184,0.3)';
+        }
+    }
+
+    if (toggleBtn) {
+        toggleBtn.textContent = st.enabled ? 'Pause Auto-Trade' : 'Resume Auto-Trade';
+    }
+    if (slotsBadge) {
+        slotsBadge.textContent = `Slots: ${st.open_positions || 0}/${st.max_positions || 8} Active`;
+    }
+}
+
+function renderAutonomousStatusError(err) {
+    const workerBadge = document.getElementById('autonomousWorkerBadge');
+    if (workerBadge) {
+        workerBadge.textContent = 'Worker: Unavailable (Retry)';
+        workerBadge.style.background = 'rgba(244,63,94,0.15)';
+        workerBadge.style.color = '#f43f5e';
+        workerBadge.style.borderColor = 'rgba(244,63,94,0.3)';
+        workerBadge.style.cursor = 'pointer';
+        workerBadge.title = 'Click to retry status check: ' + (err?.message || 'Network error');
+        workerBadge.onclick = () => fetchAutonomousStatus({ isManual: true });
+    }
+}
+
+async function fetchAutonomousFeed({ isManual = false } = {}) {
+    if (_autonomousFeedInFlight && !isManual) return;
+    _autonomousFeedInFlight = true;
+    const currentGen = ++_autonomousFeedGen;
+
+    if (_autonomousFeedController) {
+        try { _autonomousFeedController.abort(); } catch (_) {}
+    }
+    _autonomousFeedController = new AbortController();
+
+    try {
+        const res = await fetchWithTimeout(`${API}/api/autonomous/feed?limit=25&_ts=${Date.now()}`, {
+            signal: _autonomousFeedController.signal,
+            headers: _getAuthHeaders(),
+        }, 15000);
+
+        if (currentGen !== _autonomousFeedGen) return;
+
+        const data = await parseJsonResponse(res);
+        if (data && data.ok && Array.isArray(data.feed)) {
+            _lastAutonomousFeedData = data;
+            renderAutonomousFeedUI(data.feed, { isCached: false });
+            try {
+                localStorage.setItem(AUTO_FEED_STORAGE_KEY, JSON.stringify({
+                    cached_at: Date.now(),
+                    feed: data.feed.slice(0, 25),
+                }));
+            } catch (_) {}
+        } else {
+            renderAutonomousFeedError(new Error(data?.message || 'Feed payload invalid'));
+        }
+    } catch (err) {
+        if (currentGen !== _autonomousFeedGen) return;
+        renderAutonomousFeedError(err);
+    } finally {
+        _autonomousFeedInFlight = false;
+        _autonomousFeedController = null;
+    }
+}
+
+function renderAutonomousFeedUI(rawFeed, { isCached = false } = {}) {
+    const listEl = document.getElementById('autonomousDecisionFeedList');
+    if (!listEl) return;
+
+    if (!Array.isArray(rawFeed) || rawFeed.length === 0) {
+        listEl.innerHTML = '<div style="color:var(--text-muted,#94a3b8);font-size:12px;padding:0.5rem;">Autonomous engine active. Monitoring candles for qualified entries...</div>';
+        return;
+    }
+
+    let lastAction = null;
+    const displayFeed = rawFeed.filter(item => {
+        const act = (item.action || '').toUpperCase();
+        const isStandby = (act === 'MARKET_CLOSED' || act === 'SYSTEM_STANDBY');
+        if (isStandby && (lastAction === 'MARKET_CLOSED' || lastAction === 'SYSTEM_STANDBY')) {
+            return false;
+        }
+        lastAction = act;
+        return true;
+    });
+
+    if (displayFeed.length === 0) {
+        listEl.innerHTML = '<div style="color:var(--text-muted,#94a3b8);font-size:12px;padding:0.5rem;">Autonomous engine active. Monitoring candles for qualified entries...</div>';
+        return;
+    }
+
+    listEl.innerHTML = displayFeed.map(item => {
+        let badgeColor = '#38bdf8';
+        let bgBadge = 'rgba(56,189,248,0.15)';
+        const act = (item.action || '').toUpperCase();
+
+        if (act === 'AUTO_ENTER') {
+            badgeColor = '#10b981';
+            bgBadge = 'rgba(16,185,129,0.15)';
+        } else if (act.includes('TP') || act.includes('TARGET') || act.includes('TRAILING')) {
+            badgeColor = '#10b981';
+            bgBadge = 'rgba(16,185,129,0.15)';
+        } else if (act.includes('SL') || act.includes('STOP')) {
+            badgeColor = '#f43f5e';
+            bgBadge = 'rgba(244,63,94,0.15)';
+        } else if (act.includes('EOD') || act.includes('SQUAREOFF')) {
+            badgeColor = '#f59e0b';
+            bgBadge = 'rgba(245,158,11,0.15)';
+        } else if (act.includes('SKIP') || act.includes('DUPLICATE')) {
+            badgeColor = '#a855f7';
+            bgBadge = 'rgba(168,85,247,0.15)';
+        } else if (act === 'NO_TRADE' || act.includes('CLOSED')) {
+            badgeColor = '#94a3b8';
+            bgBadge = 'rgba(148,163,184,0.15)';
+        }
+
+        const tsStr = item.timestamp ? (item.timestamp.endsWith('Z') || item.timestamp.includes('+') ? item.timestamp : item.timestamp + 'Z') : null;
+        const timeStr = tsStr ? new Date(tsStr).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) : '';
+        const pnlText = (item.pnl_pct !== null && item.pnl_pct !== undefined) ? `<span style="color:${item.pnl_pct >= 0 ? '#10b981' : '#f43f5e'};font-weight:600;">(${item.pnl_pct >= 0 ? '+' : ''}${item.pnl_pct}%)</span>` : '';
+        const priceText = item.price ? `₹${Number(item.price).toLocaleString('en-IN')}` : '';
+        const scorePill = item.qs_score > 0 ? `<span style="font-size:10px;color:#38bdf8;background:rgba(56,189,248,0.1);padding:1px 4px;border-radius:3px;">QS ${item.qs_score}</span>` : '';
+
+        return `
+            <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:6px;padding:6px 10px;font-size:12px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-family:monospace;font-size:10px;color:var(--text-muted,#94a3b8);">${timeStr}</span>
+                    <span style="background:${bgBadge};color:${badgeColor};border:1px solid ${badgeColor}33;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">${escapeHtml(item.action)}</span>
+                    <strong style="color:var(--text,#f8fafc);">${escapeHtml(item.symbol)}</strong>
+                    ${item.direction && item.direction !== 'HOLD' && item.direction !== 'NEUTRAL' ? `<span style="color:${item.direction === 'LONG' ? '#10b981' : '#f43f5e'};font-weight:600;font-size:11px;">${escapeHtml(item.direction)}</span>` : ''}
+                    ${priceText ? `<span style="font-family:monospace;font-size:11px;color:var(--text-muted,#94a3b8);">${priceText}</span>` : ''}
+                    ${scorePill}
+                    ${pnlText}
+                </div>
+                <div style="color:var(--text-muted,#94a3b8);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(item.reason || '')}">
+                    ${escapeHtml(item.reason || '')}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderAutonomousFeedError(err) {
+    const listEl = document.getElementById('autonomousDecisionFeedList');
+    if (!listEl) return;
+    if (_lastAutonomousFeedData && Array.isArray(_lastAutonomousFeedData.feed) && _lastAutonomousFeedData.feed.length > 0) {
+        return;
+    }
+    listEl.innerHTML = `
+        <div style="color:#f43f5e;font-size:12px;padding:0.6rem;display:flex;align-items:center;justify-content:space-between;background:rgba(244,63,94,0.08);border-radius:6px;border:1px solid rgba(244,63,94,0.2);">
+            <span>Could not load decision feed (${escapeHtml(err?.message || 'Network timeout')}).</span>
+            <button type="button" onclick="fetchAutonomousFeed({ isManual: true })" style="padding:2px 8px;font-size:11px;background:#1e293b;border:1px solid #475569;border-radius:4px;color:#94a3b8;cursor:pointer;">Retry</button>
+        </div>
+    `;
+}
+
+function _scheduleAutonomousPoll() {
+    if (_autonomousPollTimer) {
+        clearTimeout(_autonomousPollTimer);
+        _autonomousPollTimer = null;
+    }
+
+    if (typeof document !== 'undefined' && document.hidden) return; // Tab paused
+
+    let intervalMs = 20000;
+    const isNseOpen = _lastAutonomousStatusData?.watchdog?.is_nse_market_open;
+    if (!isNseOpen) {
+        intervalMs = 60000;
+    }
+    if (_autonomousConsecutiveErrors > 0) {
+        intervalMs = Math.min(intervalMs * Math.pow(1.5, _autonomousConsecutiveErrors), 120000);
+    }
+
+    _autonomousPollTimer = setTimeout(() => {
+        loadAutonomousFeed({ isManual: false });
+    }, intervalMs);
+}
+
+async function loadAutonomousFeed({ isManual = false } = {}) {
+    await Promise.allSettled([
+        fetchAutonomousStatus({ isManual }),
+        fetchAutonomousFeed({ isManual }),
+    ]);
+    _scheduleAutonomousPoll();
+}
+
+if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            if (_autonomousPollTimer) {
+                clearTimeout(_autonomousPollTimer);
+                _autonomousPollTimer = null;
+            }
+            if (_autonomousStatusController) {
+                try { _autonomousStatusController.abort(); } catch (_) {}
+            }
+            if (_autonomousFeedController) {
+                try { _autonomousFeedController.abort(); } catch (_) {}
+            }
+        } else {
+            loadAutonomousFeed({ isManual: false });
+        }
+    });
+}
+
 
 async function runAutonomousCycleNow() {
     const btn = document.getElementById('runAutonomousCycleBtn');
@@ -26146,3 +26336,135 @@ function renderMacroIntelligence(macro) {
 }
 
 // (Enhanced openEdgeResearchDrawer and closeEdgeResearchDrawer moved to Edge Engine 3.0 section above)
+
+
+// ── Section 6A: Market Control & Protected Crypto / Forex Switch ─────────────
+let _marketControlState = { crypto_forex_enabled: false };
+
+async function fetchMarketControlStatus() {
+    try {
+        const res = await fetchWithTimeout(`${API}/api/market-control/status`, {}, 6000);
+        if (res.ok) {
+            const data = await res.json();
+            _marketControlState = data;
+            renderMarketControlUI(data);
+        }
+    } catch (e) {
+        console.debug("Market control status check skipped:", e);
+    }
+}
+
+function renderMarketControlUI(data) {
+    const btn = document.getElementById("cryptoForexToggleBtn");
+    const badge = document.getElementById("marketControlModeBadge");
+    if (!btn || !badge) return;
+
+    const isEnabled = Boolean(data.crypto_forex_enabled);
+    if (isEnabled) {
+        btn.textContent = "ON";
+        btn.style.background = "#059669";
+        btn.style.borderColor = "#10b981";
+        btn.style.color = "#ffffff";
+        badge.textContent = "Multi-Asset";
+        badge.style.background = "rgba(16, 185, 129, 0.2)";
+        badge.style.color = "#34d399";
+    } else {
+        btn.textContent = "OFF";
+        btn.style.background = "#1e293b";
+        btn.style.borderColor = "#475569";
+        btn.style.color = "#94a3b8";
+        badge.textContent = "NSE Focus";
+        badge.style.background = "rgba(59, 130, 246, 0.2)";
+        badge.style.color = "#60a5fa";
+    }
+}
+
+function handleCryptoForexToggleClick() {
+    const isCurrentlyOn = Boolean(_marketControlState.crypto_forex_enabled);
+    if (isCurrentlyOn) {
+        if (confirm("Switch back to strict NSE Focus Mode? This disables all Crypto and Forex background feeds and tasks.")) {
+            executeMarketControlToggle(false, null);
+        }
+    } else {
+        const modal = document.getElementById("marketControlPasswordModal");
+        const err = document.getElementById("marketControlErrorMsg");
+        const inp = document.getElementById("marketControlPasswordInput");
+        if (err) { err.style.display = "none"; err.textContent = ""; }
+        if (inp) { inp.value = ""; }
+        if (modal) { modal.style.display = "flex"; inp && inp.focus(); }
+    }
+}
+
+function closeMarketControlModal() {
+    const modal = document.getElementById("marketControlPasswordModal");
+    if (modal) modal.style.display = "none";
+}
+
+async function submitMarketControlPassword() {
+    const inp = document.getElementById("marketControlPasswordInput");
+    const err = document.getElementById("marketControlErrorMsg");
+    const submitBtn = document.getElementById("marketControlSubmitBtn");
+    const pwd = inp ? inp.value.trim() : "";
+
+    if (!pwd) {
+        if (err) { err.textContent = "Please enter operator password."; err.style.display = "block"; }
+        return;
+    }
+
+    if (submitBtn) { submitBtn.textContent = "Verifying..."; submitBtn.disabled = true; }
+    if (err) { err.style.display = "none"; }
+
+    try {
+        const res = await fetch(`${API}/api/market-control/toggle`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ..._getAuthHeaders() },
+            body: JSON.stringify({ enabled: true, password: pwd, reason: "Operator activated Crypto/Forex override" }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            closeMarketControlModal();
+            _marketControlState = data.state;
+            renderMarketControlUI(data.state);
+            if (typeof showToast === "function") showToast("Crypto & Forex processing successfully enabled.", "success");
+        } else {
+            if (err) {
+                err.textContent = data.message || "Authorization failed. Check password.";
+                err.style.display = "block";
+            }
+        }
+    } catch (e) {
+        if (err) {
+            err.textContent = "Network error during verification: " + e.message;
+            err.style.display = "block";
+        }
+    } finally {
+        if (submitBtn) { submitBtn.textContent = "Authorize & Enable"; submitBtn.disabled = false; }
+    }
+}
+
+async function executeMarketControlToggle(enabled, password) {
+    const btn = document.getElementById("cryptoForexToggleBtn");
+    if (btn) { btn.textContent = "..."; btn.disabled = true; }
+
+    try {
+        const res = await fetch(`${API}/api/market-control/toggle`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ..._getAuthHeaders() },
+            body: JSON.stringify({ enabled: enabled, password: password, reason: enabled ? "Operator ON" : "Operator OFF" }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            _marketControlState = data.state;
+            renderMarketControlUI(data.state);
+            if (typeof showToast === "function") showToast(data.message, "info");
+        } else {
+            alert(data.message || "Failed to change market control state.");
+            renderMarketControlUI(_marketControlState);
+        }
+    } catch (e) {
+        alert("Error updating market control state: " + e.message);
+        renderMarketControlUI(_marketControlState);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}

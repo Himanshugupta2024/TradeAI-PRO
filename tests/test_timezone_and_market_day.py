@@ -111,15 +111,15 @@ def test_session_gate_boundary_conditions():
     assert is_open
     assert reason == "SESSION_ACTIVE"
 
-    # 15:30:00 IST -> Open (closing boundary)
-    t_close = datetime(2026, 11, 4, 15, 30, 0, tzinfo=_IST)
-    is_open, reason = is_nse_market_open(t_close)
+    # 15:29:59 IST -> Open (Section 6A: 09:15:00 inclusive to 15:30:00 exclusive)
+    t_late = datetime(2026, 11, 4, 15, 29, 59, tzinfo=_IST)
+    is_open, reason = is_nse_market_open(t_late)
     assert is_open
     assert reason == "SESSION_ACTIVE"
 
-    # 15:30:01 IST -> Closed
-    t_post = datetime(2026, 11, 4, 15, 30, 1, tzinfo=_IST)
-    is_open, reason = is_nse_market_open(t_post)
+    # 15:30:00 IST -> Closed (15:30:00 exclusive)
+    t_close = datetime(2026, 11, 4, 15, 30, 0, tzinfo=_IST)
+    is_open, reason = is_nse_market_open(t_close)
     assert not is_open
     assert reason == "NSE_POST_MARKET"
 
