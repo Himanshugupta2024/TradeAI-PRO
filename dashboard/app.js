@@ -2497,13 +2497,13 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
             res = await fetchWithTimeout(targetUrl, {
                 signal: _autonomousStatusController.signal,
                 headers: reqHeaders,
-            }, 15000);
+            }, 10000, 0);
         } catch (netErr) {
             if (!API || String(targetUrl).startsWith('/') || String(targetUrl).includes('workers.dev')) {
                 res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`, {
                     signal: _autonomousStatusController.signal,
                     headers: reqHeaders,
-                }, 15000);
+                }, 10000, 0);
             } else {
                 throw netErr;
             }
@@ -2514,7 +2514,7 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
             res = await fetchWithTimeout(`https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`, {
                 signal: _autonomousStatusController.signal,
                 headers: reqHeaders,
-            }, 15000);
+            }, 10000, 0);
         }
 
         if (currentGen !== _autonomousStatusGen) return; // Stale response discarded
