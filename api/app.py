@@ -134,17 +134,8 @@ async def _keep_alive_task():
 
     """Periodically ping public URL or localhost fallback to prevent Render free-tier spin-down."""
 
-    public_url = os.environ.get("RENDER_EXTERNAL_URL")
-
-    if public_url:
-
-        url = f"{public_url.rstrip('/')}/api/health"
-
-    else:
-
-        port = int(os.environ.get("PORT", 10000))
-
-        url = f"http://localhost:{port}/api/health"
+    public_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://trading-api-n1wt.onrender.com"
+    url = f"{public_url.rstrip('/')}/api/health"
 
 
 
@@ -326,7 +317,7 @@ def _lifespan_context():
 
 
 
-        if _env_flag("SELF_PING_ENABLED", False):
+        if _env_flag("SELF_PING_ENABLED", True):
 
             _spawn_task(_keep_alive_task(), name="keep_alive_task")
 

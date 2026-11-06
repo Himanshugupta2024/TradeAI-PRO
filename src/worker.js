@@ -153,6 +153,18 @@ export default {
       try {
         originResponse = await fetch(originRequest);
       } catch (err) {
+        if (isPublicCacheable) {
+          try {
+            const stale = await cache.match(request.url);
+            if (stale) {
+              const res = new Response(stale.body, stale);
+              res.headers.set("CF-Cache-Status", "STALE-FALLBACK-ERR");
+              res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+              res.headers.set("Access-Control-Allow-Origin", "*");
+              return res;
+            }
+          } catch (_) {}
+        }
         return new Response(JSON.stringify({ error: "Backend origin unavailable", detail: String(err) }), {
           status: 502,
           headers: {
@@ -160,6 +172,20 @@ export default {
             "Access-Control-Allow-Origin": "*",
           },
         });
+      }
+
+      // If origin returns 502 or 503, fallback to stale edge cache if available
+      if (isPublicCacheable && (originResponse.status === 502 || originResponse.status === 503)) {
+        try {
+          const stale = await cache.match(request.url);
+          if (stale) {
+            const res = new Response(stale.body, stale);
+            res.headers.set("CF-Cache-Status", "STALE-FALLBACK-503");
+            res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+            res.headers.set("Access-Control-Allow-Origin", "*");
+            return res;
+          }
+        } catch (_) {}
       }
 
       // Public Cacheable: Store in cache and return MISS with unified headers

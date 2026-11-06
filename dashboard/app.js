@@ -500,6 +500,17 @@ function hydrateFromLocalStorageCache() {
 
 
 
+    
+        const rawCockpit = localStorage.getItem('tradeai_cached_cockpit_v1');
+        if (rawCockpit) {
+            try {
+                const cachedCockpit = JSON.parse(rawCockpit);
+                if (cachedCockpit && !cachedCockpit.error) {
+                    _lastCockpitData = cachedCockpit;
+                    renderCockpit(cachedCockpit);
+                }
+            } catch (_) {}
+        }
     } catch (e) {
 
 
@@ -2764,7 +2775,7 @@ async function loadAllData({ background = false } = {}) {
 
         shouldFetchOpps ? fetchWithTimeout(`${API}/api/screener/opportunities`, {}, 25000).then((r) => { _lastOppsFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
 
-        fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 25000).then((r) => parseJsonResponse(r)).catch(() => null),
+        fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 60000).then((r) => parseJsonResponse(r)).catch(() => null),
 
         shouldFetchMorning ? fetchWithTimeout(`${API}/api/morning-scan`, {}, 20000).then((r) => { _lastMorningFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
 
@@ -3101,6 +3112,18 @@ async function loadAllData({ background = false } = {}) {
 
 
 
+        try {
+
+
+
+            localStorage.setItem('tradeai_cached_cockpit_v1', JSON.stringify(cockpitData));
+
+
+
+        } catch (_) {}
+
+
+
         renderCockpit(cockpitData);
 
 
@@ -3125,11 +3148,15 @@ async function loadAllData({ background = false } = {}) {
 
 
 
-            : 'Could not load decision cockpit. Is the API running?';
+            : 'Connecting to market decision engine... Please wait a moment.';
 
 
 
         renderCockpitError(errMsg);
+
+
+
+        setTimeout(() => { if (!_isRefreshing) loadAllData({ background: true }); }, 6000);
 
 
 

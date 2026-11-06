@@ -1,8 +1,12 @@
 name: Production Backend Keep-Alive
 
 on:
-  # Cron disabled to conserve GitHub Actions monthly quota on private repository.
-  # 24/7 background keep-alive is handled internally by FastAPI async self-ping and Cloudflare Worker traffic.
+  schedule:
+    # Public Repo: Free unlimited Linux runner minutes
+    # Every 10 minutes during pre-market & market hours (03:00 to 10:30 UTC = 08:30 to 16:00 IST)
+    - cron: '*/10 3-10 * * 1-5'
+    # Off-hours & weekends: Every 2 hours
+    - cron: '0 */2 * * 0,6'
   workflow_dispatch:
     inputs:
       target_url:
