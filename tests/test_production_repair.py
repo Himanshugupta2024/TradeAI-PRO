@@ -174,7 +174,7 @@ def test_short_paper_trade_geometry_and_raw_preservation():
 
 def test_breakout_52w_high_lookback_excludes_current_bar():
     """Verify 52W high baseline excludes current candle to prevent self-comparison."""
-    dates = pd.date_range(end=datetime.now(), periods=260, freq="B")
+    dates = pd.date_range(start="2025-01-01", periods=260, freq="B")
     highs = [100.0 + (i % 20) for i in range(259)] + [135.0]
     lows = [h - 5.0 for h in highs]
     closes = [h - 1.0 for h in highs]
