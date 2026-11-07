@@ -44,7 +44,7 @@ const API = (() => {
     }
     const host = window.location.hostname;
     if (host.endsWith('workers.dev')) {
-        return 'https://trading-api-n1wt.onrender.com';
+        return '';
     }
     if (
         host.endsWith('pages.dev') ||
