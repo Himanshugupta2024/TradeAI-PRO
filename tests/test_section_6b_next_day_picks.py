@@ -210,13 +210,14 @@ def test_outcome_resolution_all_permutations():
     assert updated_pick["outcome_status"] == "RESOLVED_LOSS"
     assert updated_pick["outcome_details"]["exit_price"] == stop
 
-    # Case C: NOT_TRIGGERED (high below trigger)
+    # Case C: NOT_TRIGGERED (high below trigger, open safely between stop and trigger)
+    safe_mid = round((trigger + stop) / 2.0, 2)
     candles_not_trig = {
         sym: {
-            "open": trigger - 10.0,
-            "high": trigger - 2.0,
-            "low": stop + 5.0,
-            "close": trigger - 5.0,
+            "open": safe_mid,
+            "high": trigger - 0.5,
+            "low": safe_mid - 0.2,
+            "close": safe_mid,
         }
     }
     res_not_trig = resolve_report_outcomes(report_id, candles_not_trig)
