@@ -65,7 +65,9 @@ function harden(response) {
   });
 }
 
-// Strict Allowlist of Public Market-Data Endpoints eligible for shared edge caching
+// Strict Allowlist of Public Market-Data Endpoints eligible for shared edge caching.
+// /api/health/live is deliberately absent: caching a liveness probe lets a stale
+// "alive" answer mask a dead origin for up to the full SWR window.
 const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/overview/intelligence",
   "/api/dashboard/overview",
@@ -98,7 +100,6 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/research/next-day-picks",
   "/api/research/next-day-picks/history",
   "/api/health",
-  "/api/health/live",
 ]);
 
 function isPathCacheable(pathname) {
@@ -517,7 +518,10 @@ export default {
 };
 
 export async function handleScheduled(event, env, ctx, fetchFn = fetch) {
-  const healthUrl = `${BACKEND_ORIGIN}/api/health`;
+  // Keep-warm ping. Probe the cheap liveness route, not /api/health: the rich
+  // health endpoint walks the DB, model registry and feed state, so a 5-minute
+  // cron hammering it burns the free instance's CPU budget for no benefit.
+  const healthUrl = `${BACKEND_ORIGIN}/api/health/live`;
   try {
     const res = await fetchFn(healthUrl, {
       method: "GET",
