@@ -4675,8 +4675,8 @@ async def run_backtest(
             return {"error": f"Symbol {symbol} not found or no historical data available"}
 
         if "timestamp" in df.columns:
-            cutoff = datetime.now() - timedelta(days=days)
             ts = pd.to_datetime(df["timestamp"], errors="coerce")
+            cutoff = pd.Timestamp.now(tz=ts.dt.tz) - pd.Timedelta(days=days)
             df_window = df.loc[ts >= cutoff].copy()
             if not df_window.empty and len(df_window) >= 10:
                 df = df_window
