@@ -167,16 +167,22 @@ class TestMarketMoodNoRecursion(unittest.TestCase):
         """_compute_market_mood iterates over _signal_cache without calling _get_signal_for_symbol."""
         import api.service as svc
 
-        test_df = pd.DataFrame({"signal": ["HOLD", "LONG"], "close": [100.0, 105.0]})
-        with patch.object(svc, "_get_signal_for_symbol") as mock_get_signal:
-            svc._signal_cache = {"TEST_SYM": test_df}
-            svc._market_data = {"TEST_SYM": test_df}
+        orig_signal_cache = svc._signal_cache
+        orig_market_data = svc._market_data
+        test_df = pd.DataFrame({"signal": ["HOLD", "LONG"], "close": [100.0, 105.0], "timestamp": [pd.Timestamp.now(), pd.Timestamp.now()]})
+        try:
+            with patch.object(svc, "_get_signal_for_symbol") as mock_get_signal:
+                svc._signal_cache = {"TEST_SYM": test_df}
+                svc._market_data = {"TEST_SYM": test_df}
 
-            mood = svc._compute_market_mood()
-            # _get_signal_for_symbol must NOT have been called
-            mock_get_signal.assert_not_called()
-            self.assertIn("mood", mood)
-            self.assertEqual(mood["signals"]["long"], 1)
+                mood = svc._compute_market_mood()
+                # _get_signal_for_symbol must NOT have been called
+                mock_get_signal.assert_not_called()
+                self.assertIn("mood", mood)
+                self.assertEqual(mood["signals"]["long"], 1)
+        finally:
+            svc._signal_cache = orig_signal_cache
+            svc._market_data = orig_market_data
 
 
 class TestWebRouteGuardsAndHeaders(unittest.TestCase):

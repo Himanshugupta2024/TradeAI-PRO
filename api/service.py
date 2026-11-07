@@ -1741,9 +1741,10 @@ def _get_signal_for_symbol(symbol: str) -> dict:
     )
     current_trend = _clean_trend(last.get("htf_trend", "NEUTRAL"))
     current_regime = _regime_cache.get(symbol, "RANGING")
-    current_ts = last["timestamp"].isoformat()
+    ts_val = last.get("timestamp")
+    current_ts = ts_val.isoformat() if hasattr(ts_val, "isoformat") else (str(ts_val) if ts_val is not None else datetime.now(timezone.utc).isoformat())
     current_conf = _cap_confidence(last.get("confidence", last.get("ai_confidence", 0)))
-    current_age_min = _signal_age_minutes(last.get("timestamp"))
+    current_age_min = _signal_age_minutes(ts_val)
     stale_threshold_min = _stale_threshold_minutes(symbol)
 
     # Look for non-HOLD signal within the LAST 100 bars (recent window)
