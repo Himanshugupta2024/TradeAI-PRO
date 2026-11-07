@@ -27726,30 +27726,85 @@ async function loadDedicatedWatchlist() {
         }
     });
 
-    // Paced batching (concurrency cap: 2) to protect Render 512MB RAM and avoid Cloudflare 429
+    // 1. Bulk pre-fetch via single round-trip /api/watchlist/quotes
     const quotes = {};
+    let bulkQuotes = {};
+    try {
+        const symQuery = encodeURIComponent(list.join(','));
+        const bulkRes = await fetchSafeJSON(`${API}/api/watchlist/quotes?symbols=${symQuery}`, {}, 12000);
+        if (bulkRes.ok && bulkRes.data && bulkRes.data.quotes) {
+            bulkQuotes = bulkRes.data.quotes;
+        }
+    } catch (_) {}
+
+    // 2. Map results with fallback to signal pool and individual fetcher
+    let hasSyncingSymbols = false;
     for (let i = 0; i < list.length; i += 2) {
         const batch = list.slice(i, i + 2);
         const batchResults = await Promise.all(batch.map(async (sym) => {
+            const bQuote = bulkQuotes[sym];
+            if (bQuote && Number(bQuote.ltp || 0) > 0) {
+                const ltp = Number(bQuote.ltp);
+                const qObj = {
+                    ltp,
+                    changePct: Number(bQuote.change_pct || 0),
+                    signalLabel: bQuote.signal || 'MONITOR',
+                    conf: Number(bQuote.confidence || 65),
+                    entry: Number(bQuote.entry || ltp),
+                    sl: Number(bQuote.stop_loss || (ltp * 0.98)),
+                    tp: Number(bQuote.target || (ltp * 1.035)),
+                    isError: false,
+                    isSyncing: false,
+                    ts: Date.now()
+                };
+                _watchlistQuoteCache[sym] = qObj;
+                return { sym, data: qObj };
+            }
+
             const sig = signalsMap[sym];
             if (sig && (sig.close || sig.entry)) {
                 const ltp = Number(sig.close || sig.entry || 0);
-                return {
-                    sym,
-                    data: {
-                        ltp,
-                        changePct: Number(sig.change_pct || 0),
-                        signalLabel: sig.signal || 'MONITOR',
-                        conf: sig.confidence || 65,
-                        entry: Number(sig.entry || ltp),
-                        sl: Number(sig.stop_loss || (ltp > 0 ? ltp * 0.98 : 0)),
-                        tp: Number(sig.target || (ltp > 0 ? ltp * 1.035 : 0)),
-                        isError: false,
-                        ts: Date.now()
-                    }
+                const qObj = {
+                    ltp,
+                    changePct: Number(sig.change_pct || 0),
+                    signalLabel: sig.signal || 'MONITOR',
+                    conf: sig.confidence || 65,
+                    entry: Number(sig.entry || ltp),
+                    sl: Number(sig.stop_loss || (ltp > 0 ? ltp * 0.98 : 0)),
+                    tp: Number(sig.target || (ltp > 0 ? ltp * 1.035 : 0)),
+                    isError: false,
+                    isSyncing: false,
+                    ts: Date.now()
                 };
+                _watchlistQuoteCache[sym] = qObj;
+                return { sym, data: qObj };
             }
+
             const q = await _fetchWatchlistQuote(sym);
+            if (q.isError || !q.ltp) {
+                if (typeof marketDataCache !== 'undefined' && marketDataCache[sym] && marketDataCache[sym].close) {
+                    const ltp = Number(marketDataCache[sym].close || 0);
+                    if (ltp > 0) {
+                        return {
+                            sym,
+                            data: {
+                                ltp,
+                                changePct: Number(marketDataCache[sym].change_pct || 0),
+                                signalLabel: 'MONITOR',
+                                conf: 60,
+                                entry: ltp,
+                                sl: Number((ltp * 0.98).toFixed(1)),
+                                tp: Number((ltp * 1.035).toFixed(1)),
+                                isError: false,
+                                isSyncing: true,
+                                isCachedFallback: true,
+                                ts: Date.now()
+                            }
+                        };
+                    }
+                }
+                hasSyncingSymbols = true;
+            }
             return { sym, data: q };
         }));
         batchResults.forEach(r => { quotes[r.sym] = r.data; });
@@ -27761,15 +27816,15 @@ async function loadDedicatedWatchlist() {
 
         if (q.isError || !q.ltp || q.ltp === 0) {
             return `
-                <div class="watchlist-card watchlist-card-error" style="border-color: rgba(239,68,68,0.25);">
+                <div class="watchlist-card watchlist-card-syncing" style="border-color: rgba(59,130,246,0.25);">
                     <div class="watchlist-header">
                         <div class="watchlist-sym-block">
                             <span class="watchlist-sym">${sym}</span>
                             <span class="watchlist-name">${_escHtml(compName)}</span>
                         </div>
                         <div style="display:flex;align-items:center;gap:6px;">
-                            <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:rgba(239,68,68,0.12);color:var(--red,#ef4444);border:1px solid rgba(239,68,68,0.3);">
-                                OFFLINE / RETRY
+                            <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);">
+                                SYNCING FEED
                             </span>
                         </div>
                     </div>
@@ -27777,7 +27832,10 @@ async function loadDedicatedWatchlist() {
                     <div class="watchlist-price-row" style="padding: 0.6rem 0; opacity: 0.85;">
                         <div>
                             <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
-                            <div style="font-size: 0.9rem; font-weight: 700; color: var(--text-muted); font-family: var(--font-mono);">Quote Unavailable</div>
+                            <div style="font-size: 0.9rem; font-weight: 700; color: #94a3b8; font-family: var(--font-mono); display:flex; align-items:center; gap:6px;">
+                                <span class="spinner-inline" style="width:10px;height:10px;border:2px solid rgba(148,163,184,0.2);border-top-color:#60a5fa;border-radius:50%;display:inline-block;"></span>
+                                Syncing Quote...
+                            </div>
                         </div>
                         <div style="text-align:right;">
                             <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
@@ -27802,7 +27860,7 @@ async function loadDedicatedWatchlist() {
 
                     <div class="watchlist-actions" style="display:flex;align-items:center;gap:6px;">
                         <button class="watchlist-inspect-btn" onclick="retryWatchlistSymbol('${sym}')" style="background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.35); color: #60a5fa;" title="Retry loading ${sym} quote">
-                            🔄 Retry Fetch
+                            🔄 Retry
                         </button>
                         <button class="watchlist-inspect-btn" onclick="fetchAndShowQuote('${sym}')" title="Inspect ${sym} chart modal">
                             ⚡ Inspect
@@ -27888,6 +27946,15 @@ async function loadDedicatedWatchlist() {
     });
 
     grid.innerHTML = cardsHtml.join('');
+
+    if (hasSyncingSymbols && !window._watchlistAutoRetryTimer) {
+        window._watchlistAutoRetryTimer = setTimeout(() => {
+            window._watchlistAutoRetryTimer = null;
+            if (typeof currentTab !== 'undefined' && currentTab === 'watchlist') {
+                loadDedicatedWatchlist();
+            }
+        }, 3500);
+    }
 }
 
 
