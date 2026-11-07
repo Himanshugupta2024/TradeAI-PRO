@@ -115,12 +115,15 @@ def apply_signal_freshness(signal: dict, now: Any = None) -> dict:
         except (ValueError, TypeError):
             pass
 
-    # Degenerate level guard
+    # Degenerate level guard — only meaningful for trade signals
     e = out.get("entry")
     s = out.get("stop_loss")
     t = out.get("target")
+    direction = str(out.get("signal") or out.get("direction") or "").upper()
+    is_trade_signal = direction in ("LONG", "SHORT", "BUY", "SELL")
     levels_src = out.get("levels_source", "ENGINE")
-    if e is not None:
+
+    if e is not None and is_trade_signal:
         if s is not None and s == e:
             out["stop_loss"] = None
             levels_src = "UNAVAILABLE"
@@ -130,6 +133,10 @@ def apply_signal_freshness(signal: dict, now: Any = None) -> dict:
         if out.get("stop_loss") is None and out.get("target") is None:
             levels_src = "UNAVAILABLE"
             out["actionable"] = False
+    elif e is not None and not is_trade_signal:
+        # HOLD / SKIP / WAIT: no levels expected, nothing is missing
+        levels_src = out.get("levels_source") or "NONE"
+
     out["levels_source"] = levels_src
     return out
 

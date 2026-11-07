@@ -2517,6 +2517,7 @@ async def get_symbols():
 
     return {"symbols": list(svc._market_data.keys())}
 
+_NEGATIVE_SYMBOL_CACHE: dict[str, float] = {}
 def _build_market_response(clean_sym: str, df: pd.DataFrame, interval: str) -> dict:
     from api.data_honesty import classify_session
     last_bar = df.iloc[-1] if not df.empty else None
@@ -2606,6 +2607,18 @@ async def get_market_data(
             df = df.tail(limit)
             return _build_market_response(clean_sym, df, interval)
 
+        # Check negative symbol cache (10 min TTL) to short-circuit repeated misses
+        _now_neg = time.time()
+        _neg_ts = _NEGATIVE_SYMBOL_CACHE.get(clean_sym)
+        if _neg_ts is not None and (_now_neg - _neg_ts) < 600.0:
+            logger.debug("Negative symbol cache hit for %s (skipping fetch)", clean_sym)
+            raise HTTPException(status_code=404, detail={
+                "error": "SYMBOL_NOT_FOUND",
+                "symbol": clean_sym,
+                "message": f"No data for {clean_sym} on NSE or Yahoo.",
+                "hint": f"Ticker may have been renamed. Try {clean_sym}.NS or the new symbol.",
+            })
+
         # Non-crypto / Non-forex: NSE on-demand fetch
         period_map = {"5m": "5d", "15m": "10d", "1h": "30d", "1d": "90d"}
         period = period_map.get(interval, "5d")
@@ -2614,7 +2627,7 @@ async def get_market_data(
             df = await asyncio.to_thread(
                 fetch_arbitrary_symbol, clean_sym, period, interval
             )
-        # B5: Ticker alias fallback
+        # B5: Ticker alias fallback - try at most 2 extra attempts: .NS, then first alias only
         if df is None or df.empty:
             if not clean_sym.endswith(".NS"):
                 df = await asyncio.to_thread(
@@ -2624,16 +2637,18 @@ async def get_market_data(
             try:
                 from config.symbol_aliases import SYMBOL_ALIASES
                 aliases = SYMBOL_ALIASES.get(clean_sym, [])
-                for alias in aliases:
+                candidate_aliases = [a for a in aliases if a not in (clean_sym, f"{clean_sym}.NS")]
+                if candidate_aliases:
+                    first_alias = candidate_aliases[0]
                     df = await asyncio.to_thread(
-                        fetch_arbitrary_symbol, alias, period, interval
+                        fetch_arbitrary_symbol, first_alias, period, interval
                     )
-                    if df is not None and not df.empty:
-                        break
             except Exception:
                 pass
 
         if df is None or df.empty:
+            _NEGATIVE_SYMBOL_CACHE[clean_sym] = time.time()
+            logger.debug("Symbol %s not found on NSE/Yahoo; cached negative result for 10m", clean_sym)
             raise HTTPException(status_code=404, detail={
                 "error": "SYMBOL_NOT_FOUND",
                 "symbol": clean_sym,
@@ -2644,7 +2659,8 @@ async def get_market_data(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("On-demand market fetch error for %s@%s: %s", clean_sym, interval, e)
+        logger.debug("On-demand market fetch error for %s@%s: %s", clean_sym, interval, e)
+        _NEGATIVE_SYMBOL_CACHE[clean_sym] = time.time()
         raise HTTPException(status_code=404, detail={
             "error": "SYMBOL_NOT_FOUND",
             "symbol": clean_sym,

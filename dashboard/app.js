@@ -19660,12 +19660,16 @@ async function fetchAndShowQuote(symbol) {
 
         if (!resObj.ok) {
             const err = resObj.data || {};
+            const detailObj = (typeof err.detail === 'object' && err.detail !== null) ? err.detail : ((typeof resObj.detail === 'object' && resObj.detail !== null) ? resObj.detail : {});
+            const errMsg = err.error || err.detail?.error || resObj.error || resObj.detail?.error || 'Symbol not found on NSE or yFinance';
+            const detailMsg = detailObj.message || detailObj.hint || '';
             titleEl.textContent = symbol.toUpperCase();
             infoGrid.innerHTML = `
                 <div style="grid-column:1/-1;text-align:center;padding:2rem;">
                     <div style="font-size:2rem;margin-bottom:0.75rem;">⚠️</div>
                     <div style="color:var(--red);font-weight:600;margin-bottom:0.5rem;">Symbol Not Found</div>
-                    <div style="color:var(--text-muted);font-size:0.8rem;">${err.error || resObj.error || 'Symbol not found on NSE or yFinance'}</div>
+                    <div style="color:var(--text-muted);font-size:0.8rem;">${_escHtml(errMsg)}</div>
+                    ${detailMsg ? `<div style="color:var(--text-secondary);font-size:0.75rem;margin-top:0.35rem;">${_escHtml(detailMsg)}</div>` : ''}
                     <div style="margin-top:1rem;font-size:0.75rem;color:var(--text-muted);">
                         Make sure the NSE symbol is correct (e.g. <code style="color:var(--cyan)">PRECWIRE</code>, <code style="color:var(--cyan)">VEDL</code>)
                     </div>

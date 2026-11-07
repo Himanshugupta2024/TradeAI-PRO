@@ -136,6 +136,7 @@ function createCleanOriginHeaders(incomingHeaders) {
 
 // Helper to store response in Cloudflare edge cache using exact request.url string
 async function storeInEdgeCache(cache, urlStr, originResponse) {
+  if (!originResponse.ok) return;   // never cache 4xx/5xx
   try {
     const now = Date.now();
     const cacheHeaders = new Headers(originResponse.headers);

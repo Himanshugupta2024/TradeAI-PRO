@@ -178,3 +178,21 @@ def test_crypto_routing_variants(monkeypatch):
     r3 = client.get("/api/market/BTCUSDT?limit=5&interval=5m")
     assert r3.status_code == 200
     assert r3.json()["symbol"] == "BTC/USDT"
+
+
+def test_hold_signal_is_not_marked_unactionable():
+    sig = {"symbol": "SENSEX", "signal": "HOLD", "entry": 76727.35, "close": 76727.35,
+           "stop_loss": None, "target": None, "timestamp": "2026-11-07T18:00:00+05:30"}
+    out = apply_signal_freshness(sig, now="2026-11-07T18:00:00+05:30")
+    assert out["stale"] is False
+    assert "actionable" not in out or out["actionable"] is not False
+    assert out["levels_source"] == "NONE"
+
+
+def test_trade_signal_with_degenerate_levels_is_unactionable():
+    sig = {"symbol": "DOGE/USDT", "signal": "SHORT", "entry": 0.07418, "close": 0.07418,
+           "stop_loss": 0.07418, "target": 0.07418, "timestamp": "2026-11-07T18:00:00+05:30"}
+    out = apply_signal_freshness(sig, now="2026-11-07T18:00:00+05:30")
+    assert out["actionable"] is False
+    assert out["stop_loss"] is None and out["target"] is None
+    assert out["levels_source"] == "UNAVAILABLE"
