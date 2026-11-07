@@ -73,6 +73,7 @@ except Exception as _swing_store_exc:  # pragma: no cover — import-time safety
     )
 
 from agents.analytics.trade_journal import get_journal
+from api.data_honesty import price_decimals
 from agents.data_ingestion.context_fetcher import build_context_fetcher
 from agents.data_ingestion.validator import validate as validate_ohlcv
 from agents.market_intelligence.nse_fetcher import (
@@ -1716,7 +1717,9 @@ def _get_signal_for_symbol(symbol: str) -> dict:
     last = df.iloc[-1]
 
     # Always use current-bar values for these live fields
-    current_close = round(float(last["close"]), 2)
+    c_raw = float(last["close"])
+    prec_close = price_decimals(c_raw)
+    current_close = round(c_raw, prec_close)
     first_open_raw = df.iloc[0].get("open", current_close) if "open" in df.columns else current_close
     try:
         first_open = float(first_open_raw) if float(first_open_raw) != 0 else current_close
@@ -1762,6 +1765,7 @@ def _get_signal_for_symbol(symbol: str) -> dict:
             "change_pct": day_chg_pct,
             "stop_loss": None,
             "target": None,
+            "levels_source": "UNAVAILABLE",
             "rsi": current_rsi,
             "trend": current_trend,
             "regime": current_regime,
@@ -1820,7 +1824,7 @@ def _get_signal_for_symbol(symbol: str) -> dict:
     raw_dir = str(last_signal.get("_raw_direction", sig_label))
 
     raw_close = float(last_signal["close"])
-    precision = 6 if raw_close < 0.01 else (4 if raw_close < 1.0 else (3 if raw_close < 10.0 else 2))
+    precision = price_decimals(raw_close)
 
     # Entry price = signal bar's close with asset-magnitude-aware precision
     entry_price = round(raw_close, precision)
@@ -1831,6 +1835,7 @@ def _get_signal_for_symbol(symbol: str) -> dict:
     sl = round(float(sl_raw), precision) if pd.notna(sl_raw) else None
     tp = round(float(tp_raw), precision) if pd.notna(tp_raw) else None
 
+    levels_source = "ENGINE"
     # Sanity check: SL must be on the correct side of entry
     effective_dir = sig_label if sig_label in ("LONG", "SHORT") else raw_dir
     if sl is not None and effective_dir == "LONG" and sl >= entry_price:
@@ -1843,6 +1848,7 @@ def _get_signal_for_symbol(symbol: str) -> dict:
                 + atr_val * settings.ATR_SL_MULTIPLIER * settings.MIN_RISK_REWARD,
                 precision,
             )
+            levels_source = "RECOMPUTED_ATR"
     elif sl is not None and effective_dir == "SHORT" and sl <= entry_price:
         atr_val = _safe_float(last, f"ATR_{settings.ATR_PERIOD}")
         if atr_val:
@@ -1852,6 +1858,17 @@ def _get_signal_for_symbol(symbol: str) -> dict:
                 - atr_val * settings.ATR_SL_MULTIPLIER * settings.MIN_RISK_REWARD,
                 precision,
             )
+            levels_source = "RECOMPUTED_ATR"
+
+    # Degenerate level guard: reject identical levels after rounding
+    if sl is not None and sl == entry_price:
+        sl = None
+        levels_source = "UNAVAILABLE"
+    if tp is not None and tp == entry_price:
+        tp = None
+        levels_source = "UNAVAILABLE"
+    if sl is None and tp is None:
+        levels_source = "UNAVAILABLE"
 
     local_trend = "NEUTRAL"
     if pd.notna(last.get("EMA_20")) and pd.notna(last.get("EMA_50")):
@@ -1907,6 +1924,7 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         and signal_status == "ACTIVE"
         and not quality_hard_gate
         and not entry_crossed
+        and levels_source != "UNAVAILABLE"
     )
 
     try:
@@ -1957,11 +1975,12 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         "change_pct": day_chg_pct,
         "stop_loss": sl,
         "target": tp,
+        "levels_source": levels_source,
         "rsi": current_rsi,  # always current RSI
         "trend": current_trend,  # always current trend
         "regime": current_regime,
         "timestamp": last_signal["timestamp"].isoformat(),
-        "sparkline": [round(float(c), 2) for c in df["close"].tail(20)],
+        "sparkline": [round(float(c), precision) for c in df["close"].tail(20)],
         "stale": stale,
         "stale_minutes": round(signal_age_min, 1),
         # Signal quality
@@ -1998,33 +2017,35 @@ def _build_market_records(df: pd.DataFrame) -> list[dict]:
     """Convert a market DataFrame to a list of API-friendly record dicts."""
     records = []
     for _, row in df.iterrows():
+        c_val = float(row["close"])
+        prec = price_decimals(c_val)
         records.append(
             {
                 "timestamp": row["timestamp"].isoformat(),
-                "open": round(float(row["open"]), 2),
-                "high": round(float(row["high"]), 2),
-                "low": round(float(row["low"]), 2),
-                "close": round(float(row["close"]), 2),
+                "open": round(float(row["open"]), prec),
+                "high": round(float(row["high"]), prec),
+                "low": round(float(row["low"]), prec),
+                "close": round(c_val, prec),
                 "volume": round(float(row["volume"]), 0),
                 "rsi": round(float(row["RSI_14"]), 1)
                 if pd.notna(row.get("RSI_14"))
                 else None,
-                "ema_20": round(float(row["EMA_20"]), 2)
+                "ema_20": round(float(row["EMA_20"]), prec)
                 if pd.notna(row.get("EMA_20"))
                 else None,
-                "ema_50": round(float(row["EMA_50"]), 2)
+                "ema_50": round(float(row["EMA_50"]), prec)
                 if pd.notna(row.get("EMA_50"))
                 else None,
-                "ema_200": round(float(row["EMA_200"]), 2)
+                "ema_200": round(float(row["EMA_200"]), prec)
                 if pd.notna(row.get("EMA_200"))
                 else None,
-                "vwap": round(float(row["VWAP"]), 2)
+                "vwap": round(float(row["VWAP"]), prec)
                 if pd.notna(row.get("VWAP"))
                 else None,
-                "bb_upper": round(float(row["BB_upper"]), 2)
+                "bb_upper": round(float(row["BB_upper"]), prec)
                 if pd.notna(row.get("BB_upper"))
                 else None,
-                "bb_lower": round(float(row["BB_lower"]), 2)
+                "bb_lower": round(float(row["BB_lower"]), prec)
                 if pd.notna(row.get("BB_lower"))
                 else None,
                 "adx": round(float(row[f"ADX_{settings.ADX_PERIOD}"]), 1)
@@ -2993,11 +3014,22 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             thesis_parts.append("Negative news context")
         thesis = ", ".join(thesis_parts) if thesis_parts else "Mixed conditions"
 
-        # R:R label
+        # R:R label and precision
         rr_label = "—"
         entry_val = sig.get("entry")
         sl_val = sig.get("stop_loss")
         tp_val = sig.get("target")
+        close_val = sig.get("close")
+        prec = price_decimals(float(entry_val)) if entry_val is not None else (price_decimals(float(close_val)) if close_val is not None else 2)
+        entry_val = round(float(entry_val), prec) if entry_val is not None else None
+        sl_val = round(float(sl_val), prec) if sl_val is not None else None
+        tp_val = round(float(tp_val), prec) if tp_val is not None else None
+        if entry_val is not None:
+            if sl_val is not None and sl_val == entry_val:
+                sl_val = None
+            if tp_val is not None and tp_val == entry_val:
+                tp_val = None
+
         if entry_val and sl_val and tp_val:
             risk_dist = abs(float(entry_val) - float(sl_val))
             reward_dist = abs(float(tp_val) - float(entry_val))
@@ -3681,6 +3713,17 @@ def _compute_crypto_intelligence() -> dict:
         entry_val = sig.get("entry")
         sl_val = sig.get("stop_loss")
         tp_val = sig.get("target")
+        close_val = sig.get("close")
+        prec = price_decimals(float(entry_val)) if entry_val is not None else (price_decimals(float(close_val)) if close_val is not None else 2)
+        entry_val = round(float(entry_val), prec) if entry_val is not None else None
+        sl_val = round(float(sl_val), prec) if sl_val is not None else None
+        tp_val = round(float(tp_val), prec) if tp_val is not None else None
+        if entry_val is not None:
+            if sl_val is not None and sl_val == entry_val:
+                sl_val = None
+            if tp_val is not None and tp_val == entry_val:
+                tp_val = None
+
         rr_label = "—"
         if entry_val and sl_val and tp_val:
             rd = abs(float(entry_val) - float(sl_val))

@@ -2535,7 +2535,7 @@ def _build_market_response(clean_sym: str, df: pd.DataFrame, interval: str) -> d
     }
 
 
-@router.get("/api/market/{symbol}")
+@router.get("/api/market/{symbol:path}")
 async def get_market_data(
     symbol: str,
     limit: int = Query(100, le=500),
@@ -2552,7 +2552,14 @@ async def get_market_data(
     if symbol.lower() == "mood":
         return svc._compute_market_mood()
 
-    clean_sym = symbol.replace("-", "/").strip()
+    raw_sym = symbol.strip()
+    clean_sym = raw_sym.replace("-", "/")
+    # Normalise crypto suffix when given without delimiter (e.g. BTCUSDT -> BTC/USDT)
+    if "/" not in clean_sym:
+        for q_sfx in ("USDT", "USDC"):
+            if clean_sym.endswith(q_sfx) and len(clean_sym) > len(q_sfx):
+                clean_sym = f"{clean_sym[:-len(q_sfx)]}/{q_sfx}"
+                break
 
     if interval not in ("5m", "15m", "1h", "1d"):
         interval = "5m"
@@ -2573,7 +2580,12 @@ async def get_market_data(
             from agents.data_ingestion.forex_fetcher import get_forex_ohlcv
             df = await asyncio.to_thread(get_forex_ohlcv, clean_sym, interval, max(limit, 100))
             if df is None or df.empty:
-                return {"error": f"Symbol {clean_sym} not found"}
+                raise HTTPException(status_code=404, detail={
+                    "error": "SYMBOL_NOT_FOUND",
+                    "symbol": clean_sym,
+                    "message": f"No data for {clean_sym} on Forex feed.",
+                    "hint": "Check symbol spelling or Twelve Data availability.",
+                })
             df = calculate_indicators(df)
             df = df.tail(limit)
             return _build_market_response(clean_sym, df, interval)
@@ -2584,7 +2596,12 @@ async def get_market_data(
             since_days = days_map.get(interval, 5)
             df = await asyncio.to_thread(fetch_historical, clean_sym, interval, since_days)
             if df is None or df.empty:
-                return {"error": f"Symbol {clean_sym} not found"}
+                raise HTTPException(status_code=404, detail={
+                    "error": "SYMBOL_NOT_FOUND",
+                    "symbol": clean_sym,
+                    "message": f"No data for {clean_sym} on Binance/CCXT.",
+                    "hint": "Check symbol format (e.g. DOGE/USDT or DOGE-USDT).",
+                })
             df = calculate_indicators(df)
             df = df.tail(limit)
             return _build_market_response(clean_sym, df, interval)
@@ -2597,17 +2614,48 @@ async def get_market_data(
             df = await asyncio.to_thread(
                 fetch_arbitrary_symbol, clean_sym, period, interval
             )
+        # B5: Ticker alias fallback
         if df is None or df.empty:
-            return {"error": f"Symbol {clean_sym} not found"}
+            if not clean_sym.endswith(".NS"):
+                df = await asyncio.to_thread(
+                    fetch_arbitrary_symbol, f"{clean_sym}.NS", period, interval
+                )
+        if df is None or df.empty:
+            try:
+                from config.symbol_aliases import SYMBOL_ALIASES
+                aliases = SYMBOL_ALIASES.get(clean_sym, [])
+                for alias in aliases:
+                    df = await asyncio.to_thread(
+                        fetch_arbitrary_symbol, alias, period, interval
+                    )
+                    if df is not None and not df.empty:
+                        break
+            except Exception:
+                pass
+
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail={
+                "error": "SYMBOL_NOT_FOUND",
+                "symbol": clean_sym,
+                "message": f"No data for {clean_sym} on NSE or Yahoo.",
+                "hint": f"Ticker may have been renamed. Try {clean_sym}.NS or the new symbol.",
+            })
         df = calculate_indicators(df)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("On-demand market fetch error for %s@%s: %s", clean_sym, interval, e)
-        return {"error": str(e)}
+        raise HTTPException(status_code=404, detail={
+            "error": "SYMBOL_NOT_FOUND",
+            "symbol": clean_sym,
+            "message": str(e),
+            "hint": f"Ticker may have been renamed. Try {clean_sym}.NS or the new symbol.",
+        })
 
     df = df.tail(limit)
     return _build_market_response(clean_sym, df, interval)
 
-@router.get("/api/signal/{symbol}")
+@router.get("/api/signal/{symbol:path}")
 
 async def get_current_signal(symbol: str):
 
@@ -2619,7 +2667,12 @@ async def get_current_signal(symbol: str):
 
     if result is None:
 
-        return {"error": f"Symbol {symbol} not found"}
+        raise HTTPException(status_code=404, detail={
+            "error": "SYMBOL_NOT_FOUND",
+            "symbol": symbol,
+            "message": f"Symbol {symbol} not found",
+            "hint": "Check symbol spelling or try another instrument.",
+        })
 
     return result
 
@@ -4412,7 +4465,11 @@ async def get_regime(symbol: str):
 
     if symbol not in svc._regime_cache:
 
-        return {"error": f"Symbol {symbol} not found"}
+        raise HTTPException(status_code=404, detail={
+            "error": "SYMBOL_NOT_FOUND",
+            "symbol": symbol,
+            "message": f"Symbol {symbol} not found in regime cache",
+        })
 
     return {
 

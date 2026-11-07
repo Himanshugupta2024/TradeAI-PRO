@@ -56,12 +56,33 @@ def signal_age_minutes(timestamp: Any, now: Any = None) -> Optional[float]:
     return max((reference - stamp).total_seconds() / 60.0, 0.0)
 
 
+def price_decimals(price: float) -> int:
+    """Display decimals for a price magnitude. 0.0742 -> 5, 1320.5 -> 2."""
+    try:
+        p = abs(float(price))
+    except (TypeError, ValueError):
+        return 2
+    if p <= 0:
+        return 2
+    if p < 0.001:
+        return 7
+    if p < 0.01:
+        return 6
+    if p < 0.1:
+        return 5
+    if p < 1.0:
+        return 4
+    if p < 10.0:
+        return 3
+    return 2
+
+
 def stale_threshold_minutes(symbol: str) -> float:
     return CRYPTO_STALE_MINUTES if "/" in str(symbol) else NSE_STALE_MINUTES
 
 
 def apply_signal_freshness(signal: dict, now: Any = None) -> dict:
-    """Return a copy of ``signal`` with honest freshness fields."""
+    """Return a copy of ``signal`` with honest freshness fields, price precision, and degenerate check."""
     out = dict(signal)
     age = signal_age_minutes(out.get("timestamp"), now=now)
     threshold = stale_threshold_minutes(str(out.get("symbol", "")))
@@ -74,6 +95,42 @@ def apply_signal_freshness(signal: dict, now: Any = None) -> dict:
         out["stale"] = bool(age > threshold)
         out["stale_minutes"] = round(age, 1)
         out["freshness"] = "stale" if out["stale"] else "fresh"
+
+    entry = out.get("entry")
+    sl = out.get("stop_loss")
+    tp = out.get("target")
+    close = out.get("close")
+
+    if entry is not None:
+        try:
+            prec = price_decimals(entry)
+            entry_f = round(float(entry), prec)
+            out["entry"] = entry_f
+            if sl is not None:
+                out["stop_loss"] = round(float(sl), prec)
+            if tp is not None:
+                out["target"] = round(float(tp), prec)
+            if close is not None:
+                out["close"] = round(float(close), prec)
+        except (ValueError, TypeError):
+            pass
+
+    # Degenerate level guard
+    e = out.get("entry")
+    s = out.get("stop_loss")
+    t = out.get("target")
+    levels_src = out.get("levels_source", "ENGINE")
+    if e is not None:
+        if s is not None and s == e:
+            out["stop_loss"] = None
+            levels_src = "UNAVAILABLE"
+        if t is not None and t == e:
+            out["target"] = None
+            levels_src = "UNAVAILABLE"
+        if out.get("stop_loss") is None and out.get("target") is None:
+            levels_src = "UNAVAILABLE"
+            out["actionable"] = False
+    out["levels_source"] = levels_src
     return out
 
 
