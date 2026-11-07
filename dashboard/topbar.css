@@ -326,46 +326,64 @@
     color: #0f172a !important;
 }
 
-/* ── Proportional Responsive Hierarchy (Prevents All Collisions) ─────────── */
+/* ── Proportional Responsive Hierarchy (Preserves NIFTY, SENSEX, BANK NIFTY across all viewports) ── */
 
-/* 1. Large Laptops / Desktops (≤ 1600px): Hide dev telemetry and non-NSE crypto ticker */
+/* 1. Large Laptops / Desktops (≤ 1600px): Hide dev telemetry and secondary crypto ticker */
 @media (max-width: 1600px) {
     #v2PipelineBadge { display: none !important; }
     .mood-ticker-item:nth-child(3) { display: none !important; } /* BTC */
 }
 
-/* 2. Standard 1080p Laptops with 125% OS scaling (≤ 1420px): Streamline indices */
+/* 2. Standard Laptops (≤ 1420px): Streamline search input, keep SENSEX & BANK NIFTY visible */
 @media (max-width: 1420px) {
-    .mood-ticker-item:nth-child(2) { display: none !important; } /* SENSEX */
     .mood-search-input,
-    .global-search-input { width: 160px !important; }
-}
-
-/* 3. Compact Laptops (≤ 1260px): Hide clock & BankNifty to keep core Nifty un-clipped */
-@media (max-width: 1260px) {
+    .global-search-input { width: 130px !important; }
     .mood-clock { display: none !important; }
-    .mood-ticker-item:nth-child(4) { display: none !important; } /* BankNifty */
+}
+
+/* 3. Compact Laptops (≤ 1260px): Tighten padding, keep indices visible */
+@media (max-width: 1260px) {
+    .mood-ticker-item { padding: 0 8px !important; }
+    .mood-ticker { gap: 0 !important; }
+    .ai-engine-badge { display: none !important; }
     .mood-search-input,
-    .global-search-input { width: 140px !important; }
+    .global-search-input { width: 110px !important; }
 }
 
-/* 4. Small screens / Tablets (≤ 1100px): Hide entire ticker, let search & status breathe */
+/* 4. Small screens / Tablets (≤ 1100px): Hide search & telemetry so indices stay visible */
 @media (max-width: 1100px) {
-    .mood-ticker { display: none !important; }
+    .mood-search-wrap { display: none !important; }
+    #v2PipelineBadge { display: none !important; }
+    .mood-ticker-item:nth-child(3) { display: none !important; } /* BTC */
+    .mood-ticker {
+        display: flex !important;
+        overflow-x: auto !important;
+        scrollbar-width: none !important;
+    }
+    .mood-ticker::-webkit-scrollbar { display: none !important; }
 }
 
-/* 5. Mobile & Small Tablets (≤ 880px): Streamline right cluster */
+/* 5. Mobile & Small Tablets (≤ 880px): Streamline right cluster, keep core indices */
 @media (max-width: 880px) {
     .ai-engine-badge { display: none !important; }
     .mood-search-wrap { display: none !important; }
     #skinToggle { display: none !important; }
+    .mood-ticker-item { padding: 0 6px !important; gap: 4px !important; }
 }
 
-/* 6. Phone screens (≤ 580px): Minimal essential header */
+/* 6. Phone screens (≤ 580px): Compact typography for NIFTY, SENSEX, BANK NIFTY */
 @media (max-width: 580px) {
     .market-status { display: none !important; }
-    .mood-strip { padding: 0 8px !important; }
-    .mood-strip-logo .logo-text { font-size: 0.85rem !important; }
+    .mood-strip { padding: 0 6px !important; }
+    .mood-strip-logo .logo-text { font-size: 0.82rem !important; }
+    .mood-ticker-sym { font-size: 0.55rem !important; }
+    .mood-ticker-val { font-size: 0.68rem !important; }
+    .mood-ticker-chg { font-size: 0.62rem !important; }
+    .mood-ticker {
+        display: flex !important;
+        overflow-x: auto !important;
+        scrollbar-width: none !important;
+    }
 }
 
 /* Solid fallback when blur is unavailable */

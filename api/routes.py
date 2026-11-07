@@ -2427,95 +2427,91 @@ async def get_symbols():
     return {"symbols": list(svc._market_data.keys())}
 
 @router.get("/api/market/{symbol}")
-
 async def get_market_data(
-
     symbol: str,
-
     limit: int = Query(100, le=500),
-
     interval: str = Query("5m"),
-
 ):
-
     """
-
     Get OHLCV + indicator data for a symbol.
-
     Supports ?interval=5m|15m|1h|1d for the chart timeframe selector.
-
     Non-5m intervals are fetched on-demand and indicators are calculated fresh.
-
+    Supports NSE equities, Crypto (via Binance/CCXT), and Forex (Twelve Data).
     """
-
     # Guard against route shadowing: /api/market/mood can be captured here
-
     # when dynamic routes are registered before static ones.
-
     if symbol.lower() == "mood":
-
         return svc._compute_market_mood()
 
-    symbol = symbol.replace("-", "/")
+    clean_sym = symbol.replace("-", "/").strip()
 
     if interval not in ("5m", "15m", "1h", "1d"):
-
         interval = "5m"
 
-    if interval == "5m" and symbol in svc._market_data:
+    if interval == "5m" and clean_sym in svc._market_data:
+        cached_df = svc._market_data[clean_sym]
+        if isinstance(cached_df, pd.DataFrame) and not cached_df.empty:
+            df = cached_df.tail(limit)
+            return {
+                "symbol": clean_sym,
+                "data": svc._build_market_records(df),
+                "interval": interval,
+            }
 
-        df = svc._market_data[symbol].tail(limit)
-
-        return {
-
-            "symbol": symbol,
-
-            "data": svc._build_market_records(df),
-
-            "interval": interval,
-
-        }
-
-    # On-demand fetch for non-default intervals (or symbol not yet in cache)
-
-    period_map = {"5m": "5d", "15m": "10d", "1h": "30d", "1d": "90d"}
-
-    period = period_map.get(interval, "5d")
-
+    # Asset class routing: Crypto, Forex, or NSE
     try:
+        from config import settings
+        is_forex = clean_sym in getattr(settings, "FOREX_SYMBOLS", [])
+        is_crypto = "/" in clean_sym and not is_forex
 
-        df = await asyncio.to_thread(fetch_ohlcv, symbol, period, interval)
+        if is_forex:
+            from agents.data_ingestion.forex_fetcher import get_forex_ohlcv
+            df = await asyncio.to_thread(get_forex_ohlcv, clean_sym, interval, max(limit, 100))
+            if df is None or df.empty:
+                return {"error": f"Symbol {clean_sym} not found"}
+            df = calculate_indicators(df)
+            df = df.tail(limit)
+            return {
+                "symbol": clean_sym,
+                "data": svc._build_market_records(df),
+                "interval": interval,
+            }
 
+        if is_crypto:
+            from agents.data_ingestion.binance_fetcher import fetch_historical
+            days_map = {"5m": 3, "15m": 7, "1h": 30, "1d": 120}
+            since_days = days_map.get(interval, 5)
+            df = await asyncio.to_thread(fetch_historical, clean_sym, interval, since_days)
+            if df is None or df.empty:
+                return {"error": f"Symbol {clean_sym} not found"}
+            df = calculate_indicators(df)
+            df = df.tail(limit)
+            return {
+                "symbol": clean_sym,
+                "data": svc._build_market_records(df),
+                "interval": interval,
+            }
+
+        # Non-crypto / Non-forex: NSE on-demand fetch
+        period_map = {"5m": "5d", "15m": "10d", "1h": "30d", "1d": "90d"}
+        period = period_map.get(interval, "5d")
+        df = await asyncio.to_thread(fetch_ohlcv, clean_sym, period, interval)
         if df is None or df.empty:
-
             df = await asyncio.to_thread(
-
-                fetch_arbitrary_symbol, symbol, period, interval
-
+                fetch_arbitrary_symbol, clean_sym, period, interval
             )
-
         if df is None or df.empty:
-
-            return {"error": f"Symbol {symbol} not found"}
-
+            return {"error": f"Symbol {clean_sym} not found"}
         df = calculate_indicators(df)
-
     except Exception as e:
-
-        logger.error("On-demand market fetch error for %s@%s: %s", symbol, interval, e)
-
+        logger.error("On-demand market fetch error for %s@%s: %s", clean_sym, interval, e)
         return {"error": str(e)}
 
     df = df.tail(limit)
-
     return {
-
-        "symbol": symbol,
-
+        "symbol": clean_sym,
         "data": svc._build_market_records(df),
-
         "interval": interval,
-
     }
 
 @router.get("/api/signal/{symbol}")
@@ -4483,18 +4479,28 @@ async def run_backtest(
         provider = "Binance / CCXT" if "/" in clean_sym else "NSE / yFinance"
         interval_str = "15m" if days <= 10 else "1h"
 
-        df = svc._signal_cache.get(clean_sym)
+        cached_val = svc._market_data.get(clean_sym)
+        df = cached_val if isinstance(cached_val, pd.DataFrame) else None
         if df is None or df.empty:
-            df = svc._signal_cache.get(clean_base)
+            cached_base = svc._market_data.get(clean_base)
+            df = cached_base if isinstance(cached_base, pd.DataFrame) else None
 
         if df is None or df.empty or len(df) < 50 or days > 5:
             try:
                 if "/" in clean_sym:
-                    from agents.data_ingestion.binance_fetcher import fetch_historical
-                    ext_df = await asyncio.wait_for(
-                        asyncio.to_thread(fetch_historical, clean_sym, "1h", since_days=max(days, 15)),
-                        timeout=8.0
-                    )
+                    from config import settings
+                    if clean_sym in getattr(settings, "FOREX_SYMBOLS", []):
+                        from agents.data_ingestion.forex_fetcher import get_forex_ohlcv
+                        ext_df = await asyncio.wait_for(
+                            asyncio.to_thread(get_forex_ohlcv, clean_sym, interval_str, max(180, days * 25 + 40)),
+                            timeout=8.0
+                        )
+                    else:
+                        from agents.data_ingestion.binance_fetcher import fetch_historical
+                        ext_df = await asyncio.wait_for(
+                            asyncio.to_thread(fetch_historical, clean_sym, interval_str, since_days=max(days, 15)),
+                            timeout=8.0
+                        )
                 else:
                     from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol, NSE_SYMBOLS
                     target = NSE_SYMBOLS.get(clean_base, f"{clean_base}.NS")
@@ -4518,7 +4524,8 @@ async def run_backtest(
                         regime = detect_regime(s_df)
                         return generate_signals(s_df, regime=regime, symbol=clean_sym, offline=True)
                     df = await asyncio.to_thread(_compute_backtest_pipeline, slice_df)
-                    svc._signal_cache[clean_sym] = df
+            except Exception as exc:
+                logger.error("Backtest on-demand fetch failed for %s (%sd): %s", clean_sym, days, exc)
             except Exception as exc:
                 logger.error("Backtest on-demand fetch failed for %s (%sd): %s", clean_sym, days, exc)
 
@@ -10806,6 +10813,85 @@ async def get_context_events():
 
         return {"events": [], "error": str(exc)}
 
+_INDICES_FALLBACK_CACHE: dict[str, tuple[float | None, float | None]] = {}
+_INDICES_FALLBACK_TS: float = 0.0
+
+def _get_major_indices_sync() -> dict[str, tuple[float | None, float | None]]:
+    """Fetch or read cached quotes for NIFTY, SENSEX, and BANK NIFTY."""
+    global _INDICES_FALLBACK_CACHE, _INDICES_FALLBACK_TS
+    now = time.time()
+    if _INDICES_FALLBACK_CACHE and (now - _INDICES_FALLBACK_TS) < 60.0:
+        return _INDICES_FALLBACK_CACHE
+
+    res: dict[str, tuple[float | None, float | None]] = {
+        "nifty": (None, None),
+        "sensex": (None, None),
+        "banknifty": (None, None),
+    }
+
+    sym_mapping = {
+        "nifty": ["NIFTY 50", "NIFTY", "^NSEI"],
+        "sensex": ["SENSEX", "^BSESN", "BSE_SENSEX"],
+        "banknifty": ["BANKNIFTY", "^NSEBANK", "BANK_NIFTY"],
+    }
+    for idx_key, candidates in sym_mapping.items():
+        for sym in candidates:
+            df = svc._market_data.get(sym)
+            if isinstance(df, pd.DataFrame) and len(df) >= 2:
+                latest = float(df.iloc[-1]["close"])
+                first = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else float(df.iloc[0]["close"])
+                chg = ((latest - first) / first) * 100.0 if first else 0.0
+                res[idx_key] = (round(latest, 2), round(chg, 2))
+                break
+            sig = svc._signal_cache.get(sym)
+            if isinstance(sig, dict) and sig.get("close") is not None:
+                p = float(sig["close"])
+                c = float(sig.get("change_pct", 0.0)) if sig.get("change_pct") is not None else 0.0
+                res[idx_key] = (round(p, 2), round(c, 2))
+                break
+
+    if any(res[k][0] is None for k in res):
+        try:
+            from db.runtime_state import get_runtime_state
+            snap = get_runtime_state("latest_market_snapshot")
+            if snap and isinstance(snap, dict) and "prices" in snap:
+                prices = snap["prices"]
+                for idx_key, candidates in sym_mapping.items():
+                    if res[idx_key][0] is not None:
+                        continue
+                    for sym in candidates:
+                        if sym in prices and isinstance(prices[sym], dict) and prices[sym].get("close") is not None:
+                            p = float(prices[sym]["close"])
+                            c = float(prices[sym].get("change_pct", 0.0)) if prices[sym].get("change_pct") is not None else 0.0
+                            res[idx_key] = (round(p, 2), round(c, 2))
+                            break
+        except Exception:
+            pass
+
+    missing = [k for k in res if res[k][0] is None]
+    if missing:
+        yf_map = {"nifty": "^NSEI", "sensex": "^BSESN", "banknifty": "^NSEBANK"}
+        try:
+            import yfinance as yf
+            needed_syms = " ".join(yf_map[k] for k in missing)
+            tickers = yf.Tickers(needed_syms)
+            for k in missing:
+                t = tickers.tickers.get(yf_map[k])
+                if t:
+                    hist = t.history(period="5d", interval="1d")
+                    if not hist.empty:
+                        close = float(hist["Close"].iloc[-1])
+                        prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else close
+                        chg = ((close - prev) / prev) * 100.0 if prev else 0.0
+                        res[k] = (round(close, 2), round(chg, 2))
+        except Exception as exc:
+            logger.debug("Indices yfinance fallback error: %s", exc)
+
+    if any(res[k][0] is not None for k in res):
+        _INDICES_FALLBACK_CACHE = res
+        _INDICES_FALLBACK_TS = now
+    return res
+
 @router.get("/api/context/market-mood")
 
 async def get_market_mood_api():
@@ -10824,21 +10910,10 @@ async def get_market_mood_api():
 
         return _CONTEXT_MOOD_CACHE
 
-    def _get_idx(sym_candidates: list[str]) -> tuple[float | None, float | None]:
-        for sym in sym_candidates:
-            df = svc._market_data.get(sym)
-            if df is None or len(df) < 2:
-                df = svc._signal_cache.get(sym)
-            if df is not None and len(df) >= 2:
-                latest = float(df.iloc[-1]["close"])
-                first = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else float(df.iloc[0]["close"])
-                chg = ((latest - first) / first) * 100.0 if first else 0.0
-                return round(latest, 2), round(chg, 2)
-        return None, None
-
-    nifty_close, nifty_change = _get_idx(["NIFTY 50", "NIFTY", "^NSEI"])
-    sensex_close, sensex_change = _get_idx(["SENSEX", "^BSESN", "BSE_SENSEX"])
-    banknifty_close, banknifty_change = _get_idx(["BANKNIFTY", "^NSEBANK", "BANK_NIFTY"])
+    indices_data = await asyncio.to_thread(_get_major_indices_sync)
+    nifty_close, nifty_change = indices_data.get("nifty", (None, None))
+    sensex_close, sensex_change = indices_data.get("sensex", (None, None))
+    banknifty_close, banknifty_change = indices_data.get("banknifty", (None, None))
 
     # During startup warmup return neutral immediately — avoids 503 on first hit.
     if not svc._loading_status.get("ready"):
@@ -10903,22 +10978,15 @@ async def get_market_mood_api():
                     context_score=0.0,
                 )
 
-        # Major indices from cached 5m streams or signal cache
-        def _get_idx(sym_candidates: list[str]) -> tuple[float | None, float | None]:
-            for sym in sym_candidates:
-                df = svc._market_data.get(sym)
-                if df is None or len(df) < 2:
-                    df = svc._signal_cache.get(sym)
-                if df is not None and len(df) >= 2:
-                    latest = float(df.iloc[-1]["close"])
-                    first = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else float(df.iloc[0]["close"])
-                    chg = ((latest - first) / first) * 100.0 if first else 0.0
-                    return round(latest, 2), round(chg, 2)
-            return None, None
-
-        nifty_close, nifty_change = _get_idx(["NIFTY 50", "NIFTY", "^NSEI"])
-        sensex_close, sensex_change = _get_idx(["SENSEX", "^BSESN", "BSE_SENSEX"])
-        banknifty_close, banknifty_change = _get_idx(["BANKNIFTY", "^NSEBANK", "BANK_NIFTY"])
+        # Major indices synced via cached provider
+        if nifty_close is None or sensex_close is None or banknifty_close is None:
+            indices_data = await asyncio.to_thread(_get_major_indices_sync)
+            if nifty_close is None:
+                nifty_close, nifty_change = indices_data.get("nifty", (None, None))
+            if sensex_close is None:
+                sensex_close, sensex_change = indices_data.get("sensex", (None, None))
+            if banknifty_close is None:
+                banknifty_close, banknifty_change = indices_data.get("banknifty", (None, None))
 
         # Cache-first context sentiment over active symbols (0ms non-blocking)
 

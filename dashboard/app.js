@@ -1786,6 +1786,7 @@ function updateLivePrices(prices) {
 
 
     }
+    updateMoodStripFromCache();
 
 
 
@@ -23126,14 +23127,9 @@ function updateMoodStripFromCache() {
 
 
 
-        if (el && tick.close != null) {
-
-
-
-            el.textContent = Number(tick.close).toLocaleString('en-IN', { maximumFractionDigits: 0 });
-
-
-
+        const price = typeof tick === 'object' && tick ? (tick.close ?? tick.price ?? tick.ltp) : tick;
+        if (el && price != null && !isNaN(price) && Number(price) > 0) {
+            el.textContent = Number(price).toLocaleString('en-IN', { maximumFractionDigits: (id === 'moodBtc' ? 2 : 0) });
         }
 
 
