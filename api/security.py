@@ -26,15 +26,11 @@ def require_admin(
     If key is missing: 401 Unauthorized.
     If key is invalid: 403 Forbidden.
     """
-    settings_key = getattr(settings, "ADMIN_API_KEY", None)
-    env_key = os.environ.get("ADMIN_API_KEY")
-
-    if settings_key == "":
-        admin_key = ""
-    elif settings_key is not None and settings_key != "tradeai-secure-pass-2026":
-        admin_key = settings_key.strip()
-    elif env_key is not None:
-        admin_key = env_key.strip()
+    settings_key = (getattr(settings, "ADMIN_API_KEY", "") or "").strip()
+    if settings_key and settings_key != "tradeai-secure-pass-2026":
+        admin_key = settings_key
+    elif "ADMIN_API_KEY" in os.environ:
+        admin_key = os.environ.get("ADMIN_API_KEY", "").strip()
     else:
         admin_key = ""
     is_prod = bool(
