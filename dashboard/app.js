@@ -44,7 +44,7 @@ const API = (() => {
     }
     const host = window.location.hostname;
     if (host.endsWith('workers.dev')) {
-        return '';
+        return 'https://trading-api-n1wt.onrender.com';
     }
     if (
         host.endsWith('pages.dev') ||
@@ -24495,6 +24495,13 @@ async function loadForexData() {
 
     if (meta) meta.textContent = 'Updating sessions & scanning universe...';
 
+    const fallbackSessions = {
+        ASIAN: { open: false, start: '05:30', end: '14:30', best_pairs: ['USD/JPY', 'AUD/USD'] },
+        LONDON: { open: false, start: '13:30', end: '22:30', best_pairs: ['EUR/USD', 'GBP/USD', 'EUR/INR'] },
+        NEWYORK: { open: false, start: '18:30', end: '03:30', best_pairs: ['EUR/USD', 'USD/CAD', 'GBP/USD'] },
+        NSE_INR: { open: false, start: '09:00', end: '17:00', best_pairs: ['USD/INR', 'EUR/INR', 'GBP/INR'] }
+    };
+
 
 
     // 1. Fetch Intelligence & Session Status
@@ -24538,6 +24545,8 @@ async function loadForexData() {
     } catch (e) {
 
         console.warn('[loadForexData] intelligence fetch err:', e);
+        renderForexSessions(fallbackSessions, new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST');
+        renderCurrencyStrength({}, 'NEUTRAL');
 
     }
 
@@ -24574,6 +24583,19 @@ async function loadForexData() {
         try {
 
             const resp = await fetchWithTimeout(`${API}/api/forex/signals`, {}, 30000);
+            if (resp.status === 403) {
+                grid.innerHTML = '<div class="loading-state"><p style="color:var(--yellow);font-weight:600;">🔒 Forex Paper Engine in Standby (NSE Focus Mode Active). You can activate Multi-Asset processing from Market Control in the sidebar.</p></div>';
+                if (meta) meta.textContent = 'Standby (NSE Focus Mode)';
+                renderTopForexSetups([]);
+                return;
+            }
+            if (resp.status === 429) {
+                grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p style="color:var(--cyan);font-weight:600;">Forex scanner cooling down (Rate Limit). Retrying via keyless feed shortly...</p></div>';
+                if (meta) meta.textContent = 'Cooling down (Retrying...)';
+                renderTopForexSetups([]);
+                setTimeout(loadForexData, 6000);
+                return;
+            }
 
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
@@ -24618,6 +24640,7 @@ async function loadForexData() {
             grid.innerHTML = `<div class="loading-state"><p style="color:var(--red);">Failed to load forex setups (${_escHtml(err.message)})</p></div>`;
 
             if (meta) meta.textContent = 'Scan failed';
+            renderTopForexSetups([]);
 
         }
 

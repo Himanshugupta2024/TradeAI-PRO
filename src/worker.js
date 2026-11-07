@@ -81,6 +81,9 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/swing/shortlist",
   "/api/swing/stats",
   "/api/forex/signals",
+  "/api/forex/rates",
+  "/api/forex/intelligence",
+  "/api/forex/sessions",
   "/api/macro/intelligence",
   "/api/edge/macro-heatmap",
   "/api/edge/risk-gauge",
@@ -96,7 +99,8 @@ function isPathCacheable(pathname) {
     pathname.startsWith("/api/backtest/") ||
     pathname.startsWith("/api/news/") ||
     pathname.startsWith("/api/search/") ||
-    pathname.startsWith("/api/swing/symbol/")
+    pathname.startsWith("/api/swing/symbol/") ||
+    pathname.startsWith("/api/forex/ohlcv/")
   ) {
     return true;
   }

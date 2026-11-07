@@ -364,21 +364,24 @@ async def health_check():
 
     signals_count = len(svc._signal_cache)
     if signals_count == 0:
-        try:
-            from db.runtime_state import get_runtime_state
-            snap = get_runtime_state("latest_signals:v1")
-            if snap and isinstance(snap, dict):
-                signals_count = int(snap.get("count", len(snap.get("signals", []))))
-        except Exception:
-            pass
-        if signals_count == 0:
+        if getattr(svc, "_persisted_signals_snapshot", None):
+            signals_count = len(svc._persisted_signals_snapshot)
+        else:
             try:
-                import db.intraday_store as ids
-                latest_scan = ids.load_latest_scan()
-                if latest_scan and latest_scan.get("results"):
-                    signals_count = len(latest_scan["results"])
+                from db.runtime_state import get_runtime_state
+                snap = get_runtime_state("latest_signals:v1")
+                if snap and isinstance(snap, dict):
+                    signals_count = int(snap.get("count", len(snap.get("signals", []))))
             except Exception:
                 pass
+            if signals_count == 0:
+                try:
+                    import db.intraday_store as ids
+                    latest_scan = ids.load_latest_scan()
+                    if latest_scan and latest_scan.get("results"):
+                        signals_count = len(latest_scan["results"])
+                except Exception:
+                    pass
 
     return {
         "status": status_str,
@@ -4424,7 +4427,7 @@ async def get_performance():
 
             "symbols_loaded": len(svc._market_data),
 
-            "signals_cached": len(svc._signal_cache),
+            "signals_cached": len(svc._signal_cache) or len(getattr(svc, "_persisted_signals_snapshot", None) or []),
 
         },
 

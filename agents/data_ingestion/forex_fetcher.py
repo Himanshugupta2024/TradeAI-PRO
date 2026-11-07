@@ -30,6 +30,7 @@ _IST = ZoneInfo("Asia/Kolkata")
 # ── In-memory caches ─────────────────────────────────────────────────────────
 _ohlcv_cache: dict[tuple[str, str], dict] = {}
 _rate_cache: dict[str, dict] = {}
+_currency_strength_cache: dict = {"data": None, "fetched_at": 0.0}
 
 # Backoff when Twelve Data minute credits are exhausted.
 _minute_backoff_until: float = 0.0
@@ -347,6 +348,10 @@ def _fetch_ohlcv_with_retry(
         try:
             _wait_for_rate_limit()
             resp = requests.get(url, params=params, timeout=10)
+            if resp.status_code == 429:
+                _set_minute_backoff(65)
+                log.warning("[FOREX] %s OHLCV Twelve Data rate limit hit (HTTP 429). Backing off 65s.", symbol)
+                break
             resp.raise_for_status()
             data = resp.json()
 
@@ -409,6 +414,13 @@ def get_forex_rate(symbol: str) -> float:
     try:
         _wait_for_rate_limit()
         resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code == 429:
+            _set_minute_backoff(65)
+            log.warning("[FOREX] %s Twelve Data rate limit hit (HTTP 429). Backing off 65s.", symbol)
+            yf_rate = _fetch_rate_yfinance(symbol)
+            if yf_rate > 0:
+                return yf_rate
+            return cached["rate"] if cached else 0.0
         resp.raise_for_status()
         data = resp.json()
 
@@ -448,6 +460,14 @@ def _fetch_rate_batch(symbols: list[str], rates: dict[str, float]) -> None:
     try:
         _wait_for_rate_limit()
         resp = requests.get(url, params=params, timeout=12)
+        if resp.status_code == 429:
+            _set_minute_backoff(65)
+            log.warning("[FOREX] Twelve Data batch rate limit hit (HTTP 429). Triggering 65s backoff and yfinance fallback.")
+            for s in symbols:
+                yf_r = _fetch_rate_yfinance(s)
+                if yf_r > 0:
+                    rates[s] = yf_r
+            return
         resp.raise_for_status()
         data = resp.json()
 
@@ -577,6 +597,10 @@ def compute_session_intelligence() -> dict:
 
 
 def compute_currency_strengths() -> dict:
+    global _currency_strength_cache
+    now_ts = time.time()
+    if _currency_strength_cache.get("data") and (now_ts - _currency_strength_cache.get("fetched_at", 0.0)) < 300:
+        return _currency_strength_cache["data"].copy()
     """
     Compute relative strength index for 8 major/INR currencies and overall risk sentiment
     using fast parallel daily changes.
@@ -601,6 +625,8 @@ def compute_currency_strengths() -> dict:
                             changes[sym] = ((c1 - c0) / c0) * 100.0
     except Exception as e:
         log.warning("[FOREX] yfinance batch download for currency strength failed: %s", e)
+        if _currency_strength_cache.get("data"):
+            return _currency_strength_cache["data"].copy()
 
     curr_scores = {c: [] for c in currencies}
     for sym, chg in changes.items():
@@ -621,6 +647,16 @@ def compute_currency_strengths() -> dict:
     growth_score = strengths.get("AUD", 0) + strengths.get("GBP", 0) + strengths.get("EUR", 0)
     safe_score = strengths.get("USD", 0) + strengths.get("JPY", 0) + strengths.get("CHF", 0)
     risk_sentiment = "RISK ON" if growth_score >= safe_score else "RISK OFF"
+    _currency_strength_cache = {
+        "data": {
+            "strengths": strengths,
+            "risk_sentiment": risk_sentiment,
+            "growth_score": round(growth_score, 2),
+            "safe_haven_score": round(safe_score, 2),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        "fetched_at": now_ts,
+    }
 
     return {
         "strengths": strengths,

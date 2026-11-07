@@ -23,12 +23,8 @@
     if (isLocalhost && (window.location.port === '5500' || window.location.port === '3000' || window.location.port === '5173')) {
         apiBase = 'http://127.0.0.1:8000';
         wsBase = '127.0.0.1:8000';
-    } else if (isCloudflareWorkers) {
-        // Route through Cloudflare Worker edge reverse proxy (/api/* and /ws/* proxied to Render with SWR caching & sanitized headers)
-        apiBase = '';
-        wsBase = window.location.host;
-        wsProto = 'wss:';
-    } else if (isCloudflarePages || isVercel) {
+    } else if (isCloudflareWorkers || isCloudflarePages || isVercel) {
+        // Direct Render Origin for API & WS — avoids Cloudflare-to-Cloudflare proxy chaining & egress rate-limits
         apiBase = 'https://trading-api-n1wt.onrender.com';
         wsBase = 'trading-api-n1wt.onrender.com';
         wsProto = 'wss:';
