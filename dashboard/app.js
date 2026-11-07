@@ -472,6 +472,13 @@ function hydrateFromLocalStorageCache() {
 
 
 
+        const rawAi = localStorage.getItem('tradeai_ai_engine_v2');
+        if (rawAi) {
+            try {
+                const ai = JSON.parse(rawAi);
+                if (typeof applyAiBadgeState === 'function') applyAiBadgeState(ai);
+            } catch (_) {}
+        }
         const raw = localStorage.getItem('tradeai_cached_signals_v1');
 
 
@@ -26203,15 +26210,52 @@ async function paperResolveEOD() {
 
 
 
+function applyAiBadgeState(ai) {
+    if (!ai) return;
+    const badgeHeader = document.getElementById('aiEngineStatusBadge');
+    if (badgeHeader) {
+        badgeHeader.textContent = ai.badge_short || (ai.fitted_count === 4 
+            ? 'Models: 4/4 Active' 
+            : (ai.fitted_count > 0 ? `Hybrid (${ai.fitted_count}/4 Models)` : 'Rule-Based Engine'));
+        badgeHeader.title = ai.badge_text || 'AI Engine Status';
+        badgeHeader.dataset.hydrated = 'true';
+        if (ai.fitted_count >= 3) {
+            badgeHeader.style.background = 'rgba(16,185,129,0.15)';
+            badgeHeader.style.color = '#10b981';
+            badgeHeader.style.borderColor = 'rgba(16,185,129,0.3)';
+        } else if (ai.fitted_count > 0) {
+            badgeHeader.style.background = 'rgba(245,158,11,0.12)';
+            badgeHeader.style.color = 'var(--amber, #f59e0b)';
+            badgeHeader.style.borderColor = 'rgba(245,158,11,0.3)';
+        } else {
+            badgeHeader.style.background = 'rgba(239,68,68,0.12)';
+            badgeHeader.style.color = 'var(--red, #ef4444)';
+            badgeHeader.style.borderColor = 'rgba(239,68,68,0.3)';
+        }
+    }
+
+    const badgeCockpit = document.getElementById('aiModelBadgeCockpit');
+    if (badgeCockpit) {
+        badgeCockpit.textContent = ai.badge_text || `AI Engine: ${ai.mode}`;
+        if (ai.fitted_count >= 3) {
+            badgeCockpit.style.background = 'rgba(16,185,129,0.15)';
+            badgeCockpit.style.color = '#10b981';
+            badgeCockpit.style.borderColor = 'rgba(16,185,129,0.3)';
+        } else if (ai.fitted_count > 0) {
+            badgeCockpit.style.background = 'rgba(245,158,11,0.12)';
+            badgeCockpit.style.color = 'var(--amber, #f59e0b)';
+            badgeCockpit.style.borderColor = 'rgba(245,158,11,0.3)';
+        } else {
+            badgeCockpit.style.background = 'rgba(239,68,68,0.12)';
+            badgeCockpit.style.color = 'var(--red, #ef4444)';
+            badgeCockpit.style.borderColor = 'rgba(239,68,68,0.3)';
+        }
+    }
+}
+
 async function updateAiModelHealthBadge() {
-
-
-
     try {
-
-
-
-        const res = await fetchWithTimeout(`${API}/api/health`, {}, 5000);
+        const res = await fetchWithTimeout(`${API}/api/health`, {}, 15000);
 
 
 
@@ -26224,10 +26268,9 @@ async function updateAiModelHealthBadge() {
 
 
         const ai = data.ai_engine;
-
-
-
         if (!ai) return;
+        applyAiBadgeState(ai);
+        try { localStorage.setItem('tradeai_ai_engine_v2', JSON.stringify(ai)); } catch (_) {}
 
 
 
