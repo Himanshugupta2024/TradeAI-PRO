@@ -4216,13 +4216,13 @@ class SnapshotBroadcaster:
             logger.debug("[Broadcaster] DB snapshot read skipped: %s", exc)
 
         prices: dict[str, Any] = {}
-        feed_status = "EOD"
+        feed_info = _get_feed_status()
+        feed_status = feed_info
         source = "CACHE"
         updated_at = datetime.now(timezone.utc).isoformat()
 
         if snapshot and isinstance(snapshot, dict) and "prices" in snapshot:
             prices = snapshot.get("prices", {})
-            feed_status = str(snapshot.get("feed_status", "LIVE"))
             source = str(snapshot.get("source", "WORKER_DB"))
             updated_at = str(snapshot.get("timestamp", updated_at))
         else:
@@ -4242,7 +4242,6 @@ class SnapshotBroadcaster:
                         "regime": _regime_cache.get(sym, "RANGING"),
                         "data_status": "LIVE" if "/" in sym else "DELAYED",
                     }
-            feed_status = _get_feed_status().get("status", "EOD")
             source = "IN_PROCESS"
 
         try:

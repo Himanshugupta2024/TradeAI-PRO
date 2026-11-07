@@ -1490,6 +1490,10 @@ function updateWsIndicator(connected) {
 
 
 function _updateFeedStatusFromWs(feedStatus) {
+    if (!feedStatus) return;
+    if (typeof feedStatus === 'string') {
+        feedStatus = { state: feedStatus };
+    }
 
 
 
@@ -1549,7 +1553,11 @@ function _updateFeedStatusFromWs(feedStatus) {
 
 
 
-    const color = state === 'LIVE' ? 'var(--green)' : state === 'DELAYED' ? '#f59e0b' : 'var(--red)';
+    const color = (state === 'LIVE' || state === 'CURRENT')
+        ? 'var(--green)'
+        : (state === 'EOD' || state === 'CLOSED' || state === 'STANDBY')
+            ? '#22d3ee'
+            : (state === 'DELAYED' ? '#f59e0b' : 'var(--red)');
 
 
 
@@ -4111,11 +4119,18 @@ function _renderGuardrails(grd) {
 
 
 
+    if (typeof feed === 'string') {
+        feed = { state: feed };
+    }
     const feedState = feed.state || 'UNKNOWN';
 
 
 
-    const feedColor = feedState === 'LIVE' ? 'var(--green)' : feedState === 'DELAYED' ? '#f59e0b' : 'var(--red)';
+    const feedColor = (feedState === 'LIVE' || feedState === 'CURRENT')
+        ? 'var(--green)'
+        : (feedState === 'EOD' || feedState === 'CLOSED' || feedState === 'STANDBY')
+            ? '#22d3ee'
+            : (feedState === 'DELAYED' ? '#f59e0b' : 'var(--red)');
 
 
 
