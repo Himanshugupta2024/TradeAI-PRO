@@ -181,3 +181,19 @@ def test_entry_distance_and_crossing():
         entry=261.02,
     )
     assert "entry_crossed" in pens3
+
+
+def test_filter_valid_setups_target_1_fallback():
+    from api.data_honesty import filter_valid_setups
+    
+    # Setups where target is in target_1/t1 and stop_loss in sl
+    setups = [
+        {"symbol": "SCI", "direction": "SHORT", "entry": 76.15, "sl": 80.72, "target_1": 58.75},
+        {"symbol": "EXIDEIND", "direction": "SHORT", "entry": 362.5, "stop_loss": 378.28, "t1": 272.0},
+    ]
+    valid, rejected = filter_valid_setups(setups)
+    assert len(valid) == 2
+    assert len(rejected) == 0
+    assert valid[0]["target"] == 58.75
+    assert valid[0]["stop_loss"] == 80.72
+    assert valid[1]["target"] == 272.0

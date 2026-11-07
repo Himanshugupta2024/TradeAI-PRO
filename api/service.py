@@ -3144,9 +3144,9 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
         # Off-hours fallback to latest SwingSpectrum shortlist candidates
         swing_candidates = _swing_cache.get("setups") or []
         for s in swing_candidates[:5]:
-            entry_p = float(s.get("entry_price") or s.get("entry") or 0.0)
-            sl_p = float(s.get("stop_loss") or 0.0)
-            tp_p = float(s.get("target") or 0.0)
+            entry_p = float(s.get("entry_price") or s.get("entry") or s.get("close") or 0.0)
+            sl_p = float(s.get("stop_loss") or s.get("sl") or 0.0)
+            tp_p = float(s.get("target") or s.get("target_1") or s.get("t1") or 0.0)
             qs = int(s.get("confluence_score") or s.get("score") or 75)
             q_grade = "A" if qs >= 75 else ("B" if qs >= 60 else "C")
             top_setups.append({
@@ -3182,9 +3182,9 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                     "quality_grade": q_grade,
                     "confidence": float(s.get("confidence") or 65.0),
                     "composite_rank": float(qs),
-                    "entry": float(s.get("entry") or s.get("close") or 0.0),
-                    "stop_loss": float(s.get("stop_loss") or 0.0),
-                    "target": float(s.get("target") or 0.0),
+                    "entry": float(s.get("entry") or s.get("entry_price") or s.get("close") or 0.0),
+                    "stop_loss": float(s.get("stop_loss") or s.get("sl") or 0.0),
+                    "target": float(s.get("target") or s.get("target_1") or s.get("t1") or 0.0),
                     "trend": str(s.get("trend") or "NEUTRAL"),
                     "regime": str(s.get("regime") or "LAST_SESSION"),
                     "blockers": [],

@@ -191,13 +191,20 @@ def filter_valid_setups(setups: Iterable[dict]) -> tuple[list[dict], list[tuple[
     for setup in setups:
         if not isinstance(setup, dict):
             continue
+        entry = setup.get("entry") or setup.get("entry_price") or setup.get("close")
+        sl = setup.get("stop_loss") or setup.get("sl")
+        tp = setup.get("target") or setup.get("target_1") or setup.get("t1")
         ok, reason = validate_setup_levels(
-            setup.get("entry"),
-            setup.get("stop_loss"),
-            setup.get("target"),
-            setup.get("signal", "LONG"),
+            entry,
+            sl,
+            tp,
+            setup.get("signal") or setup.get("direction") or "LONG",
         )
         if ok:
+            if (setup.get("target") is None or float(setup.get("target") or 0) == 0) and tp is not None:
+                setup["target"] = tp
+            if (setup.get("stop_loss") is None or float(setup.get("stop_loss") or 0) == 0) and sl is not None:
+                setup["stop_loss"] = sl
             valid.append(setup)
         else:
             rejected.append((setup, reason))

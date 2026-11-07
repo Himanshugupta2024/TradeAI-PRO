@@ -26775,7 +26775,7 @@ function renderMacroIntelligence(macro) {
         bPrice.textContent = `$${Number(brent.price).toFixed(2)}`;
         if (bSub) {
             bSub.textContent = `${fmtPct(brent.change_pct)} • $/bbl`;
-            colorPct(bSub, brent.change_pct, true);
+            colorPct(bSub, brent.change_pct, false);
         }
     }
 
@@ -26786,7 +26786,7 @@ function renderMacroIntelligence(macro) {
         wPrice.textContent = `$${Number(wti.price).toFixed(2)}`;
         if (wSub) {
             wSub.textContent = `${fmtPct(wti.change_pct)} • $/bbl`;
-            colorPct(wSub, wti.change_pct, true);
+            colorPct(wSub, wti.change_pct, false);
         }
     }
 
@@ -26797,7 +26797,7 @@ function renderMacroIntelligence(macro) {
         yPrice.textContent = `${Number(y10.price).toFixed(2)}%`;
         if (ySub) {
             ySub.textContent = `${fmtPct(y10.change_pct)} • Treasuries`;
-            colorPct(ySub, y10.change_pct, true);
+            colorPct(ySub, y10.change_pct, false);
         }
     }
 
@@ -26808,7 +26808,7 @@ function renderMacroIntelligence(macro) {
         dPrice.textContent = Number(dxy.price).toFixed(2);
         if (dSub) {
             dSub.textContent = `${fmtPct(dxy.change_pct)} • DXY`;
-            colorPct(dSub, dxy.change_pct, true);
+            colorPct(dSub, dxy.change_pct, false);
         }
     }
 
