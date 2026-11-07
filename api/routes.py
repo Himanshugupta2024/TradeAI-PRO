@@ -438,13 +438,14 @@ async def readiness_check():
     ready = db_ok and (
         symbols_count > 0
         or svc._loading_status.get("ready", False)
+        or is_lightweight
     )
 
     if not ready:
         reasons = []
         if not db_ok:
             reasons.append("Database unavailable")
-        if symbols_count == 0:
+        if symbols_count == 0 and not is_lightweight:
             reasons.append("Zero market symbols loaded")
 
         return JSONResponse(
