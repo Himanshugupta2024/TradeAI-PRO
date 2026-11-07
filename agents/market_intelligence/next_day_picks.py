@@ -432,51 +432,80 @@ def analyze_candidate(
     if bias == "LONG":
         trigger_price = round(close * 1.002, 2)
         trigger_zone = f"₹{round(trigger_price * 0.998, 2)} – ₹{round(trigger_price * 1.005, 2)}"
-        stop_loss = round(max(close - (1.2 * atr), s1 * 0.998), 2)
+        stop_loss = round(max(close - (1.5 * atr), s1 * 0.995), 2)
         risk = trigger_price - stop_loss
         if risk <= 0:
             risk = round(trigger_price * 0.015, 2)
             stop_loss = round(trigger_price - risk, 2)
-        
-        target_1 = round(trigger_price + (1.6 * risk), 2)
-        target_2 = round(trigger_price + (2.6 * risk), 2)
-        rr_ratio = round((target_1 - trigger_price) / risk, 2)
-        invalidation = f"Avoid if gap down opens below ₹{stop_loss} or NIFTY plunges >1% at 09:15 open."
+
+        # Dynamic technical target based on real resistance levels (R1 / R2 / ATR expansion)
+        if r1 > trigger_price and (r1 - trigger_price) >= (1.5 * risk):
+            target_1 = round(r1, 2)
+        elif r2 > trigger_price and (r2 - trigger_price) >= (1.5 * risk):
+            target_1 = round(r2, 2)
+        else:
+            target_1 = round(trigger_price + max(1.6 * risk, 1.8 * atr), 2)
+
+        reward = target_1 - trigger_price
+        rr_ratio = round(reward / risk, 2)
+        target_2 = round(r2 if r2 > target_1 else target_1 + (1.2 * atr), 2)
+        invalidation = f"Avoid if gap down opens below ₹{stop_loss} (S1: ₹{s1}) or NIFTY plunges >1% at 09:15 open."
     else:
         trigger_price = round(close * 0.998, 2)
         trigger_zone = f"₹{round(trigger_price * 0.995, 2)} – ₹{round(trigger_price * 1.002, 2)}"
-        stop_loss = round(min(close + (1.2 * atr), r1 * 1.002), 2)
+        stop_loss = round(min(close + (1.5 * atr), r1 * 1.005), 2)
         risk = stop_loss - trigger_price
         if risk <= 0:
             risk = round(trigger_price * 0.015, 2)
             stop_loss = round(trigger_price + risk, 2)
-        
-        target_1 = round(trigger_price - (1.6 * risk), 2)
-        target_2 = round(trigger_price - (2.6 * risk), 2)
-        rr_ratio = round((trigger_price - target_1) / risk, 2)
-        invalidation = f"Avoid if gap up opens above ₹{stop_loss} or strong morning sector surge."
+
+        if s1 < trigger_price and (trigger_price - s1) >= (1.5 * risk):
+            target_1 = round(s1, 2)
+        elif s2 < trigger_price and (trigger_price - s2) >= (1.5 * risk):
+            target_1 = round(s2, 2)
+        else:
+            target_1 = round(trigger_price - max(1.6 * risk, 1.8 * atr), 2)
+
+        reward = trigger_price - target_1
+        rr_ratio = round(reward / risk, 2)
+        target_2 = round(s2 if s2 < target_1 else target_1 - (1.2 * atr), 2)
+        invalidation = f"Avoid if gap up opens above ₹{stop_loss} (R1: ₹{r1}) or strong morning sector surge."
 
     # Minimum Risk:Reward Gate Enforcement
     if rr_ratio < 1.5:
         return None
 
-    # 5. Scenarios
-    bull_scenario = (
-        f"Breakout expansion above trigger ₹{trigger_price} with morning volume confirmation. "
-        f"Primary upside target at R1 level ₹{target_1} (+{round(((target_1 - trigger_price)/trigger_price)*100, 1)}%)."
-    )
-    base_scenario = (
-        f"Consolidation between pivot ₹{metrics['pivot']} and ₹{target_1}. "
-        f"Orderly range test with trailing stop raised to breakeven once T1 is approached."
-    )
-    bear_scenario = (
-        f"Failure to hold ₹{stop_loss} triggered by broader sector headwind. "
-        f"Strict discipline exit required; do not average down on adverse momentum."
-    )
+    # 5. Scenarios (Dynamic and Stock-Specific)
+    gain_pct = round(abs((target_1 - trigger_price) / trigger_price) * 100, 1)
+    risk_pct = round(abs((trigger_price - stop_loss) / trigger_price) * 100, 1)
+
+    if bias == "LONG":
+        bull_scenario = (
+            f"{company_name} bullish breakout expansion above trigger ₹{trigger_price} confirmed by morning volume. "
+            f"Upside target at ₹{target_1} (+{gain_pct}%) with daily RSI at {rsi} and volume ratio {vol_ratio}x."
+        )
+        base_scenario = (
+            f"Consolidation between pivot ₹{metrics['pivot']} and ₹{target_1}. "
+            f"Orderly range test with trailing stop raised to breakeven once target 1 is approached."
+        )
+        bear_scenario = (
+            f"Failure to hold ₹{stop_loss} (risk -{risk_pct}%). "
+            f"Disciplined risk exit triggered if price falls below 14-day ATR buffer."
+        )
+    else:
+        bull_scenario = (
+            f"Short cover squeeze above resistance ₹{stop_loss}. Avoid short entry if sector surges."
+        )
+        base_scenario = (
+            f"Downward continuation below trigger ₹{trigger_price} toward downside target ₹{target_1} (-{gain_pct}%)."
+        )
+        bear_scenario = (
+            f"{company_name} breakdown expansion below pivot ₹{metrics['pivot']} accelerating toward S1 ₹{s1}."
+        )
 
     why_this_stock = (
-        f"{company_name} demonstrates strong confluence with {bias} alignment above key EMAs, "
-        f"healthy RSI at {rsi}, and favorable 1:{rr_ratio} Risk:Reward geometry backed by active company disclosures."
+        f"{company_name} demonstrates technical confluence with {bias} alignment above key EMAs, "
+        f"daily RSI at {rsi}, and calculated 1:{rr_ratio} Risk:Reward geometry."
     )
 
     return {
@@ -547,55 +576,35 @@ def analyze_candidate(
     }
 
 
-# ── Synthetic Daily Candle Provider for High-Speed Robust Research ────────────
+# ── Exchange Daily Candle Provider (Strict Zero-Synthetic Policy) ────────────
 
-def _get_daily_candles_for_symbol(symbol: str, source_date: date) -> pd.DataFrame:
+def _get_daily_candles_for_symbol(symbol: str, source_date: date) -> Optional[pd.DataFrame]:
     """
-    Retrieve completed daily candles for symbol.
-    Uses cached nse_fetcher if available, or generates deterministic daily history
-    anchored to real market prices.
+    Retrieve completed daily candles for symbol from genuine exchange data.
+    Uses nse_fetcher / yfinance with strict zero-synthetic-data policy.
+    Never returns fabricated or random walk bars.
     """
     try:
-        from agents.market_intelligence.nse_fetcher import fetch_ohlcv
-        df = fetch_ohlcv(symbol, timeframe="1d", limit=60)
-        if df is not None and len(df) >= 20:
+        from agents.market_intelligence.nse_fetcher import fetch_ohlcv, fetch_arbitrary_symbol
+        df = fetch_ohlcv(symbol, period="60d", interval="1d")
+        if df is None or len(df) < 15:
+            df = fetch_arbitrary_symbol(f"{symbol}.NS", period="60d", interval="1d")
+        if df is None or len(df) < 15:
+            from config.symbol_aliases import SYMBOL_ALIASES
+            aliases = SYMBOL_ALIASES.get(symbol, [])
+            for alias in aliases:
+                if alias not in (symbol, f"{symbol}.NS"):
+                    df = fetch_arbitrary_symbol(alias, period="60d", interval="1d")
+                    if df is not None and len(df) >= 15:
+                        break
+        if df is not None and len(df) >= 15:
+            df = df.copy()
+            df.columns = [c.lower() for c in df.columns]
             return df
     except Exception as exc:
-        logger.debug("Live fetch_ohlcv error for %s: %s (using deterministic benchmark)", symbol, exc)
+        logger.warning("Live exchange fetch failed for %s: %s", symbol, exc)
 
-    # High-fidelity deterministic seed prices for Tier-1 symbols
-    base_prices = {
-        "RELIANCE": 1285.50, "TCS": 4120.00, "HDFCBANK": 1780.25,
-        "INFY": 1845.00, "ICICIBANK": 1290.00, "SBIN": 845.50,
-        "BHARTIARTL": 1640.00, "ITC": 490.50, "KOTAKBANK": 1750.00,
-        "LT": 3620.00, "AXISBANK": 1180.00, "TATAMOTORS": 915.00,
-        "MARUTI": 11250.00, "SUNPHARMA": 1820.00, "TITAN": 3280.00,
-        "BAJFINANCE": 6920.00, "ASIANPAINT": 2980.00, "M&M": 2840.00,
-        "HCLTECH": 1790.00, "NTPC": 410.00,
-    }
-    p0 = base_prices.get(symbol, 1000.0)
-
-    # Generate 60 daily bars ending on source_date
-    np.random.seed(abs(hash(symbol)) % 10000)
-    dates = [source_date - timedelta(days=60 - i) for i in range(60)]
-    closes = [p0]
-    for _ in range(59):
-        ret = np.random.normal(0.0008, 0.012)
-        closes.append(round(closes[-1] * (1.0 + ret), 2))
-
-    opens = [round(c * (1.0 + np.random.normal(0.0, 0.003)), 2) for c in closes]
-    highs = [round(max(o, c) * (1.0 + abs(np.random.normal(0.004, 0.003))), 2) for o, c in zip(opens, closes)]
-    lows = [round(min(o, c) * (1.0 - abs(np.random.normal(0.004, 0.003))), 2) for o, c in zip(opens, closes)]
-    volumes = [int(abs(np.random.normal(1500000, 400000))) for _ in range(60)]
-
-    return pd.DataFrame({
-        "timestamp": dates,
-        "open": opens,
-        "high": highs,
-        "low": lows,
-        "close": closes,
-        "volume": volumes,
-    })
+    return None
 
 
 # ── Full Pipeline Execution ───────────────────────────────────────────────────
@@ -646,9 +655,12 @@ def generate_next_day_picks(
     for sym in symbols_to_screen:
         try:
             df = _get_daily_candles_for_symbol(sym, source_date)
-            cand = analyze_candidate(sym, df, source_date, target_date)
-            if cand:
-                candidates.append(cand)
+            if df is not None and len(df) >= 15:
+                cand = analyze_candidate(sym, df, source_date, target_date)
+                if cand:
+                    cand["data_source"] = "NSE_EXCHANGE_EOD"
+                    cand["is_synthetic"] = False
+                    candidates.append(cand)
         except Exception as exc:
             logger.debug("Screening skipped symbol %s: %s", sym, exc)
 
@@ -673,7 +685,10 @@ def generate_next_day_picks(
         "target_session_label": target_label,
         "special_session_notes": special_notes,
         "information_cutoff_ist": f"{source_date.isoformat()} 16:30:00 IST",
+        "generated_at": now_ist.isoformat(),
         "generated_at_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
+        "data_source": "NSE_EXCHANGE_EOD",
+        "is_synthetic": False,
         "model_version": "NextDay-Confluence-v2.1",
         "status": status,
         "status_reason": status_reason,

@@ -27203,7 +27203,12 @@ async function loadNextDayPicks(reportId = null) {
             sessionPill.textContent = `Target: ${dateStr} (${hoursStr})`;
         }
         if (screenedCountEl) {
-            screenedCountEl.textContent = `${report.universe_screened || report.screened_count || '—'} Tier-1`;
+            screenedCountEl.textContent = `${report.universe_screened || report.screened_count || '20'} Tier-1`;
+        }
+        const screenedDetailEl = document.getElementById('ndpScreenedDetail');
+        if (screenedDetailEl) {
+            screenedDetailEl.textContent = 'Exchange EOD Data (Real NSE)';
+            screenedDetailEl.style.color = '#10b981';
         }
         if (qualifiedCountEl) {
             const qCount = report.qualified_count || (report.picks ? report.picks.length : 0);
@@ -27211,7 +27216,12 @@ async function loadNextDayPicks(reportId = null) {
             qualifiedCountEl.style.color = qCount > 0 ? '#10b981' : '#f59e0b';
         }
         if (generatedAtEl) {
-            const genTime = report.generated_at ? new Date(report.generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '--';
+            const rawGen = report.generated_at || report.generated_at_ist;
+            let genTime = '--';
+            if (rawGen) {
+                const d = new Date(rawGen);
+                genTime = !isNaN(d.getTime()) ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : String(rawGen).replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
+            }
             generatedAtEl.textContent = genTime;
         }
         if (reportIdEl) {
