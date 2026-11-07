@@ -1073,9 +1073,16 @@ async def get_all_signals(response: Response):
         durable_sigs = []
         try:
             from db.runtime_state import get_runtime_state
-            snap = get_runtime_state("latest_signals:v1")
-            if snap and isinstance(snap, dict) and snap.get("signals"):
-                durable_sigs = snap["signals"]
+            snap_v1 = get_runtime_state("latest_signals:v1")
+            snap_raw = get_runtime_state("latest_signals_snapshot")
+            sigs_v1 = snap_v1.get("signals", []) if isinstance(snap_v1, dict) else []
+            sigs_raw = snap_raw.get("signals", []) if isinstance(snap_raw, dict) else []
+
+            merged = {s["symbol"].upper().replace(".NS", ""): s for s in sigs_raw if isinstance(s, dict) and s.get("symbol")}
+            for s in sigs_v1:
+                if isinstance(s, dict) and s.get("symbol"):
+                    merged[s["symbol"].upper().replace(".NS", "")] = s
+            durable_sigs = list(merged.values())
         except Exception:
             pass
         if not durable_sigs:

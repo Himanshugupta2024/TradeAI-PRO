@@ -27542,8 +27542,65 @@ async function _fetchWatchlistQuote(sym) {
     if (cached && (Date.now() - cached.ts < 60000) && !cached.isError) {
         return cached;
     }
+
+    // 1. Check in-memory marketDataCache first (0ms instantaneous lookup)
+    if (typeof marketDataCache !== 'undefined' && marketDataCache[sym] && marketDataCache[sym].close) {
+        const md = marketDataCache[sym];
+        const ltp = Number(md.close || 0);
+        if (ltp > 0) {
+            const quoteObj = {
+                ltp,
+                changePct: Number(md.change_pct || 0),
+                signalLabel: 'MONITOR',
+                conf: 65,
+                entry: ltp,
+                sl: Number((ltp * 0.98).toFixed(1)),
+                tp: Number((ltp * 1.035).toFixed(1)),
+                isError: false,
+                ts: Date.now()
+            };
+            _watchlistQuoteCache[sym] = quoteObj;
+            return quoteObj;
+        }
+    }
+
+    // 2. Fetch fast lightweight market quote from /api/market/{sym}?limit=2&interval=5m (~1.8s)
     try {
-        const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 10000);
+        const cleanSym = encodeURIComponent(sym.replace('.NS', '').trim());
+        const mRes = await fetchSafeJSON(`${API}/api/market/${cleanSym}?limit=2&interval=5m`, {}, 15000);
+        if (mRes.ok && mRes.data && Array.isArray(mRes.data.data) && mRes.data.data.length > 0) {
+            const candles = mRes.data.data;
+            const last = candles[candles.length - 1];
+            const prev = candles.length > 1 ? candles[candles.length - 2] : last;
+            const ltp = Number(last.close || 0);
+            if (ltp > 0) {
+                const prevClose = Number(prev.close || ltp);
+                const changePct = prevClose > 0 ? Number((((ltp - prevClose) / prevClose) * 100).toFixed(2)) : 0;
+                const sig = (last.signal || 'HOLD').toUpperCase();
+                const signalLabel = ['LONG', 'SHORT', 'BUY', 'SELL', 'HOLD'].includes(sig) ? sig : 'MONITOR';
+                const ema50 = Number(last.ema_50 || (ltp * 0.98));
+                const sl = Number((last.bb_lower && last.bb_lower < ltp) ? last.bb_lower : (ema50 < ltp ? ema50 : ltp * 0.98));
+                const tp = Number((last.bb_upper && last.bb_upper > ltp) ? last.bb_upper : (ltp * 1.035));
+                const quoteObj = {
+                    ltp,
+                    changePct,
+                    signalLabel,
+                    conf: Number(last.rsi ? Math.min(85, Math.max(50, Math.round(last.rsi))) : 65),
+                    entry: ltp,
+                    sl: Number(sl.toFixed(1)),
+                    tp: Number(tp.toFixed(1)),
+                    isError: false,
+                    ts: Date.now()
+                };
+                _watchlistQuoteCache[sym] = quoteObj;
+                return quoteObj;
+            }
+        }
+    } catch (_) {}
+
+    // 3. Fallback to /api/search/quote/{sym} with resilient 25s timeout
+    try {
+        const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 25000);
         if (qRes.ok && qRes.data) {
             const d = qRes.data;
             const ltp = Number(d.close || 0);
@@ -27572,6 +27629,7 @@ async function _fetchWatchlistQuote(sym) {
             return quoteObj;
         }
     } catch (_) {}
+
     return {
         ltp: 0,
         changePct: 0,
@@ -27644,13 +27702,19 @@ async function loadDedicatedWatchlist() {
     };
 
     const signalsMap = {};
-    const sigPool = (Array.isArray(allSignals) && allSignals.length > 0)
-        ? allSignals
-        : (window._allSignalsCache || []);
+    const sigPool = [
+        ...(Array.isArray(allSignals) ? allSignals : (allSignals?.signals || [])),
+        ...(Array.isArray(window._allSignalsCache) ? window._allSignalsCache : []),
+        ...(Array.isArray(window._intradayAllSigs) ? window._intradayAllSigs : []),
+        ...(Array.isArray(window._swingAllSetups) ? window._swingAllSetups : []),
+        ...(Array.isArray(window._topSetups) ? window._topSetups : [])
+    ];
     sigPool.forEach(s => {
         if (s && s.symbol) {
             const k = s.symbol.toUpperCase().replace('.NS', '').trim();
-            signalsMap[k] = s;
+            if (!signalsMap[k] || (s.close && !signalsMap[k].close)) {
+                signalsMap[k] = s;
+            }
         }
     });
 

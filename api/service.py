@@ -380,12 +380,30 @@ async def _hydrate_signals_cache_from_db() -> bool:
     global _persisted_signals_snapshot, _persisted_signals_updated_at
     try:
         from db.runtime_state import get_runtime_state
-        data = await asyncio.to_thread(get_runtime_state, "latest_signals:v1")
-        if not (isinstance(data, dict) and data.get("signals")):
-            data = await asyncio.to_thread(get_runtime_state, "latest_signals_snapshot")
-        if isinstance(data, dict) and data.get("signals"):
-            _persisted_signals_snapshot = data["signals"]
-            _persisted_signals_updated_at = data.get("timestamp") or data.get("updated_at")
+        data_v1 = await asyncio.to_thread(get_runtime_state, "latest_signals:v1")
+        data_snap = await asyncio.to_thread(get_runtime_state, "latest_signals_snapshot")
+
+        sigs_v1 = data_v1.get("signals", []) if isinstance(data_v1, dict) else []
+        sigs_snap = data_snap.get("signals", []) if isinstance(data_snap, dict) else []
+
+        merged_signals = {}
+        for s in sigs_snap:
+            if isinstance(s, dict) and s.get("symbol"):
+                merged_signals[s["symbol"].upper().replace(".NS", "")] = s
+        for s in sigs_v1:
+            if isinstance(s, dict) and s.get("symbol"):
+                k = s["symbol"].upper().replace(".NS", "")
+                if k not in merged_signals or len(s.keys()) > len(merged_signals[k].keys()):
+                    merged_signals[k] = s
+
+        if merged_signals:
+            _persisted_signals_snapshot = list(merged_signals.values())
+            _persisted_signals_updated_at = (
+                (data_v1.get("timestamp") if isinstance(data_v1, dict) else None)
+                or (data_snap.get("updated_at") if isinstance(data_snap, dict) else None)
+                or (data_snap.get("timestamp") if isinstance(data_snap, dict) else None)
+                or datetime.now(timezone.utc).isoformat()
+            )
             logger.info("Hydrated %d signals from DB snapshot on startup", len(_persisted_signals_snapshot))
             return True
     except Exception as e:

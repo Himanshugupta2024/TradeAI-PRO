@@ -22,6 +22,8 @@ awesome-codex-skills/
 *.tmp
 .tmp_xgb/
 .tmp_xgb2/
+.tmp_fix_work/
+.tmp_npm/
 *.bak
 trading.db
 trading.db-wal
