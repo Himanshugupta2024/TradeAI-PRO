@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 def _create_engine():
     """Create the SQLAlchemy engine with appropriate settings."""
     url = DATABASE_URL or "sqlite:///trading.db"
+    from config import settings
+    is_prod = getattr(settings, 'IS_PRODUCTION', False) or getattr(settings, 'ENVIRONMENT', '').lower() == 'production'
+    if is_prod and ('sqlite' in url or not url):
+        raise RuntimeError('Production database configuration error: SQLite is strictly forbidden in production mode.')
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
 

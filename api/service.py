@@ -840,14 +840,19 @@ _engines: dict[str, PaperTradingEngine] = {}
 
 def get_engine_for_account(account_id: str = "default") -> PaperTradingEngine:
     """Get or create the paper trading engine for a specific isolated account."""
+    global _engine
     clean_id = (account_id or "default").strip().lower()
     if not clean_id or not clean_id.replace("-", "").replace("_", "").isalnum():
         clean_id = "default"
+    if clean_id == "default" and _engine is not None:
+        return _engine
     if clean_id not in _engines:
         _engines[clean_id] = PaperTradingEngine(
             initial_capital=100_000.0,
             account_id=clean_id,
         )
+        if clean_id == "default" and _engine is None:
+            _engine = _engines[clean_id]
     return _engines[clean_id]
 
 def _get_engine() -> PaperTradingEngine:

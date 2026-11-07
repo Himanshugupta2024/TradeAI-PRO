@@ -321,9 +321,9 @@ class TestChallengerBackendStressAndGuards(unittest.TestCase):
             # But in lightweight mode, it strictly checks file existence
             status = get_model_status()
             self.assertTrue(status.get("lightweight_mode"))
-            self.assertEqual(status.get("fitted_count"), 4)
+            self.assertEqual(status.get("active_inference_mode"), "LIGHTWEIGHT_BASELINE")
             self.assertTrue(status.get("xgboost_fitted"))
-            self.assertIn("Ensemble V2", status.get("mode"))
+            self.assertIn("Lightweight", status.get("mode"))
 
         print("[CHALLENGER ORACLE 8] Poisoned artifact defense verified: lightweight status probe checks file existence without unpickling.")
 

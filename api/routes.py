@@ -2645,10 +2645,10 @@ async def get_market_data(
             df = df.tail(limit)
             return _build_market_response(clean_sym, df, interval)
 
-        # Check negative symbol cache (10 min TTL) to short-circuit repeated misses
+        # Check negative symbol cache (30s TTL) to short-circuit repeated misses on unknown symbols
         _now_neg = time.time()
         _neg_ts = _NEGATIVE_SYMBOL_CACHE.get(clean_sym)
-        if _neg_ts is not None and (_now_neg - _neg_ts) < 600.0:
+        if _neg_ts is not None and (_now_neg - _neg_ts) < 30.0:
             logger.debug("Negative symbol cache hit for %s (skipping fetch)", clean_sym)
             raise HTTPException(status_code=404, detail={
                 "error": "SYMBOL_NOT_FOUND",
@@ -2685,8 +2685,16 @@ async def get_market_data(
                 pass
 
         if df is None or df.empty:
-            _NEGATIVE_SYMBOL_CACHE[clean_sym] = time.time()
-            logger.debug("Symbol %s not found on NSE/Yahoo; cached negative result for 10m", clean_sym)
+            from agents.market_intelligence.nse_fetcher import NSE_SYMBOLS
+            is_known = (
+                clean_sym in NSE_SYMBOLS
+                or clean_sym in getattr(settings, "TOP_NSE_SYMBOLS", [])
+                or clean_sym in getattr(settings, "FOREX_SYMBOLS", [])
+                or getattr(settings, "NSE_TICKER_MAP", {}).get(clean_sym) is not None
+            )
+            if not is_known:
+                _NEGATIVE_SYMBOL_CACHE[clean_sym] = time.time()
+                logger.debug("Unknown symbol %s cached in negative cache for 30s", clean_sym)
             raise HTTPException(status_code=404, detail={
                 "error": "SYMBOL_NOT_FOUND",
                 "symbol": clean_sym,
@@ -2698,7 +2706,7 @@ async def get_market_data(
         raise
     except Exception as e:
         logger.debug("On-demand market fetch error for %s@%s: %s", clean_sym, interval, e)
-        _NEGATIVE_SYMBOL_CACHE[clean_sym] = time.time()
+        # Transient errors (timeouts, load spikes) must NOT poison the negative symbol cache
         raise HTTPException(status_code=404, detail={
             "error": "SYMBOL_NOT_FOUND",
             "symbol": clean_sym,
@@ -2708,6 +2716,111 @@ async def get_market_data(
 
     df = df.tail(limit)
     return _build_market_response(clean_sym, df, interval)
+
+
+@router.get("/api/watchlist/quotes")
+async def get_watchlist_quotes(symbols: str = Query(..., description="Comma-separated symbols, e.g. RELIANCE,HDFCBANK")):
+    """
+    Bulk quote endpoint for user watchlists.
+    Returns real-time or cached snapshot quotes in a single round-trip,
+    avoiding multiple concurrent requests and client timeouts.
+    """
+    raw_list = [s.strip().upper().replace(".NS", "") for s in symbols.split(",") if s.strip()]
+    if not raw_list:
+        return {"quotes": {}, "count": 0}
+
+    target_symbols = raw_list[:20]
+    results = {}
+
+    for sym in target_symbols:
+        quote = None
+        # 1. In-memory market data cache (0ms)
+        if sym in svc._market_data:
+            df = svc._market_data[sym]
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                last = df.iloc[-1]
+                prev = df.iloc[-2] if len(df) > 1 else last
+                ltp = float(last.get("close", 0.0))
+                prev_close = float(prev.get("close", ltp))
+                chg_pct = round(((ltp - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
+                sig = str(last.get("signal", "HOLD")).upper()
+                quote = {
+                    "symbol": sym,
+                    "ltp": round(ltp, 2),
+                    "change_pct": chg_pct,
+                    "signal": sig if sig in ("LONG", "SHORT", "BUY", "SELL", "HOLD") else "MONITOR",
+                    "confidence": int(last.get("rsi", 65)) if pd.notna(last.get("rsi")) else 65,
+                    "entry": round(ltp, 2),
+                    "stop_loss": round(float(last.get("bb_lower", ltp * 0.98)), 2),
+                    "target": round(float(last.get("bb_upper", ltp * 1.035)), 2),
+                    "source": "memory_cache",
+                    "is_stale": False,
+                }
+
+        # 2. Check signal cache
+        if not quote and sym in svc._signal_cache:
+            df = svc._signal_cache[sym]
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                last = df.iloc[-1]
+                ltp = float(last.get("close", 0.0))
+                quote = {
+                    "symbol": sym,
+                    "ltp": round(ltp, 2),
+                    "change_pct": round(float(last.get("change_pct", 0.0)), 2),
+                    "signal": str(last.get("signal", "MONITOR")).upper(),
+                    "confidence": 65,
+                    "entry": round(ltp, 2),
+                    "stop_loss": round(ltp * 0.98, 2),
+                    "target": round(ltp * 1.035, 2),
+                    "source": "signal_cache",
+                    "is_stale": False,
+                }
+
+        # 3. If still missing, on-demand quick fetch
+        if not quote:
+            try:
+                from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
+                df = await asyncio.to_thread(fetch_arbitrary_symbol, f"{sym}.NS", "5d", "5m")
+                if df is not None and not df.empty:
+                    df = calculate_indicators(df)
+                    svc._market_data[sym] = df
+                    last = df.iloc[-1]
+                    prev = df.iloc[-2] if len(df) > 1 else last
+                    ltp = float(last.get("close", 0.0))
+                    prev_close = float(prev.get("close", ltp))
+                    chg_pct = round(((ltp - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
+                    quote = {
+                        "symbol": sym,
+                        "ltp": round(ltp, 2),
+                        "change_pct": chg_pct,
+                        "signal": "MONITOR",
+                        "confidence": 65,
+                        "entry": round(ltp, 2),
+                        "stop_loss": round(float(last.get("bb_lower", ltp * 0.98)), 2),
+                        "target": round(float(last.get("bb_upper", ltp * 1.035)), 2),
+                        "source": "on_demand",
+                        "is_stale": False,
+                    }
+            except Exception:
+                pass
+
+        if quote:
+            results[sym] = quote
+        else:
+            results[sym] = {
+                "symbol": sym,
+                "ltp": 0.0,
+                "change_pct": 0.0,
+                "signal": "SYNCING",
+                "confidence": 0,
+                "entry": 0.0,
+                "stop_loss": 0.0,
+                "target": 0.0,
+                "source": "pending",
+                "is_stale": True,
+            }
+
+    return {"quotes": results, "count": len(results)}
 
 @router.get("/api/signal/{symbol:path}")
 
@@ -7800,6 +7913,25 @@ async def get_morning_scan():
 
         session.close()
 
+_quote_single_flight_locks: dict[str, asyncio.Lock] = {}
+_quote_latencies_ms: deque = deque(maxlen=500)
+
+@router.get("/api/search/latency")
+async def get_search_latency_stats():
+    """Latency distribution (p50, p95, p99) for symbol quote resolution."""
+    if not _quote_latencies_ms:
+        return {"samples": 0, "p50_ms": 0.0, "p95_ms": 0.0, "p99_ms": 0.0, "min_ms": 0.0, "max_ms": 0.0}
+    arr = sorted(_quote_latencies_ms)
+    n = len(arr)
+    return {
+        "samples": n,
+        "p50_ms": arr[int(n * 0.50)],
+        "p95_ms": arr[min(int(n * 0.95), n - 1)],
+        "p99_ms": arr[min(int(n * 0.99), n - 1)],
+        "min_ms": arr[0],
+        "max_ms": arr[-1],
+    }
+
 @router.get("/api/search/quote/{symbol}")
 
 async def search_quote(symbol: str):
@@ -7815,6 +7947,7 @@ async def search_quote(symbol: str):
     Auto-appends ".NS" suffix for unrecognized Indian stock symbols.
 
     """
+    t_start = time.perf_counter()
 
     clean = symbol.replace("-", "/").replace("_", " ")
 
@@ -8058,6 +8191,9 @@ async def search_quote(symbol: str):
 
     # Free heap and trim glibc malloc pages to protect Render 512MB RAM cap
     svc._force_free_memory()
+
+    elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
+    _quote_latencies_ms.append(elapsed_ms)
 
     return {
 

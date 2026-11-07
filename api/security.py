@@ -30,9 +30,11 @@ def require_admin(
     env_key = os.environ.get("ADMIN_API_KEY", "").strip() if "ADMIN_API_KEY" in os.environ else ""
 
     if "pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST"):
-        if settings_key and settings_key != "tradeai-secure-pass-2026":
+        if getattr(settings, "ADMIN_API_KEY", None) == "":
+            admin_key = ""
+        elif settings_key and settings_key != "tradeai-secure-pass-2026":
             admin_key = settings_key
-        elif "ADMIN_API_KEY" in os.environ:
+        elif "ADMIN_API_KEY" in os.environ and os.environ.get("ADMIN_API_KEY") != "tradeai-secure-pass-2026":
             admin_key = env_key
         else:
             admin_key = ""

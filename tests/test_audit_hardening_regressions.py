@@ -89,6 +89,7 @@ def test_3_missing_admin_key_rejected_in_production(monkeypatch):
     monkeypatch.setattr(settings, "IS_PRODUCTION", True)
     monkeypatch.setattr(settings, "DATABASE_URL", "postgresql://user:pass@host:5432/trading")
     monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+    monkeypatch.setenv("ADMIN_API_KEY", "")
 
     with pytest.raises(ValueError, match="ADMIN_API_KEY must be configured"):
         settings.validate_runtime_config()

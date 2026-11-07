@@ -949,15 +949,15 @@ def get_model_status() -> dict:
         return {
             "mode": mode,
             "active_inference_mode": "LIGHTWEIGHT_BASELINE",
-            "fitted_count": 0,  # 0 ML models executing in memory (respects 512MB RAM cap)
+            "fitted_count": sum([xgb_disk, lgbm_disk, lstm_disk, logit_disk]),
             "executing_in_memory": False,
             "total_ml_models": 4,
             "statistical_heuristic": True,
-            "xgboost_fitted": False,
-            "lightgbm_fitted": False,
-            "lstm_fitted": False,
-            "logistic_fitted": False,
-            "meta_learner_fitted": False,
+            "xgboost_fitted": xgb_disk,
+            "lightgbm_fitted": lgbm_disk,
+            "lstm_fitted": lstm_disk,
+            "logistic_fitted": logit_disk,
+            "meta_learner_fitted": meta_disk,
             "calibrator_fitted": calib_disk,
             "calibration_status": {
                 "calibrated": calib_disk,

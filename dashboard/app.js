@@ -58,6 +58,10 @@ const API = (() => {
 
 // ── Resilient JSON Fetcher with Dual-Origin Fallback & Content-Type Safety ──
 async function fetchSafeJSON(url, options = {}, timeoutMs = 12000) {
+    const method = (options.method || 'GET').toUpperCase();
+    if (method === 'GET' && typeof _inFlightRequests !== 'undefined' && _inFlightRequests.has(url)) {
+        return _inFlightRequests.get(url).then(r => ({ ok: r.ok, status: r.status, data: r._cachedData || {} }));
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -3128,12 +3132,12 @@ async function loadAllData({ background = false } = {}) {
     // Adaptive Lazy-Loading: Heavy peripheral modules are fetched on-demand or with 3-minute interval
 
     const nowTs = Date.now();
+    const isColdBoot = (_lastOppsFetchTs === 0 && _lastCryptoFetchTs === 0);
 
-    const shouldFetchOpps = (currentTab === 'opportunities') || (nowTs - (_lastOppsFetchTs || 0) > 180000);
-
-    const shouldFetchCrypto = (currentTab === 'crypto') || (nowTs - (_lastCryptoFetchTs || 0) > 180000);
-
-    const shouldFetchMorning = (nowTs - (_lastMorningFetchTs || 0) > 300000);
+    // Stagger non-essential deep intelligence queries during cold boot
+    const shouldFetchOpps = (currentTab === 'opportunities') || (!isColdBoot && (nowTs - (_lastOppsFetchTs || 0) > 180000));
+    const shouldFetchCrypto = (currentTab === 'crypto') || (!isColdBoot && (nowTs - (_lastCryptoFetchTs || 0) > 180000));
+    const shouldFetchMorning = (currentTab === 'morning-scan') || (!isColdBoot && (nowTs - (_lastMorningFetchTs || 0) > 300000));
 
 
 
@@ -26350,12 +26354,16 @@ function applyAiBadgeState(ai) {
     if (!ai) return;
     const badgeHeader = document.getElementById('aiEngineStatusBadge');
     if (badgeHeader) {
-        badgeHeader.textContent = ai.badge_short || (ai.fitted_count === 4 
+        badgeHeader.textContent = ai.badge_short || (ai.lightweight_mode ? '⚡ Lightweight Mode' : (ai.fitted_count === 4 
             ? 'Models: 4/4 Active' 
-            : (ai.fitted_count > 0 ? `Hybrid (${ai.fitted_count}/4 Models)` : 'Rule-Based Engine'));
+            : (ai.fitted_count > 0 ? `Hybrid (${ai.fitted_count}/4 Models)` : 'Rule-Based Engine')));
         badgeHeader.title = ai.badge_text || 'AI Engine Status';
         badgeHeader.dataset.hydrated = 'true';
-        if (ai.fitted_count >= 3) {
+        if (ai.lightweight_mode) {
+            badgeHeader.style.background = 'rgba(56,189,248,0.15)';
+            badgeHeader.style.color = '#38bdf8';
+            badgeHeader.style.borderColor = 'rgba(56,189,248,0.3)';
+        } else if (ai.fitted_count >= 3) {
             badgeHeader.style.background = 'rgba(16,185,129,0.15)';
             badgeHeader.style.color = '#10b981';
             badgeHeader.style.borderColor = 'rgba(16,185,129,0.3)';
@@ -27881,3 +27889,21 @@ async function loadDedicatedWatchlist() {
 
     grid.innerHTML = cardsHtml.join('');
 }
+
+
+// Centralized delegated click handler for data-action buttons (CSP hardening)
+document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    const action = el.dataset.action;
+    if (action === 'switchTab') {
+        const tab = el.dataset.tab;
+        if (tab && typeof switchTab === 'function') switchTab(tab);
+    } else if (action === 'openSymbolModal') {
+        const sym = el.dataset.symbol;
+        if (sym && typeof openSymbolModal === 'function') openSymbolModal(sym);
+    } else if (action === 'addToWatchlist') {
+        const sym = el.dataset.symbol;
+        if (sym && typeof addToWatchlist === 'function') addToWatchlist(sym);
+    }
+});
