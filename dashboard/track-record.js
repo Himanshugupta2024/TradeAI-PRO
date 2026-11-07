@@ -18,14 +18,18 @@
 
     var inr = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 });
 
-    function money(value) {
+    function money(value, currency) {
         var n = Number(value || 0);
-        return (n < 0 ? '-' : '') + '₹' + inr.format(Math.abs(n));
+        var qc = String(currency || 'INR').toUpperCase();
+        var sym = (qc === 'USDT' || qc === 'USD') ? '$' : '₹';
+        return (n < 0 ? '-' : '') + sym + inr.format(Math.abs(n));
     }
 
-    function signedMoney(value) {
+    function signedMoney(value, currency) {
         var n = Number(value || 0);
-        return (n > 0 ? '+' : '') + money(n);
+        var qc = String(currency || 'INR').toUpperCase();
+        var sym = (qc === 'USDT' || qc === 'USD') ? '$' : '₹';
+        return (n > 0 ? '+' : (n < 0 ? '-' : '')) + sym + inr.format(Math.abs(n));
     }
 
     function pct(value) {
@@ -113,15 +117,16 @@
             }) : '—';
             var costs = Number(t.estimated_costs || 0);
             var pnlTitle = costs > 0 ? ' title="Net of ~₹' + costs.toFixed(2) + ' estimated statutory costs"' : '';
+            var qc = t.quote_currency || 'INR';
             return '<tr>' +
                 '<td>' + esc(exitTime) + '</td>' +
                 '<td><b>' + esc(t.symbol) + '</b></td>' +
                 '<td><span class="' + dirClass + '">' + esc(dir || '—') + '</span></td>' +
                 '<td>' + esc(t.strategy || '—') + '</td>' +
                 '<td>' + Number(t.quantity || 0).toFixed(2) + '</td>' +
-                '<td>' + money(t.entry_price) + '</td>' +
-                '<td>' + money(t.exit_price) + '</td>' +
-                '<td class="' + (Number(t.pnl) >= 0 ? 'pos' : 'neg') + '"' + pnlTitle + '><b>' + signedMoney(t.pnl) + '</b></td>' +
+                '<td>' + money(t.entry_price, qc) + '</td>' +
+                '<td>' + money(t.exit_price, qc) + '</td>' +
+                '<td class="' + (Number(t.pnl) >= 0 ? 'pos' : 'neg') + '"' + pnlTitle + '><b>' + signedMoney(t.pnl, qc) + '</b></td>' +
                 '<td class="' + (Number(t.pnl) >= 0 ? 'pos' : 'neg') + '">' + (t.return_pct == null ? '—' : pct(t.return_pct)) + '</td>' +
                 '<td>' + esc(t.exit_reason || '—') + '</td>' +
                 '</tr>';
@@ -129,6 +134,36 @@
 
         var count = document.getElementById('tradeCount');
         if (count) count.textContent = rows.length + ' closed trades';
+    }
+
+    function renderQuarantine(data) {
+        var unconv = data.unconverted_legacy_trades || [];
+        var sec = document.getElementById('quarantineSection');
+        if (!sec) return;
+        if (unconv.length === 0) {
+            sec.style.display = 'none';
+            return;
+        }
+        sec.style.display = 'block';
+        renderTable('quarantineBody', unconv, function (t) {
+            var dir = String(t.direction || '').toUpperCase();
+            var dirClass = (dir === 'LONG' || dir === 'BUY') ? 'dir-long' : 'dir-short';
+            var exitTime = t.exit_time ? new Date(t.exit_time).toLocaleDateString('en-IN', {
+                day: '2-digit', month: 'short', year: '2-digit'
+            }) : '—';
+            var qc = t.quote_currency || 'USDT';
+            return '<tr>' +
+                '<td>' + esc(exitTime) + '</td>' +
+                '<td><b>' + esc(t.symbol) + '</b></td>' +
+                '<td><span class="' + dirClass + '">' + esc(dir || '—') + '</span></td>' +
+                '<td>' + esc(t.strategy || '—') + '</td>' +
+                '<td>' + Number(t.quantity || 0).toFixed(2) + '</td>' +
+                '<td>' + money(t.entry_price, qc) + '</td>' +
+                '<td>' + money(t.exit_price, qc) + '</td>' +
+                '<td class="' + (Number(t.pnl) >= 0 ? 'pos' : 'neg') + '"><b>' + signedMoney(t.pnl, qc) + '</b></td>' +
+                '<td><span class="badge badge-warn">LEGACY UNCONVERTED</span></td>' +
+                '</tr>';
+        });
     }
 
     function showError(message) {
@@ -151,6 +186,7 @@
         renderPerYear(data);
         renderPerStrategy(data);
         renderTrades(data);
+        renderQuarantine(data);
     }
 
     function load() {

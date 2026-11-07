@@ -3230,3 +3230,139 @@ body::before {
     color: #334155 !important;
     font-weight: 600 !important;
 }
+
+/* ── Priority Watchlist Tab (Option A) ── */
+.watchlist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+.watchlist-card {
+    background: rgba(15, 23, 42, 0.65);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.watchlist-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(59, 130, 246, 0.4);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.watchlist-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+.watchlist-sym-block {
+    display: flex;
+    flex-direction: column;
+}
+.watchlist-sym {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: var(--text-primary, #f8fafc);
+    letter-spacing: 0.02em;
+}
+.watchlist-name {
+    font-size: 0.72rem;
+    color: var(--text-muted, #94a3b8);
+}
+.watchlist-price-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.watchlist-ltp {
+    font-size: 1.3rem;
+    font-weight: 800;
+    font-family: var(--font-mono, monospace);
+    color: #38bdf8;
+}
+.watchlist-chg {
+    font-size: 0.85rem;
+    font-weight: 700;
+    font-family: var(--font-mono, monospace);
+}
+.watchlist-levels {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+    padding: 8px 10px;
+    text-align: center;
+}
+.watchlist-lvl-label {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    color: var(--text-muted, #94a3b8);
+    letter-spacing: 0.04em;
+}
+.watchlist-lvl-val {
+    font-size: 0.88rem;
+    font-weight: 700;
+    font-family: var(--font-mono, monospace);
+    margin-top: 2px;
+}
+.watchlist-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-top: 0.2rem;
+}
+.watchlist-inspect-btn {
+    flex: 1;
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+.watchlist-inspect-btn:hover {
+    opacity: 0.9;
+}
+.watchlist-remove-btn {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 6px;
+    padding: 0.4rem 0.65rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+.watchlist-remove-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
+}
+.modal-pin-btn {
+    background: rgba(59, 130, 246, 0.12);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.modal-pin-btn:hover {
+    background: rgba(59, 130, 246, 0.25);
+}
+.modal-pin-btn.pinned {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+    border-color: rgba(245, 158, 11, 0.45);
+}

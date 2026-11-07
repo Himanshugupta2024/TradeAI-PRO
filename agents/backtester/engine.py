@@ -49,6 +49,10 @@ class BacktestResult:
     gross_return_pct: float = 0.0
     estimated_costs_pct: float = 0.0
     net_return_pct: float = 0.0
+    per_trade_cost_pct: float = 0.0
+    cost_drag_pct: float = 0.0
+    stats_available: bool = False
+    min_trades_for_stats: int = 20
     net_pnl_inr: float = 0.0
     expectancy_pct: float = 0.0
     max_drawdown: float = 0.0
@@ -397,10 +401,22 @@ class Backtester:
         result.total_pnl_pct = round(sum(pnl_pcts), 2)
         
         result.net_pnl_inr = round(sum(net_inrs), 2)
-        result.gross_return_pct = round(sum(pnl_pcts), 2)
+        total_gross_inr = sum(gross_inrs)
         total_costs_inr = sum(cost_inrs)
+        result.gross_return_pct = round((total_gross_inr / self.initial_capital) * 100.0, 2)
         result.estimated_costs_pct = round((total_costs_inr / self.initial_capital) * 100.0, 2)
-        result.net_return_pct = round(((final_capital - self.initial_capital) / self.initial_capital) * 100.0, 2)
+        result.net_return_pct = round(result.gross_return_pct - result.estimated_costs_pct, 2)
+
+        trade_count = max(result.total_trades, 1)
+        result.per_trade_cost_pct = round(result.estimated_costs_pct / trade_count, 2)
+        if result.gross_return_pct > 0:
+            result.cost_drag_pct = round((result.estimated_costs_pct / abs(result.gross_return_pct)) * 100.0, 1)
+        else:
+            result.cost_drag_pct = 0.0
+
+        result.stats_available = bool(result.total_trades >= 20)
+        result.min_trades_for_stats = 20
+
 
         result.avg_win = float(np.mean(win_pcts)) if win_pcts else 0.0
         result.avg_loss = float(np.mean(loss_pcts)) if loss_pcts else 0.0

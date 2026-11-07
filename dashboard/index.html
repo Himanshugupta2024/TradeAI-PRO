@@ -114,7 +114,7 @@
 
     <script src="/static/vendor/chart.umd.min.js"></script>
 
-    <link rel="stylesheet" href="/static/styles.css?v=mw_15">
+    <link rel="stylesheet" href="/static/styles.css?v=mw_17">
 
     <link rel="stylesheet" href="/static/glass.css?v=1">
 
@@ -3567,7 +3567,7 @@
 
             <div id="aiEngineStatusBadge" class="ai-engine-badge" title="AI engine status (loaded from /api/health)">
 
-                <span>AI Models —</span>
+                <span>🧠 AI: Heuristic (0/4 ML)</span>
 
             </div>
 
@@ -3627,6 +3627,14 @@
 
             <span class="sidebar-label">Overview</span>
 
+        </button>
+
+        <button class="sidebar-item tab-btn" data-tab="watchlist" id="tabWatchlist" title="Priority Watchlist">
+            <span class="sidebar-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+            </span>
+            <span class="sidebar-label">Watchlist</span>
+            <span class="sidebar-badge" id="watchlistSidebarBadge" style="margin-left:auto;font-size:0.62rem;background:rgba(59,130,246,0.2);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);padding:1px 6px;border-radius:10px;font-weight:700;">5</span>
         </button>
 
 
@@ -4256,7 +4264,7 @@
 
                             <span>System State</span>
 
-                            <span id="aiModelBadgeCockpit" style="font-size:0.62rem;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(245,158,11,0.12);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">AI Engine: Statistical Heuristic (0/3 models fitted)</span>
+                            <span id="aiModelBadgeCockpit" style="font-size:0.62rem;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(245,158,11,0.12);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);">AI Engine: Statistical Heuristic (0/4 models fitted)</span>
 
                         </div>
 
@@ -4738,6 +4746,43 @@
 
             </div>
 
+        </section>
+
+        <!-- ════════ WATCHLIST TAB (OPTION A) ════════ -->
+        <section class="tab-content" id="watchlistTab">
+            <div class="terminal-panel-header" style="margin-bottom:1.2rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+                <div style="display:flex;align-items:center;gap:0.75rem;">
+                    <div style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,rgba(59,130,246,0.2),rgba(99,102,241,0.2));border:1px solid rgba(59,130,246,0.3);display:flex;align-items:center;justify-content:center;color:#60a5fa;font-size:1.1rem;">★</div>
+                    <div>
+                        <h2 style="margin:0;font-size:1.25rem;font-weight:800;color:var(--text-primary);letter-spacing:0.02em;">Priority Stock Watchlist</h2>
+                        <span style="font-size:0.75rem;color:var(--text-muted);" id="watchlistSubtitle">Real-time tracking of your high-conviction NSE assets with institutional levels & signals</span>
+                    </div>
+                </div>
+                <div class="watchlist-quick-add" style="display:flex;align-items:center;gap:0.5rem;">
+                    <input type="text" id="watchlistAddInput" placeholder="Add NSE symbol (e.g. VEDL, SBIN)..." 
+                           style="background:rgba(2,6,23,0.7);border:1px solid var(--border-color);border-radius:6px;padding:0.45rem 0.85rem;color:#f8fafc;font-size:0.82rem;width:230px;outline:none;"
+                           onkeydown="if(event.key==='Enter') addInputStockToWatchlist()" />
+                    <button class="btn btn-primary btn-sm" onclick="addInputStockToWatchlist()" style="padding:0.45rem 0.9rem;font-size:0.82rem;font-weight:700;border-radius:6px;cursor:pointer;">+ Add Stock</button>
+                </div>
+            </div>
+
+            <!-- Quick Add Suggestion Pills -->
+            <div id="watchlistSuggestions" style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:1.2rem;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);padding:0.6rem 0.85rem;border-radius:8px;">
+                <span style="font-size:0.72rem;color:var(--text-muted);font-weight:600;">⚡ Quick Add Priority:</span>
+                <button class="btn btn-xs btn-outline" onclick="addToWatchlist('RELIANCE')" style="cursor:pointer;">+ RELIANCE</button>
+                <button class="btn btn-xs btn-outline" onclick="addToWatchlist('HDFCBANK')" style="cursor:pointer;">+ HDFCBANK</button>
+                <button class="btn btn-xs btn-outline" onclick="addToWatchlist('TCS')" style="cursor:pointer;">+ TCS</button>
+                <button class="btn btn-xs btn-outline" onclick="addToWatchlist('INFY')" style="cursor:pointer;">+ INFY</button>
+                <button class="btn btn-xs btn-outline" onclick="addToWatchlist('ICICIBANK')" style="cursor:pointer;">+ ICICIBANK</button>
+                <button class="btn btn-xs btn-outline" onclick="addToWatchlist('VEDL')" style="cursor:pointer;">+ VEDL</button>
+                <button class="btn btn-xs btn-outline" onclick="addToWatchlist('TATAMOTORS')" style="cursor:pointer;">+ TATAMOTORS</button>
+                <button class="btn btn-xs btn-outline" onclick="addToWatchlist('SBIN')" style="cursor:pointer;">+ SBIN</button>
+            </div>
+
+            <!-- Watchlist Content Grid -->
+            <div id="watchlistGrid" class="watchlist-grid">
+                <!-- Dynamically populated by loadDedicatedWatchlist() -->
+            </div>
         </section>
 
 
@@ -5264,11 +5309,13 @@
 
                     <div class="perf-breakdown-card">
 
-                        <h3 class="chart-title">Win / Loss</h3>
+                        <h3 class="chart-title">Win / Loss / Break-Even</h3>
 
                         <div class="winloss-bar" id="winlossBar">
 
                             <div class="winloss-fill win" id="winBar" style="width:50%"></div>
+
+                            <div class="winloss-fill breakeven" id="beBar" style="width:0%;background:#94a3b8;" title="Break-Even"></div>
 
                             <div class="winloss-fill loss" id="lossBar" style="width:50%"></div>
 
@@ -5277,6 +5324,8 @@
                         <div class="winloss-labels">
 
                             <span id="winLabel">0 wins</span>
+
+                            <span id="beLabel" style="color:var(--text-muted);font-size:0.75rem;">0 BE</span>
 
                             <span id="perfWinPct">50%</span>
 
@@ -5894,7 +5943,7 @@
 
                     <p style="font-size:0.78rem;color:var(--text-muted);margin-top:0.25rem;">
 
-                        Multi-timeframe swing analysis · 4/4 ML Consensus · Keyless fallback active · Strict Paper Trading Only
+                        Multi-timeframe swing analysis · Multi-TF Consensus · Keyless fallback active · Strict Paper Trading Only
 
                     </p>
 
@@ -6700,12 +6749,9 @@
 
                             <span class="ee-pro-pill">PRO QUANT</span>
 
-                            <div class="ee-telemetry-pill live" id="eeLiveStatusPill">
-
-                                <span class="status-dot live" style="width:6px;height:6px;"></span>
-
-                                <span id="eeMarketStateText">NSE OPEN · 15m Delayed</span>
-
+                            <div class="ee-telemetry-pill" id="eeLiveStatusPill">
+                                <span class="status-dot" style="width:6px;height:6px;"></span>
+                                <span id="eeMarketStateText">NSE MARKET STATE</span>
                             </div>
 
                             <div class="ee-telemetry-pill" id="eeTelemetryBadge" title="Cross-Asset Telemetry">
@@ -7453,7 +7499,11 @@
 
             <div class="modal-header">
 
-                <h2 class="modal-title" id="modalTitle">BTC/USDT</h2>
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <h2 class="modal-title" id="modalTitle" style="margin:0;">BTC/USDT</h2>
+                    <span id="modalSessionBadge" style="font-size:0.72rem;font-weight:600;padding:2px 8px;border-radius:12px;font-family:var(--font-mono);display:none;align-items:center;gap:4px;"></span>
+                    <button class="modal-pin-btn" id="modalWatchlistPinBtn" onclick="toggleCurrentModalWatchlist()" title="Pin to Priority Watchlist">★ Pin to Watchlist</button>
+                </div>
 
                 <div class="modal-header-right">
 
@@ -8154,7 +8204,7 @@
 
     <script src="/static/config.js"></script>
 
-    <script src="/static/app.js?v=mw_18"></script>
+    <script src="/static/app.js?v=mw_20"></script>
 
     <script src="/static/honesty.js" defer></script>
 

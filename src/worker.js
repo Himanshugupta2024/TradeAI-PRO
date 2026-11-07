@@ -29,7 +29,7 @@ const CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https://api.qrserver.com https://*.githubusercontent.com",
-  "connect-src 'self' wss://tradeai-pro.tradingpro.workers.dev https://tradeai-pro.tradingpro.workers.dev https://trading-api-n1wt.onrender.com wss://trading-api-n1wt.onrender.com",
+  "connect-src 'self' wss://tradeai-pro.tradingpro.workers.dev https://tradeai-pro.tradingpro.workers.dev https://trading-api-n1wt.onrender.com wss://trading-api-n1wt.onrender.com https://api.binance.com https://fapi.binance.com https://data-api.binance.vision https://api.coingecko.com",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

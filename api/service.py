@@ -1698,6 +1698,14 @@ def _get_signal_for_symbol(symbol: str) -> dict:
             "signal": "HOLD",
             "direction": "HOLD",
             "signal_status": "NO_SIGNAL",
+            "actionable": False,
+            "signal_age_minutes": round(current_age_min, 1) if current_age_min is not None else None,
+            "entry_distance_pct": 0.0,
+            "entry_crossed": False,
+            "chase_risk": False,
+            "confluence_penalties": [],
+            "confluence_score": 0,
+            "confluence_factors": [],
             "local_trend": local_trend,
             "current_bar_signal": "HOLD",
             "confidence": current_conf,
@@ -1826,11 +1834,71 @@ def _get_signal_for_symbol(symbol: str) -> dict:
     elif stale:
         signal_status = "STALE"
 
+    from api.data_honesty import entry_distance_pct, confluence_penalties
+    entry_dist = entry_distance_pct(entry_price, current_close)
+    is_long_dir = effective_dir in ("LONG", "BUY")
+    is_short_dir = effective_dir in ("SHORT", "SELL")
+    entry_crossed = (is_long_dir and entry_dist > 0.25) or (is_short_dir and entry_dist < -0.25)
+    chase_risk = entry_crossed
+
+    vwap_val = _safe_float(last, "VWAP")
+    atr_val = _safe_float(last, f"ATR_{settings.ATR_PERIOD}")
+    pens = confluence_penalties(
+        signal=effective_dir,
+        rsi=current_rsi,
+        daily_trend=current_trend,
+        close=current_close,
+        entry=entry_price,
+        vwap=vwap_val,
+        atr=atr_val,
+    )
+
+    actionable = bool(
+        not stale
+        and sig_label in ("LONG", "SHORT")
+        and signal_status == "ACTIVE"
+        and not quality_hard_gate
+        and not entry_crossed
+    )
+
+    try:
+        current_mood_dict = _compute_market_mood()
+    except Exception:
+        current_mood_dict = {}
+
+    display_conf, display_factors = _confluence_for_setup(
+        {
+            "signal": sig_label,
+            "direction": effective_dir,
+            "trend": current_trend,
+            "regime": current_regime,
+            "context_score": _safe_float(last_signal, "context_score") or 0.0,
+            "drift_detected": bool(last_signal.get("drift_detected", False)),
+            "event_risk_active": bool(last_signal.get("event_risk_active", False)),
+            "conflict": conflict_payload,
+            "rsi": current_rsi,
+            "close": current_close,
+            "entry": entry_price,
+            "vwap": vwap_val,
+            "atr": atr_val,
+        },
+        mood=current_mood_dict,
+        for_display=True,
+    )
+
     return {
         "symbol": symbol,
         "signal": sig_label,  # LONG / SHORT / SKIP / HOLD
         "direction": effective_dir,  # Underlying direction for SKIPs
         "signal_status": signal_status,
+        "actionable": actionable,
+        "signal_age_minutes": round(signal_age_min, 1) if signal_age_min is not None else None,
+        "entry_distance_pct": entry_dist,
+        "entry_crossed": entry_crossed,
+        "chase_risk": chase_risk,
+        "confluence_penalties": list(pens),
+        "confluence_score": display_conf,
+        "confluence_factors": display_factors,
         "local_trend": local_trend,
         "current_bar_signal": str(last.get("signal", "HOLD")),
         "confidence": _cap_confidence(
@@ -2228,21 +2296,42 @@ def _compute_market_mood() -> dict:
         if float(close_val) > float(dma20_val):
             breadth_above_20 += 1
 
-    breadth_split_score = (
-        (breadth_above_20 / breadth_universe * 100.0) if breadth_universe else 50.0
-    )
-    buy_sell_total = long_count + short_count
-    signal_bias_score = (
-        (long_count / buy_sell_total * 100.0) if buy_sell_total else 50.0
-    )
-    split_composite_score = (breadth_split_score * 0.6) + (signal_bias_score * 0.4)
-
-    def _split_label(value: float) -> str:
+    def _split_label(value: float | None) -> str:
+        if value is None:
+            return "UNKNOWN"
         if value > 55:
             return "BULLISH"
         if value < 45:
             return "BEARISH"
         return "NEUTRAL"
+
+    if breadth_universe == 0:
+        breadth_split_score = None
+        breadth_split_label = "UNKNOWN (0 observations)"
+        breadth_split_detail = "0/0 stocks above 20 DMA (no observations)"
+    else:
+        breadth_split_score = round(breadth_above_20 / breadth_universe * 100.0, 1)
+        breadth_split_label = _split_label(breadth_split_score)
+        breadth_split_detail = f"{breadth_above_20}/{breadth_universe} stocks above 20 DMA"
+
+    buy_sell_total = long_count + short_count
+    if buy_sell_total == 0:
+        signal_bias_score = None
+        signal_bias_label = "UNKNOWN (0 observations)"
+        signal_bias_detail = "0 BUY out of 0 directional signals"
+    else:
+        signal_bias_score = round(long_count / buy_sell_total * 100.0, 1)
+        signal_bias_label = _split_label(signal_bias_score)
+        signal_bias_detail = f"{long_count} BUY out of {buy_sell_total} directional signals"
+
+    if breadth_split_score is not None and signal_bias_score is not None:
+        split_composite_score = round((breadth_split_score * 0.6) + (signal_bias_score * 0.4), 1)
+    elif breadth_split_score is not None:
+        split_composite_score = breadth_split_score
+    elif signal_bias_score is not None:
+        split_composite_score = signal_bias_score
+    else:
+        split_composite_score = None
 
     regime_counts = {"TRENDING": 0, "RANGING": 0, "HIGH_VOLATILITY": 0}
     for regime in _regime_cache.values():
@@ -2269,27 +2358,36 @@ def _compute_market_mood() -> dict:
     )
     sector_bias = max(min(avg_sector_move * 15.0, 100.0), -100.0)
 
-    score = 50.0
-    score += breadth_pct * 0.25
-    score += signal_bias_pct * 0.35
-    score += regime_bias * 0.25
-    score += sector_bias * 0.15
-    score = max(0.0, min(100.0, score))
-
-    if score >= 68:
-        mood = "BULLISH"
-    elif score >= 52:
-        mood = "NEUTRAL"
-    elif score >= 40:
-        mood = "CAUTIOUS"
+    has_inputs = (total_movers > 0 or signal_total > 0 or breadth_universe > 0 or regime_total > 0 or len(sectors) > 0)
+    if not has_inputs:
+        mood = "UNKNOWN"
+        score = None
     else:
-        mood = "BEARISH"
+        score = 50.0
+        if total_movers > 0:
+            score += breadth_pct * 0.25
+        if signal_total > 0:
+            score += signal_bias_pct * 0.35
+        if regime_total > 0:
+            score += regime_bias * 0.25
+        if sectors:
+            score += sector_bias * 0.15
+        score = max(0.0, min(100.0, score))
+
+        if score >= 68:
+            mood = "BULLISH"
+        elif score >= 52:
+            mood = "NEUTRAL"
+        elif score >= 40:
+            mood = "CAUTIOUS"
+        else:
+            mood = "BEARISH"
 
     payload = {
         "mood": mood,
-        "score": round(score, 1),
+        "score": round(score, 1) if score is not None else 50.0,
         "mood_label": mood,
-        "mood_score": round(score, 1),
+        "mood_score": round(score, 1) if score is not None else 50.0,
         "breadth": {
             "gainers": len(gainers),
             "losers": len(losers),
@@ -2303,17 +2401,17 @@ def _compute_market_mood() -> dict:
         },
         "breadth_signal_split": {
             "breadth": {
-                "score": round(breadth_split_score, 1),
-                "label": _split_label(breadth_split_score),
-                "detail": f"{breadth_above_20}/{breadth_universe} stocks above 20 DMA",
+                "score": round(breadth_split_score, 1) if breadth_split_score is not None else None,
+                "label": breadth_split_label,
+                "detail": breadth_split_detail,
             },
             "signal_bias": {
-                "score": round(signal_bias_score, 1),
-                "label": _split_label(signal_bias_score),
-                "detail": f"{long_count} BUY out of {buy_sell_total} directional signals",
+                "score": round(signal_bias_score, 1) if signal_bias_score is not None else None,
+                "label": signal_bias_label,
+                "detail": signal_bias_detail,
             },
             "composite": {
-                "score": round(split_composite_score, 1),
+                "score": round(split_composite_score, 1) if split_composite_score is not None else None,
                 "note": "Breadth 60% weight · Signal Bias 40%",
             },
         },
@@ -2504,9 +2602,10 @@ def _calibration_for_setup(
     }
 
 
-def _confluence_for_setup(sig: dict, mood: dict) -> tuple[int, list[str]]:
+def _confluence_for_setup(sig: dict, mood: dict, for_display: bool = False) -> tuple[int, list[str]]:
     """
     Phase 5: independent factor alignment score 0–100 (advisory, not a trade signal).
+    When for_display=True, applies technical and execution conflict penalties without altering baseline ranking.
     """
     factors: list[str] = []
     score = 0
@@ -2569,6 +2668,28 @@ def _confluence_for_setup(sig: dict, mood: dict) -> tuple[int, list[str]]:
         if has_conflict:
             score -= 12
             factors.append("Signal conflict")
+
+    if for_display:
+        from api.data_honesty import confluence_penalties
+        sig_dir = str(sig.get("signal") or sig.get("direction") or "HOLD")
+        rsi_val = sig.get("rsi")
+        daily_trend = sig.get("daily_trend") or sig.get("macro_trend") or sig.get("trend") or ""
+        close_val = sig.get("close") or sig.get("current_price") or 0.0
+        entry_val = sig.get("entry") or close_val
+        vwap_val = sig.get("vwap")
+        atr_val = sig.get("atr")
+        pens = confluence_penalties(
+            signal=sig_dir,
+            rsi=rsi_val,
+            daily_trend=daily_trend,
+            close=close_val,
+            entry=entry_val,
+            vwap=vwap_val,
+            atr=atr_val,
+        )
+        score += pens.penalty_sum
+        for flag in pens:
+            factors.append(f"Conflict: {flag}")
 
     score = max(0, min(100, score))
     return score, factors[:6]
@@ -3042,8 +3163,9 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
         k = str(r).upper()
         if k in regime_counts:
             regime_counts[k] += 1
-    total_regimes = sum(regime_counts.values()) or 1
-    dominant_regime = max(regime_counts, key=lambda k: regime_counts[k])
+    regime_sum = sum(regime_counts.values())
+    total_regimes = regime_sum or 1
+    dominant_regime = max(regime_counts, key=lambda k: regime_counts[k]) if regime_sum > 0 else "UNKNOWN"
 
     # ── System / risk state ──────────────────────────────────────────────────
     engine = _get_engine()
@@ -3141,12 +3263,21 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
     _last_intelligence_snapshot["captured_at"] = datetime.now().isoformat()
 
     updated_at = datetime.now().isoformat()
+    truly_actionable = [
+        t for t in top_setups
+        if not t.get("stale")
+        and not t.get("blockers")
+        and not t.get("invalid_levels")
+        and not t.get("is_off_hours_fallback")
+    ]
+    actionable_count = len(truly_actionable) if is_market_live else 0
+
     result = {
         "top_setups": top_setups[:5],
         "avoid_list": avoid_list[:5],
         "ranking_meta": {
             "total_tracked": len(signals_to_process),
-            "actionable": len(top_setups),
+            "actionable": actionable_count,
             "blocked_high_quality": len(avoid_list),
             "fallback_applied": fallback_applied,
             "session_state": "LIVE" if is_market_live else "EOD",

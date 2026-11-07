@@ -155,14 +155,16 @@ async def resolve_open_trades_valuation(engine, svc, *, refresh_stale: bool = Fa
             for sym in missing_syms:
                 if sym in snap_prices:
                     sp = snap_prices[sym]
-                    quotes[sym] = {
-                        "close": float(sp.get("close", 0.0)),
-                        "high": float(sp.get("high", sp.get("close", 0.0))),
-                        "low": float(sp.get("low", sp.get("close", 0.0))),
-                        "source": "RUNTIME_SNAPSHOT",
-                        "timestamp": snap.get("timestamp", now_iso),
-                        "is_stale": False,
-                    }
+                    ts = snap.get("timestamp") or sp.get("timestamp") or now_iso
+                    quotes[sym] = _assess_quote(
+                        sym,
+                        float(sp.get("close", 0.0)),
+                        float(sp.get("high", sp.get("close", 0.0))),
+                        float(sp.get("low", sp.get("close", 0.0))),
+                        "RUNTIME_SNAPSHOT",
+                        ts,
+                        now=now_utc,
+                    )
         except Exception as snap_err:
             log.debug("Snapshot price resolution skipped: %s", snap_err)
 
@@ -209,6 +211,13 @@ async def resolve_open_trades_valuation(engine, svc, *, refresh_stale: bool = Fa
     total_deployed_margin_inr = 0.0
     missing_quotes_count = 0
 
+    def _is_market_session_open(symbol: str, dt_utc: datetime) -> bool:
+        if "/" in str(symbol):
+            return True  # 24/7 crypto
+        ref_ist = dt_utc.astimezone(IST)
+        mins = ref_ist.hour * 60 + ref_ist.minute
+        return ref_ist.weekday() < 5 and (9 * 60 + 15) <= mins <= (15 * 60 + 30)
+
     for t in open_trades:
         sym = t.symbol
         asset_class, quote_curr, base_curr = resolve_instrument_identity(sym)
@@ -225,7 +234,16 @@ async def resolve_open_trades_valuation(engine, svc, *, refresh_stale: bool = Fa
             quote_age = q.get("age_seconds")
             is_stale = bool(q.get("is_stale", False))
             is_entry_fallback = False
-            quote_status = "STALE" if is_stale else ("LIVE" if q.get("is_verified", True) else "UNVERIFIED")
+
+            # F03: Distinguish LIVE from LAST_SESSION_EOD / REFERENCE
+            if is_stale:
+                quote_status = "STALE"
+            elif not _is_market_session_open(sym, now_utc):
+                quote_status = "LAST_SESSION_EOD"
+            elif quote_age is not None and quote_age > NSE_OPEN_MAX_AGE_SEC:
+                quote_status = "REFERENCE"
+            else:
+                quote_status = "LIVE" if q.get("is_verified", True) else "UNVERIFIED"
         else:
             # Explicit entry fallback with transparency
             ltp = entry
@@ -283,6 +301,7 @@ async def resolve_open_trades_valuation(engine, svc, *, refresh_stale: bool = Fa
             "fx_source": fx_source,
             "quote_source": quote_source,
             "quote_timestamp": quote_ts,
+            "source_candle_time": quote_ts,
             "is_stale_quote": is_stale,
             "is_entry_fallback": is_entry_fallback,
             "quote_status": quote_status,

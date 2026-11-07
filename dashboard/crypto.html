@@ -2110,11 +2110,33 @@ async function selectCoinFromUI(symbol, scroll = true) {
 
 // ── Fetch Binance 24h All Tickers ────────────────────────
 async function fetchTickers() {
-  const res = await fetch(`${BINANCE_API}/ticker/24hr`);
-  if (!res.ok) {
-    throw new Error(`Binance ticker API failed: HTTP ${res.status}`);
+  let data;
+  let directErr = null;
+  try {
+    const res = await fetch(`${BINANCE_API}/ticker/24hr`);
+    if (res.ok) {
+      data = await res.json();
+    } else {
+      directErr = new Error(`Binance direct HTTP ${res.status}`);
+    }
+  } catch (e) {
+    directErr = e;
   }
-  const data = await res.json();
+
+  if (!Array.isArray(data)) {
+    // Fallback to backend proxy (F08)
+    try {
+      const proxyRes = await fetch(`${API}/api/crypto/proxy/binance/24hr`);
+      if (proxyRes.ok) {
+        data = await proxyRes.json();
+      } else {
+        throw new Error(`Proxy HTTP ${proxyRes.status}`);
+      }
+    } catch (proxyErr) {
+      throw new Error(`Binance feed unavailable (direct: ${directErr ? directErr.message : 'failed'}, proxy: ${proxyErr.message})`);
+    }
+  }
+
   if (!Array.isArray(data)) {
     throw new Error('Binance ticker API returned unexpected payload');
   }
@@ -2155,10 +2177,10 @@ function setCryptoUnavailable(message) {
   const predReasons = document.getElementById('predReasons');
   const signalBoard = document.getElementById('signalBoard');
   if (predDirection && predMeta && predConfFill && predReasons) {
-    predDirection.textContent = 'NEUTRAL';
+    predDirection.textContent = 'UNAVAILABLE';
     predDirection.className = 'pred-direction neutral';
-    predMeta.textContent = 'Confidence 20% · horizon 6-24h';
-    predConfFill.style.width = '20%';
+    predMeta.textContent = 'Confidence: — (feed unavailable)';
+    predConfFill.style.width = '0%';
     predReasons.innerHTML = '<span class="reason-pill">Live ticker feed unavailable</span>';
   }
   if (signalBoard) {
@@ -2174,8 +2196,19 @@ async function fetchKlines(symbol, interval = signalTimeframe) {
       return;
     }
 
-    const res = await fetch(`${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}&limit=80`);
-    const data = await res.json();
+    let data;
+    try {
+      const res = await fetch(`${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}&limit=80`);
+      if (res.ok) data = await res.json();
+    } catch (_) { /* direct failed */ }
+
+    if (!Array.isArray(data)) {
+      try {
+        const proxyRes = await fetch(`${API}/api/crypto/proxy/binance/klines?symbol=${symbol}&interval=${interval}&limit=80`);
+        if (proxyRes.ok) data = await proxyRes.json();
+      } catch (_) { /* proxy failed */ }
+    }
+
     if (!Array.isArray(data)) return;
     const times = data.map((c) => Number(c[0]));
     const opens = data.map((c) => parseFloat(c[1]));

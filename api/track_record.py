@@ -180,17 +180,17 @@ def build_track_record(
         for key, items in sorted(by_strategy.items(), key=lambda kv: -len(kv[1]))
     ]
 
-    # Per-symbol (top 15 by trade count)
+    # Per-symbol (top 15 by trade count, based on inr_closed)
     by_symbol: dict[str, list[dict]] = defaultdict(list)
-    for trade in closed:
+    for trade in inr_closed:
         by_symbol[str(trade.get("symbol") or "?")].append(trade)
     per_symbol = [
         {"symbol": key, **_summarise(items)}
         for key, items in sorted(by_symbol.items(), key=lambda kv: -len(kv[1]))[:15]
     ]
 
-    best = max((t["pnl"] for t in normalised), default=0.0)
-    worst = min((t["pnl"] for t in normalised), default=0.0)
+    best = max((t["pnl"] for t in inr_normalised), default=0.0)
+    worst = min((t["pnl"] for t in inr_normalised), default=0.0)
 
     return {
         "as_of": datetime.now(timezone.utc).isoformat(),
@@ -207,7 +207,7 @@ def build_track_record(
         "per_year": per_year,
         "per_strategy": per_strategy,
         "per_symbol": per_symbol,
-        "trades": normalised,
+        "trades": inr_normalised,
         "unconverted_legacy_trades": [_normalise_trade(t) for t in unconverted_trades],
         "disclaimer": (
             "Paper trading only. No broker connection, no real orders. "

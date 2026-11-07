@@ -318,7 +318,14 @@ async def health_check():
 
     except Exception as _e:
 
-        ai_engine_info = {"mode": "Statistical Heuristic (fallback)", "badge_text": "AI Engine: Statistical Heuristic (0/3 models fitted)", "fitted_count": 0}
+        ai_engine_info = {
+            "mode": "Statistical Heuristic (fallback)",
+            "badge_text": "AI Engine: Statistical Heuristic (0/4 models fitted)",
+            "badge_short": "🧠 AI: Heuristic (0/4 ML)",
+            "fitted_count": 0,
+            "total_ml_models": 4,
+            "statistical_heuristic": True,
+        }
 
     try:
         db_ok = await _check_db_connectivity_with_retry()
@@ -2507,6 +2514,24 @@ async def get_symbols():
 
     return {"symbols": list(svc._market_data.keys())}
 
+def _build_market_response(clean_sym: str, df: pd.DataFrame, interval: str) -> dict:
+    from api.data_honesty import classify_session
+    last_bar = df.iloc[-1] if not df.empty else None
+    last_ts = None
+    if last_bar is not None and "timestamp" in last_bar:
+        last_ts = last_bar.get("timestamp")
+    session_info = classify_session(now=None, bar_ts=last_ts, symbol=clean_sym)
+    return {
+        "symbol": clean_sym,
+        "data": svc._build_market_records(df),
+        "interval": interval,
+        "as_of": session_info["as_of"],
+        "bar_age_seconds": session_info["bar_age_seconds"],
+        "market_state": session_info["market_state"],
+        "is_stale": session_info["is_stale"],
+    }
+
+
 @router.get("/api/market/{symbol}")
 async def get_market_data(
     symbol: str,
@@ -2533,11 +2558,7 @@ async def get_market_data(
         cached_df = svc._market_data[clean_sym]
         if isinstance(cached_df, pd.DataFrame) and not cached_df.empty:
             df = cached_df.tail(limit)
-            return {
-                "symbol": clean_sym,
-                "data": svc._build_market_records(df),
-                "interval": interval,
-            }
+            return _build_market_response(clean_sym, df, interval)
 
     # Asset class routing: Crypto, Forex, or NSE
     try:
@@ -2552,11 +2573,7 @@ async def get_market_data(
                 return {"error": f"Symbol {clean_sym} not found"}
             df = calculate_indicators(df)
             df = df.tail(limit)
-            return {
-                "symbol": clean_sym,
-                "data": svc._build_market_records(df),
-                "interval": interval,
-            }
+            return _build_market_response(clean_sym, df, interval)
 
         if is_crypto:
             from agents.data_ingestion.binance_fetcher import fetch_historical
@@ -2567,11 +2584,7 @@ async def get_market_data(
                 return {"error": f"Symbol {clean_sym} not found"}
             df = calculate_indicators(df)
             df = df.tail(limit)
-            return {
-                "symbol": clean_sym,
-                "data": svc._build_market_records(df),
-                "interval": interval,
-            }
+            return _build_market_response(clean_sym, df, interval)
 
         # Non-crypto / Non-forex: NSE on-demand fetch
         period_map = {"5m": "5d", "15m": "10d", "1h": "30d", "1d": "90d"}
@@ -2589,11 +2602,7 @@ async def get_market_data(
         return {"error": str(e)}
 
     df = df.tail(limit)
-    return {
-        "symbol": clean_sym,
-        "data": svc._build_market_records(df),
-        "interval": interval,
-    }
+    return _build_market_response(clean_sym, df, interval)
 
 @router.get("/api/signal/{symbol}")
 
@@ -2903,13 +2912,15 @@ async def place_paper_trade_endpoint(payload: dict):
     min_rr = float(payload.get("min_rr") or 0.0) if payload.get("min_rr") else None
 
     if not symbol or entry <= 0 or stop_loss <= 0 or target <= 0:
-
         return JSONResponse(
-
             status_code=400,
-
             content={"error": "Invalid trade details: symbol, entry, stop_loss, and target must be > 0."},
+        )
 
+    if abs(entry - stop_loss) < 1e-4 or abs(entry - target) < 1e-4:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Degenerate trade geometry: entry, stop_loss, and target must be distinct levels."},
         )
 
     norm_dir = "LONG" if direction in ("LONG", "BUY") else ("SHORT" if direction in ("SHORT", "SELL") else None)
@@ -3694,17 +3705,21 @@ async def get_portfolio():
         return float(num) / float(den)
 
     def _total_trade_pnl(trade: dict) -> float:
-
+        if trade.get("cost_profile") and trade.get("cost_profile") != "UNAVAILABLE":
+            net = _safe_float(trade.get("net_pnl"))
+            if abs(net) > 1e-9:
+                return net
+        for key in ("total_pnl", "pnl_inr", "realized_pnl"):
+            val = trade.get(key)
+            if val is not None and abs(_safe_float(val)) > 1e-9:
+                return _safe_float(val)
+        if trade.get("net_pnl") is not None and abs(_safe_float(trade.get("net_pnl"))) > 1e-9:
+            return _safe_float(trade.get("net_pnl"))
         total = trade.get("total_pnl")
-
         if total is not None:
-
             return _safe_float(total, 0.0)
-
         return _safe_float(trade.get("pnl"), 0.0) * _safe_float(
-
             trade.get("quantity"), 1.0
-
         )
 
     def _parse_iso_dt(raw: str | None):
@@ -3774,14 +3789,20 @@ async def get_portfolio():
             return "Others"
 
     engine = svc._get_engine()
-
-    open_trades = engine.get_open_trades()
+    from api.valuation import resolve_open_trades_valuation
+    val = await resolve_open_trades_valuation(engine, svc, refresh_stale=True)
+    open_trades = val.get("open_trades", [])
+    val_summary = val.get("summary", {})
 
     closed_trades = engine.get_history(limit=2000)
+    inr_closed_trades = [
+        t for t in closed_trades
+        if not (t.get("fx_status") == "LEGACY_UNCONVERTED" and (t.get("quote_currency") or "INR") != "INR")
+    ]
 
     now_ist = datetime.now(tz=ist_tz)
 
-    total_unrealized = 0
+    total_unrealized = _safe_float(val_summary.get("unrealized_pnl"), 0.0)
 
     total_open_risk = 0.0
 
@@ -3803,31 +3824,15 @@ async def get_portfolio():
 
         initial_qty = _safe_float(t.get("initial_quantity"), quantity)
 
-        if symbol in svc._market_data:
+        current_close = _safe_float(t.get("current_price"), entry)
 
-            current_close = float(svc._market_data[symbol].iloc[-1]["close"])
-
-            if direction == "LONG":
-
-                unrealized = (current_close - entry) * quantity
-
-            else:
-
-                unrealized = (entry - current_close) * quantity
-
-        else:
-
-            current_close = entry
-
-            unrealized = 0.0
+        unrealized = _safe_float(t.get("unrealized_pnl"), 0.0)
 
         initial_risk = abs(entry - stop_loss) * max(initial_qty, 0.0)
 
         open_risk = abs(entry - stop_loss) * max(quantity, 0.0)
 
         total_open_risk += open_risk
-
-        total_unrealized += unrealized
 
         r_multiple = _safe_div(unrealized, initial_risk)
 
@@ -3909,12 +3914,9 @@ async def get_portfolio():
 
         )
 
-    # Risk-adjusted performance metrics from closed trades
-
+    # Risk-adjusted performance metrics from closed INR trades
     returns = np.array(
-
-        [_safe_float(t.get("pnl_pct"), 0.0) / 100.0 for t in closed_trades], dtype=float
-
+        [_safe_float(t.get("pnl_pct"), 0.0) / 100.0 for t in inr_closed_trades], dtype=float
     )
 
     rf_daily = 0.065 / 252.0
@@ -3946,15 +3948,11 @@ async def get_portfolio():
         sortino = 0.0
 
     gross_profit = sum(
-
-        _total_trade_pnl(t) for t in closed_trades if _total_trade_pnl(t) > 0
-
+        _total_trade_pnl(t) for t in inr_closed_trades if _total_trade_pnl(t) > 0
     )
 
     gross_loss = abs(
-
-        sum(_total_trade_pnl(t) for t in closed_trades if _total_trade_pnl(t) < 0)
-
+        sum(_total_trade_pnl(t) for t in inr_closed_trades if _total_trade_pnl(t) < 0)
     )
 
     if gross_loss > 0:
@@ -3991,10 +3989,9 @@ async def get_portfolio():
 
         curve_values.append(val)
 
-    current_value = _safe_float(getattr(engine, "capital", 0.0), 0.0) + float(
-
-        total_unrealized
-
+    current_value = _safe_float(
+        val_summary.get("total_equity"),
+        _safe_float(getattr(engine, "capital", 0.0), 0.0) + float(total_unrealized),
     )
 
     series = list(curve_values)
@@ -4127,7 +4124,7 @@ async def get_portfolio():
 
     trades_today = 0
 
-    for t in closed_trades:
+    for t in inr_closed_trades:
 
         exit_dt = _parse_iso_dt(t.get("exit_time"))
 
@@ -4177,7 +4174,7 @@ async def get_portfolio():
 
                         1
 
-                        for t in closed_trades
+                        for t in inr_closed_trades
 
                         if str(
 
@@ -4284,59 +4281,44 @@ async def get_performance():
     from collections import Counter, defaultdict
 
     def _trade_total_pnl(trade: dict) -> float:
-
+        if trade.get("cost_profile") and trade.get("cost_profile") != "UNAVAILABLE":
+            net = _safe_float(trade.get("net_pnl"))
+            if abs(net) > 1e-9:
+                return net
+        for key in ("total_pnl", "pnl_inr", "realized_pnl"):
+            val = trade.get(key)
+            if val is not None and abs(_safe_float(val)) > 1e-9:
+                return _safe_float(val)
+        if trade.get("net_pnl") is not None and abs(_safe_float(trade.get("net_pnl"))) > 1e-9:
+            return _safe_float(trade.get("net_pnl"))
         total = trade.get("total_pnl")
-
         if total is not None:
-
-            try:
-
-                return float(total)
-
-            except Exception:
-
-                pass
-
-        try:
-
-            return float(trade.get("pnl", 0) or 0) * float(
-
-                trade.get("quantity", 1) or 1
-
-            )
-
-        except Exception:
-
-            return 0.0
+            return _safe_float(total, 0.0)
+        return _safe_float(trade.get("pnl"), 0.0) * _safe_float(trade.get("quantity"), 1.0)
 
     engine = svc._get_engine()
-
     stats = engine.get_stats()
-
     equity_curve = engine.get_equity_curve()
-
     closed_trades = engine.get_history(limit=1000)
 
-    wins = [t for t in closed_trades if _trade_total_pnl(t) > 0]
-
-    losses = [t for t in closed_trades if _trade_total_pnl(t) <= 0]
+    # Quarantine unconverted non-INR trades from INR ledger calculations (F05)
+    inr_closed_trades = [
+        t for t in closed_trades
+        if not (t.get("fx_status") == "LEGACY_UNCONVERTED" and (t.get("quote_currency") or "INR") != "INR")
+    ]
+    wins = [t for t in inr_closed_trades if _trade_total_pnl(t) > 1e-6]
+    losses = [t for t in inr_closed_trades if _trade_total_pnl(t) < -1e-6]
+    breakevens = [t for t in inr_closed_trades if abs(_trade_total_pnl(t)) <= 1e-6]
 
     # ── Monthly P&L breakdown ──────────────────────────
-
     monthly: dict[str, float] = defaultdict(float)
-
-    for t in closed_trades:
-
+    for t in inr_closed_trades:
         key = (t.get("exit_time") or "")[:7]  # "2026-03"
-
         if key:
-
             monthly[key] += _trade_total_pnl(t)
-
     monthly_pnl = [{"month": k, "pnl": round(v, 2)} for k, v in sorted(monthly.items())]
 
     # ── Exit reason breakdown ──────────────────────────
-
     exit_counts = Counter(t.get("status", "UNKNOWN") for t in closed_trades)
 
     exit_reasons = [{"reason": r, "count": c} for r, c in exit_counts.most_common()]
@@ -4347,7 +4329,7 @@ async def get_performance():
 
     sym_trades: dict[str, int] = defaultdict(int)
 
-    for t in closed_trades:
+    for t in inr_closed_trades:
 
         sym = t.get("symbol", "?")
 
@@ -4382,67 +4364,39 @@ async def get_performance():
     return {
 
         "metrics": {
-
             "total_trades": stats.get("total_trades", 0),
-
             "winning_trades": stats.get("winning_trades", 0),
-
             "losing_trades": stats.get("losing_trades", 0),
-
+            "breakeven_trades": stats.get("breakeven_trades", len(breakevens)),
             "win_rate": stats.get("win_rate", 0),
-
             "total_pnl": stats.get("total_pnl", 0),
-
             "total_return_pct": total_return_pct,
-
             "avg_pnl": stats.get("avg_pnl", 0),
-
             "avg_win": stats.get("avg_win", 0),
-
             "avg_loss": stats.get("avg_loss", 0),
-
             "best_trade": stats.get("best_trade", 0),
-
             "worst_trade": stats.get("worst_trade", 0),
-
             "sharpe_ratio": stats.get("sharpe_ratio", 0),
-
             "max_drawdown": stats.get("max_drawdown", 0),
-
             "max_drawdown_pct": stats.get("max_drawdown_pct", 0),
-
             "profit_factor": stats.get("profit_factor", 0),
-
             "capital": current,
-
             "initial_capital": initial,
-
             "daily_pnl": stats.get("daily_pnl", 0),
-
+            "unconverted_legacy_trades": stats.get("unconverted_legacy_trades", []),
         },
-
         "status": {
-
             "feed": svc._get_feed_status(),
-
             "symbols_loaded": len(svc._market_data),
-
             "signals_cached": len(svc._signal_cache) or len(getattr(svc, "_persisted_signals_snapshot", None) or []),
-
         },
-
         "equity_curve": equity_curve,
-
-        "trade_distribution": {"wins": len(wins), "losses": len(losses)},
-
+        "trade_distribution": {"wins": len(wins), "losses": len(losses), "breakevens": len(breakevens)},
+        "unconverted_legacy_trades": stats.get("unconverted_legacy_trades", []),
         "monthly_pnl": monthly_pnl,
-
         "exit_reasons": exit_reasons,
-
         "symbol_breakdown": symbol_breakdown,
-
         "recent_trades": list(reversed(closed_trades[-50:])),
-
     }
 
 @router.get("/api/regime/{symbol}")
@@ -4649,6 +4603,10 @@ async def run_backtest(
             "gross_return": round(result.gross_return_pct, 2),
             "estimated_costs": round(result.estimated_costs_pct, 2),
             "net_return": round(result.net_return_pct, 2),
+            "per_trade_cost_pct": round(getattr(result, "per_trade_cost_pct", 0.0), 3),
+            "cost_drag_pct": round(getattr(result, "cost_drag_pct", 0.0), 1),
+            "stats_available": getattr(result, "stats_available", False),
+            "min_trades_for_stats": getattr(result, "min_trades_for_stats", 20),
             "points_pnl": round(result.points_pnl, 2),
             "net_pnl_inr": round(result.net_pnl_inr, 2),
             "profit_factor": round(result.profit_factor, 2),
@@ -9099,12 +9057,97 @@ async def get_crypto_intelligence():
                 "blocked_high_quality": 0,
 
             },
-
             "updated_at": datetime.now(timezone.utc).isoformat(),
-
             "error": str(exc),
-
         }
+
+_binance_proxy_cache = {
+    "timestamp": 0.0,
+    "payload": None,
+}
+_binance_klines_cache = {}
+
+@router.get("/api/crypto/proxy/binance/24hr")
+async def proxy_binance_24hr():
+    """Proxy Binance 24hr ticker with 15s caching to resolve CSP and direct provider fetch issues (F08)."""
+    now = time.time()
+    if _binance_proxy_cache["payload"] and (now - _binance_proxy_cache["timestamp"] < 15.0):
+        return JSONResponse(
+            content=_binance_proxy_cache["payload"],
+            headers={"Cache-Control": "public, max-age=15", "X-Cache": "HIT"},
+        )
+
+    endpoints = [
+        "https://api.binance.com/api/v3/ticker/24hr",
+        "https://data-api.binance.vision/api/v3/ticker/24hr",
+    ]
+    import httpx
+    for url in endpoints:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(url, headers={"User-Agent": "TradeAI-Pro/1.0"})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        _binance_proxy_cache["timestamp"] = now
+                        _binance_proxy_cache["payload"] = data
+                        return JSONResponse(
+                            content=data,
+                            headers={"Cache-Control": "public, max-age=15", "X-Cache": "MISS"},
+                        )
+        except Exception as exc:
+            logger.warning("Binance proxy fetch failed for %s: %s", url, exc)
+
+    if _binance_proxy_cache["payload"]:
+        return JSONResponse(
+            content=_binance_proxy_cache["payload"],
+            headers={"Cache-Control": "public, max-age=5", "X-Cache": "STALE"},
+        )
+
+    return JSONResponse(
+        status_code=502,
+        content={"error": "Binance upstream ticker feed unavailable.", "status": "UPSTREAM_UNAVAILABLE"},
+    )
+
+@router.get("/api/crypto/proxy/binance/klines")
+async def proxy_binance_klines(symbol: str = Query(...), interval: str = Query("1h"), limit: int = Query(80)):
+    """Proxy Binance klines with 20s caching to resolve CSP and provider fetch issues (F08)."""
+    now = time.time()
+    cache_key = f"{symbol}_{interval}_{limit}"
+    cached = _binance_klines_cache.get(cache_key)
+    if cached and (now - cached["timestamp"] < 20.0):
+        return JSONResponse(
+            content=cached["payload"],
+            headers={"Cache-Control": "public, max-age=20", "X-Cache": "HIT"},
+        )
+
+    endpoints = [
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
+    ]
+    import httpx
+    for u in endpoints:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(u, headers={"User-Agent": "TradeAI-Pro/1.0"})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        _binance_klines_cache[cache_key] = {"timestamp": now, "payload": data}
+                        return JSONResponse(
+                            content=data,
+                            headers={"Cache-Control": "public, max-age=20", "X-Cache": "MISS"},
+                        )
+        except Exception as exc:
+            logger.warning("Binance klines proxy fetch failed for %s: %s", u, exc)
+
+    if cached:
+        return JSONResponse(content=cached["payload"], headers={"Cache-Control": "public, max-age=5", "X-Cache": "STALE"})
+
+    return JSONResponse(
+        status_code=502,
+        content={"error": "Binance upstream klines feed unavailable.", "status": "UPSTREAM_UNAVAILABLE"},
+    )
 
 @router.get("/api/crypto/prediction")
 

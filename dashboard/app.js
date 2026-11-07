@@ -301,7 +301,16 @@ let _lastCryptoIntelData = null;  // latest /api/crypto/intelligence payload
 
 
 
-let _watchlist = new Set(JSON.parse(localStorage.getItem('tradeai_watchlist') || '[]'));
+let _watchlist = (() => {
+    try {
+        const stored = localStorage.getItem('tradeai_watchlist');
+        if (stored) {
+            const arr = JSON.parse(stored);
+            if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
+        }
+    } catch (_) {}
+    return new Set(['RELIANCE', 'HDFCBANK', 'TCS', 'INFY', 'VEDL']);
+})();
 
 
 
@@ -603,6 +612,7 @@ function hydrateFromLocalStorageCache() {
 
 
 document.addEventListener('DOMContentLoaded', () => {
+    updateWatchlistBadge();
 
 
 
@@ -2205,6 +2215,7 @@ function switchTab(tab) {
         const _now = Date.now();
     if (!_tabLastFetched[tab] || (_now - _tabLastFetched[tab] > 10000)) {
         _tabLastFetched[tab] = _now;
+        if (tab === 'watchlist') loadDedicatedWatchlist();
         if (tab === 'portfolio') loadPortfolio();
         if (tab === 'performance') loadPerformance();
         if (tab === 'market') loadMarket();
@@ -2266,6 +2277,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
 
     const isGet = !options.method || options.method.toUpperCase() === 'GET';
+    const isSafeMethod = !options.method || ['GET', 'HEAD', 'OPTIONS'].includes(options.method.toUpperCase());
 
 
 
@@ -2341,7 +2353,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
 
 
-            if (_retries > 0) {
+            if (isSafeMethod && _retries > 0) {
 
 
 
@@ -2382,7 +2394,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
 
         // HTTP-level 503 or 429 → server waking up or burst rate-limited, retry with backoff
-        if ((resp.status === 503 || resp.status === 429) && _retries > 0) {
+        if (isSafeMethod && (resp.status === 503 || resp.status === 429) && _retries > 0) {
             const delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
             console.warn(`[fetch] ${resp.status} from ${url} — retrying in ${(delay / 1000).toFixed(1)}s (${_retries} left)...`);
             await new Promise(r => setTimeout(r, delay));
@@ -8341,9 +8353,9 @@ async function openPositionDetail(tradeId) {
                     <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">Filled</div>
                 </div>
                 <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
-                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">${isClosed ? 'Exit Price' : 'Live Market LTP'}</div>
+                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">${isClosed ? 'Exit Price' : (trade.quote_status === 'LAST_SESSION_EOD' ? 'Last Session Mark' : (isFallback || trade.is_entry_fallback ? 'Reference Mark' : 'Live Market LTP'))}</div>
                     <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#38bdf8;margin-top:2px;">${currSym}${isClosed ? exitPx.toFixed(2) : ltp.toFixed(2)}</div>
-                    <div style="font-size:0.65rem;color:${isClosed ? 'var(--text-muted)' : '#38bdf8'};margin-top:2px;">${isClosed ? (trade.exit_time ? 'Closed ' + new Date(trade.exit_time).toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'}) : 'Closed') : 'Real-Time'}</div>
+                    <div style="font-size:0.65rem;color:${isClosed ? 'var(--text-muted)' : '#38bdf8'};margin-top:2px;">${isClosed ? (trade.exit_time ? 'Closed ' + new Date(trade.exit_time).toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'}) : 'Closed') : (trade.quote_status === 'LAST_SESSION_EOD' ? 'Last Session EOD' : (isFallback || trade.is_entry_fallback || trade.is_stale_quote ? 'Reference Mark' : 'Real-Time'))}</div>
                 </div>
                 <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
                     <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss (SL)</div>
@@ -10137,7 +10149,14 @@ function renderSignals(signals) {
 
 
 
-        const isActionable = ['LONG', 'BUY', 'SHORT', 'SELL'].includes(String(sig.signal || '').toUpperCase()) && !isSkip;
+        const isStale = Boolean(sig.stale || sig.is_stale || sig.freshness === 'stale');
+        const isBlocked = Boolean(sig.is_blocked || sig.in_avoid_list || (sig.blockers && sig.blockers.length > 0));
+        const numEntry = Number(sig.entry || sig.close || 0);
+        const numSl = Number(sig.stop_loss || 0);
+        const numTp = Number(sig.target || 0);
+        const hasValidGeometry = numEntry > 0 && numSl > 0 && numTp > 0 && Math.abs(numEntry - numSl) > 0.0001 && Math.abs(numEntry - numTp) > 0.0001;
+
+        const isActionable = ['LONG', 'BUY', 'SHORT', 'SELL'].includes(String(sig.signal || '').toUpperCase()) && !isSkip && !isStale && !isBlocked && hasValidGeometry;
 
 
 
@@ -10145,23 +10164,17 @@ function renderSignals(signals) {
 
 
 
-        const tradeActionHtml = isActionable
-
-
-
-            ? `<div style="margin-top:0.6rem;padding-top:0.45rem;border-top:1px solid rgba(255,255,255,0.06);display:flex;justify-content:flex-end;">
-
-
-
+        let tradeActionHtml = '';
+        if (isActionable) {
+            tradeActionHtml = `<div style="margin-top:0.6rem;padding-top:0.45rem;border-top:1px solid rgba(255,255,255,0.06);display:flex;justify-content:flex-end;">
                 <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(sig.symbol)}', '${tradeDir}', ${Number(sig.entry || sig.close || 0)}, ${Number(sig.stop_loss || 0)}, ${Number(sig.target || 0)}, ${Number(sig.atr || 0)}, '${_escHtml(sig.strategy || 'SIGNAL')}', this, { confidence: ${Number(sig.confidence || 0)}, regime: '${_escHtml(sig.regime || 'TRENDING')}', rsi: ${Number(sig.rsi || 0)} })" style="font-size:0.75rem;padding:0.35rem 0.75rem;cursor:pointer;border-radius:5px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;display:flex;align-items:center;gap:4px;">⚡ Paper Trade</button>
-
-
-
-              </div>`
-
-
-
-            : '';
+            </div>`;
+        } else if (['LONG', 'BUY', 'SHORT', 'SELL'].includes(String(sig.signal || '').toUpperCase())) {
+            const blockReason = isStale ? 'Stale Data' : (isBlocked ? 'Setup Blocked' : (!hasValidGeometry ? 'Degenerate Geometry' : 'Not Actionable'));
+            tradeActionHtml = `<div style="margin-top:0.6rem;padding-top:0.45rem;border-top:1px solid rgba(255,255,255,0.06);display:flex;justify-content:flex-end;">
+                <button type="button" class="btn btn-secondary" disabled style="font-size:0.72rem;padding:0.3rem 0.65rem;border-radius:5px;background:rgba(255,255,255,0.05);color:var(--text-muted);border:1px solid rgba(255,255,255,0.1);cursor:not-allowed;" title="${blockReason}">🔒 ${blockReason}</button>
+            </div>`;
+        }
 
 
 
@@ -11402,7 +11415,7 @@ async function loadPortfolio() {
 
 
                     const currSym = _symCurr(p.symbol);
-                    const pnlSign = pnl >= 0 ? '+' : '';
+                    const pnlSign = pnl > 0 ? '+' : (pnl < 0 ? '-' : '');
                     return `
                         <tr onclick="openPositionDetail(${p.id})" style="cursor:pointer;" title="Click to view detailed position analytics">
                             <td>
@@ -11495,7 +11508,7 @@ async function loadPortfolio() {
                     }[rawReason] || rawReason || '—';
 
                     const pnlPct = Number(t.pnl_pct || 0);
-                    const sign = pnlVal >= 0 ? '+' : '';
+                    const sign = pnlVal > 0 ? '+' : (pnlVal < 0 ? '-' : '');
                     const pctSign = pnlPct >= 0 ? '+' : '';
                     const signalBadge = t.signal_type ? `<div style="font-size:0.65rem;color:var(--text-muted);letter-spacing:0.04em;">${t.signal_type}</div>` : '';
 
@@ -11914,6 +11927,74 @@ async function loadLearningStats() {
 
 
 
+        // Confidence Calibration (F10)
+        const calibBadge = document.getElementById('lsCalibStatusBadge');
+        const calibBandsEl = document.getElementById('lsConfidenceBands');
+        const calibHint = document.getElementById('lsCalibHint');
+
+        const calib = data.insights?.confidence_calibration || {};
+        const bandStats = data.insights?.confidence_band_stats || {};
+
+        if (calibBadge) {
+            const status = calib.status || 'NO_DATA';
+            calibBadge.textContent = status.replace(/_/g, ' ');
+            if (status === 'CALIBRATED') {
+                calibBadge.style.color = 'var(--green, #10b981)';
+                calibBadge.style.borderColor = 'rgba(16,185,129,0.4)';
+            } else if (status === 'MISALIGNED') {
+                calibBadge.style.color = 'var(--red, #ef4444)';
+                calibBadge.style.borderColor = 'rgba(239,68,68,0.4)';
+            } else if (status === 'WEAK_CALIBRATION') {
+                calibBadge.style.color = 'var(--yellow, #f59e0b)';
+                calibBadge.style.borderColor = 'rgba(245,158,11,0.4)';
+            } else {
+                calibBadge.style.color = 'var(--text-muted)';
+                calibBadge.style.borderColor = 'var(--border-color)';
+            }
+        }
+
+        if (calibBandsEl) {
+            const entries = Object.entries(bandStats);
+            if (entries.length === 0) {
+                calibBandsEl.innerHTML = '<div class="loading-state" style="padding:.5rem 0"><p style="font-size:.75rem">No calibration data</p></div>';
+            } else {
+                calibBandsEl.innerHTML = entries.map(([band, bst]) => {
+                    const wr = Number(bst.win_rate || 0);
+                    const trades = bst.trades || 0;
+                    const c = wr >= 50 ? 'var(--green, #10b981)' : (trades === 0 ? 'var(--text-muted)' : 'var(--red, #ef4444)');
+                    return `
+                        <div class="perf-sym-bar-wrap" style="margin-bottom:0.6rem;">
+                            <div class="perf-sym-label" style="display:flex;justify-content:space-between;font-size:0.75rem;">
+                                <span class="psym" style="font-weight:600;">Conf ${band}%</span>
+                                <span class="pnl" style="color:${c};font-weight:700;">${trades > 0 ? `${wr.toFixed(1)}% WR` : 'No Trades'}</span>
+                            </div>
+                            <div class="perf-sym-track" style="height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden;margin:3px 0;">
+                                <div class="perf-sym-fill" style="width:${trades > 0 ? wr : 0}%;background:${c};height:100%;border-radius:3px;"></div>
+                            </div>
+                            <div style="font-size:0.68rem;color:var(--text-muted);display:flex;justify-content:space-between;">
+                                <span>${trades} sample trade(s)</span>
+                                <span>Avg ${Number(bst.avg_pnl || 0).toFixed(2)}%</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+        }
+
+        if (calibHint) {
+            const status = calib.status;
+            const spread = calib.high_minus_low != null ? `${calib.high_minus_low > 0 ? '+' : ''}${calib.high_minus_low}%` : '';
+            if (status === 'MISALIGNED') {
+                calibHint.innerHTML = `<span style="color:#ef4444;font-weight:600;">⚠️ Misaligned Calibration (spread ${spread}):</span> Lower confidence trades currently outperform higher confidence bands. Sample size caveat applies (${totalClosed}/${reqTrades} trades); model weights adjust adaptively.`;
+            } else if (status === 'CALIBRATED') {
+                calibHint.innerHTML = `<span style="color:#10b981;font-weight:600;">✅ Well-Calibrated (spread ${spread}):</span> Higher confidence bands correspond to higher realized win rate.`;
+            } else if (status === 'WEAK_CALIBRATION') {
+                calibHint.innerHTML = `<span style="color:#f59e0b;font-weight:600;">⚠️ Weak Calibration (spread ${spread}):</span> Win rates are positive across bands but spread is under 5%. Continuing sample accumulation.`;
+            } else {
+                calibHint.textContent = 'Higher confidence bands should show higher realized win rate. Minimum sample required for statistical validation.';
+            }
+        }
+
         const wl = document.getElementById('lsWeightsList');
 
 
@@ -12186,7 +12267,7 @@ async function loadPerformance() {
 
 
 
-        _setKpi('pkPnlVal',     hasTrades ? `${totalPnl >= 0 ? '+' : ''}₹${Math.round(totalPnl).toLocaleString('en-IN')}` : '—', hasTrades ? (totalPnl >= 0 ? 'positive' : 'negative') : 'neutral');
+        _setKpi('pkPnlVal',     hasTrades ? `${totalPnl < 0 ? '-' : (totalPnl > 0 ? '+' : '')}₹${Math.abs(Math.round(totalPnl)).toLocaleString('en-IN')}` : '—', hasTrades ? (totalPnl >= 0 ? 'positive' : 'negative') : 'neutral');
 
 
 
@@ -12271,49 +12352,25 @@ async function loadPerformance() {
 
 
         const dist = data.trade_distribution || {};
-
-
-
         const wins = dist.wins || 0;
-
-
-
         const losses = dist.losses || 0;
-
-
-
-        const total = wins + losses || 1;
-
-
-
+        const breakevens = dist.breakevens || 0;
+        const total = wins + losses + breakevens || 1;
         const wPct = (wins / total * 100).toFixed(1);
-
-
-
         const lPct = (losses / total * 100).toFixed(1);
-
-
+        const bePct = (breakevens / total * 100).toFixed(1);
 
         document.getElementById('winBar').style.width   = `${wPct}%`;
-
-
-
+        const beBarEl = document.getElementById('beBar');
+        if (beBarEl) beBarEl.style.width = `${bePct}%`;
         document.getElementById('lossBar').style.width  = `${lPct}%`;
 
-
-
         document.getElementById('winLabel').textContent  = `${wins} wins`;
-
-
-
+        const beLabelEl = document.getElementById('beLabel');
+        if (beLabelEl) beLabelEl.textContent = `${breakevens} BE`;
         document.getElementById('lossLabel').textContent = `${losses} losses`;
 
-
-
         const wpEl = document.getElementById('perfWinPct');
-
-
-
         if (wpEl) wpEl.textContent = `${wPct}%`;
 
 
@@ -12902,7 +12959,7 @@ function _renderMonthlyPnl(months) {
 
 
 
-        const sign = m.pnl >= 0 ? '+' : '';
+        const sign = m.pnl > 0 ? '+' : (m.pnl < 0 ? '-' : '');
 
 
 
@@ -13314,7 +13371,7 @@ function _renderSymbolBreakdown(symbols) {
 
 
 
-        const sign = s.pnl >= 0 ? '+' : '';
+        const sign = s.pnl > 0 ? '+' : (s.pnl < 0 ? '-' : '');
 
 
 
@@ -13766,7 +13823,9 @@ function _renderTradeHistory(trades) {
         }) : '—';
         const duration = t.duration_human || _fmtDuration(t.entry_time, t.exit_time);
         const durHtml = duration && duration !== '—' ? `<br><small style="color:var(--text-muted);font-size:0.68rem;">⏱ ${duration}</small>` : '';
-        const sign = pnl >= 0 ? '+' : '';
+        const sign = pnl > 0 ? '+' : (pnl < 0 ? '-' : '');
+        const pnlPct = Number(t.pnl_pct || 0);
+        const pctSign = pnlPct > 0 ? '+' : '';
         const qtyDisplay = Number.isInteger(qty) ? qty.toString() : qty.toFixed(qty < 1 ? 4 : 2);
 
         return `<tr onclick="openPositionDetail(${t.id})" style="cursor:pointer;" title="Click to view complete trade analytics and execution details">
@@ -13777,7 +13836,7 @@ function _renderTradeHistory(trades) {
             <td class="mono">${currSym}${(t.exit_price  || 0).toFixed(2)}</td>
             <td class="mono">${qtyDisplay}</td>
             <td class="mono ${pnlCls}">${sign}${currSym}${Math.abs(pnl).toFixed(2)}</td>
-            <td class="mono ${pnlCls}">${sign}${(t.pnl_pct || 0).toFixed(2)}%</td>
+            <td class="mono ${pnlCls}">${pctSign}${pnlPct.toFixed(2)}%</td>
             <td><span class="perf-exit-badge">${exitIcon[t.status] || ''} ${exitLabel[t.status] || t.status || '—'}</span></td>
             <td class="perf-td-time">${dt}${durHtml}</td>
         </tr>`;
@@ -15155,11 +15214,11 @@ async function _loadModalChart(symbol, interval) {
 
 
 
-            drawModalChart(data.data, interval);
+            drawModalChart(data.data, interval, data);
 
 
 
-            renderModalInfo(data.data, symbol, interval);
+            renderModalInfo(data.data, symbol, interval, data);
 
 
 
@@ -15360,7 +15419,7 @@ async function loadModalBacktest(symbol) {
 
     try {
         const encodedSymbol = symbol.replace('/', '-');
-        const res = await fetchSafeJSON(`${API}/api/backtest/${encodedSymbol}`, {}, 12000);
+        const res = await fetchSafeJSON(`${API}/api/backtest/${encodedSymbol}`, {}, 25000);
         if (!res.ok) {
             if (res.status === 429) {
                 section.innerHTML = '<p style="color:var(--yellow);font-size:0.8rem">⚠️ Rate limit in effect. Retrying shortly...</p>';
@@ -15382,10 +15441,25 @@ async function loadModalBacktest(symbol) {
         const ptsColor = (data.points_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
 
         const tradeCount = data.trade_count ?? data.total_trades ?? 0;
-        const isExploratory = data.sample_status === 'INSUFFICIENT_SAMPLE' || tradeCount < 30;
+        const statsOk = Boolean(data.stats_available ?? (tradeCount >= 20));
+        const isExploratory = data.sample_status === 'INSUFFICIENT_SAMPLE' || tradeCount < 20;
         const sampleBadge = isExploratory 
-            ? `<span style="font-size:0.65rem;color:var(--yellow);background:rgba(245,158,11,0.12);padding:2px 8px;border-radius:10px;font-weight:700;">⚠️ ${data.sample_badge || `${tradeCount} trades • Exploratory only`}</span>`
+            ? `<span style="font-size:0.65rem;color:var(--yellow);background:rgba(245,158,11,0.12);padding:2px 8px;border-radius:10px;font-weight:700;">⚠️ ${tradeCount < 20 ? `${tradeCount} trades • Exploratory only` : (data.sample_badge || 'Exploratory only')}</span>`
             : `<span style="font-size:0.65rem;color:var(--green);background:rgba(16,185,129,0.12);padding:2px 8px;border-radius:10px;font-weight:700;">✓ ${data.sample_badge || 'Statistically valid'}</span>`;
+
+        const wrLabel = statsOk ? 'Win Rate' : 'Win rate (small sample)';
+        const sharpeDisplay = statsOk
+            ? `${data.sharpe ?? data.sharpe_ratio ?? '—'}`
+            : `<span title="Needs ≥20 trades (currently ${tradeCount}) · exploratory only" style="cursor:help;color:var(--text-muted);">—</span>`;
+        const pfDisplay = statsOk
+            ? `${data.profit_factor ?? '—'}`
+            : `<span title="Needs ≥20 trades (currently ${tradeCount}) · exploratory only" style="cursor:help;color:var(--text-muted);">—</span>`;
+
+        const grossRet = Number(data.gross_return ?? 0);
+        const estCosts = Number(data.estimated_costs ?? 0);
+        const netRet = Number(data.net_return ?? (grossRet - estCosts));
+        const perTradeCost = Number(data.per_trade_cost_pct ?? (tradeCount > 0 ? estCosts / tradeCount : 0));
+        const costDrag = Number(data.cost_drag_pct ?? (grossRet > 0 ? (estCosts / Math.abs(grossRet)) * 100 : 0));
 
         const dataWindow = `Data: ${data.bars || data.bars_used || 0} bars (${data.timeframe || '15m'}) · ${data.window_days || 5}d`;
 
@@ -15400,7 +15474,7 @@ async function loadModalBacktest(symbol) {
             <div class="backtest-grid">
                 <div class="bt-metric">
                     <span class="bt-val" style="color:${wrColor}">${data.win_rate}%</span>
-                    <span class="bt-label">Win Rate</span>
+                    <span class="bt-label">${wrLabel}</span>
                 </div>
                 <div class="bt-metric">
                     <span class="bt-val">${tradeCount}</span>
@@ -15411,11 +15485,11 @@ async function loadModalBacktest(symbol) {
                     <span class="bt-label">Points PnL</span>
                 </div>
                 <div class="bt-metric">
-                    <span class="bt-val" style="color:${netColor}">${(data.net_return || 0) >= 0 ? '+' : ''}${data.net_return || 0}%</span>
+                    <span class="bt-val" style="color:${netColor}">${netRet >= 0 ? '+' : ''}${netRet.toFixed(2)}%</span>
                     <span class="bt-label">Net Return</span>
                 </div>
                 <div class="bt-metric">
-                    <span class="bt-val" style="color:${pfColor}">${data.profit_factor}</span>
+                    <span class="bt-val" style="color:${pfColor}">${pfDisplay}</span>
                     <span class="bt-label">Profit Factor</span>
                 </div>
                 <div class="bt-metric">
@@ -15423,7 +15497,7 @@ async function loadModalBacktest(symbol) {
                     <span class="bt-label">Max DD</span>
                 </div>
                 <div class="bt-metric">
-                    <span class="bt-val">${data.sharpe ?? data.sharpe_ratio}</span>
+                    <span class="bt-val">${sharpeDisplay}</span>
                     <span class="bt-label">Sharpe</span>
                 </div>
                 <div class="bt-metric">
@@ -15431,8 +15505,26 @@ async function loadModalBacktest(symbol) {
                     <span class="bt-label">Net Cash (₹100k)</span>
                 </div>
             </div>
-            <div style="font-size:0.63rem;color:#64748b;margin-top:0.4rem;display:flex;justify-content:space-between;">
-                <span>Costs: ${data.estimated_costs || 0}% (Gross: ${data.gross_return || 0}%)</span>
+            <div style="margin-top:0.6rem;padding:0.55rem 0.75rem;background:rgba(255,255,255,0.02);border:1px solid var(--border-color);border-radius:6px;font-family:var(--font-mono);font-size:0.7rem;">
+                <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+                    <span style="color:var(--text-muted)">Gross return</span>
+                    <span style="font-weight:600;color:var(--text-primary)">${grossRet >= 0 ? '+' : ''}${grossRet.toFixed(2)}%</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+                    <span style="color:var(--text-muted)">Total costs</span>
+                    <span style="color:var(--red)">-${estCosts.toFixed(2)}% <span style="color:var(--text-muted);font-size:0.63rem">(${tradeCount} trades · ${perTradeCost.toFixed(2)}% each)</span></span>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:3px;border-top:1px dashed var(--border-color);padding-top:3px;">
+                    <span style="color:var(--text-muted)">Net return</span>
+                    <span style="font-weight:700;color:${netColor}">${netRet >= 0 ? '+' : ''}${netRet.toFixed(2)}%</span>
+                </div>
+                ${costDrag > 0 ? `
+                <div style="display:flex;justify-content:space-between;margin-top:3px;">
+                    <span style="color:var(--text-muted)">Cost drag</span>
+                    <span style="color:var(--yellow);">${Math.round(costDrag)}% <span style="font-size:0.62rem;color:var(--text-muted)">← costs ate most of the edge</span></span>
+                </div>` : ''}
+            </div>
+            <div style="font-size:0.63rem;color:#64748b;margin-top:0.4rem;display:flex;justify-content:flex-end;">
                 <span>${data.cache_status === 'HIT' ? '⚡ Instant (Cache)' : 'Live Model Computed'}</span>
             </div>
         `;
@@ -15503,7 +15595,7 @@ async function loadModalNews(symbol) {
     }
 }
 
-function drawModalChart(data, interval) {
+function drawModalChart(data, interval, meta) {
 
 
 
@@ -16215,7 +16307,13 @@ function drawModalChart(data, interval) {
 
 
 
-    ctx.fillText('Live · yfinance', W - PAD.right, H - 6);
+        if (meta && (meta.is_stale || meta.market_state !== 'OPEN')) {
+        ctx.fillStyle = 'rgba(245,158,11,0.7)';
+        ctx.fillText('Last session · yfinance', W - PAD.right, H - 6);
+    } else {
+        ctx.fillStyle = 'rgba(99,102,241,0.5)';
+        ctx.fillText('Live · yfinance', W - PAD.right, H - 6);
+    }
 
 
 
@@ -16227,7 +16325,33 @@ function drawModalChart(data, interval) {
 
 
 
-function renderModalInfo(data, symbol, interval) {
+function renderModalInfo(data, symbol, interval, meta) {
+    const sessionBadgeEl = document.getElementById('modalSessionBadge');
+    if (sessionBadgeEl) {
+        const isStale = Boolean(meta?.is_stale);
+        const state = meta?.market_state || 'UNKNOWN';
+        const asOfStr = meta?.as_of || (data[data.length - 1] && data[data.length - 1].timestamp);
+        const asOfDate = asOfStr ? new Date(asOfStr) : new Date();
+
+        if (isStale || state !== 'OPEN') {
+            const dayStr = asOfDate.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' });
+            const timeStr = asOfDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+            sessionBadgeEl.innerHTML = `⏱ Last session · ${dayStr} ${timeStr}`;
+            sessionBadgeEl.style.display = 'inline-flex';
+            sessionBadgeEl.style.color = 'var(--yellow)';
+            sessionBadgeEl.style.background = 'rgba(245,158,11,0.15)';
+            sessionBadgeEl.style.border = '1px solid rgba(245,158,11,0.3)';
+            sessionBadgeEl.title = `Data timestamp: ${asOfDate.toLocaleString('en-IN')} (Market ${state})`;
+        } else {
+            const timeStr = asOfDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+            sessionBadgeEl.innerHTML = `● Live · ${timeStr}`;
+            sessionBadgeEl.style.display = 'inline-flex';
+            sessionBadgeEl.style.color = 'var(--green)';
+            sessionBadgeEl.style.background = 'rgba(16,185,129,0.15)';
+            sessionBadgeEl.style.border = '1px solid rgba(16,185,129,0.3)';
+            sessionBadgeEl.title = 'Live feed fresh';
+        }
+    }
     const last = data[data.length - 1];
     const sig = allSignals.find(s => s.symbol === symbol);
     const isCrypto = symbol.includes('/');
@@ -16283,12 +16407,58 @@ function renderModalInfo(data, symbol, interval) {
     const macroTrend = (sig?.trend || '—').replace('TrendDirection.', '');
     const localColor = localTrend === 'BULLISH' ? 'var(--green)' : localTrend === 'BEARISH' ? 'var(--red)' : 'var(--text-muted)';
     const macroColor = macroTrend === 'BULLISH' ? 'var(--green)' : macroTrend === 'BEARISH' ? 'var(--red)' : 'var(--text-muted)';
+    const isMacroConflict = (localTrend === 'BULLISH' && macroTrend === 'BEARISH') || (localTrend === 'BEARISH' && macroTrend === 'BULLISH');
+    const macroConflictChip = isMacroConflict ? '<span style="font-size:0.62rem;font-weight:700;color:var(--yellow);margin-left:4px;" title="Macro conflict: local timeframe trend opposes daily macro">⚠️ CONFLICT</span>' : '';
+
+    // Stale check & human age string
+    const isSignalStale = Boolean(sig?.stale || sig?.actionable === false || meta?.is_stale);
+    const staleMin = sig?.signal_age_minutes ?? sig?.stale_minutes ?? (meta?.bar_age_seconds ? meta.bar_age_seconds / 60 : null);
+    let ageHuman = '';
+    if (staleMin != null && !isNaN(staleMin)) {
+        const m = Math.floor(staleMin);
+        if (m < 60) ageHuman = `${m}m`;
+        else {
+            const h = Math.floor(m / 60);
+            const remM = m % 60;
+            if (h < 24) ageHuman = remM > 0 ? `${h}h ${remM}m` : `${h}h`;
+            else {
+                const d = Math.floor(h / 24);
+                const remH = h % 24;
+                ageHuman = remH > 0 ? `${d}d ${remH}h` : `${d}d`;
+            }
+        }
+    }
+
+    // Limit entry distance calculation and warning chip
+    const entryDist = sig?.entry_distance_pct != null
+        ? sig.entry_distance_pct
+        : (entryVal > 0 ? ((curClose - entryVal) / entryVal * 100) : 0);
+    const isEntryCrossed = Boolean(
+        sig?.entry_crossed ||
+        sig?.chase_risk ||
+        (['LONG', 'BUY'].includes(sigDir) && entryDist > 0.25) ||
+        (['SHORT', 'SELL'].includes(sigDir) && entryDist < -0.25)
+    );
+    const entryWarningChip = isEntryCrossed ? `
+        <span style="display:inline-block;font-size:0.62rem;font-weight:600;color:var(--yellow);background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);padding:1px 6px;border-radius:4px;margin-top:3px;" title="Limit entry already crossed; chasing risk.">
+            Price moved ${entryDist >= 0 ? '+' : ''}${entryDist.toFixed(2)}% past entry
+        </span>` : '';
+
+    // Confluence score and conflict penalty chips
+    const confScore = sig?.confluence_score ?? sig?.confidence;
+    const confPenalties = sig?.confluence_penalties || [];
+    let confChipsHTML = '';
+    if (confPenalties.length > 0) {
+        confChipsHTML = `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">` +
+            confPenalties.map(p => `<span style="font-size:0.58rem;background:rgba(239,68,68,0.15);color:var(--red);border-radius:3px;padding:1px 4px;font-family:var(--font-mono);" title="Conflict penalty">${p}</span>`).join('') +
+            `</div>`;
+    }
 
     // Entry / SL / Target Trade Section
     const hasSignal = ['LONG', 'SHORT', 'BUY', 'SELL'].includes(sigDir);
     let tradeSectionHTML = '';
     if (hasSignal && (slVal || tpVal)) {
-        if (isTargetHit) {
+        if (!isSignalStale && isTargetHit) {
             const gainPct = entryVal > 0 && tpVal ? Math.abs((tpVal - entryVal) / entryVal * 100).toFixed(2) : '0';
             tradeSectionHTML = `
                 <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.55rem;margin-top:0.1rem;">
@@ -16312,8 +16482,14 @@ function renderModalInfo(data, symbol, interval) {
                     </div>
                 </div>`;
         } else {
+            const staleBanner = isSignalStale ? `
+                <div style="grid-column:1/-1;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);color:var(--yellow);padding:5px 8px;border-radius:6px;font-size:0.68rem;font-weight:600;margin-bottom:0.4rem;text-align:center;">
+                    Last session levels · not actionable ${ageHuman ? `(data ${ageHuman} old)` : ''}
+                </div>` : '';
+            const dimStyle = isSignalStale ? 'opacity:0.6;' : '';
             tradeSectionHTML = `
-                <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.6rem;margin-top:0.1rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;">
+                <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.6rem;margin-top:0.1rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;${dimStyle}">
+                    ${staleBanner}
                     <div style="text-align:center">
                         <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Entry</div>
                         <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
@@ -16330,15 +16506,28 @@ function renderModalInfo(data, symbol, interval) {
         }
     }
 
+    const sigDimStyle = isSignalStale ? 'opacity:0.6;' : '';
+    const signalDisplayHTML = `
+        <div style="${sigDimStyle}">
+            <span style="color:${sigColor}">${displaySig}</span> ${statusBadge}
+            ${entryWarningChip}
+        </div>`;
+
+    const confluenceDisplayHTML = `
+        <div>
+            <span>${confScore != null ? `${confScore}/100` : '—'}</span>
+            ${confChipsHTML}
+        </div>`;
+
     const items = [
         { label: 'Close',       value: `${curr}${Number(last.close).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
         { label: 'RSI (14)',    value: rsiLabel, color: rsiColor },
         { label: 'MACD Hist',   value: macdHist != null ? `${macdIcon} ${Math.abs(macdHist).toFixed(4)}` : '—', color: macdColor },
-        { label: 'Signal',      value: `${displaySig} ${statusBadge}`, color: sigColor },
-        { label: 'Confluence',  value: sig?.confidence != null ? `${sig.confidence}/100` : '—' },
+        { label: 'Signal',      value: signalDisplayHTML, rawHtml: true },
+        { label: 'Confluence',  value: confluenceDisplayHTML, rawHtml: true },
         { label: 'Regime',      value: sig?.regime || '—' },
         { label: `${tf.toUpperCase()} Trend`, value: localTrend, color: localColor },
-        { label: 'Daily Macro', value: macroTrend, color: macroColor },
+        { label: 'Daily Macro', value: macroTrend + macroConflictChip, color: macroColor, rawHtml: true },
         { label: 'EMA 20',      value: last.ema_20 ? `${curr}${last.ema_20.toFixed(2)}` : '—' },
         { label: 'EMA 50',      value: last.ema_50 ? `${curr}${last.ema_50.toFixed(2)}` : '—' },
         { label: 'VWAP',        value: last.vwap   ? `${curr}${last.vwap.toFixed(2)}` : '—' },
@@ -16357,7 +16546,7 @@ function renderModalInfo(data, symbol, interval) {
         grid.innerHTML = items.map(item => `
             <div class="info-item">
                 <span class="info-label">${item.label}</span>
-                <span class="info-value" ${item.color ? `style="color:${item.color}"` : ''}>${item.value}</span>
+                <span class="info-value" ${item.color && !item.rawHtml ? `style="color:${item.color}"` : ''}>${item.value}</span>
             </div>
         `).join('') + tradeSectionHTML;
     }
@@ -16457,9 +16646,25 @@ function updateDynamicMarketStatus() {
 
 
         el.title = `Market closed. Next session: ${typeof _nextNseOpenLabel === 'function' ? _nextNseOpenLabel() : '09:15 AM IST'}`;
+    }
 
-
-
+    // Update Edge Radar market state badge (F13)
+    const eeText = document.getElementById('eeMarketStateText');
+    const eePill = document.getElementById('eeLiveStatusPill');
+    if (eeText && eePill) {
+        if (isOpen) {
+            eeText.textContent = 'NSE OPEN · 15m Delayed';
+            eePill.className = 'ee-telemetry-pill live';
+        } else if (isPreMarket) {
+            eeText.textContent = 'NSE PRE-OPEN';
+            eePill.className = 'ee-telemetry-pill';
+        } else if (isWeekend) {
+            eeText.textContent = 'NSE CLOSED · WEEKEND';
+            eePill.className = 'ee-telemetry-pill';
+        } else {
+            eeText.textContent = 'NSE CLOSED · OFF-HOURS';
+            eePill.className = 'ee-telemetry-pill';
+        }
     }
 
 
@@ -19458,6 +19663,7 @@ async function fetchAndShowQuote(symbol) {
 
         const data = resObj.data;
         titleEl.textContent = data.symbol;
+        updateModalPinButton(data.symbol);
 
 
 
@@ -20284,21 +20490,13 @@ async function loadSwingScanner() {
 
 
     } catch (err) {
-
-
-
         console.error('Swing scanner error:', err);
-
-
-
         renderSwingMetaBar(null);
-
-
-
-        grid.innerHTML = '<div class="loading-state"><p style="color:var(--red)">Failed to load swing setups</p></div>';
-
-
-
+        grid.innerHTML = `<div class="loading-state" style="padding:2rem;text-align:center;">
+            <p style="color:var(--red);font-weight:700;margin-bottom:6px;">⚠️ Swing Scanner Telemetry Unavailable (${_escHtml(err.message)})</p>
+            <p style="color:var(--text-muted);font-size:0.75rem;margin-bottom:12px;">Endpoint encountered upstream rate limit or degradation. Preserving capital rules.</p>
+            <button class="btn btn-secondary" onclick="loadSwingScanner()" style="font-size:0.75rem;padding:4px 12px;border-radius:4px;cursor:pointer;">🔄 Retry Scanner</button>
+        </div>`;
     }
 
 
@@ -21644,14 +21842,14 @@ async function loadBreakouts() {
 
 
     try {
-
-
-
-        const res = await fetch(`${API}/api/breakouts`);
-
-
-
+        const res = await fetchWithTimeout(`${API}/api/breakouts`, {}, 25000);
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
         _breakoutData = await res.json();
+        if (_breakoutData.error) {
+            throw new Error(_breakoutData.error);
+        }
 
 
 
@@ -21696,17 +21894,12 @@ async function loadBreakouts() {
 
 
     } catch (err) {
-
-
-
         console.error('Breakout scanner error:', err);
-
-
-
-        body.innerHTML = '<tr><td colspan="10" class="empty-row" style="color:var(--red);">Failed to load breakouts</td></tr>';
-
-
-
+        body.innerHTML = `<tr><td colspan="10" class="empty-row" style="color:var(--red);padding:2rem;">
+            <div style="font-size:1.05rem;font-weight:700;margin-bottom:6px;">⚠️ Breakout Scanner Telemetry Unavailable (${_escHtml(err.message)})</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:12px;">Upstream market scanner service temporarily degraded or rate-limited. Preserving capital rules.</div>
+            <button class="btn btn-secondary" onclick="loadBreakouts()" style="font-size:0.75rem;padding:4px 12px;border-radius:4px;cursor:pointer;">🔄 Retry Telemetry</button>
+        </td></tr>`;
     }
 
 
@@ -23413,6 +23606,7 @@ async function loadEdgeTopSetups(universe = null, force = false) {
     const body = document.getElementById('edgeTopSetupsBody');
     const spinner = document.getElementById('eeRefreshSpinner');
     if (spinner) spinner.style.animation = 'spin 0.8s linear infinite';
+    if (typeof updateDynamicMarketStatus === 'function') updateDynamicMarketStatus();
 
     if (body) {
         body.innerHTML = `<tr><td colspan="13" class="empty-row">
@@ -23447,7 +23641,20 @@ async function loadEdgeTopSetups(universe = null, force = false) {
             }
         };
 
-        const data = await parseSafe(setupsRes) || { setups: [] };
+        if (!setupsRes || !setupsRes.ok) {
+            const statusErr = setupsRes ? `HTTP ${setupsRes.status}` : 'Network Timeout / Offline';
+            if (body) {
+                body.innerHTML = `<tr><td colspan="13" class="empty-row" style="color:#ef4444;padding:2rem;">
+                    <div style="font-size:1.05rem;margin-bottom:6px;font-weight:700;">⚠️ Radar Telemetry Unavailable (${statusErr})</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:12px;">Quantitative radar service temporarily degraded or rate-limited. Preserving capital rules.</div>
+                    <button class="btn btn-secondary" onclick="loadEdgeTopSetups(null, true)" style="font-size:0.75rem;padding:4px 12px;border-radius:4px;cursor:pointer;">🔄 Retry Telemetry</button>
+                </td></tr>`;
+            }
+            renderEdgeMetrics(null, []);
+            return;
+        }
+
+        const data = await setupsRes.json();
         _edgeAllSetups = data.setups || [];
 
         // Parse optional peripheral telemetry
@@ -23530,13 +23737,17 @@ function renderEdgeMetrics(overviewData, setups) {
     const bSub = document.getElementById('eeBreadthSub');
     if (overviewData && overviewData.market_guardrails && overviewData.market_guardrails.breadth_split) {
         const bs = overviewData.market_guardrails.breadth_split;
-        const score = bs.breadth ? bs.breadth.score : 89.5;
-        const label = bs.breadth ? bs.breadth.label : 'BULLISH';
-        if (bVal) bVal.textContent = `${score.toFixed(1)}% ${label}`;
-        if (bSub) bSub.textContent = bs.breadth.detail || '17/19 stocks above 20 DMA';
+        const b = bs.breadth || {};
+        if (b.score != null && Number.isFinite(Number(b.score))) {
+            if (bVal) bVal.textContent = `${Number(b.score).toFixed(1)}% ${b.label || 'NEUTRAL'}`;
+            if (bSub) bSub.textContent = b.detail || 'Breadth split active';
+        } else {
+            if (bVal) bVal.textContent = b.label || '— UNAVAILABLE';
+            if (bSub) bSub.textContent = b.detail || '0 observations available';
+        }
     } else {
-        if (bVal) bVal.textContent = '89.5% BULLISH';
-        if (bSub) bSub.textContent = '17/19 stocks above 20 DMA';
+        if (bVal) bVal.textContent = '— UNAVAILABLE';
+        if (bSub) bSub.textContent = '0 observations available';
     }
 
     // 2. Regime
@@ -23544,11 +23755,14 @@ function renderEdgeMetrics(overviewData, setups) {
     const rSub = document.getElementById('eeRegimeSub');
     if (overviewData && overviewData.market_guardrails && overviewData.market_guardrails.regime_summary) {
         const reg = overviewData.market_guardrails.regime_summary;
-        if (rVal) rVal.textContent = reg.dominant || 'HIGH_VOLATILITY';
-        if (rSub) rSub.textContent = `${reg.pct_trending || 41.2}% Trending · ${reg.counts?.HIGH_VOLATILITY || 18} Volatile`;
+        const dom = reg.dominant || 'UNKNOWN';
+        if (rVal) rVal.textContent = dom;
+        const trendingPct = reg.pct_trending != null ? `${reg.pct_trending}% Trending` : '0% Trending';
+        const volCount = reg.counts?.HIGH_VOLATILITY ?? 0;
+        if (rSub) rSub.textContent = (dom === 'UNKNOWN') ? '0 observations available' : `${trendingPct} · ${volCount} Volatile`;
     } else {
-        if (rVal) rVal.textContent = 'HIGH_VOLATILITY';
-        if (rSub) rSub.textContent = '41.2% Trending · 52.9% Volatile';
+        if (rVal) rVal.textContent = 'UNKNOWN';
+        if (rSub) rSub.textContent = '0 observations available';
     }
 
     // 3. Bullish & Bearish Candidates
@@ -24425,7 +24639,7 @@ async function loadEdgeRiskGauge() {
 
 
 
-                            <div style="font-size:0.95rem;font-weight:700;font-family:var(--font-mono);margin-top:2px;">${Number(v).toFixed(2)}</div>
+                            <div style="font-size:0.95rem;font-weight:700;font-family:var(--font-mono);margin-top:2px;">${(typeof v === 'number' && Number.isFinite(v)) ? Number(v).toFixed(2) : (v != null && !isNaN(Number(v)) && String(v).trim() !== '' ? Number(v).toFixed(2) : _escHtml(String(v ?? '—')))}</div>
 
 
 
@@ -26140,7 +26354,7 @@ async function updateAiModelHealthBadge() {
 
 
 
-            if (ai.fitted_count === 3) {
+            if (ai.fitted_count >= 3) {
 
 
 
@@ -26800,7 +27014,7 @@ async function loadNextDayPicks(reportId = null) {
             sessionPill.textContent = `Target: ${dateStr} (${hoursStr})`;
         }
         if (screenedCountEl) {
-            screenedCountEl.textContent = `${report.universe_screened || 50} Tier-1`;
+            screenedCountEl.textContent = `${report.universe_screened || report.screened_count || '—'} Tier-1`;
         }
         if (qualifiedCountEl) {
             const qCount = report.qualified_count || (report.picks ? report.picks.length : 0);
@@ -26844,18 +27058,49 @@ async function loadNextDayPicks(reportId = null) {
 }
 
 function renderNextDayPickCard(pick, index) {
-    const isLong = pick.direction === 'LONG';
+    const rawDir = pick.directional_bias || pick.direction || 'LONG';
+    const isLong = String(rawDir).toUpperCase() === 'LONG';
     const dirColor = isLong ? '#10b981' : '#ef4444';
     const dirBg = isLong ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)';
-    const rrRatio = (pick.risk_reward_ratio || 2.0).toFixed(1);
-    const setup = pick.trade_plan || {};
-    const scenarios = pick.scenarios || {};
-    const catalysts = pick.catalysts || [];
-    const technicals = pick.technical_alignment || {};
 
+    const setup = pick.trade_plan || {};
+    const entryPrice = Number(setup.trigger_price ?? setup.entry_trigger ?? setup.entry ?? 0);
+    const stopLoss = Number(setup.stop_loss ?? 0);
+    const targetPrice = Number(setup.target_1 ?? setup.target ?? 0);
+    const hasValidLevels = entryPrice > 0 && stopLoss > 0 && targetPrice > 0;
+
+    const entryDisplay = entryPrice > 0 ? `₹${entryPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}` : '— (unavailable)';
+    const slDisplay = stopLoss > 0 ? `₹${stopLoss.toLocaleString('en-IN', {maximumFractionDigits: 2})}` : '— (unavailable)';
+    const targetDisplay = targetPrice > 0 ? `₹${targetPrice.toLocaleString('en-IN', {maximumFractionDigits: 2})}` : '— (unavailable)';
+
+    const rawRR = hasValidLevels ? (setup.risk_reward ?? pick.risk_reward_ratio ?? (
+        Math.abs(entryPrice - stopLoss) > 0.001
+            ? (Math.abs(targetPrice - entryPrice) / Math.abs(entryPrice - stopLoss))
+            : null
+    )) : null;
+    const rrRatio = (rawRR != null && Number.isFinite(Number(rawRR))) ? `${Number(rawRR).toFixed(1)}x R:R` : '— R:R';
+
+    const riskPct = (hasValidLevels && entryPrice > 0) ? `${((Math.abs(entryPrice - stopLoss) / entryPrice) * 100).toFixed(1)}%` : '—';
+    const rewardPct = (hasValidLevels && entryPrice > 0) ? `${((Math.abs(targetPrice - entryPrice) / entryPrice) * 100).toFixed(1)}%` : '—';
+
+    const scenarios = pick.scenarios || {};
+    const bullScenario = scenarios.bull || scenarios.bull_case || 'Breakout expansion above trigger level with volume expansion';
+    const baseScenario = scenarios.base || scenarios.base_case || 'Trend continuation toward planned primary target';
+    const invalidationRule = scenarios.invalidation || scenarios.invalidation_rule || 'Break below stop loss voids setup immediately';
+
+    const catalysts = pick.news_catalysts || pick.catalysts || [];
     const catalystHtml = catalysts.length > 0
-        ? catalysts.map(c => `<li style="margin-bottom: 4px; color: var(--text-secondary); font-size: 0.78rem;"><strong>${escapeHtml(c.title || '')}:</strong> ${escapeHtml(c.summary || '')}</li>`).join('')
+        ? catalysts.map(c => {
+            const headline = c.headline || c.title || '';
+            const source = c.source ? `[${c.source}] ` : '';
+            const impact = c.impact ? ` (${c.impact})` : '';
+            return `<li style="margin-bottom: 4px; color: var(--text-secondary); font-size: 0.78rem;"><strong>${escapeHtml(source + headline)}</strong>${escapeHtml(impact)}</li>`;
+          }).join('')
         : '<li style="color: var(--text-muted); font-size: 0.78rem;">No negative filings; sector technical confluence verified.</li>';
+
+    const techLevels = pick.technical_levels || pick.technical_alignment || {};
+    const rsiVal = techLevels.rsi14 ?? techLevels.rsi ?? null;
+    const rsiDisplay = (rsiVal != null && Number.isFinite(Number(rsiVal))) ? Number(rsiVal).toFixed(0) : '—';
 
     return `
     <div class="card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; position: relative;">
@@ -26864,13 +27109,13 @@ function renderNextDayPickCard(pick, index) {
             <div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <span style="font-size: 1.25rem; font-weight: 800; color: var(--text-primary); font-family: var(--font-mono, monospace);">${escapeHtml(pick.symbol)}</span>
-                    <span style="background: ${dirBg}; color: ${dirColor}; font-weight: 700; font-size: 0.75rem; padding: 2px 8px; border-radius: 4px;">${pick.direction}</span>
+                    <span style="background: ${dirBg}; color: ${dirColor}; font-weight: 700; font-size: 0.75rem; padding: 2px 8px; border-radius: 4px;">${rawDir}</span>
                     <span style="background: rgba(14, 165, 233, 0.1); color: #0284c7; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px;">RANK #${pick.rank || (index + 1)}</span>
                 </div>
-                <span style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(pick.sector || 'NSE Tier-1')}</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(pick.company_name || pick.sector || 'NSE Tier-1')}</span>
             </div>
             <div style="text-align: right;">
-                <div style="font-size: 1.1rem; font-weight: 700; color: #10b981; font-family: var(--font-mono, monospace);">${rrRatio}x R:R</div>
+                <div style="font-size: 1.1rem; font-weight: 700; color: #10b981; font-family: var(--font-mono, monospace);">${rrRatio}</div>
                 <span style="font-size: 0.7rem; color: var(--text-muted);">Minimum &ge; 1.5x Gate</span>
             </div>
         </div>
@@ -26878,27 +27123,27 @@ function renderNextDayPickCard(pick, index) {
         <!-- Price Setup Grid -->
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; background: var(--bg-hover, rgba(255,255,255,0.03)); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color);">
             <div style="text-align: center;">
-                <div style="font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase;">Entry Level</div>
-                <div style="font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin-top: 2px; font-family: var(--font-mono, monospace);">₹${(setup.entry_trigger || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}</div>
-                <span style="font-size: 0.68rem; color: var(--text-muted);">${escapeHtml(setup.trigger_condition || 'Pullback / Breakout')}</span>
+                <div style="font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase;">Entry Trigger</div>
+                <div style="font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin-top: 2px; font-family: var(--font-mono, monospace);">${entryDisplay}</div>
+                <span style="font-size: 0.68rem; color: var(--text-muted);">${escapeHtml(setup.trigger_zone || setup.trigger_condition || 'Pullback / Breakout')}</span>
             </div>
             <div style="text-align: center; border-left: 1px solid var(--border-color); border-right: 1px solid var(--border-color);">
                 <div style="font-size: 0.7rem; color: #ef4444; text-transform: uppercase;">Stop Loss</div>
-                <div style="font-size: 0.95rem; font-weight: 700; color: #ef4444; margin-top: 2px; font-family: var(--font-mono, monospace);">₹${(setup.stop_loss || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}</div>
-                <span style="font-size: 0.68rem; color: var(--text-muted);">Risk: ${(setup.risk_pct || 2.0).toFixed(1)}%</span>
+                <div style="font-size: 0.95rem; font-weight: 700; color: #ef4444; margin-top: 2px; font-family: var(--font-mono, monospace);">${slDisplay}</div>
+                <span style="font-size: 0.68rem; color: var(--text-muted);">Risk: ${riskPct}</span>
             </div>
             <div style="text-align: center;">
-                <div style="font-size: 0.7rem; color: #10b981; text-transform: uppercase;">Target (TP)</div>
-                <div style="font-size: 0.95rem; font-weight: 700; color: #10b981; margin-top: 2px; font-family: var(--font-mono, monospace);">₹${(setup.target || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}</div>
-                <span style="font-size: 0.68rem; color: var(--text-muted);">Gain: +${(setup.reward_pct || 4.5).toFixed(1)}%</span>
+                <div style="font-size: 0.7rem; color: #10b981; text-transform: uppercase;">Target (TP1)</div>
+                <div style="font-size: 0.95rem; font-weight: 700; color: #10b981; margin-top: 2px; font-family: var(--font-mono, monospace);">${targetDisplay}</div>
+                <span style="font-size: 0.68rem; color: var(--text-muted);">Gain: ${rewardPct === '—' ? '—' : '+' + rewardPct}</span>
             </div>
         </div>
 
         <!-- 3-Way Scenarios -->
         <div style="font-size: 0.78rem; display: flex; flex-direction: column; gap: 4px;">
-            <div style="color: #10b981;"><strong>Bull Trigger:</strong> <span style="color: var(--text-secondary);">${escapeHtml(scenarios.bull_case || 'Break above trigger level with volume expansion')}</span></div>
-            <div style="color: #0284c7;"><strong>Base Plan:</strong> <span style="color: var(--text-secondary);">${escapeHtml(scenarios.base_case || 'Trend continuation toward planned target')}</span></div>
-            <div style="color: #ef4444;"><strong>Invalidation:</strong> <span style="color: var(--text-secondary);">${escapeHtml(scenarios.invalidation_rule || 'Break below stop loss voids setup immediately')}</span></div>
+            <div style="color: #10b981;"><strong>Bull Trigger:</strong> <span style="color: var(--text-secondary);">${escapeHtml(bullScenario)}</span></div>
+            <div style="color: #0284c7;"><strong>Base Plan:</strong> <span style="color: var(--text-secondary);">${escapeHtml(baseScenario)}</span></div>
+            <div style="color: #ef4444;"><strong>Invalidation:</strong> <span style="color: var(--text-secondary);">${escapeHtml(invalidationRule)}</span></div>
         </div>
 
         <!-- Verified Catalysts -->
@@ -26911,8 +27156,8 @@ function renderNextDayPickCard(pick, index) {
 
         <!-- Footer: Technical & Status -->
         <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 0.6rem; font-size: 0.72rem; color: var(--text-muted);">
-            <div>RSI: <strong>${(technicals.rsi || 50).toFixed(0)}</strong> · Trend: <strong>${escapeHtml(technicals.regime || 'ALIGNED')}</strong></div>
-            <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; padding: 2px 6px; border-radius: 4px;">STATUS: ${escapeHtml(pick.status || 'PENDING_OPEN')}</span>
+            <div>RSI: <strong>${rsiDisplay}</strong> · Confluence: <strong>${escapeHtml(pick.eligibility || 'QUALIFIED')}</strong></div>
+            <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; padding: 2px 6px; border-radius: 4px;">STATUS: ${escapeHtml(pick.outcome_status || pick.status || 'PENDING')}</span>
         </div>
     </div>`;
 }
@@ -26999,3 +27244,228 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+// ══════════════════════════════════════════════════════════════════════════════
+// ── PRIORITY WATCHLIST ENGINE (OPTION A) ──────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+function updateWatchlistBadge() {
+    const badge = document.getElementById('watchlistSidebarBadge');
+    if (badge) {
+        badge.textContent = _watchlist.size;
+        badge.style.display = _watchlist.size > 0 ? 'inline-block' : 'none';
+    }
+}
+
+function addToWatchlist(sym) {
+    if (!sym) return;
+    const clean = sym.trim().toUpperCase().replace('.NS', '');
+    if (!_watchlist.has(clean)) {
+        _watchlist.add(clean);
+        _saveWatchlist();
+        updateWatchlistBadge();
+        if (currentTab === 'watchlist') loadDedicatedWatchlist();
+        updateModalPinButton(clean);
+        showToast(`★ Added ${clean} to Priority Watchlist`, 'success');
+    } else {
+        showToast(`${clean} is already in Watchlist`, 'info');
+    }
+}
+
+function removeFromWatchlist(sym) {
+    if (!sym) return;
+    const clean = sym.trim().toUpperCase().replace('.NS', '');
+    if (_watchlist.has(clean)) {
+        _watchlist.delete(clean);
+        _saveWatchlist();
+        updateWatchlistBadge();
+        if (currentTab === 'watchlist') loadDedicatedWatchlist();
+        updateModalPinButton(clean);
+        showToast(`Removed ${clean} from Watchlist`, 'info');
+    }
+}
+
+function addInputStockToWatchlist() {
+    const input = document.getElementById('watchlistAddInput');
+    if (!input) return;
+    const val = input.value.trim().toUpperCase();
+    if (!val) {
+        showToast('Please enter an NSE stock symbol', 'info');
+        return;
+    }
+    addToWatchlist(val);
+    input.value = '';
+}
+
+function toggleCurrentModalWatchlist() {
+    const titleEl = document.getElementById('modalTitle');
+    if (!titleEl) return;
+    const sym = titleEl.textContent.trim().toUpperCase().replace('.NS', '');
+    if (!sym || sym.includes('LOADING')) return;
+    if (_watchlist.has(sym)) {
+        removeFromWatchlist(sym);
+    } else {
+        addToWatchlist(sym);
+    }
+}
+
+function updateModalPinButton(sym) {
+    const pinBtn = document.getElementById('modalWatchlistPinBtn');
+    if (!pinBtn) return;
+    const isPinned = _watchlist.has(sym);
+    pinBtn.textContent = isPinned ? '★ In Watchlist' : '☆ Pin to Watchlist';
+    pinBtn.className = isPinned ? 'modal-pin-btn pinned' : 'modal-pin-btn';
+}
+
+async function loadDedicatedWatchlist() {
+    const grid = document.getElementById('watchlistGrid');
+    updateWatchlistBadge();
+    if (!grid) return;
+
+    const list = [..._watchlist];
+    if (list.length === 0) {
+        grid.innerHTML = `
+            <div style="grid-column: 1/-1; text-align: center; padding: 3rem 1rem; background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.1); border-radius: 10px;">
+                <div style="font-size: 2.2rem; margin-bottom: 0.75rem;">⭐</div>
+                <h3 style="color: var(--text-primary); margin-bottom: 0.5rem; font-size: 1.1rem;">Your Priority Watchlist is Empty</h3>
+                <p style="color: var(--text-muted); font-size: 0.8rem; max-width: 420px; margin: 0 auto 1.2rem;">
+                    Add your high-conviction NSE assets above using the Quick Add bar, or click any suggestion pill to begin monitoring.
+                </p>
+                <button class="btn btn-primary btn-sm" onclick="addToWatchlist('RELIANCE'); addToWatchlist('HDFCBANK'); addToWatchlist('VEDL');">
+                    + Load Core Tier-1 Leaders
+                </button>
+            </div>
+        `;
+        return;
+    }
+
+    grid.innerHTML = `
+        <div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--text-muted);">
+            <div class="loader" style="margin: 0 auto 0.75rem;"></div>
+            Fetching real-time quotes & institutional levels for ${list.length} priority stocks...
+        </div>
+    `;
+
+    const companyNames = {
+        'RELIANCE': 'Reliance Industries Ltd.',
+        'HDFCBANK': 'HDFC Bank Ltd.',
+        'TCS': 'Tata Consultancy Services',
+        'INFY': 'Infosys Limited',
+        'ICICIBANK': 'ICICI Bank Ltd.',
+        'SBIN': 'State Bank of India',
+        'BHARTIARTL': 'Bharti Airtel Ltd.',
+        'LT': 'Larsen & Toubro Ltd.',
+        'ITC': 'ITC Limited',
+        'TATAMOTORS': 'Tata Motors Ltd.',
+        'VEDL': 'Vedanta Limited',
+        'MARUTI': 'Maruti Suzuki India',
+        'SUNPHARMA': 'Sun Pharmaceutical',
+        'BAJFINANCE': 'Bajaj Finance Ltd.',
+        'ASIANPAINT': 'Asian Paints Ltd.',
+        'ONGC': 'Oil & Natural Gas Corp',
+        'BPCL': 'Bharat Petroleum Corp',
+        'COALINDIA': 'Coal India Limited',
+        'TATASTEEL': 'Tata Steel Ltd.'
+    };
+
+    const signalsMap = {};
+    if (window._allSignalsCache && Array.isArray(window._allSignalsCache)) {
+        window._allSignalsCache.forEach(s => {
+            if (s.symbol) signalsMap[s.symbol.toUpperCase()] = s;
+        });
+    }
+
+    const cardsHtml = await Promise.all(list.map(async (sym) => {
+        const sig = signalsMap[sym];
+        const compName = companyNames[sym] || `${sym} · NSE Equity`;
+        
+        let ltp = sig?.close || sig?.entry || 0;
+        let changePct = sig?.change_pct || 0;
+        let signalLabel = sig?.signal || 'MONITOR';
+        let conf = sig?.confidence || 65;
+        let entry = sig?.entry || ltp;
+        let sl = sig?.stop_loss || (ltp > 0 ? ltp * 0.98 : 0);
+        let tp = sig?.target || (ltp > 0 ? ltp * 1.035 : 0);
+
+        if (!ltp || ltp === 0) {
+            try {
+                const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 6000);
+                if (qRes.ok && qRes.data) {
+                    const d = qRes.data;
+                    ltp = Number(d.close || 0);
+                    if (d.signal) {
+                        signalLabel = d.signal.signal || signalLabel;
+                        conf = d.signal.confidence || conf;
+                        entry = d.signal.entry || ltp;
+                        sl = d.signal.stop_loss || sl;
+                        tp = d.signal.target || tp;
+                    }
+                }
+            } catch (_) {}
+        }
+
+        const isLong = ['LONG', 'BUY'].includes(signalLabel.toUpperCase());
+        const isShort = ['SHORT', 'SELL'].includes(signalLabel.toUpperCase());
+        const sigColor = isLong ? 'var(--green, #10b981)' : (isShort ? 'var(--red, #ef4444)' : '#94a3b8');
+        const sigBg = isLong ? 'rgba(16,185,129,0.12)' : (isShort ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)');
+        const sigBorder = isLong ? 'rgba(16,185,129,0.3)' : (isShort ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.1)');
+
+        const chgClass = changePct >= 0 ? 'text-profit' : 'text-loss';
+        const chgStr = `${changePct >= 0 ? '+' : ''}${Number(changePct).toFixed(2)}%`;
+
+        return `
+            <div class="watchlist-card">
+                <div class="watchlist-header">
+                    <div class="watchlist-sym-block">
+                        <span class="watchlist-sym">${sym}</span>
+                        <span class="watchlist-name">${_escHtml(compName)}</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="font-size:0.65rem;font-weight:800;padding:2px 8px;border-radius:4px;background:${sigBg};color:${sigColor};border:1px solid ${sigBorder};">
+                            ${signalLabel}
+                        </span>
+                        <span style="font-size:0.62rem;font-family:var(--font-mono);color:var(--text-muted);background:rgba(255,255,255,0.03);padding:2px 5px;border-radius:4px;">
+                            ${conf}/100
+                        </span>
+                    </div>
+                </div>
+
+                <div class="watchlist-price-row">
+                    <div>
+                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
+                        <div class="watchlist-ltp">₹${Number(ltp).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
+                        <div class="watchlist-chg ${chgClass}">${chgStr}</div>
+                    </div>
+                </div>
+
+                <div class="watchlist-levels">
+                    <div>
+                        <div class="watchlist-lvl-label">Entry Ref</div>
+                        <div class="watchlist-lvl-val" style="color:var(--text-primary);">₹${Number(entry || ltp).toFixed(1)}</div>
+                    </div>
+                    <div>
+                        <div class="watchlist-lvl-label" style="color:var(--red,#ef4444);">Stop Loss</div>
+                        <div class="watchlist-lvl-val" style="color:var(--red,#ef4444);">₹${Number(sl).toFixed(1)}</div>
+                    </div>
+                    <div>
+                        <div class="watchlist-lvl-label" style="color:var(--green,#10b981);">Target (TP)</div>
+                        <div class="watchlist-lvl-val" style="color:var(--green,#10b981);">₹${Number(tp).toFixed(1)}</div>
+                    </div>
+                </div>
+
+                <div class="watchlist-actions">
+                    <button class="watchlist-inspect-btn" onclick="fetchAndShowQuote('${sym}')" title="Inspect ${sym} 5m/15m chart and technical indicators">
+                        ⚡ Inspect Chart & Setup
+                    </button>
+                    <button class="watchlist-remove-btn" onclick="removeFromWatchlist('${sym}')" title="Remove ${sym} from Watchlist">
+                        ✕
+                    </button>
+                </div>
+            </div>
+        `;
+    }));
+
+    grid.innerHTML = cardsHtml.join('');
+}

@@ -768,7 +768,11 @@ class PaperTradingEngine:
 
         total_equity = self.capital + unrealized_pnl
         closed = [t for t in self.trades if t.status != "OPEN"]
-        realized_pnl = sum(self._trade_total_pnl(t) for t in closed)
+        inr_closed = [
+            t for t in closed
+            if not (getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and getattr(t, "quote_currency", "INR") != "INR")
+        ]
+        realized_pnl = sum(self._trade_total_pnl(t) for t in inr_closed)
 
         return {
             "initial_capital": round(self.initial_capital, 2),
@@ -813,12 +817,25 @@ class PaperTradingEngine:
                 "sharpe_ratio": 0, "max_drawdown": 0, "max_drawdown_pct": 0,
                 "profit_factor": 0, "avg_win": 0, "avg_loss": 0,
                 "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
+                "breakeven_trades": 0,
+                "unconverted_legacy_trades": [],
             }
 
-        pnls = [self._trade_total_pnl(t) for t in closed]
-        wins = [t for t in closed if self._trade_total_pnl(t) > 1e-6]
-        losses = [t for t in closed if self._trade_total_pnl(t) < -1e-6]
-        pnl_pcts = [t.pnl_pct for t in closed]
+        # Quarantine unconverted non-INR legacy trades from INR totals (F05)
+        inr_closed = [
+            t for t in closed
+            if not (getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and getattr(t, "quote_currency", "INR") != "INR")
+        ]
+        unconverted_legacy = [
+            t for t in closed
+            if getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and getattr(t, "quote_currency", "INR") != "INR"
+        ]
+
+        pnls = [self._trade_total_pnl(t) for t in inr_closed]
+        wins = [t for t in inr_closed if self._trade_total_pnl(t) > 1e-6]
+        losses = [t for t in inr_closed if self._trade_total_pnl(t) < -1e-6]
+        breakevens = [t for t in inr_closed if abs(self._trade_total_pnl(t)) <= 1e-6]
+        pnl_pcts = [t.pnl_pct for t in inr_closed]
 
         # Equity curve for drawdown
         equity = [self.initial_capital]
@@ -867,7 +884,8 @@ class PaperTradingEngine:
             "sample_size": len(closed),
             "winning_trades": len(wins),
             "losing_trades": len(losses),
-            "win_rate": round(len(wins) / len(closed) * 100, 1) if closed else None,
+            "breakeven_trades": len(breakevens),
+            "win_rate": round(len(wins) / len(inr_closed) * 100, 1) if inr_closed else None,
             "capital": round(self.capital, 2),
             "total_equity": equity_info["total_equity"],
             "unrealized_pnl": equity_info["unrealized_pnl"],
@@ -888,6 +906,16 @@ class PaperTradingEngine:
             "max_drawdown_pct": round(max_dd_pct, 1),
             "profit_factor": profit_factor,
             "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
+            "unconverted_legacy_trades": [
+                {
+                    "id": t.id,
+                    "symbol": t.symbol,
+                    "quote_currency": getattr(t, "quote_currency", "USDT"),
+                    "total_pnl_native": getattr(t, "total_pnl_native", t.total_pnl),
+                    "fx_status": getattr(t, "fx_status", "LEGACY_UNCONVERTED"),
+                }
+                for t in unconverted_legacy
+            ],
         }
 
     def get_portfolio_heat_pct(self) -> float:
