@@ -22,11 +22,32 @@ logger = logging.getLogger(__name__)
 _IST = ZoneInfo("Asia/Kolkata")
 
 
+def get_last_completed_session_date(ref_ist: datetime) -> Any:
+    """Find the date of the most recent completed NSE trading session."""
+    from datetime import date, time as dt_time, timedelta
+    try:
+        from agents.market_intelligence.nse_holidays import is_holiday
+    except Exception:
+        is_holiday = lambda d: False  # type: ignore
+
+    d = ref_ist.date()
+    # If today is a weekday and not a holiday, and current time is >= 15:30 IST, today completed.
+    if ref_ist.weekday() < 5 and not is_holiday(d) and ref_ist.time() >= dt_time(15, 30):
+        return d
+
+    # Otherwise step back 1 day at a time to find the last completed session
+    cur = d - timedelta(days=1)
+    while cur.weekday() >= 5 or is_holiday(cur):
+        cur -= timedelta(days=1)
+    return cur
+
+
 def format_human_data_age(
     snap_dt: Optional[datetime],
     age_seconds: Optional[float],
     is_nse_open: bool,
     now_ist: Optional[datetime] = None,
+    data_age_source: str = "LAST_BAR",
 ) -> str:
     """Format an honest, user-facing label for data freshness and exchange delay."""
     if snap_dt is None or age_seconds is None:
@@ -35,13 +56,22 @@ def format_human_data_age(
     if now_ist is None:
         now_ist = datetime.now(_IST)
 
-    snap_ist = snap_dt.astimezone(_IST) if snap_dt.tzinfo else snap_dt.replace(tzinfo=timezone.utc).astimezone(_IST)
+    snap_ist = snap_dt.astimezone(_IST) if snap_dt.tzinfo else snap_dt.replace(tzinfo=_IST)
 
     if not is_nse_open:
         # Market Closed / Weekend
-        date_str = snap_ist.strftime("%d %b")
-        time_str = snap_ist.strftime("%H:%M IST")
-        return f"EOD Snapshot · {date_str} (Market Closed)"
+        bar_str = snap_ist.strftime("%d %b %H:%M")
+        if age_seconds < 86400:
+            h = int(age_seconds // 3600)
+            m = int((age_seconds % 3600) // 60)
+            age_str = f"{h}h {m}m old"
+        else:
+            d = int(age_seconds // 86400)
+            h = int((age_seconds % 86400) // 3600)
+            age_str = f"{d}d {h}h old"
+
+        suffix = " · bar time unknown" if data_age_source == "CYCLE_FALLBACK" else ""
+        return f"EOD Snapshot · {bar_str} (Market Closed) · {age_str}{suffix}"
 
     # Market is active (09:15 - 15:30 IST)
     mins_ago = int(age_seconds // 60)
@@ -137,29 +167,71 @@ def evaluate_health_v2(
             worker_reason = "Worker cycle has not executed during active market session"
 
     # ── Tier 3: Data Freshness ────────────────────────────────────────────────
-    age_seconds = feed_status.get("age_seconds")
-    last_update_str = feed_status.get("last_update")
+    last_bar_at_val = feed_status.get("last_bar_at")
+    bar_age_val = feed_status.get("bar_age_seconds")
+
     snap_dt: Optional[datetime] = None
-    if last_update_str:
-        try:
-            snap_dt = datetime.fromisoformat(str(last_update_str).replace("Z", "+00:00"))
-            if snap_dt.tzinfo is None:
-                snap_dt = snap_dt.replace(tzinfo=timezone.utc)
-            if age_seconds is None:
-                age_seconds = max((now_utc - snap_dt).total_seconds(), 0.0)
-        except Exception:
-            pass
+    age_seconds: Optional[float] = None
+    data_age_source = "CYCLE_FALLBACK"
+
+    if last_bar_at_val or bar_age_val is not None:
+        if last_bar_at_val:
+            try:
+                snap_dt = datetime.fromisoformat(str(last_bar_at_val).replace("Z", "+00:00"))
+                if snap_dt.tzinfo is None:
+                    snap_dt = snap_dt.replace(tzinfo=_IST)
+            except Exception:
+                snap_dt = None
+        if bar_age_val is not None:
+            try:
+                age_seconds = float(bar_age_val)
+            except Exception:
+                age_seconds = None
+        elif snap_dt is not None:
+            age_seconds = max((now_utc - snap_dt).total_seconds(), 0.0)
+
+        if snap_dt is not None or age_seconds is not None:
+            data_age_source = "LAST_BAR"
+
+    if snap_dt is None or age_seconds is None:
+        data_age_source = "CYCLE_FALLBACK"
+        last_update_str = feed_status.get("last_update")
+        if last_update_str:
+            try:
+                snap_dt = datetime.fromisoformat(str(last_update_str).replace("Z", "+00:00"))
+                if snap_dt.tzinfo is None:
+                    snap_dt = snap_dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                snap_dt = None
+        cycle_age = feed_status.get("age_seconds")
+        if cycle_age is not None:
+            try:
+                age_seconds = float(cycle_age)
+            except Exception:
+                age_seconds = None
+        elif snap_dt is not None:
+            age_seconds = max((now_utc - snap_dt).total_seconds(), 0.0)
 
     if age_seconds is None or snap_dt is None:
         freshness_tier = "UNAVAILABLE"
         freshness_healthy = False
         freshness_reason = "No market data snapshot available"
     elif not is_nse_open:
-        # Off-hours: EOD snapshot is valid and expected
-        freshness_tier = "EOD_VALID"
-        freshness_healthy = True
-        hours_ago = int(age_seconds // 3600)
-        freshness_reason = f"EOD Snapshot valid ({hours_ago}h ago, market closed)"
+        # Off-hours: EOD snapshot is valid ONLY if bar date matches or is not older than the last completed session
+        bar_ist = snap_dt.astimezone(_IST) if snap_dt.tzinfo else snap_dt.replace(tzinfo=_IST)
+        last_session_date = get_last_completed_session_date(now_ist)
+        if bar_ist.date() < last_session_date:
+            freshness_tier = "STALE_DATA"
+            freshness_healthy = False
+            freshness_reason = (
+                f"Market data bar ({bar_ist.strftime('%d %b')}) is older than "
+                f"last completed session ({last_session_date.strftime('%d %b')})"
+            )
+        else:
+            freshness_tier = "EOD_VALID"
+            freshness_healthy = True
+            hours_ago = int(age_seconds // 3600)
+            freshness_reason = f"EOD Snapshot valid ({hours_ago}h ago, market closed)"
     else:
         # Market open: Expecting ~15m delay (tolerance up to 30 mins)
         if age_seconds <= 1800:
@@ -175,7 +247,7 @@ def evaluate_health_v2(
     if not infra_healthy:
         overall_status = "DEGRADED"
         overall_reason = infra_reason
-    elif is_nse_open and not freshness_healthy:
+    elif not freshness_healthy:
         overall_status = "STALE_DATA"
         overall_reason = freshness_reason
     elif is_nse_open and not worker_healthy:
@@ -185,7 +257,9 @@ def evaluate_health_v2(
         overall_status = "HEALTHY"
         overall_reason = "All system tiers nominal"
 
-    data_age_human = format_human_data_age(snap_dt, age_seconds, is_nse_open, now_ist)
+    data_age_human = format_human_data_age(
+        snap_dt, age_seconds, is_nse_open, now_ist, data_age_source=data_age_source
+    )
 
     return {
         "status": overall_status,
@@ -203,6 +277,9 @@ def evaluate_health_v2(
         "overall_reason": overall_reason,
         "data_age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
         "data_age_human": data_age_human,
+        "data_age_source": data_age_source,
+        "last_bar_at": feed_status.get("last_bar_at") or (snap_dt.isoformat() if data_age_source == "LAST_BAR" and snap_dt else None),
+        "bar_age_seconds": feed_status.get("bar_age_seconds") or (round(age_seconds, 1) if data_age_source == "LAST_BAR" and age_seconds is not None else None),
         "is_market_open": is_nse_open,
         "market_session_status": nse_reason,
     }

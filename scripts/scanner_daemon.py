@@ -22,6 +22,9 @@ import signal
 import sys
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_IST = ZoneInfo("Asia/Kolkata")
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +91,7 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
     market_prices: dict[str, Any] = {}
     regimes: dict[str, str] = {}
     candidate_signals: list[dict[str, Any]] = []
+    max_bar_dt: datetime | None = None
 
     # Bounded symbol universe for responsive worker cycles
     nse_syms = list(settings.NSE_SYMBOLS.keys()) if isinstance(settings.NSE_SYMBOLS, dict) else list(settings.NSE_SYMBOLS)
@@ -102,6 +106,23 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
                 df = await asyncio.to_thread(fetch_ohlcv, sym, "5d", "5m")
             if df is None or df.empty or len(df) < 15:
                 continue
+
+            try:
+                c_idx = df.index[-1]
+                c_bar_dt = None
+                if isinstance(c_idx, str):
+                    c_bar_dt = datetime.fromisoformat(c_idx.replace("Z", "+00:00"))
+                elif hasattr(c_idx, "to_pydatetime"):
+                    c_bar_dt = c_idx.to_pydatetime()
+                elif isinstance(c_idx, datetime):
+                    c_bar_dt = c_idx
+                if c_bar_dt is not None:
+                    if c_bar_dt.tzinfo is None:
+                        c_bar_dt = c_bar_dt.replace(tzinfo=_IST)
+                    if max_bar_dt is None or c_bar_dt > max_bar_dt:
+                        max_bar_dt = c_bar_dt
+            except Exception:
+                pass
 
             df = calculate_indicators(df)
             regime = detect_regime(df)
@@ -148,6 +169,7 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
         "source": "WORKER_DAEMON",
         "feed_status": "LIVE",
         "freshness_sec": 0,
+        "last_bar_at": max_bar_dt.isoformat() if max_bar_dt else None,
         "symbols": list(market_prices.keys()),
         "prices": market_prices,
         "regimes": regimes,

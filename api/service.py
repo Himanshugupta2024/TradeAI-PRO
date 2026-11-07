@@ -12,6 +12,9 @@ sys.path.insert(0, _ROOT_DIR)
 
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
+
+_IST = ZoneInfo("Asia/Kolkata")
 
 import numpy as np
 import pandas as pd
@@ -654,6 +657,9 @@ def _get_feed_status() -> dict[str, object]:
             "worker_health": "NO_RECENT_RUN",
             "last_update": None,
             "age_seconds": None,
+            "last_bar_at": None,
+            "bar_age_seconds": None,
+            "bar_date_label": None,
             "source": "NONE",
             "mode": "15m Delayed Public Feed",
             "is_market_open": is_mkt_open,
@@ -704,12 +710,53 @@ def _get_feed_status() -> dict[str, object]:
             except Exception:
                 worker_health = "NO_RECENT_RUN"
 
+    # Newest bar time extraction
+    bar_raw = None
+    if snapshot and isinstance(snapshot, dict):
+        bar_raw = (
+            snapshot.get("last_bar_at")
+            or snapshot.get("last_bar")
+            or snapshot.get("latest_bar_timestamp")
+        )
+    if not bar_raw and _market_data:
+        try:
+            candidates = [
+                df.index[-1]
+                for df in _market_data.values()
+                if isinstance(df, pd.DataFrame) and not df.empty
+            ]
+            if candidates:
+                bar_raw = max(candidates)
+        except Exception:
+            pass
+
+    bar_dt: datetime | None = None
+    bar_age_seconds: float | None = None
+    if bar_raw is not None:
+        try:
+            if isinstance(bar_raw, str):
+                bar_dt = datetime.fromisoformat(bar_raw.replace("Z", "+00:00"))
+            elif hasattr(bar_raw, "to_pydatetime"):
+                bar_dt = bar_raw.to_pydatetime()
+            elif isinstance(bar_raw, datetime):
+                bar_dt = bar_raw
+            if bar_dt is not None:
+                if bar_dt.tzinfo is None:
+                    bar_dt = bar_dt.replace(tzinfo=_IST)
+                bar_age_seconds = max((now_utc - bar_dt).total_seconds(), 0.0)
+        except Exception:
+            bar_dt = None
+            bar_age_seconds = None
+
     return {
         "state": state,
         "market_snapshot_health": snapshot_health,
         "worker_health": worker_health,
         "last_update": snap_dt.isoformat(),
         "age_seconds": round(age, 1),
+        "last_bar_at": bar_dt.isoformat() if bar_dt else None,
+        "bar_age_seconds": round(bar_age_seconds, 1) if bar_age_seconds is not None else None,
+        "bar_date_label": bar_dt.astimezone(_IST).strftime("%d %b %H:%M") if bar_dt else None,
         "source": source,
         "mode": "15m Delayed Public Feed (NSE / Yahoo)",
         "is_market_open": is_mkt_open,

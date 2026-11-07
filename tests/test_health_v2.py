@@ -172,3 +172,111 @@ def test_api_health_endpoint_response_structure():
     assert "data_age_human" in data
     assert "signals_cached" in data
     assert isinstance(data["signals_cached"], int)
+
+
+def test_saturday_freshness_anchored_to_friday_last_bar():
+    """1. Saturday, cycle ran today, last bar Friday 15:25 -> label contains 06 Nov, Market Closed, 1d-scale, not 8h, not today."""
+    # Saturday 07 Nov 2026, 18:26:00 IST (12:56:00 UTC)
+    now_utc = datetime(2026, 11, 7, 12, 56, 0, tzinfo=timezone.utc)
+    # Worker ran Saturday 10:00:00 UTC (~8.6h ago)
+    cycle_dt = datetime(2026, 11, 7, 4, 20, 0, tzinfo=timezone.utc)
+    # Last bar was Friday 06 Nov 15:25:00 IST (09:55:00 UTC) -> 95,834s (~26.6h ago)
+    bar_dt = datetime(2026, 11, 6, 9, 55, 0, tzinfo=timezone.utc)
+    bar_age_sec = (now_utc - bar_dt).total_seconds()  # 97260.0s (1d 3h)
+
+    feed = {
+        "market_snapshot_health": "EOD",
+        "worker_health": "NO_RECENT_RUN",
+        "last_update": cycle_dt.isoformat(),
+        "age_seconds": (now_utc - cycle_dt).total_seconds(),
+        "last_bar_at": bar_dt.isoformat(),
+        "bar_age_seconds": bar_age_sec,
+        "is_market_open": False,
+    }
+
+    res = evaluate_health_v2(db_ok=True, feed_status=feed, now=now_utc)
+
+    assert "06 Nov" in res["data_age_human"]
+    assert "07 Nov" not in res["data_age_human"]
+    assert "Market Closed" in res["data_age_human"]
+    assert "1d" in res["data_age_human"]
+    assert "8h" not in res["data_age_human"]
+    assert res["data_age_source"] == "LAST_BAR"
+    assert res["health_tier"]["freshness"] == "EOD_VALID"
+
+
+def test_data_age_source_last_bar_when_present():
+    """2. data_age_source == 'LAST_BAR' when bar_age_seconds present."""
+    now_utc = datetime(2026, 11, 7, 10, 0, 0, tzinfo=timezone.utc)
+    feed = {
+        "last_update": "2026-11-07T08:00:00+00:00",
+        "age_seconds": 7200.0,
+        "last_bar_at": "2026-11-06T15:25:00+05:30",
+        "bar_age_seconds": 95834.0,
+        "is_market_open": False,
+    }
+    res = evaluate_health_v2(db_ok=True, feed_status=feed, now=now_utc)
+    assert res["data_age_source"] == "LAST_BAR"
+    assert res["data_age_seconds"] == 95834.0
+
+
+def test_missing_bar_fields_cycle_fallback():
+    """3. Missing bar fields -> CYCLE_FALLBACK and label still renders (no crash, no None)."""
+    now_utc = datetime(2026, 11, 7, 10, 0, 0, tzinfo=timezone.utc)
+    cycle_dt = datetime(2026, 11, 7, 2, 0, 0, tzinfo=timezone.utc)
+    feed = {
+        "last_update": cycle_dt.isoformat(),
+        "age_seconds": 28800.0,
+        "is_market_open": False,
+    }
+    res = evaluate_health_v2(db_ok=True, feed_status=feed, now=now_utc)
+    assert res["data_age_source"] == "CYCLE_FALLBACK"
+    assert res["data_age_human"] is not None
+    assert "bar time unknown" in res["data_age_human"]
+    assert "EOD Snapshot" in res["data_age_human"]
+
+
+def test_market_open_bar_fresh():
+    """4. Market open + bar 5m old -> still 15m Delayed · Updated 5m ago."""
+    now_utc = datetime(2026, 11, 11, 6, 0, 0, tzinfo=timezone.utc)  # Wednesday 11:30 IST
+    bar_dt = now_utc - timedelta(minutes=5)
+    feed = {
+        "last_bar_at": bar_dt.isoformat(),
+        "bar_age_seconds": 300.0,
+        "is_market_open": True,
+    }
+    res = evaluate_health_v2(db_ok=True, feed_status=feed, now=now_utc)
+    assert res["data_age_human"] == "15m Delayed · Updated 5m ago"
+    assert res["health_tier"]["freshness"] == "DATA_FRESH"
+
+
+def test_market_open_bar_stale():
+    """5. Market open + bar 45m old -> still ⚠️ Stale Feed."""
+    now_utc = datetime(2026, 11, 11, 6, 0, 0, tzinfo=timezone.utc)  # Wednesday 11:30 IST
+    bar_dt = now_utc - timedelta(minutes=45)
+    feed = {
+        "last_bar_at": bar_dt.isoformat(),
+        "bar_age_seconds": 2700.0,
+        "is_market_open": True,
+    }
+    res = evaluate_health_v2(db_ok=True, feed_status=feed, now=now_utc)
+    assert "⚠️ Stale Feed" in res["data_age_human"]
+    assert "45m ago" in res["data_age_human"]
+    assert res["health_tier"]["freshness"] == "STALE_DATA"
+
+
+def test_eod_valid_refused_when_bar_older_than_last_completed_session():
+    """6. EOD_VALID refused when last bar is older than the last completed session."""
+    # Saturday 07 Nov 2026 (last completed session was Friday 06 Nov)
+    now_utc = datetime(2026, 11, 7, 10, 0, 0, tzinfo=timezone.utc)
+    # Bar is from Thursday 05 Nov 15:25 IST
+    thursday_bar = datetime(2026, 11, 5, 9, 55, 0, tzinfo=timezone.utc)
+    feed = {
+        "last_bar_at": thursday_bar.isoformat(),
+        "bar_age_seconds": (now_utc - thursday_bar).total_seconds(),
+        "is_market_open": False,
+    }
+    res = evaluate_health_v2(db_ok=True, feed_status=feed, now=now_utc)
+    assert res["health_tier"]["freshness"] == "STALE_DATA"
+    assert res["healthy"] is False
+    assert "older than last completed session" in res["health_reasons"]["freshness"]
