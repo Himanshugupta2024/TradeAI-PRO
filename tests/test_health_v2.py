@@ -96,6 +96,8 @@ def test_health_v2_market_closed_eod_valid():
         "worker_health": "NO_RECENT_RUN",
         "age_seconds": 86400.0,
         "last_update": snap_dt.isoformat(),
+        "last_bar_at": snap_dt.isoformat(),
+        "bar_age_seconds": 86400.0,
         "is_market_open": False,
     }
     worker = {"status": "COMPLETED", "timestamp": snap_dt.isoformat()}
@@ -221,7 +223,7 @@ def test_data_age_source_last_bar_when_present():
 
 
 def test_missing_bar_fields_cycle_fallback():
-    """3. Missing bar fields -> CYCLE_FALLBACK and label still renders (no crash, no None)."""
+    """3. Missing bar fields -> CYCLE_FALLBACK and label renders Last cycle, bar time unknown."""
     now_utc = datetime(2026, 11, 7, 10, 0, 0, tzinfo=timezone.utc)
     cycle_dt = datetime(2026, 11, 7, 2, 0, 0, tzinfo=timezone.utc)
     feed = {
@@ -233,7 +235,11 @@ def test_missing_bar_fields_cycle_fallback():
     assert res["data_age_source"] == "CYCLE_FALLBACK"
     assert res["data_age_human"] is not None
     assert "bar time unknown" in res["data_age_human"]
-    assert "EOD Snapshot" in res["data_age_human"]
+    assert "Last cycle" in res["data_age_human"]
+    assert "EOD Snapshot" not in res["data_age_human"]
+    assert res["health_tier"]["freshness"] == "EOD_UNVERIFIED"
+    assert res["healthy"] is False
+    assert res["status"] == "DEGRADED" 
 
 
 def test_market_open_bar_fresh():
@@ -280,3 +286,90 @@ def test_eod_valid_refused_when_bar_older_than_last_completed_session():
     assert res["health_tier"]["freshness"] == "STALE_DATA"
     assert res["healthy"] is False
     assert "older than last completed session" in res["health_reasons"]["freshness"]
+
+
+def test_cycle_fallback_never_prints_eod_snapshot_label():
+    now_utc = datetime(2026, 11, 7, 13, 35, 0, tzinfo=timezone.utc)
+    feed = {
+        "last_update": "2026-11-07T03:49:51+00:00",
+        "age_seconds": 54500.0,
+        "last_bar_at": None,
+        "bar_age_seconds": None,
+        "is_market_open": False,
+    }
+    res = evaluate_health_v2(db_ok=True, feed_status=feed, now=now_utc)
+    human = res["data_age_human"]
+    assert "Last cycle" in human
+    assert "EOD Snapshot" not in human
+    assert "bar time unknown" in human
+
+
+def test_cycle_fallback_is_not_eod_valid():
+    now_utc = datetime(2026, 11, 7, 13, 35, 0, tzinfo=timezone.utc)
+    feed = {
+        "last_update": "2026-11-07T03:49:51+00:00",
+        "age_seconds": 54500.0,
+        "last_bar_at": None,
+        "bar_age_seconds": None,
+        "is_market_open": False,
+    }
+    res = evaluate_health_v2(db_ok=True, feed_status=feed, now=now_utc)
+    assert res["health_tier"]["freshness"] == "EOD_UNVERIFIED"
+    assert res["healthy"] is False
+    assert res["status"] == "DEGRADED"
+
+
+def test_last_bar_source_still_yields_eod_valid():
+    now_utc = datetime(2026, 11, 7, 13, 35, 0, tzinfo=timezone.utc)
+    feed = {
+        "last_update": "2026-11-07T03:49:51+00:00",
+        "age_seconds": 54500.0,
+        "last_bar_at": "2026-11-06T15:25:00+05:30",
+        "bar_age_seconds": 96000.0,
+        "is_market_open": False,
+    }
+    res = evaluate_health_v2(db_ok=True, feed_status=feed, now=now_utc)
+    assert res["health_tier"]["freshness"] == "EOD_VALID"
+    assert res["status"] == "HEALTHY"
+    assert res["healthy"] is True
+
+
+def test_probe_supplies_bar_time_when_snapshot_lacks_it(monkeypatch):
+    import api.service as svc
+    svc._market_data.clear()
+
+    def mock_get_runtime_state(key):
+        if key == "last_bar_probe:v1":
+            return {"last_bar_at": "2026-11-06T15:25:00+05:30"}
+        if key == "latest_market_snapshot":
+            return {"timestamp": "2026-11-07T03:49:51+00:00", "status": "STALE"}
+        return None
+
+    monkeypatch.setattr("db.runtime_state.get_runtime_state", mock_get_runtime_state)
+
+    feed = svc._get_feed_status()
+    assert feed["last_bar_at"].startswith("2026-11-06T15:25")
+    assert feed["bar_age_seconds"] > 90000
+
+
+def test_probe_write_is_throttled(monkeypatch):
+    import api.routes as routes
+    from api.routes import _build_market_response
+    import pandas as pd
+
+    writes = []
+    def mock_set_runtime_state(key, val):
+        writes.append((key, val))
+
+    monkeypatch.setattr("db.runtime_state.set_runtime_state", mock_set_runtime_state)
+    routes._LAST_BAR_PROBE_WRITE = 0.0
+
+    df = pd.DataFrame([{"timestamp": pd.to_datetime("2026-11-06T15:25:00+05:30"), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000}])
+
+    # Call 1
+    _build_market_response("RELIANCE", df, "5m")
+    assert len(writes) == 1
+
+    # Call 2 immediately within 300s -> throttled
+    _build_market_response("RELIANCE", df, "5m")
+    assert len(writes) == 1

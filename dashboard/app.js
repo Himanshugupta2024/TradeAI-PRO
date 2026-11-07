@@ -26450,6 +26450,14 @@ async function updateAiModelHealthBadge() {
                 if (status === 'HEALTHY' || status === 'OK') {
                     titleEl.textContent = 'System Healthy';
                     titleEl.style.color = '#10b981';
+                } else if (status === 'DEGRADED' || tier.freshness === 'EOD_UNVERIFIED') {
+                    if (tier.infra === 'UNHEALTHY' || tier.infra === 'DOWN') {
+                        titleEl.textContent = 'System Degraded';
+                        titleEl.style.color = '#ef4444';
+                    } else {
+                        titleEl.textContent = 'Freshness Unverified';
+                        titleEl.style.color = '#f59e0b';
+                    }
                 } else if (status === 'STALE_DATA') {
                     titleEl.textContent = 'Data Stale';
                     titleEl.style.color = '#f59e0b';
@@ -26465,6 +26473,12 @@ async function updateAiModelHealthBadge() {
             if (dotEl) {
                 if (status === 'HEALTHY' || status === 'OK') {
                     dotEl.style.background = '#10b981';
+                } else if (status === 'DEGRADED' || tier.freshness === 'EOD_UNVERIFIED') {
+                    if (tier.infra === 'UNHEALTHY' || tier.infra === 'DOWN') {
+                        dotEl.style.background = '#ef4444';
+                    } else {
+                        dotEl.style.background = '#f59e0b';
+                    }
                 } else if (status === 'STALE_DATA' || status === 'WORKER_DOWN') {
                     dotEl.style.background = '#f59e0b';
                 } else {

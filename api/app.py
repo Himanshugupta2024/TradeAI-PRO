@@ -321,6 +321,42 @@ def _lifespan_context():
 
             svc.logger.info("SELF_PING_ENABLED=false -> skipping self-ping keep-alive task")
 
+        async def _warm_bar_probe():
+            try:
+                from agents.market_intelligence.nse_fetcher import fetch_ohlcv
+                from db.runtime_state import set_runtime_state
+                from api.data_honesty import IST
+                from datetime import datetime, timezone
+                df = await asyncio.to_thread(fetch_ohlcv, "NIFTY 50", "1d", "5m")
+                if df is not None and not df.empty:
+                    last_bar = df.iloc[-1]
+                    ts = last_bar.get("timestamp") if "timestamp" in last_bar else None
+                    if ts is None and hasattr(df, "index") and len(df.index) > 0:
+                        ts = df.index[-1]
+                    if ts is not None:
+                        if isinstance(ts, str):
+                            ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        elif hasattr(ts, "to_pydatetime"):
+                            ts_dt = ts.to_pydatetime()
+                        elif isinstance(ts, datetime):
+                            ts_dt = ts
+                        else:
+                            ts_dt = None
+                        if ts_dt is not None:
+                            if ts_dt.tzinfo is None:
+                                ts_dt = ts_dt.replace(tzinfo=IST)
+                            set_runtime_state("last_bar_probe:v1", {
+                                "last_bar_at": ts_dt.isoformat(),
+                                "symbol": "NIFTY 50",
+                                "interval": "5m",
+                                "written_at": datetime.now(timezone.utc).isoformat(),
+                            })
+                            svc.logger.info("Warm bar probe recorded last_bar_at: %s", ts_dt.isoformat())
+            except Exception as e:
+                svc.logger.debug("Warm bar probe non-blocking failure: %s", e)
+
+        _spawn_task(_warm_bar_probe(), name="warm_bar_probe")
+
 
 
         svc.logger.info("Server ready — accepting connections. Data loading in background.")

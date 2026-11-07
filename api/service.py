@@ -719,6 +719,14 @@ def _get_feed_status() -> dict[str, object]:
             or snapshot.get("last_bar")
             or snapshot.get("latest_bar_timestamp")
         )
+    if not bar_raw:
+        try:
+            from db.runtime_state import get_runtime_state
+            probe = get_runtime_state("last_bar_probe:v1")
+            if isinstance(probe, dict):
+                bar_raw = probe.get("last_bar_at")
+        except Exception:
+            pass
     if not bar_raw and _market_data:
         try:
             candidates = [
@@ -2021,7 +2029,7 @@ def _build_market_records(df: pd.DataFrame) -> list[dict]:
         prec = price_decimals(c_val)
         records.append(
             {
-                "timestamp": row["timestamp"].isoformat(),
+                "timestamp": row["timestamp"] if isinstance(row["timestamp"], str) else row["timestamp"].isoformat(),
                 "open": round(float(row["open"]), prec),
                 "high": round(float(row["high"]), prec),
                 "low": round(float(row["low"]), prec),

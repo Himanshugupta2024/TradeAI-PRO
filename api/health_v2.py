@@ -58,20 +58,22 @@ def format_human_data_age(
 
     snap_ist = snap_dt.astimezone(_IST) if snap_dt.tzinfo else snap_dt.replace(tzinfo=_IST)
 
+    if age_seconds < 86400:
+        h = int(age_seconds // 3600)
+        m = int((age_seconds % 3600) // 60)
+        age_str = f"{h}h {m}m old"
+    else:
+        d = int(age_seconds // 86400)
+        h = int((age_seconds % 86400) // 3600)
+        age_str = f"{d}d {h}h old"
+
     if not is_nse_open:
         # Market Closed / Weekend
+        if data_age_source == "CYCLE_FALLBACK":
+            cycle_str = snap_ist.strftime("%d %b %H:%M")
+            return f"Last cycle · {cycle_str} · bar time unknown · {age_str}"
         bar_str = snap_ist.strftime("%d %b %H:%M")
-        if age_seconds < 86400:
-            h = int(age_seconds // 3600)
-            m = int((age_seconds % 3600) // 60)
-            age_str = f"{h}h {m}m old"
-        else:
-            d = int(age_seconds // 86400)
-            h = int((age_seconds % 86400) // 3600)
-            age_str = f"{d}d {h}h old"
-
-        suffix = " · bar time unknown" if data_age_source == "CYCLE_FALLBACK" else ""
-        return f"EOD Snapshot · {bar_str} (Market Closed) · {age_str}{suffix}"
+        return f"EOD Snapshot · {bar_str} (Market Closed) · {age_str}"
 
     # Market is active (09:15 - 15:30 IST)
     mins_ago = int(age_seconds // 60)
@@ -216,6 +218,13 @@ def evaluate_health_v2(
         freshness_tier = "UNAVAILABLE"
         freshness_healthy = False
         freshness_reason = "No market data snapshot available"
+    elif not is_nse_open and data_age_source == "CYCLE_FALLBACK":
+        freshness_tier = "EOD_UNVERIFIED"
+        freshness_healthy = False
+        freshness_reason = (
+            "Bar time unknown (worker has not reported last_bar_at); "
+            "using cycle timestamp — freshness cannot be verified"
+        )
     elif not is_nse_open:
         # Off-hours: EOD snapshot is valid ONLY if bar date matches or is not older than the last completed session
         bar_ist = snap_dt.astimezone(_IST) if snap_dt.tzinfo else snap_dt.replace(tzinfo=_IST)
@@ -247,6 +256,9 @@ def evaluate_health_v2(
     if not infra_healthy:
         overall_status = "DEGRADED"
         overall_reason = infra_reason
+    elif freshness_tier == "EOD_UNVERIFIED":
+        overall_status = "DEGRADED"
+        overall_reason = freshness_reason
     elif not freshness_healthy:
         overall_status = "STALE_DATA"
         overall_reason = freshness_reason

@@ -2518,6 +2518,8 @@ async def get_symbols():
     return {"symbols": list(svc._market_data.keys())}
 
 _NEGATIVE_SYMBOL_CACHE: dict[str, float] = {}
+_LAST_BAR_PROBE_WRITE: float = 0.0
+
 def _build_market_response(clean_sym: str, df: pd.DataFrame, interval: str) -> dict:
     from api.data_honesty import classify_session
     last_bar = df.iloc[-1] if not df.empty else None
@@ -2525,6 +2527,26 @@ def _build_market_response(clean_sym: str, df: pd.DataFrame, interval: str) -> d
     if last_bar is not None and "timestamp" in last_bar:
         last_ts = last_bar.get("timestamp")
     session_info = classify_session(now=None, bar_ts=last_ts, symbol=clean_sym)
+
+    try:
+        global _LAST_BAR_PROBE_WRITE
+        import time as _time
+        from datetime import datetime, timezone
+        from db.runtime_state import set_runtime_state
+        _now = _time.time()
+        as_of_val = session_info.get("as_of")
+        if as_of_val and isinstance(as_of_val, str) and ("+" in as_of_val or "Z" in as_of_val or "-" in as_of_val[10:]):
+            if _now - _LAST_BAR_PROBE_WRITE > 300:      # throttle: 1 write / 5 min
+                _LAST_BAR_PROBE_WRITE = _now
+                set_runtime_state("last_bar_probe:v1", {
+                    "last_bar_at": as_of_val,
+                    "symbol": clean_sym,
+                    "interval": interval,
+                    "written_at": datetime.now(timezone.utc).isoformat(),
+                })
+    except Exception:
+        pass
+
     return {
         "symbol": clean_sym,
         "data": svc._build_market_records(df),
