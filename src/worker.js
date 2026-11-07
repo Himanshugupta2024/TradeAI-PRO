@@ -97,7 +97,6 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/edge/risk-gauge",
   "/api/research/next-day-picks",
   "/api/research/next-day-picks/history",
-  "/api/paper/open",
   "/api/health",
   "/api/health/live",
 ]);
@@ -109,12 +108,27 @@ function isPathCacheable(pathname) {
     pathname.startsWith("/api/news/") ||
     pathname.startsWith("/api/search/") ||
     pathname.startsWith("/api/swing/symbol/") ||
-    pathname.startsWith("/api/forex/ohlcv/") ||
-    pathname.startsWith("/api/trades")
+    pathname.startsWith("/api/forex/ohlcv/")
   ) {
     return true;
   }
   return false;
+}
+
+// User state must never enter the shared edge cache. Portfolio, paper book and
+// trade history are per-account data: caching them publicly (or copying them
+// into a shared cache keyed only by URL) leaks one user's positions to another.
+function isPrivateStatePath(pathname) {
+  return (
+    pathname.startsWith("/api/paper/") ||
+    pathname.startsWith("/api/portfolio") ||
+    pathname.startsWith("/api/trades") ||
+    pathname.startsWith("/api/positions") ||
+    pathname.startsWith("/api/orders") ||
+    pathname.startsWith("/api/journal") ||
+    pathname.startsWith("/api/capital") ||
+    pathname.startsWith("/api/risk")
+  );
 }
 
 // Helper to sanitize headers forwarded to Render origin.
@@ -378,9 +392,15 @@ export default {
 
       // Non-public / Private / Mutating endpoints: Explicit BYPASS & Private Caching
       const clientHeaders = new Headers(originResponse.headers);
+      const privateState = isPrivateStatePath(url.pathname);
       clientHeaders.set("CF-Cache-Status", "BYPASS");
       clientHeaders.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
-      clientHeaders.set("Access-Control-Allow-Origin", "*");
+      if (privateState) {
+        // Never advertise another account's positions to arbitrary origins.
+        clientHeaders.delete("Access-Control-Allow-Origin");
+      } else {
+        clientHeaders.set("Access-Control-Allow-Origin", "*");
+      }
 
       // Anti-poisoning headers on any 4xx/5xx responses to prevent downstream caching
       if (originResponse.status >= 400) {
@@ -392,14 +412,7 @@ export default {
           }
         }
       } else if (
-        url.pathname.includes("/portfolio") ||
-        url.pathname.includes("/trades") ||
-        url.pathname.includes("/paper") ||
-        url.pathname.includes("/capital") ||
-        url.pathname.includes("/risk") ||
-        url.pathname.includes("/journal") ||
-        url.pathname.includes("/orders") ||
-        url.pathname.includes("/positions") ||
+        privateState ||
         request.method !== "GET"
       ) {
         clientHeaders.set("Cache-Control", "private, no-cache, no-store, must-revalidate");

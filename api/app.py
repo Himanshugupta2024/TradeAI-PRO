@@ -235,6 +235,10 @@ def _lifespan_context():
 
         _spawn_task(_async_warmup_and_hydrate(), name="warmup_and_hydrate")
         _spawn_task(svc.broadcaster.broadcast_loop(), name="snapshot_broadcaster")
+        # Enforce stops on bars that arrived while the process was down. Runs
+        # regardless of INITIAL_LOAD_ENABLED: a restart must never leave a
+        # position sitting past its stop.
+        _spawn_task(svc._reconcile_open_positions_on_startup(), name="startup_reconcile")
 
 
 

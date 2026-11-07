@@ -9,7 +9,11 @@ services:
     autoDeploy: true
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /api/health
+    # Probe the cheap liveness route, not /api/health. The rich health endpoint
+    # touches the DB, model registry and feed state; on a 0.1-CPU free instance
+    # it can exceed Render's probe timeout, which kills a *healthy* container and
+    # produces a restart loop (server_failed -> server_available every few minutes).
+    healthCheckPath: /api/health/live
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7

@@ -757,7 +757,7 @@ async def get_market_control_status_route():
     return await asyncio.to_thread(get_market_control_status)
 
 from starlette.requests import Request as FastApiRequest
-@router.post("/api/market-control/toggle")
+@router.post("/api/market-control/toggle", dependencies=[Depends(require_admin)])
 async def toggle_market_control_route(req: MarketControlToggleRequest, request: FastApiRequest):
     """
     Operator control for Crypto / Forex processing under Section 6A policy.
@@ -2972,7 +2972,7 @@ async def resolve_paper_trades():
 
         return {"ok": False, "resolved": 0, "remaining_open": 0, "error": str(exc)}
 
-@router.post("/api/paper/trade")
+@router.post("/api/paper/trade", dependencies=[Depends(require_admin)])
 
 async def place_paper_trade_endpoint(payload: dict):
 
@@ -3180,7 +3180,7 @@ async def get_open_paper_trades_endpoint():
         summary["unpriced_positions"] = unpriced
     return {"open_trades": trades, "summary": summary}
 
-@router.post("/api/paper/close/{trade_id}")
+@router.post("/api/paper/close/{trade_id}", dependencies=[Depends(require_admin)])
 
 async def close_paper_trade_endpoint(trade_id: int, payload: dict | None = None):
 
@@ -3292,7 +3292,7 @@ async def close_paper_trades_bulk(payload: dict | None = None):
         "trades": closed,
     }
 
-@router.post("/api/paper/capital")
+@router.post("/api/paper/capital", dependencies=[Depends(require_admin)])
 async def set_paper_capital_endpoint(payload: dict | None = None):
     """Reconfigure self-learning paper capital and reset portfolio baseline."""
     payload = payload or {}
@@ -3306,7 +3306,7 @@ async def set_paper_capital_endpoint(payload: dict | None = None):
         "stats": new_stats,
     }
 
-@router.post("/api/paper/reset")
+@router.post("/api/paper/reset", dependencies=[Depends(require_admin)])
 async def reset_paper_trading_endpoint(capital: float = Query(100000.0, ge=1000.0)):
     """Reset paper trading portfolio and self-learning state."""
     engine = svc._get_engine()
@@ -3549,7 +3549,7 @@ async def get_autonomous_feed(response: Response, limit: int = 25):
     return {"ok": True, "feed": final_feed, "count": len(final_feed)}
 
 
-@router.post("/api/autonomous/run-cycle")
+@router.post("/api/autonomous/run-cycle", dependencies=[Depends(require_admin)])
 async def trigger_autonomous_cycle(payload: dict | None = None):
     """
     Trigger a single autonomous worker cycle immediately.

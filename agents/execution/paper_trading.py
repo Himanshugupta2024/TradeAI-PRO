@@ -36,6 +36,25 @@ def _now_ist_isoformat() -> str:
 def _today_ist() -> str:
     """Return today's date string in IST (YYYY-MM-DD)."""
     return datetime.now(tz=_IST).date().isoformat()
+
+
+def _parse_ist_ts(value) -> Optional[datetime]:
+    """Parse a bar/trade timestamp to an IST-aware datetime, or None.
+
+    Bar indexes arrive as naive dates ("2026-11-06 00:00:00"), offset-aware ISO
+    strings, or plain dates. Comparing them as strings mis-orders mixed formats,
+    so reconciliation compares real datetimes and only falls back to lexical
+    order when parsing fails.
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_IST)
+    return parsed.astimezone(_IST)
 from config.logger import get_logger
 from agents.execution.trailing_sl import TrailingStopManager
 from agents.execution.position_sizing import calculate_position_size
@@ -77,6 +96,9 @@ class PaperTrade:
     status: str = "OPEN"  # OPEN, CLOSED_TP, CLOSED_SL, CLOSED_TRAIL, CLOSED_MANUAL
     exit_price: float = 0.0
     exit_time: str = ""
+    # Timestamp of the last bar this trade was evaluated against. Reconciliation
+    # uses it to replay only bars that arrived while the process was down.
+    last_checked_bar_ts: str = ""
     pnl: float = 0.0
     pnl_pct: float = 0.0
     total_pnl: float = 0.0
@@ -520,6 +542,37 @@ class PaperTradingEngine:
         )
         return trade
 
+    @staticmethod
+    def _stop_fill_price(direction: str, stop: float, bar_open) -> float:
+        """Gap-aware stop fill.
+
+        If the bar opened beyond the stop, the realistic fill is the open — the
+        stop price was never available. Filling at the stop would silently erase
+        the gap loss from the record.
+        """
+        try:
+            opened = float(bar_open)
+        except (TypeError, ValueError):
+            return stop
+        if not math.isfinite(opened) or opened <= 0:
+            return stop
+        if direction in ("LONG", "BUY"):
+            return opened if opened < stop else stop
+        return opened if opened > stop else stop
+
+    @staticmethod
+    def _target_fill_price(direction: str, target: float, bar_open) -> float:
+        """Gap-aware target fill: a favourable gap fills at the open, not the target."""
+        try:
+            opened = float(bar_open)
+        except (TypeError, ValueError):
+            return target
+        if not math.isfinite(opened) or opened <= 0:
+            return target
+        if direction in ("LONG", "BUY"):
+            return opened if opened > target else target
+        return opened if opened < target else target
+
     def update_prices(self, prices: dict[str, dict], atr_values: dict[str, float] = None) -> list[PaperTrade]:
         """
         Check open trades against current prices and close if SL/TP hit.
@@ -542,6 +595,8 @@ class PaperTradingEngine:
 
             raw_high = price.get("high")
             raw_low = price.get("low")
+            bar_open = price.get("open")
+            bar_ts = str(price.get("timestamp") or price.get("ts") or "")
 
             try:
                 high = float(raw_high)
@@ -583,7 +638,8 @@ class PaperTradingEngine:
                 # Check SL
                 if low <= trade.stop_loss:
                     exit_reason = "CLOSED_TRAIL" if atr > 0 else "CLOSED_SL"
-                    self._close_trade(trade, trade.stop_loss, exit_reason)
+                    fill = self._stop_fill_price(trade.direction, trade.stop_loss, bar_open)
+                    self._close_trade(trade, fill, exit_reason)
                     closed.append(trade)
                 else:
                     # Optional scale-out: book partial at mid-target and trail remainder.
@@ -592,24 +648,122 @@ class PaperTradingEngine:
                         state_changed = True
                     # Check TP
                     if high >= trade.target:
-                        self._close_trade(trade, trade.target, "CLOSED_TP")
+                        fill = self._target_fill_price(trade.direction, trade.target, bar_open)
+                        self._close_trade(trade, fill, "CLOSED_TP")
                         closed.append(trade)
 
             elif trade.direction in ("SHORT", "SELL"):
                 # Short: SL is above
                 if high >= trade.stop_loss:
                     exit_reason = "CLOSED_TRAIL" if atr > 0 else "CLOSED_SL"
-                    self._close_trade(trade, trade.stop_loss, exit_reason)
+                    fill = self._stop_fill_price(trade.direction, trade.stop_loss, bar_open)
+                    self._close_trade(trade, fill, exit_reason)
                     closed.append(trade)
                 else:
                     partial_changed = self._maybe_take_partial_profit(trade, high=high, low=low, atr=atr)
                     if partial_changed:
                         state_changed = True
                     if low <= trade.target:
-                        self._close_trade(trade, trade.target, "CLOSED_TP")
+                        fill = self._target_fill_price(trade.direction, trade.target, bar_open)
+                        self._close_trade(trade, fill, "CLOSED_TP")
                         closed.append(trade)
 
+            if bar_ts and trade.status == "OPEN":
+                trade.last_checked_bar_ts = bar_ts
+                state_changed = True
+
         if closed or state_changed:
+            self._save()
+
+        return closed
+
+    def reconcile_open_trades(self, bars_by_symbol: dict[str, list[dict]]) -> list[PaperTrade]:
+        """Replay bars that arrived while this process was not running.
+
+        ``update_prices`` only ever sees the newest bar handed to it. Every bar
+        that lands during a restart, crash, or deploy window is therefore never
+        evaluated, and a position can sit past its stop indefinitely. This walks
+        the bars after ``last_checked_bar_ts`` in order and closes at the first
+        breach, filling at the bar open when price gapped through the level.
+
+        Args:
+            bars_by_symbol: {symbol: [{"timestamp", "open", "high", "low", "close"}, ...]}
+                Bars must be in ascending time order.
+
+        Returns:
+            Trades closed during reconciliation.
+        """
+        closed: list[PaperTrade] = []
+        state_changed = False
+
+        for trade in list(self.open_trades):
+            bars = bars_by_symbol.get(trade.symbol)
+            if not bars:
+                bars = bars_by_symbol.get(self._normalize_symbol(trade.symbol))
+            if not bars:
+                continue
+
+            start_raw = str(trade.last_checked_bar_ts or trade.entry_time or "")
+            start_dt = _parse_ist_ts(start_raw)
+            is_long = trade.direction in ("LONG", "BUY")
+            is_short = trade.direction in ("SHORT", "SELL")
+            if not (is_long or is_short):
+                continue
+
+            for bar in bars:
+                bar_ts = str(bar.get("timestamp") or "")
+                if not bar_ts:
+                    continue
+                bar_dt = _parse_ist_ts(bar_ts)
+                if start_dt is not None and bar_dt is not None:
+                    if bar_dt <= start_dt:
+                        continue
+                elif start_raw and bar_ts <= start_raw:
+                    continue
+
+                try:
+                    high = float(bar.get("high"))
+                    low = float(bar.get("low"))
+                except (TypeError, ValueError):
+                    continue
+                if (
+                    not math.isfinite(high)
+                    or not math.isfinite(low)
+                    or high <= 0
+                    or low <= 0
+                    or low > high
+                ):
+                    continue
+
+                bar_open = bar.get("open")
+                hit_stop = (is_long and low <= trade.stop_loss) or (
+                    is_short and high >= trade.stop_loss
+                )
+                if hit_stop:
+                    fill = self._stop_fill_price(trade.direction, trade.stop_loss, bar_open)
+                    log.warning(
+                        "🩹 Reconciliation: %s %s #%d breached SL %.2f on bar %s — closing at %.2f",
+                        trade.direction, trade.symbol, trade.id, trade.stop_loss, bar_ts, fill,
+                    )
+                    self._close_trade(trade, fill, "CLOSED_SL", exit_time=bar_ts)
+                    closed.append(trade)
+                    state_changed = True
+                    break
+
+                hit_target = (is_long and high >= trade.target) or (
+                    is_short and low <= trade.target
+                )
+                if hit_target:
+                    fill = self._target_fill_price(trade.direction, trade.target, bar_open)
+                    self._close_trade(trade, fill, "CLOSED_TP", exit_time=bar_ts)
+                    closed.append(trade)
+                    state_changed = True
+                    break
+
+                trade.last_checked_bar_ts = bar_ts
+                state_changed = True
+
+        if state_changed:
             self._save()
 
         return closed
@@ -1142,14 +1296,18 @@ class PaperTradingEngine:
                 f"drawdown {drawdown * 100:.2f}% >= {settings.CIRCUIT_BREAKER_THRESHOLD * 100:.2f}%"
             )
 
-    def _close_trade(self, trade: PaperTrade, exit_price: float, status: str):
-        """Close a trade and update metrics."""
+    def _close_trade(self, trade: PaperTrade, exit_price: float, status: str, exit_time: str | None = None):
+        """Close a trade and update metrics.
+
+        ``exit_time`` lets reconciliation stamp the bar timestamp that actually
+        breached the stop instead of the wall-clock time the replay happened.
+        """
         if trade.status in ("CLOSED_TP", "CLOSED_SL", "CLOSED_TRAIL", "CLOSED_MANUAL"):
             log.warning("Trade #%s is already closed (%s). Skipping duplicate close.", trade.id, trade.status)
             return
 
         trade.exit_price = exit_price
-        trade.exit_time = _now_ist_isoformat()
+        trade.exit_time = exit_time or _now_ist_isoformat()
         trade.status = status
 
         if trade.direction in ("LONG", "BUY"):

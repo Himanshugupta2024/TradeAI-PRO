@@ -826,6 +826,94 @@ def _get_engine() -> PaperTradingEngine:
     return _engine
 
 
+async def _reconcile_open_positions_on_startup() -> None:
+    """Replay bars missed while the process was down so stops are enforced on boot.
+
+    ``manage_open_trades`` only runs inside the refresh loop. Every bar that
+    arrives during a restart, crash, or deploy window is otherwise never
+    evaluated, so a position can sit past its stop until the next successful
+    cycle — and stay there indefinitely if price later comes back inside.
+    """
+    try:
+        engine = _get_engine()
+        open_trades = list(engine.open_trades)
+    except Exception as exc:
+        logger.debug("[Reconcile] engine unavailable at startup: %s", exc)
+        return
+
+    if not open_trades:
+        return
+
+    bars_by_symbol: dict[str, list[dict]] = {}
+    for trade in open_trades:
+        try:
+            if "/" in trade.symbol:
+                from agents.data_ingestion.binance_fetcher import fetch_historical
+                df = await asyncio.wait_for(
+                    asyncio.to_thread(fetch_historical, trade.symbol, "1d", 40), timeout=25.0
+                )
+            else:
+                from agents.market_intelligence.nse_fetcher import fetch_ohlcv
+                df = await asyncio.wait_for(
+                    asyncio.to_thread(fetch_ohlcv, trade.symbol, "3mo", "1d"), timeout=25.0
+                )
+        except Exception as exc:
+            logger.warning("[Reconcile] bar fetch failed for %s: %s", trade.symbol, exc)
+            continue
+
+        if df is None or getattr(df, "empty", True):
+            continue
+
+        bars: list[dict] = []
+        for ts, row in df.iterrows():
+            try:
+                bars.append({
+                    "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                })
+            except (KeyError, TypeError, ValueError):
+                continue
+        if bars:
+            bars_by_symbol[trade.symbol] = bars
+
+    if not bars_by_symbol:
+        logger.info("[Reconcile] no historical bars for %d open position(s)", len(open_trades))
+        return
+
+    try:
+        closed = await asyncio.to_thread(engine.reconcile_open_trades, bars_by_symbol)
+    except Exception as exc:
+        logger.error("[Reconcile] failed: %s", exc)
+        return
+
+    if not closed:
+        logger.info("[Reconcile] %d open position(s) replayed — no stop breach", len(open_trades))
+        return
+
+    logger.warning(
+        "[Reconcile] closed %d position(s) that breached stops while offline: %s",
+        len(closed),
+        ", ".join(f"#{t.id} {t.symbol} {t.direction} @ {t.exit_price:.2f} ({t.status})" for t in closed),
+    )
+    for t in closed:
+        try:
+            from agents.execution.autonomous_daemon import get_autonomous_daemon
+            get_autonomous_daemon().record_decision(
+                action="STOP_LOSS",
+                symbol=t.symbol,
+                direction=t.direction,
+                price=float(t.exit_price or 0.0),
+                reason=f"Reconciled at startup: bar traded beyond stop (PnL {t.pnl_pct:+.2f}%)",
+                pnl_pct=t.pnl_pct,
+                trade_id=t.id,
+            )
+        except Exception as exc:
+            logger.debug("[Reconcile] decision record failed for #%s: %s", t.id, exc)
+
+
 # Startup logic is now handled in the lifespan context manager above.
 
 
