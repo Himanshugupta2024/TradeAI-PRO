@@ -31,7 +31,7 @@ def get_process_rss_mb(collect_gc: bool = True) -> float:
 
     system = platform.system()
 
-    # 1. Windows implementation via pywin32
+    # 1. Windows implementation via ctypes (standard library) / pywin32
     if system == "Windows":
         try:
             if collect_gc:
@@ -40,10 +40,43 @@ def get_process_rss_mb(collect_gc: bool = True) -> float:
                     ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())
                 except Exception:
                     pass
+            import ctypes
+            from ctypes import wintypes
+
+            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ('cb', wintypes.DWORD),
+                    ('PageFaultCount', wintypes.DWORD),
+                    ('PeakWorkingSetSize', ctypes.c_size_t),
+                    ('WorkingSetSize', ctypes.c_size_t),
+                    ('QuotaPeakPagedPoolUsage', ctypes.c_size_t),
+                    ('QuotaPagedPoolUsage', ctypes.c_size_t),
+                    ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t),
+                    ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+                    ('PagefileUsage', ctypes.c_size_t),
+                    ('PeakPagefileUsage', ctypes.c_size_t),
+                ]
+
+            psapi = ctypes.WinDLL('psapi.dll')
+            kernel32 = ctypes.WinDLL('kernel32.dll')
+            func = psapi.GetProcessMemoryInfo
+            func.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESS_MEMORY_COUNTERS), wintypes.DWORD]
+            func.restype = wintypes.BOOL
+
+            counters = PROCESS_MEMORY_COUNTERS()
+            counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+            if func(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+                if counters.WorkingSetSize > 0:
+                    return round(counters.WorkingSetSize / (1024.0 * 1024.0), 2)
+        except Exception:
+            pass
+
+        try:
             import win32process
             info = win32process.GetProcessMemoryInfo(win32process.GetCurrentProcess())
             rss_bytes = info.get("WorkingSetSize", 0)
-            return round(rss_bytes / (1024.0 * 1024.0), 2)
+            if rss_bytes > 0:
+                return round(rss_bytes / (1024.0 * 1024.0), 2)
         except Exception:
             pass
 

@@ -374,6 +374,11 @@ def get_dynamic_weight_state() -> dict:
     }
 
 
+def _is_lightweight_mode() -> bool:
+    """Enforce Render 512MB RAM cap: bypasses heavy ML model loading and inference in web mode."""
+    return os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes")
+
+
 # ── Main Ensemble Functions ────────────────────────────────────────────────────
 
 def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, force_refresh: bool = False) -> dict:
@@ -409,6 +414,35 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
         stat_result = predict_ensemble(df)
     except Exception as exc:
         log.debug("[Ensemble] Statistical failed: %s", exc)
+
+    if _is_lightweight_mode():
+        # Render Free 512MB RAM cap: Bypass heavy ML model loading and inference in web mode
+        direction = stat_result.get("direction", "NEUTRAL")
+        conf = float(stat_result.get("confidence", 50.0))
+        prob_up = float(stat_result.get("prob_up", 50.0 if direction != "DOWN" else 30.0))
+        prob_down = float(stat_result.get("prob_down", 50.0 if direction != "UP" else 30.0))
+        res = {
+            "direction": direction,
+            "confidence": round(conf, 1),
+            "raw_ensemble_score": conf,
+            "calibrated_trade_win_prob": round(conf, 1),
+            "prob_up": prob_up,
+            "prob_down": prob_down,
+            "model_contributions": {"statistical": 1.0, "xgboost": 0.0, "lightgbm": 0.0, "lstm": 0.0, "logistic": 0.0},
+            "anomaly_tier": "CLEAN",
+            "is_vetoed": False,
+            "confidence_multiplier": 1.0,
+            "consensus_multiplier": 1.0,
+            "agreement_count": 1,
+            "meta_learner_active": False,
+            "lightweight_mode": True,
+        }
+        if cache_key is not None:
+            with _ENSEMBLE_CACHE_LOCK:
+                if len(_ENSEMBLE_PRED_CACHE) >= _ENSEMBLE_CACHE_MAX_ENTRIES:
+                    _ENSEMBLE_PRED_CACHE.pop(next(iter(_ENSEMBLE_PRED_CACHE)))
+                _ENSEMBLE_PRED_CACHE[cache_key] = dict(res)
+        return res
 
     # ── 2. XGBoost predictor ───────────────────────────────────────────────
     xgb_result = {"direction": "NEUTRAL", "confidence": 0.0}
@@ -751,6 +785,10 @@ def predict_batch_ensemble(df: pd.DataFrame, symbol: str = "", offline: bool = F
     except Exception:
         stat_conf = np.full(n, 50.0)
 
+    if _is_lightweight_mode():
+        # Render Free 512MB RAM cap: Return fast statistical batch scores, avoid loading XGB/LGBM/Torch
+        return pd.Series(stat_conf, index=df.index, dtype=float)
+
     # ── XGBoost batch ──────────────────────────────────────────────────────
     xgb_conf   = np.full(n, 50.0)
     xgb_fitted = False
@@ -855,6 +893,7 @@ def _neutral(reason: str) -> dict:
         "signed_scores":      {},
         "sentiment_adj":      0.0,
         "model_accuracy":     {},
+        "lightweight_mode":   _is_lightweight_mode(),
     }
 
 
@@ -864,6 +903,52 @@ import os
 
 def get_model_status() -> dict:
     """Return status of all models in the ensemble."""
+    if _is_lightweight_mode():
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        models_dir = os.path.join(base_dir, "models")
+
+        def _has_model(fname: str) -> bool:
+            return os.path.exists(os.path.join("models", fname)) or os.path.exists(os.path.join(models_dir, fname))
+
+        xgb_fitted = _has_model("xgb_model.pkl")
+        lgbm_fitted = _has_model("lgbm_model.pkl")
+        lstm_fitted = _has_model("best_model.pt")
+        logit_fitted = _has_model("logistic_model.pkl")
+        meta_fitted = _has_model("meta_learner.pkl")
+        calib_fitted = _has_model("calibrator.pkl")
+
+        fitted_count = sum([xgb_fitted, lgbm_fitted, lstm_fitted, logit_fitted])
+        total_ml = 4
+
+        if fitted_count == total_ml and calib_fitted:
+            mode = "Ensemble V2 (4/4 ML + Calibrated)"
+            badge_short = "🧠 Ensemble 4/4 • Calibrated"
+        elif fitted_count == total_ml:
+            mode = "Ensemble V2 (4/4 ML Fitted)"
+            badge_short = "🧠 Ensemble (4/4 ML)"
+        elif fitted_count > 0:
+            mode = f"Hybrid Ensemble ({fitted_count}/{total_ml} ML fitted)"
+            badge_short = f"🧠 AI: Hybrid ({fitted_count}/{total_ml} ML)"
+        else:
+            mode = "Statistical Heuristic (0/4 models fitted)"
+            badge_short = "🧠 AI: Heuristic (0/4 ML)"
+
+        return {
+            "mode": mode,
+            "fitted_count": fitted_count,
+            "total_ml_models": total_ml,
+            "statistical_heuristic": True,
+            "xgboost_fitted": xgb_fitted,
+            "lightgbm_fitted": lgbm_fitted,
+            "lstm_fitted": lstm_fitted,
+            "logistic_fitted": logit_fitted,
+            "meta_learner_fitted": meta_fitted,
+            "calibrator_fitted": calib_fitted,
+            "badge_text": f"AI Engine: {mode}",
+            "badge_short": badge_short,
+            "lightweight_mode": True,
+        }
+
     xgb_fitted = False
     try:
         from agents.ai_engine.xgboost_model import get_xgb_predictor

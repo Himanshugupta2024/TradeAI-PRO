@@ -15,6 +15,7 @@ Generates LONG/SHORT/SKIP/HOLD signals based on multi-factor technical confluenc
 Calculates ATR-based Stop Loss and Targets with minimum 1:2 Risk:Reward.
 """
 
+import os
 import json
 import pandas as pd
 import numpy as np
@@ -468,14 +469,16 @@ def generate_signals(
 
         # ── Attempt 3: advanced ensemble (XGBoost + Statistical + Sentiment) ──
         ensemble_ok = False
-        try:
-            from agents.ai_engine.ensemble import predict_batch_ensemble
-            ensemble_conf = predict_batch_ensemble(result, symbol=symbol)
-            result["ai_confidence"] = ensemble_conf.values
-            ensemble_ok = True
-            log.debug("ai_confidence sourced from advanced ensemble (XGBoost + Statistical + Sentiment)")
-        except Exception as _ens_err:
-            log.debug("Ensemble confidence unavailable (%s) — using composite fallback", _ens_err)
+        is_lightweight_mode = os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes")
+        if not is_lightweight_mode:
+            try:
+                from agents.ai_engine.ensemble import predict_batch_ensemble
+                ensemble_conf = predict_batch_ensemble(result, symbol=symbol)
+                result["ai_confidence"] = ensemble_conf.values
+                ensemble_ok = True
+                log.debug("ai_confidence sourced from advanced ensemble (XGBoost + Statistical + Sentiment)")
+            except Exception as _ens_err:
+                log.debug("Ensemble confidence unavailable (%s) — using composite fallback", _ens_err)
 
         # ── Fallback 4: directional composite (RSI + MACD + EMA + HTF) ───
         if not ensemble_ok:

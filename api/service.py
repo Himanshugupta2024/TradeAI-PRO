@@ -380,10 +380,12 @@ async def _hydrate_signals_cache_from_db() -> bool:
     global _persisted_signals_snapshot, _persisted_signals_updated_at
     try:
         from db.runtime_state import get_runtime_state
-        data = await asyncio.to_thread(get_runtime_state, "latest_signals_snapshot")
+        data = await asyncio.to_thread(get_runtime_state, "latest_signals:v1")
+        if not (isinstance(data, dict) and data.get("signals")):
+            data = await asyncio.to_thread(get_runtime_state, "latest_signals_snapshot")
         if isinstance(data, dict) and data.get("signals"):
             _persisted_signals_snapshot = data["signals"]
-            _persisted_signals_updated_at = data.get("updated_at")
+            _persisted_signals_updated_at = data.get("timestamp") or data.get("updated_at")
             logger.info("Hydrated %d signals from DB snapshot on startup", len(_persisted_signals_snapshot))
             return True
     except Exception as e:
@@ -2333,11 +2335,16 @@ def _compute_market_mood() -> dict:
     long_count = 0
     short_count = 0
     hold_count = 0
-    for symbol in _signal_cache:
-        sig = _get_signal_for_symbol(symbol)
-        if not sig:
-            continue
-        sig_label = str(sig.get("signal", "HOLD")).upper()
+    for symbol, item in list(_signal_cache.items()):
+        sig_label = "HOLD"
+        try:
+            if isinstance(item, pd.DataFrame) and not item.empty:
+                if "signal" in item.columns:
+                    sig_label = str(item.iloc[-1].get("signal", "HOLD")).upper()
+            elif isinstance(item, dict):
+                sig_label = str(item.get("signal", "HOLD")).upper()
+        except Exception:
+            sig_label = "HOLD"
         if sig_label == "LONG":
             long_count += 1
         elif sig_label == "SHORT":
@@ -2943,6 +2950,25 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
     """
     global _cached_overview_intelligence, _cached_overview_time
     now_m = time.monotonic()
+
+    is_lightweight = os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes")
+    if is_lightweight and not force_refresh:
+        try:
+            from db.runtime_state import get_runtime_state
+            db_snap = get_runtime_state("overview_intelligence:v1")
+            if not (isinstance(db_snap, dict) and db_snap):
+                db_snap = get_runtime_state("latest_overview_intelligence")
+            if not (isinstance(db_snap, dict) and db_snap):
+                db_snap = get_runtime_state("latest_overview_intelligence:v1")
+            if db_snap and isinstance(db_snap, dict):
+                _cached_overview_intelligence = db_snap
+                _cached_overview_time = now_m
+                return db_snap
+        except Exception as e:
+            logger.warning("[Service] DB overview snapshot read failed: %s", e)
+        if _cached_overview_intelligence is not None:
+            return _cached_overview_intelligence
+
     if (
         not force_refresh
         and _cached_overview_intelligence is not None
@@ -3413,6 +3439,11 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
     }
     _cached_overview_intelligence = result
     _cached_overview_time = time.monotonic()
+    try:
+        from db.runtime_state import set_runtime_state
+        set_runtime_state("latest_overview_intelligence:v1", result)
+    except Exception as exc:
+        logger.debug("[Service] DB overview snapshot save skipped: %s", exc)
     return result
 
 

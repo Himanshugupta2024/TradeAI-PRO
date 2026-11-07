@@ -13,6 +13,7 @@ tradvix-app/node_modules/
 .cursor/
 .claude/
 .playwright-mcp/
+.agents/
 awesome-codex-skills/
 .pytest_cache/
 .mypy_cache/

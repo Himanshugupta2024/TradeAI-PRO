@@ -7866,7 +7866,11 @@ async def search_quote(symbol: str):
 
                     svc._regime_cache[clean] = regime.value
 
-                    df = generate_signals(df, regime=regime)
+                    if os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes"):
+                        from agents.ai_engine.fallback_predictor import predict_batch
+                        df = generate_signals(df, regime=regime, ai_confidence=predict_batch(df))
+                    else:
+                        df = generate_signals(df, regime=regime)
 
                     svc._market_data[clean] = df
 
@@ -7958,7 +7962,11 @@ async def search_quote(symbol: str):
 
             svc._regime_cache[clean] = regime.value
 
-            df = generate_signals(df, regime=regime)
+            if os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes"):
+                from agents.ai_engine.fallback_predictor import predict_batch
+                df = generate_signals(df, regime=regime, ai_confidence=predict_batch(df))
+            else:
+                df = generate_signals(df, regime=regime)
 
             svc._market_data[clean] = df
 
@@ -8354,8 +8362,14 @@ async def retrain_xgboost(
         POST /api/retrain
 
         POST /api/retrain?symbols=BTC/USDT,ETH/USDT&timeframe=4h&days=730
-
     """
+
+    is_lightweight = os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes")
+    if is_lightweight:
+        raise HTTPException(
+            status_code=503,
+            detail="Model retraining is disabled in LIGHTWEIGHT_API_MODE to respect the Render 512MB RAM cap. Retraining must run in a dedicated worker or batch training environment.",
+        )
 
     import asyncio
 
@@ -9091,22 +9105,17 @@ async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
 @router.get("/api/crypto/intelligence")
 
 async def get_crypto_intelligence():
+    """
+    Phase 6 - Aggregated crypto cockpit intelligence payload.
+    Mirrors /api/overview/intelligence contract for frontend reuse.
+    Includes: top_setups, avoid_list, market_guardrails, futures_context, theme_leadership.
+    """
     from agents.execution.market_control import is_crypto_forex_enabled
     if not is_crypto_forex_enabled():
         return JSONResponse(
             status_code=403,
             content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
         )
-
-    """
-
-    Phase 6 – Aggregated crypto cockpit intelligence payload.
-
-    Mirrors /api/overview/intelligence contract for frontend reuse.
-
-    Includes: top_setups, avoid_list, market_guardrails, futures_context, theme_leadership.
-
-    """
 
     try:
 

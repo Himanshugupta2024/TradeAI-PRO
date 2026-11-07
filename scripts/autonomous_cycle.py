@@ -583,6 +583,17 @@ async def run_single_autonomous_cycle(
             }
             await asyncio.to_thread(set_runtime_state, "latest_signals:v1", signals_payload)
             logger.info("💾 [AutonomousWorker] Persisted %d signals to latest_signals:v1", len(candidate_signals))
+
+            try:
+                from api.service import _compute_overview_intelligence
+                overview_payload = await asyncio.to_thread(_compute_overview_intelligence, True)
+                if overview_payload and isinstance(overview_payload, dict):
+                    await asyncio.to_thread(set_runtime_state, "overview_intelligence:v1", overview_payload)
+                    await asyncio.to_thread(set_runtime_state, "latest_overview_intelligence", overview_payload)
+                    await asyncio.to_thread(set_runtime_state, "latest_overview_intelligence:v1", overview_payload)
+                    logger.info("💾 [AutonomousWorker] Persisted overview intelligence snapshot to overview_intelligence:v1")
+            except Exception as ov_err:
+                logger.warning("[AutonomousWorker] Could not persist overview snapshot: %s", ov_err)
         except Exception as sig_err:
             logger.warning("[AutonomousWorker] Could not persist latest_signals:v1: %s", sig_err)
 

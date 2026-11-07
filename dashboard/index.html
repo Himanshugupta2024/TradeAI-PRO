@@ -5952,109 +5952,57 @@
                 <div style="display:flex;align-items:center;gap:0.5rem;">
 
                     <div id="forexLiquidityBadge" class="live-pill" style="background:rgba(56,189,248,0.12);color:var(--cyan);border:1px solid rgba(56,189,248,0.3);font-size:0.75rem;padding:3px 10px;font-weight:700;">
-
-                        <span class="status-dot live"></span> LIQUIDITY: HIGH
-
+                        <span class="status-dot live"></span> LIQUIDITY: EVALUATING...
                     </div>
-
-                    <button class="toggle-btn" onclick="loadForexData()" style="font-size:0.74rem;padding:0.3rem 0.85rem;">↺ Refresh Scanner</button>
-
+                    <button class="toggle-btn" onclick="loadForexData(false)" style="font-size:0.74rem;padding:0.3rem 0.85rem;">↺ Refresh Scanner</button>
                 </div>
-
             </div>
-
-
 
             <!-- Top Forex Setups Banner -->
-
             <div style="margin-bottom:1.5rem;">
-
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem;">
-
                     <span style="font-size:0.78rem;font-weight:700;color:var(--accent);letter-spacing:0.06em;text-transform:uppercase;">★ Top Qualified Forex Setups</span>
-
                     <span id="forexTopCountBadge" style="font-size:0.7rem;color:var(--text-muted);">0 Qualified</span>
-
                 </div>
-
                 <div id="forexTopSetupsGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:1rem;">
-
                     <div class="kpi-card" style="padding:1.5rem;text-align:center;"><span style="color:var(--text-muted);font-size:0.85rem;">Scanning for high-probability setups…</span></div>
-
                 </div>
-
             </div>
-
-
 
             <!-- Global Session & Market Intelligence Row -->
-
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem;margin-bottom:1.5rem;">
-
                 <!-- Session Intelligence Card -->
-
                 <div class="card" style="padding:1rem;">
-
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
-
                         <span style="font-size:0.75rem;font-weight:700;color:var(--text-muted);letter-spacing:0.05em;text-transform:uppercase;">Global Market Sessions</span>
-
-                        <span id="forexOverlapText" style="font-size:0.72rem;font-weight:700;color:var(--cyan);background:rgba(56,189,248,0.1);padding:2px 7px;border-radius:4px;">LONDON + NEW YORK</span>
-
+                        <span id="forexOverlapText" style="font-size:0.72rem;font-weight:700;color:var(--cyan);background:rgba(56,189,248,0.1);padding:2px 7px;border-radius:4px;">SYNCING IST...</span>
                     </div>
-
                     <div id="forexSessionClock" style="display:grid;grid-template-columns:repeat(2,1fr);gap:0.6rem;">
-
                         <!-- Populated by renderForexSessions() -->
-
-                        <div class="kpi-card"><span class="kpi-lbl">Loading sessions…</span></div>
-
+                        <div class="kpi-card"><span class="kpi-lbl">Syncing sessions…</span></div>
                     </div>
-
                 </div>
-
-
 
                 <!-- Currency Relative Strength & Risk Sentiment Card -->
-
                 <div class="card" style="padding:1rem;">
-
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
-
                         <span style="font-size:0.75rem;font-weight:700;color:var(--text-muted);letter-spacing:0.05em;text-transform:uppercase;">Currency Relative Strength</span>
-
-                        <span id="forexRiskSentimentBadge" style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:4px;background:rgba(16,185,129,0.15);color:var(--green);border:1px solid rgba(16,185,129,0.3);">RISK ON</span>
-
+                        <span id="forexRiskSentimentBadge" style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:4px;background:rgba(148,163,184,0.12);color:var(--text-muted);border:1px solid rgba(148,163,184,0.25);">NEUTRAL</span>
                     </div>
-
                     <div id="forexCurrencyMatrix" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;text-align:center;">
-
                         <!-- Populated by renderCurrencyStrength() -->
-
-                        <div style="font-size:0.78rem;color:var(--text-muted);">Loading strengths…</div>
-
+                        <div style="font-size:0.78rem;color:var(--text-muted);">Syncing strengths…</div>
                     </div>
-
                 </div>
-
             </div>
 
-
-
             <!-- INR Pair Strip -->
-
             <div id="forexInrStrip" style="background:var(--bg-raised);border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.5rem;overflow-x:auto;">
-
                 <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.5rem;letter-spacing:0.05em;text-transform:uppercase;">INR Pairs (NSE Currency — 09:00 to 17:00 IST)</div>
-
                 <div id="forexInrRow" style="display:flex;gap:1.5rem;min-width:max-content;">
-
                     <!-- Populated by renderInrStrip() -->
-
-                    <span style="color:var(--text-muted);font-size:0.82rem;">Loading…</span>
-
+                    <span style="color:var(--text-muted);font-size:0.82rem;">Syncing INR rates…</span>
                 </div>
-
             </div>
 
 

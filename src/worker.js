@@ -134,9 +134,16 @@ function createCleanOriginHeaders(incomingHeaders) {
   return clean;
 }
 
+// Helper to attach anti-poisoning cache headers to prevent downstream CDN/browser caching of errors
+function applyAntiPoisoningHeaders(headers) {
+  headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  headers.set("Pragma", "no-cache");
+}
+
 // Helper to store response in Cloudflare edge cache using exact request.url string
 async function storeInEdgeCache(cache, urlStr, originResponse) {
-  if (!originResponse.ok) return;   // never cache 4xx/5xx
+  if (!originResponse.ok || originResponse.status !== 200) return; // strictly cache only HTTP 200
+  if (!cache || typeof cache.put !== "function") return;
   try {
     const now = Date.now();
     const cacheHeaders = new Headers(originResponse.headers);
@@ -181,10 +188,10 @@ export default {
       const targetUrl = new URL(url.pathname + url.search, BACKEND_ORIGIN);
       const isGet = request.method === "GET";
       const isPublicCacheable = isGet && isPathCacheable(url.pathname);
-      const cache = caches.default;
+      const cache = typeof caches !== "undefined" ? caches.default : null;
 
       // Check Edge Cache only for approved public GET endpoints
-      if (isPublicCacheable) {
+      if (isPublicCacheable && cache) {
         const cachedResponse = await cache.match(request.url);
         if (cachedResponse) {
           const cachedAt = parseInt(cachedResponse.headers.get("X-SWR-Cached-At") || "0", 10);
@@ -202,7 +209,7 @@ export default {
           } else if (ageSec <= PHYSICAL_EDGE_TTL_SEC) {
             // Case B: STALE HIT (16s - 45s) -> True RFC 5861 Stale-While-Revalidate!
             // 1. Spawn asynchronous revalidation in background
-            ctx.waitUntil((async () => {
+            const revalTask = (async () => {
               try {
                 const revalHeaders = createCleanOriginHeaders(request.headers);
 
@@ -217,7 +224,10 @@ export default {
               } catch (revalErr) {
                 // Background fetch failed, stale entry remains until physical expiry
               }
-            })());
+            })();
+            if (ctx && typeof ctx.waitUntil === "function") {
+              ctx.waitUntil(revalTask);
+            }
 
             // 2. Return stale cached data immediately to client (<20ms!)
             const res = new Response(cachedResponse.body, cachedResponse);
@@ -246,7 +256,7 @@ export default {
       try {
         originResponse = await fetch(originRequest);
       } catch (err) {
-        if (isPublicCacheable) {
+        if (isPublicCacheable && cache) {
           try {
             const stale = await cache.match(request.url);
             if (stale) {
@@ -254,21 +264,26 @@ export default {
               res.headers.set("CF-Cache-Status", "STALE-FALLBACK-ERR");
               res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
               res.headers.set("Access-Control-Allow-Origin", "*");
+              res.headers.set("Cache-Control", "public, max-age=0, must-revalidate, stale-while-revalidate=10");
               return res;
             }
           } catch (_) {}
         }
+        const errHeaders = new Headers({
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "X-Edge-Proxy": "TradeAI-Cloudflare-Worker",
+        });
+        applyAntiPoisoningHeaders(errHeaders);
         return new Response(JSON.stringify({ error: "Backend origin unavailable", detail: String(err) }), {
           status: 502,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
+          headers: errHeaders,
         });
       }
 
-      // If origin returns 502 or 503, fallback to stale edge cache if available
-      if (isPublicCacheable && (originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 429 || originResponse.status === 403 || originResponse.status === 504)) {
+      // If origin returns 502, 503, 429, or 504, fallback to stale edge cache if available.
+      // NOTE: 403 (Section 6A Focus Mode / admin lock) is strictly excluded so administrative locks are honored immediately.
+      if (isPublicCacheable && cache && (originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 429 || originResponse.status === 504)) {
         try {
           const stale = await cache.match(request.url);
           if (stale) {
@@ -276,6 +291,7 @@ export default {
             res.headers.set("CF-Cache-Status", "STALE-FALLBACK-503");
             res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
             res.headers.set("Access-Control-Allow-Origin", "*");
+            res.headers.set("Cache-Control", "public, max-age=0, must-revalidate, stale-while-revalidate=10");
             return res;
           }
         } catch (_) {}
@@ -283,7 +299,14 @@ export default {
 
       // Public Cacheable: Store in cache and return MISS with unified headers
       if (isPublicCacheable && originResponse.status === 200) {
-        ctx.waitUntil(storeInEdgeCache(cache, request.url, originResponse.clone()));
+        if (cache) {
+          const storePromise = storeInEdgeCache(cache, request.url, originResponse.clone());
+          if (ctx && typeof ctx.waitUntil === "function") {
+            ctx.waitUntil(storePromise);
+          } else {
+            await storePromise;
+          }
+        }
 
         const clientHeaders = new Headers(originResponse.headers);
         clientHeaders.set("CF-Cache-Status", "MISS");
@@ -301,6 +324,18 @@ export default {
       // Ensure API endpoints NEVER return HTML challenge pages to JSON consumers
       const originContentType = (originResponse.headers.get("content-type") || "").toLowerCase();
       if (!originContentType.includes("application/json") && originResponse.status >= 400) {
+        const errorHeaders = new Headers({
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "X-Edge-Proxy": "TradeAI-Cloudflare-Worker",
+        });
+        applyAntiPoisoningHeaders(errorHeaders);
+        if (originResponse.status === 429) {
+          const retryAfter = originResponse.headers.get("retry-after");
+          if (retryAfter) {
+            errorHeaders.set("Retry-After", retryAfter);
+          }
+        }
         return new Response(
           JSON.stringify({
             error: originResponse.status === 429 
@@ -310,11 +345,7 @@ export default {
           }),
           {
             status: originResponse.status,
-            headers: {
-              "Content-Type": "application/json",
-              "Access-Control-Allow-Origin": "*",
-              "X-Edge-Proxy": "TradeAI-Cloudflare-Worker"
-            }
+            headers: errorHeaders,
           }
         );
       }
@@ -325,8 +356,16 @@ export default {
       clientHeaders.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
       clientHeaders.set("Access-Control-Allow-Origin", "*");
 
-      // For sensitive user/trading endpoints, enforce strict private no-store headers
-      if (
+      // Anti-poisoning headers on any 4xx/5xx responses to prevent downstream caching
+      if (originResponse.status >= 400) {
+        applyAntiPoisoningHeaders(clientHeaders);
+        if (originResponse.status === 429) {
+          const retryAfter = originResponse.headers.get("retry-after");
+          if (retryAfter) {
+            clientHeaders.set("Retry-After", retryAfter);
+          }
+        }
+      } else if (
         url.pathname.includes("/portfolio") ||
         url.pathname.includes("/trades") ||
         url.pathname.includes("/paper") ||

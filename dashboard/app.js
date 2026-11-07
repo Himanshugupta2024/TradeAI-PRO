@@ -2410,7 +2410,16 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
         // HTTP-level 503 or 429 → server waking up or burst rate-limited, retry with backoff
         if (isSafeMethod && (resp.status === 503 || resp.status === 429) && _retries > 0) {
-            const delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
+            let delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
+            try {
+                const retryAfterHeader = resp.headers && resp.headers.get ? resp.headers.get('retry-after') : null;
+                if (retryAfterHeader) {
+                    const parsedSeconds = parseInt(retryAfterHeader, 10);
+                    if (!isNaN(parsedSeconds) && parsedSeconds > 0) {
+                        delay = Math.min(parsedSeconds * 1000, 65000);
+                    }
+                }
+            } catch (_) {}
             console.warn(`[fetch] ${resp.status} from ${url} — retrying in ${(delay / 1000).toFixed(1)}s (${_retries} left)...`);
             await new Promise(r => setTimeout(r, delay));
             return fetchWithTimeout(url, options, timeoutMs, _retries - 1, _backoffMs * 1.5);
@@ -24740,329 +24749,445 @@ let _forexCurrentFilter = 'all';
 
 
 
-async function loadForexData() {
+let _lastKnownForexRates = null;
+let _forexRetryTimeoutId = null;
+let _forexRetryCount = 0;
+const _MAX_FOREX_RETRIES = 5;
+const _BASE_FOREX_BACKOFF_MS = 8000;
+
+function resetForexRetry() {
+    if (_forexRetryTimeoutId) {
+        clearTimeout(_forexRetryTimeoutId);
+        _forexRetryTimeoutId = null;
+    }
+    _forexRetryCount = 0;
+}
+
+function getForexRetryCount() {
+    return _forexRetryCount;
+}
+
+/**
+ * Compute real-time Forex session intelligence directly on client in IST.
+ * Evaluates session status, overlap description, and liquidity rating deterministically from IST clock time without API dependency.
+ */
+function computeClientForexSessions() {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        weekday: 'short',
+        hour12: false
+    });
+    const parts = formatter.formatToParts(now);
+    let hour = '00', minute = '00', second = '00', weekday = '';
+    for (const p of parts) {
+        if (p.type === 'hour') hour = p.value;
+        if (p.type === 'minute') minute = p.value;
+        if (p.type === 'second') second = p.value;
+        if (p.type === 'weekday') weekday = p.value;
+    }
+    const currentIst = `${hour}:${minute}`;
+    const isWeekend = weekday === 'Sat' || (weekday === 'Sun' && parseInt(hour, 10) < 23);
+
+    const inSession = (start, end, cur) => {
+        if (start <= end) return cur >= start && cur < end;
+        return cur >= start || cur < end;
+    };
+
+    const sessionDefs = {
+        ASIAN:   { start: '05:30', end: '14:30', best_pairs: ['USD/JPY', 'AUD/USD'] },
+        LONDON:  { start: '13:30', end: '22:30', best_pairs: ['EUR/USD', 'GBP/USD', 'EUR/INR'] },
+        NEWYORK: { start: '18:30', end: '03:30', best_pairs: ['EUR/USD', 'USD/CAD', 'GBP/USD'] },
+        NSE_INR: { start: '09:00', end: '17:00', best_pairs: ['USD/INR', 'EUR/INR', 'GBP/INR'] }
+    };
+
+    const sessions = {};
+    const active = [];
+    for (const [name, def] of Object.entries(sessionDefs)) {
+        const isOpen = isWeekend ? false : inSession(def.start, def.end, currentIst);
+        sessions[name] = {
+            open: isOpen,
+            start: def.start,
+            end: def.end,
+            best_pairs: def.best_pairs
+        };
+        if (isOpen) active.push(name);
+    }
+
+    const majorActive = active.filter(s => ['ASIAN', 'LONDON', 'NEWYORK'].includes(s));
+    const overlap = isWeekend ? 'WEEKEND CLOSED' : (majorActive.length ? majorActive.join(' + ') : 'OFF-HOURS');
+
+    let liquidity = 'LOW';
+    if (!isWeekend) {
+        if (active.includes('LONDON') && active.includes('NEWYORK')) liquidity = 'HIGH';
+        else if (active.includes('LONDON') || active.includes('NEWYORK') || active.includes('ASIAN')) liquidity = 'MODERATE';
+    }
+
+    return {
+        sessions,
+        active_sessions: active,
+        overlap,
+        liquidity,
+        current_ist: `${currentIst}:${second} IST`,
+        is_weekend: isWeekend
+    };
+}
+
+async function loadForexData(isAutoRetry = false) {
+    if (!isAutoRetry) {
+        resetForexRetry();
+    }
 
     const meta = document.getElementById('forexScanMeta');
-
     const grid = document.getElementById('forexSignalGrid');
+    const liqBadge = document.getElementById('forexLiquidityBadge');
+    const ovText = document.getElementById('forexOverlapText');
+    const topCountBadge = document.getElementById('forexTopCountBadge');
+    const topSetupsGrid = document.getElementById('forexTopSetupsGrid');
 
     if (meta) meta.textContent = 'Updating sessions & scanning universe...';
 
-    const fallbackSessions = {
-        ASIAN: { open: false, start: '05:30', end: '14:30', best_pairs: ['USD/JPY', 'AUD/USD'] },
-        LONDON: { open: false, start: '13:30', end: '22:30', best_pairs: ['EUR/USD', 'GBP/USD', 'EUR/INR'] },
-        NEWYORK: { open: false, start: '18:30', end: '03:30', best_pairs: ['EUR/USD', 'USD/CAD', 'GBP/USD'] },
-        NSE_INR: { open: false, start: '09:00', end: '17:00', best_pairs: ['USD/INR', 'EUR/INR', 'GBP/INR'] }
-    };
-
-
+    // Compute deterministic client sessions immediately so UI never hangs on loading placeholders
+    const clientIntel = computeClientForexSessions();
+    renderForexSessions(clientIntel.sessions, clientIntel.current_ist);
+    if (ovText) ovText.textContent = clientIntel.overlap;
+    if (liqBadge) {
+        liqBadge.innerHTML = `<span class="status-dot live"></span> LIQUIDITY: ${_escHtml(clientIntel.liquidity)}`;
+        liqBadge.style.color = clientIntel.liquidity === 'HIGH' ? 'var(--green)' : (clientIntel.liquidity === 'MODERATE' ? 'var(--cyan)' : 'var(--text-muted)');
+    }
 
     // 1. Fetch Intelligence & Session Status
-
     try {
-
-        const iResp = await fetchWithTimeout(`${API}/api/forex/intelligence`);
-
+        const iResp = await fetchWithTimeout(`${API}/api/forex/intelligence`, {}, 15000);
         if (iResp.ok) {
-
             const iData = await iResp.json();
-
-            const sessIntel = iData.session_intelligence || {};
-
-            renderForexSessions(sessIntel.sessions || {}, sessIntel.current_ist || '');
-
+            const sessIntel = iData.session_intelligence || clientIntel;
+            renderForexSessions(sessIntel.sessions || clientIntel.sessions, sessIntel.current_ist || clientIntel.current_ist);
             renderCurrencyStrength(iData.currency_strengths || {}, iData.risk_sentiment || 'NEUTRAL');
 
-            
-
-            const liqBadge = document.getElementById('forexLiquidityBadge');
-
             if (liqBadge && sessIntel.liquidity) {
-
                 liqBadge.innerHTML = `<span class="status-dot live"></span> LIQUIDITY: ${_escHtml(sessIntel.liquidity)}`;
-
                 liqBadge.style.color = sessIntel.liquidity === 'HIGH' ? 'var(--green)' : (sessIntel.liquidity === 'MODERATE' ? 'var(--cyan)' : 'var(--text-muted)');
-
             }
-
-            const ovText = document.getElementById('forexOverlapText');
-
             if (ovText && sessIntel.overlap) {
-
                 ovText.textContent = sessIntel.overlap;
-
             }
-
+        } else {
+            // Non-2xx response (HTTP 403 under Section 6A, HTTP 429 under Twelve Data rate limit, etc.)
+            renderForexSessions(clientIntel.sessions, clientIntel.current_ist);
+            const fallbackSentiment = iResp.status === 403 ? 'STANDBY' : (iResp.status === 429 ? 'COOLING' : 'NEUTRAL');
+            renderCurrencyStrength({}, fallbackSentiment);
+            if (ovText) ovText.textContent = clientIntel.overlap;
+            if (liqBadge) {
+                if (iResp.status === 403) {
+                    liqBadge.innerHTML = '<span class="status-dot" style="background:#60a5fa;"></span> STANDBY: NSE FOCUS';
+                    liqBadge.style.color = '#60a5fa';
+                } else if (iResp.status === 429) {
+                    liqBadge.innerHTML = '<span class="status-dot" style="background:#f59e0b;"></span> PROVIDER RATE LIMIT COOLING';
+                    liqBadge.style.color = '#f59e0b';
+                } else {
+                    liqBadge.innerHTML = `<span class="status-dot live"></span> LIQUIDITY: ${_escHtml(clientIntel.liquidity)}`;
+                    liqBadge.style.color = clientIntel.liquidity === 'HIGH' ? 'var(--green)' : (clientIntel.liquidity === 'MODERATE' ? 'var(--cyan)' : 'var(--text-muted)');
+                }
+            }
         }
-
     } catch (e) {
-
         console.warn('[loadForexData] intelligence fetch err:', e);
-        renderForexSessions(fallbackSessions, new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST');
+        renderForexSessions(clientIntel.sessions, clientIntel.current_ist);
         renderCurrencyStrength({}, 'NEUTRAL');
-
+        if (ovText) ovText.textContent = clientIntel.overlap;
     }
-
-
 
     // 2. Fetch Live Rates for INR Strip
-
     try {
-
-        const rResp = await fetchWithTimeout(`${API}/api/forex/rates`);
-
+        const rResp = await fetchWithTimeout(`${API}/api/forex/rates`, {}, 15000);
         if (rResp.ok) {
-
             const rData = await rResp.json();
-
             renderInrStrip(rData.rates || {});
-
+        } else {
+            const statusPill = rResp.status === 403 ? 'NSE CURRENCY STANDBY' : (rResp.status === 429 ? 'RATE LIMIT COOLING' : null);
+            renderInrStrip(null, statusPill);
         }
-
     } catch (e) {
-
         console.warn('[loadForexData] rates fetch err:', e);
-
+        renderInrStrip(null, null);
     }
 
-
-
     // 3. Fetch Swing Signals
-
     if (grid) {
-
         grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Scanning forex universe across 4h &amp; 1D timeframes...</p></div>';
-
         try {
-
             const resp = await fetchWithTimeout(`${API}/api/forex/signals`, {}, 30000);
             if (resp.status === 403) {
-                grid.innerHTML = '<div class="loading-state"><p style="color:var(--yellow);font-weight:600;">🔒 Forex Paper Engine in Standby (NSE Focus Mode Active). You can activate Multi-Asset processing from Market Control in the sidebar.</p></div>';
-                if (meta) meta.textContent = 'Standby (NSE Focus Mode)';
-                renderTopForexSetups([]);
+                grid.innerHTML = `
+                    <div class="card" style="padding:2rem;text-align:center;grid-column:1/-1;">
+                        <div class="live-pill" style="background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);font-size:0.75rem;padding:3px 10px;font-weight:700;margin-bottom:0.75rem;display:inline-flex;align-items:center;gap:6px;">
+                            <span class="status-dot" style="background:#60a5fa;"></span> STANDBY: NSE FOCUS
+                        </div>
+                        <p style="color:var(--text-muted);font-size:0.85rem;max-width:540px;margin:0 auto 1rem auto;line-height:1.5;">
+                            Forex Paper Engine is in standby under strict NSE Focus Mode (Section 6A). Multi-Asset processing can be unlocked via Market Control.
+                        </p>
+                        <button class="toggle-btn" onclick="handleCryptoForexToggleClick()" style="font-size:0.78rem;padding:0.4rem 1rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.4);">
+                            Unlock Multi-Asset Mode
+                        </button>
+                    </div>
+                `;
+                if (meta) meta.textContent = 'Standby (NSE Focus Mode Active)';
+                if (topSetupsGrid) {
+                    topSetupsGrid.innerHTML = `
+                        <div class="card" style="padding:1.5rem;text-align:center;grid-column:1/-1;">
+                            <span class="live-pill" style="background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);font-size:0.75rem;padding:3px 10px;font-weight:700;">SECTION 6A ACTIVE</span>
+                            <p style="color:var(--text-muted);font-size:0.82rem;margin:0.5rem 0 0 0;">Forex setup generation paused in strict NSE Focus Mode.</p>
+                        </div>
+                    `;
+                }
+                if (topCountBadge) topCountBadge.textContent = 'Standby';
                 return;
             }
+
             if (resp.status === 429) {
-                grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p style="color:var(--cyan);font-weight:600;">Forex scanner cooling down (Rate Limit). Retrying via keyless feed shortly...</p></div>';
-                if (meta) meta.textContent = 'Cooling down (Retrying...)';
-                renderTopForexSetups([]);
-                setTimeout(loadForexData, 6000);
+                let retryAfterSec = 0;
+                try {
+                    const header = resp.headers && resp.headers.get ? resp.headers.get('retry-after') : null;
+                    if (header) {
+                        const parsed = parseInt(header, 10);
+                        if (!isNaN(parsed) && parsed > 0) retryAfterSec = Math.min(parsed, 65);
+                    }
+                } catch (_) {}
+
+                if (_forexRetryCount < _MAX_FOREX_RETRIES) {
+                    _forexRetryCount++;
+                    const delaySec = retryAfterSec > 0
+                        ? retryAfterSec
+                        : Math.min(Math.round((_BASE_FOREX_BACKOFF_MS * Math.pow(1.8, _forexRetryCount - 1)) / 1000), 65);
+
+                    if (meta) meta.textContent = `Rate limited · Retrying in ${delaySec}s (${_forexRetryCount}/${_MAX_FOREX_RETRIES})`;
+                    grid.innerHTML = `
+                        <div class="loading-state" style="padding:2rem;text-align:center;grid-column:1/-1;">
+                            <div class="live-pill" style="background:rgba(245,158,11,0.12);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);font-size:0.75rem;padding:3px 10px;font-weight:700;margin-bottom:0.75rem;display:inline-flex;align-items:center;gap:6px;">
+                                <span class="status-dot" style="background:#f59e0b;"></span> PROVIDER RATE LIMIT COOLING
+                            </div>
+                            <p style="color:var(--text-muted);font-size:0.85rem;max-width:540px;margin:0 auto 1rem auto;line-height:1.5;">
+                                Twelve Data free tier quota reached. Backing off <strong>${delaySec}s</strong> before retry (${_forexRetryCount}/${_MAX_FOREX_RETRIES}).
+                            </p>
+                            <div style="font-size:0.75rem;color:var(--text-muted);">Keyless secondary feeds remain active for session intelligence.</div>
+                        </div>
+                    `;
+                    if (topSetupsGrid) {
+                        topSetupsGrid.innerHTML = `
+                            <div class="card" style="padding:1.5rem;text-align:center;grid-column:1/-1;">
+                                <span class="live-pill" style="background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);font-size:0.75rem;padding:3px 10px;font-weight:700;">PROVIDER RATE LIMIT COOLING</span>
+                                <p style="color:var(--text-muted);font-size:0.82rem;margin:0.5rem 0 0 0;">Rate limit cooling down. Re-evaluating candidate pairs in ${delaySec}s...</p>
+                            </div>
+                        `;
+                    }
+                    if (topCountBadge) topCountBadge.textContent = 'Cooling Down';
+
+                    _forexRetryTimeoutId = setTimeout(() => {
+                        loadForexData(true);
+                    }, delaySec * 1000);
+                } else {
+                    if (meta) meta.textContent = 'Rate limit cooling paused (Retries exhausted)';
+                    grid.innerHTML = `
+                        <div class="card" style="padding:2rem;text-align:center;grid-column:1/-1;">
+                            <div class="live-pill" style="background:rgba(245,158,11,0.12);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);font-size:0.75rem;padding:3px 10px;font-weight:700;margin-bottom:0.75rem;display:inline-flex;align-items:center;gap:6px;">
+                                <span class="status-dot" style="background:#f59e0b;"></span> PROVIDER RATE LIMIT COOLING
+                            </div>
+                            <p style="color:var(--text-muted);font-size:0.85rem;max-width:540px;margin:0 auto 1rem auto;line-height:1.5;">
+                                Maximum retries reached while Twelve Data quota cools down. You can resume scanner requests manually when ready.
+                            </p>
+                            <button class="toggle-btn" onclick="loadForexData(false)" style="font-size:0.78rem;padding:0.4rem 1rem;">
+                                ↺ Retry Scanner Now
+                            </button>
+                        </div>
+                    `;
+                }
                 return;
             }
 
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
             const data = await resp.json();
-
-
-
             _forexAllSetups = data.setups || [];
-
             const qualified = data.qualified_setups || _forexAllSetups.filter(s => s.status === 'QUALIFIED');
-
             const topSetups = data.top_setups || qualified.slice(0, 3);
 
-
-
-            const topCountBadge = document.getElementById('forexTopCountBadge');
-
             if (topCountBadge) {
-
                 topCountBadge.textContent = `${qualified.length} Qualified Setup${qualified.length === 1 ? '' : 's'}`;
-
             }
-
-
 
             if (meta) {
-
                 meta.textContent = `Last scan: ${new Date().toLocaleTimeString()} • ${qualified.length} qualified / ${_forexAllSetups.length} evaluated`;
-
             }
 
-
-
             renderTopForexSetups(topSetups);
-
             renderForexSignals(_forexAllSetups, _forexCurrentFilter);
-
+            _forexRetryCount = 0;
         } catch (err) {
-
             console.error('[loadForexData] signals fetch err:', err);
-
-            grid.innerHTML = `<div class="loading-state"><p style="color:var(--red);">Failed to load forex setups (${_escHtml(err.message)})</p></div>`;
-
-            if (meta) meta.textContent = 'Scan failed';
+            grid.innerHTML = `
+                <div class="loading-state" style="padding:2rem;text-align:center;grid-column:1/-1;">
+                    <div class="live-pill" style="background:rgba(239,68,68,0.12);color:var(--red);border:1px solid rgba(239,68,68,0.3);font-size:0.75rem;padding:3px 10px;font-weight:700;margin-bottom:0.75rem;display:inline-flex;align-items:center;gap:6px;">
+                        <span class="status-dot" style="background:var(--red);"></span> SERVICE TEMPORARILY OFFLINE
+                    </div>
+                    <p style="color:var(--text-muted);font-size:0.85rem;max-width:500px;margin:0 auto 1rem auto;">
+                        Unable to synchronize forex setups at this time. Network connection or upstream gateway is recovering.
+                    </p>
+                    <button class="toggle-btn" onclick="loadForexData(false)" style="font-size:0.78rem;padding:0.4rem 1rem;">
+                        ↺ Retry Scanner
+                    </button>
+                </div>
+            `;
+            if (meta) meta.textContent = 'Scan temporarily unavailable';
             renderTopForexSetups([]);
-
         }
-
     }
-
 }
 
-
-
-function renderInrStrip(rates) {
-
+function renderInrStrip(rates, statusPill = null) {
     const row = document.getElementById('forexInrRow');
-
-    if (!row || !rates) return;
-
-
+    if (!row) return;
 
     const inrPairs = ['USD/INR', 'EUR/INR', 'GBP/INR', 'JPY/INR'];
-
-
-
-    const renderPair = (sym) => {
-
-        const rate = Number(rates[sym] || 0);
-
-        if (rate <= 0) return '';
-
-        const decimals = sym.includes('JPY') ? 3 : 2;
-
-        return `
-
-            <div style="display:flex;flex-direction:column;gap:2px;">
-
-                <span style="font-size:0.75rem;font-weight:600;color:var(--text-primary,#f8fafc);">${escapeHtml(sym)}</span>
-
-                <span style="font-family:monospace;font-size:0.85rem;color:var(--cyan,#38bdf8);font-weight:600;">₹${rate.toFixed(decimals)}</span>
-
-            </div>
-
-        `;
-
+    const referenceRates = {
+        'USD/INR': 86.85,
+        'EUR/INR': 91.40,
+        'GBP/INR': 110.10,
+        'JPY/INR': 0.565
     };
 
+    let effectiveRates = null;
+    let rateSourceLabel = '';
 
+    if (rates && typeof rates === 'object') {
+        const hasPositiveRate = inrPairs.some(p => Number(rates[p] || 0) > 0);
+        if (hasPositiveRate) {
+            effectiveRates = rates;
+            _lastKnownForexRates = { ...rates };
+            rateSourceLabel = '';
+        }
+    }
+
+    if (!effectiveRates && _lastKnownForexRates) {
+        effectiveRates = _lastKnownForexRates;
+        rateSourceLabel = 'Cached';
+    }
+
+    if (!effectiveRates) {
+        effectiveRates = referenceRates;
+        rateSourceLabel = 'Indicative';
+    }
+
+    const renderPair = (sym) => {
+        const rate = Number(effectiveRates[sym] || 0);
+        if (rate <= 0) return '';
+        const decimals = sym.includes('JPY') ? 3 : 2;
+        const subLabel = rateSourceLabel ? `<span style="font-size:0.65rem;color:var(--text-muted);font-weight:400;margin-left:4px;">(${rateSourceLabel})</span>` : '';
+        return `
+            <div style="display:flex;flex-direction:column;gap:2px;">
+                <span style="font-size:0.75rem;font-weight:600;color:var(--text-primary,#f8fafc);">${escapeHtml(sym)}${subLabel}</span>
+                <span style="font-family:monospace;font-size:0.85rem;color:var(--cyan,#38bdf8);font-weight:600;">₹${rate.toFixed(decimals)}</span>
+            </div>
+        `;
+    };
 
     const inrHtml = inrPairs.map(renderPair).filter(Boolean).join('<div style="width:1px;background:rgba(255,255,255,0.08);margin:0 0.5rem;"></div>');
 
-    row.innerHTML = inrHtml || '<span style="color:var(--text-muted);font-size:0.82rem;">No INR rates available</span>';
-
-}
-
-
-
-function renderForexSessions(sessions, currentIst) {
-
-    const clock = document.getElementById('forexSessionClock');
-
-    if (!clock) return;
-
-
-
-    const entries = Object.entries(sessions);
-
-    if (!entries.length) return;
-
-
-
-    clock.innerHTML = entries.map(([name, s]) => {
-
-        const isOpen = s.open === true;
-
-        const statusColor = isOpen ? 'var(--green)' : 'var(--text-muted)';
-
-        const statusBg = isOpen ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.02)';
-
-        const statusBdr = isOpen ? 'rgba(16,185,129,0.35)' : 'var(--border-color)';
-
-        const pairs = (s.best_pairs || []).slice(0, 3).join(', ');
-
-
-
-        return `
-
-            <div class="intel-card" style="padding:0.6rem 0.75rem;background:${statusBg};border:1px solid ${statusBdr};border-radius:6px;">
-
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;">
-
-                    <strong style="font-size:0.82rem;">${_escHtml(name)}</strong>
-
-                    <span style="font-size:0.62rem;font-weight:800;padding:1px 5px;border-radius:3px;color:${statusColor};border:1px solid ${statusColor};">${isOpen ? '● OPEN' : 'CLOSED'}</span>
-
-                </div>
-
-                <div style="font-size:0.7rem;color:var(--text-muted);">${_escHtml(s.start || '')} - ${_escHtml(s.end || '')} IST</div>
-
-                <div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.2rem;">Pairs: <span style="color:var(--text-primary);">${_escHtml(pairs || '—')}</span></div>
-
-            </div>
-
-        `;
-
-    }).join('');
-
-}
-
-
-
-function renderCurrencyStrength(strengths, riskSentiment) {
-
-    const matrix = document.getElementById('forexCurrencyMatrix');
-
-    const badge = document.getElementById('forexRiskSentimentBadge');
-
-
-
-    if (badge) {
-
-        const isRiskOn = riskSentiment === 'RISK ON';
-
-        badge.textContent = riskSentiment || 'NEUTRAL';
-
-        badge.style.background = isRiskOn ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)';
-
-        badge.style.color = isRiskOn ? 'var(--green)' : '#f59e0b';
-
-        badge.style.borderColor = isRiskOn ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)';
-
+    let pillHtml = '';
+    if (statusPill === 'NSE CURRENCY STANDBY') {
+        pillHtml = '<div style="margin-left:auto;display:flex;align-items:center;"><span class="live-pill" style="background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.25);font-size:0.7rem;padding:2px 8px;font-weight:700;">NSE CURRENCY STANDBY</span></div>';
+    } else if (statusPill === 'RATE LIMIT COOLING') {
+        pillHtml = '<div style="margin-left:auto;display:flex;align-items:center;"><span class="live-pill" style="background:rgba(245,158,11,0.12);color:#f59e0b;border:1px solid rgba(245,158,11,0.25);font-size:0.7rem;padding:2px 8px;font-weight:700;">RATE LIMIT COOLING</span></div>';
     }
 
+    row.innerHTML = (inrHtml ? `${inrHtml}${pillHtml}` : '<span style="color:var(--text-muted);font-size:0.82rem;">Reference INR benchmarks active</span>');
+}
 
+function renderForexSessions(sessions, currentIst) {
+    const clock = document.getElementById('forexSessionClock');
+    if (!clock) return;
+
+    let entries = Object.entries(sessions || {});
+    if (!entries.length) {
+        const fallback = computeClientForexSessions();
+        entries = Object.entries(fallback.sessions);
+    }
+
+    clock.innerHTML = entries.map(([name, s]) => {
+        const isOpen = s.open === true;
+        const statusColor = isOpen ? 'var(--green)' : 'var(--text-muted)';
+        const statusBg = isOpen ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.02)';
+        const statusBdr = isOpen ? 'rgba(16,185,129,0.35)' : 'var(--border-color)';
+        const pairs = (s.best_pairs || []).slice(0, 3).join(', ');
+
+        return `
+            <div class="intel-card" style="padding:0.6rem 0.75rem;background:${statusBg};border:1px solid ${statusBdr};border-radius:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;">
+                    <strong style="font-size:0.82rem;">${_escHtml(name)}</strong>
+                    <span style="font-size:0.62rem;font-weight:800;padding:1px 5px;border-radius:3px;color:${statusColor};border:1px solid ${statusColor};">${isOpen ? '● OPEN' : 'CLOSED'}</span>
+                </div>
+                <div style="font-size:0.7rem;color:var(--text-muted);">${_escHtml(s.start || '')} - ${_escHtml(s.end || '')} IST</div>
+                <div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.2rem;">Pairs: <span style="color:var(--text-primary);">${_escHtml(pairs || '—')}</span></div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderCurrencyStrength(strengths, riskSentiment) {
+    const matrix = document.getElementById('forexCurrencyMatrix');
+    const badge = document.getElementById('forexRiskSentimentBadge');
+
+    if (badge) {
+        const sentiment = String(riskSentiment || 'NEUTRAL').toUpperCase();
+        badge.textContent = sentiment;
+        if (sentiment === 'RISK ON') {
+            badge.style.background = 'rgba(16,185,129,0.15)';
+            badge.style.color = 'var(--green)';
+            badge.style.borderColor = 'rgba(16,185,129,0.3)';
+        } else if (sentiment === 'STANDBY') {
+            badge.style.background = 'rgba(59,130,246,0.15)';
+            badge.style.color = '#60a5fa';
+            badge.style.borderColor = 'rgba(59,130,246,0.3)';
+        } else if (sentiment.includes('COOLING')) {
+            badge.style.background = 'rgba(245,158,11,0.15)';
+            badge.style.color = '#f59e0b';
+            badge.style.borderColor = 'rgba(245,158,11,0.3)';
+        } else if (sentiment === 'RISK OFF') {
+            badge.style.background = 'rgba(239,68,68,0.15)';
+            badge.style.color = 'var(--red)';
+            badge.style.borderColor = 'rgba(239,68,68,0.3)';
+        } else {
+            badge.style.background = 'rgba(148,163,184,0.12)';
+            badge.style.color = 'var(--text-muted)';
+            badge.style.borderColor = 'rgba(148,163,184,0.25)';
+        }
+    }
 
     if (!matrix) return;
 
-    const entries = Object.entries(strengths);
-
-    if (!entries.length) {
-
-        matrix.innerHTML = '<span style="color:var(--text-muted);font-size:0.75rem;">Calculating strengths...</span>';
-
-        return;
-
-    }
-
-
+    const standardCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'INR', 'AUD', 'CAD', 'CHF'];
+    const hasData = strengths && typeof strengths === 'object' && Object.keys(strengths).length > 0;
+    const entries = hasData 
+        ? Object.entries(strengths) 
+        : standardCurrencies.map(c => [c, 0.0]);
 
     matrix.innerHTML = entries.map(([curr, val]) => {
-
         const num = Number(val || 0);
-
-        const isPos = num >= 0;
-
-        const color = isPos ? 'var(--green)' : 'var(--red)';
-
+        const isPos = num > 0.0001;
+        const isNeg = num < -0.0001;
+        const color = isPos ? 'var(--green)' : (isNeg ? 'var(--red)' : 'var(--text-muted)');
         const sign = isPos ? '+' : '';
 
         return `
-
             <div style="background:rgba(255,255,255,0.03);padding:0.4rem 0.2rem;border-radius:4px;border:1px solid rgba(255,255,255,0.05);">
-
                 <div style="font-size:0.75rem;font-weight:700;">${_escHtml(curr)}</div>
-
                 <div style="font-family:var(--font-mono);font-size:0.78rem;font-weight:700;color:${color};">${sign}${num.toFixed(2)}%</div>
-
             </div>
-
         `;
-
     }).join('');
-
 }
 
 
@@ -25524,16 +25649,16 @@ function renderForexSignals(setups, filter = 'all') {
 
 
 // Window globals
-
 window.filterForexPairs = filterForexPairs;
-
 window.renderTopForexSetups = renderTopForexSetups;
-
 window.renderCurrencyStrength = renderCurrencyStrength;
-
 window.renderForexSignals = renderForexSignals;
-
 window.loadForexData = loadForexData;
+window.computeClientForexSessions = computeClientForexSessions;
+window.renderForexSessions = renderForexSessions;
+window.renderInrStrip = renderInrStrip;
+window.resetForexRetry = resetForexRetry;
+window.getForexRetryCount = getForexRetryCount;
 
 
 

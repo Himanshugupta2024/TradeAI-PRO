@@ -442,8 +442,12 @@ def create_app() -> FastAPI:
     async def add_security_and_cache_headers(request, call_next):
         response = await call_next(request)
         path = request.url.path
-        # Enforce strict private, no-store policy on sensitive / stateful endpoints
-        if any(k in path for k in ("/portfolio", "/trades", "/paper", "/capital", "/journal", "/risk", "/admin", "/orders", "/positions")) or request.method != "GET":
+        # Enforce strict private, no-store policy on error responses (status >= 400) and sensitive / stateful endpoints
+        if (
+            response.status_code >= 400
+            or any(k in path for k in ("/portfolio", "/trades", "/paper", "/capital", "/journal", "/risk", "/admin", "/orders", "/positions"))
+            or request.method != "GET"
+        ):
             response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
         # Baseline hardening for JSON responses served directly from Render.

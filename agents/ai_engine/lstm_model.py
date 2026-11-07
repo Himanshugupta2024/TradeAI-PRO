@@ -9,18 +9,32 @@ the statistical predictor in `fallback_predictor.py`.
 """
 
 import os
+import sys
 import logging
 
 log = logging.getLogger(__name__)
 
-try:
-    import torch
-    import torch.nn as nn
-    torch.set_num_threads(1)
-    torch.set_num_interop_threads(1)
-    TORCH_AVAILABLE = True
-except (ImportError, Exception):
+_enable_torch_env = os.getenv("ENABLE_PYTORCH_MODELS", "false").lower() in ("true", "1", "yes")
+_lightweight_mode = os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("true", "1", "yes")
+
+if _enable_torch_env and not _lightweight_mode:
+    try:
+        import torch
+        import torch.nn as nn
+        torch.set_num_threads(1)
+        torch.set_num_interop_threads(1)
+        TORCH_AVAILABLE = True
+    except (ImportError, Exception):
+        TORCH_AVAILABLE = False
+else:
     TORCH_AVAILABLE = False
+    if "torch" in sys.modules:
+        try:
+            import torch
+            torch.set_num_threads(1)
+            torch.set_num_interop_threads(1)
+        except Exception:
+            pass
 
 
 if TORCH_AVAILABLE:
@@ -110,6 +124,8 @@ if TORCH_AVAILABLE:
                     "prob_up": round(probs[0, 0].item() * 100, 1),
                     "prob_down": round(probs[0, 1].item() * 100, 1),
                 }
+else:
+    TradingLSTM = None
 
 
 
