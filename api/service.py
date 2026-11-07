@@ -3226,9 +3226,10 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
 
     top_setups, rejected_setups = filter_valid_setups(top_setups)
     for rejected, reason in rejected_setups:
-        rejected["blockers"] = list(rejected.get("blockers") or []) + [reason]
-        rejected["invalid_levels"] = True
-        avoid_list.append(rejected)
+        if not rejected.get("is_off_hours_fallback") and reason != "missing_or_invalid_levels":
+            rejected["blockers"] = list(rejected.get("blockers") or []) + [reason]
+            rejected["invalid_levels"] = True
+            avoid_list.append(rejected)
     if rejected_setups:
         avoid_list.sort(key=lambda item: item.get("composite_rank") or 0.0, reverse=True)
 

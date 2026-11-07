@@ -4855,50 +4855,25 @@ function _renderTopSetups(setups, meta) {
 
 
 function _renderAvoidList(list) {
-
-
-
     const el = document.getElementById('cockpitAvoidList');
-
-
-
     const countBadge = document.getElementById('cockpitAvoidCount');
 
+    // Defensive: Avoid For Now is strictly for real risk blockers (regime, conflict, drift, event).
+    // Filter out any internal missing level artifacts from rendering.
+    const displayList = (list || []).filter(s => {
+        const blockers = s.blockers || [];
+        return !blockers.some(b => b === 'missing_or_invalid_levels' || b === 'missing or invalid levels');
+    });
 
-
-    if (countBadge) countBadge.textContent = list.length || '';
-
-
-
+    if (countBadge) countBadge.textContent = displayList.length || '';
     if (!el) return;
 
-
-
-
-
-
-
-    if (list.length === 0) {
-
-
-
+    if (displayList.length === 0) {
         el.innerHTML = '<span class="cockpit-empty-msg">No high-quality blocked setups right now.</span>';
-
-
-
         return;
-
-
-
     }
 
-
-
-
-
-
-
-    el.innerHTML = list.map(s => {
+    el.innerHTML = displayList.map(s => {
 
 
 
