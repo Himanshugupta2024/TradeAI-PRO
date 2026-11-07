@@ -52,6 +52,7 @@ def test_fallback_intelligence_structure():
     assert intel.brent_crude.price > 0
     assert intel.wti_crude.price > 0
     assert intel.macro_regime in ("NEUTRAL", "RISK_ON", "RISK_OFF", "HIGH_CRUDE_RISK")
+    assert intel.feed_source == "FALLBACK"
 
 
 def test_macro_sector_gate_blocks_asian_paints_on_high_crude(monkeypatch):

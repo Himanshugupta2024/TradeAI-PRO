@@ -2,8 +2,8 @@
  * TradeAI PRO — data honesty helpers.
  *
  * The dashboard ships with empty placeholders. This script makes the UI state
- * explicit when the backend does not deliver: no stale hardcoded numbers, no
- * "MONITORING" badge over an empty panel. It never fabricates a value.
+ * explicit when the backend does not deliver: no stale hardcoded numbers.
+ * It never fabricates a value and respects the backend feed_source.
  */
 (function () {
     'use strict';
@@ -46,27 +46,48 @@
 
     function stampMacroState() {
         var timestamp = document.getElementById('macroTimestamp');
-        var cue = document.getElementById('macroCuePill');
+        var dot = document.querySelector('.macro-live-dot');
         var time = istTime();
 
-        if (hasMacroData()) {
-            if (timestamp) timestamp.textContent = 'as of ' + time + ' IST';
-            if (cue) {
-                cue.textContent = 'LIVE';
-                cue.style.background = 'rgba(16,185,129,0.12)';
-                cue.style.color = '#10b981';
-                cue.style.borderColor = 'rgba(16,185,129,0.25)';
+        // 1. If real macro data object exists from API, use its true source & timestamp
+        if (window._lastMacroData) {
+            var source = window._lastMacroData.feed_source || 'LIVE';
+            var ts = window._lastMacroData.timestamp;
+            var timeStr = '';
+            if (ts) {
+                try {
+                    timeStr = new Date(ts).toLocaleTimeString('en-IN', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                        timeZone: 'Asia/Kolkata'
+                    });
+                } catch (_) {}
+            }
+            if (!timeStr) timeStr = time;
+
+            if (timestamp) {
+                if (source === 'LIVE') {
+                    timestamp.textContent = 'as of ' + timeStr + ' IST';
+                } else {
+                    timestamp.textContent = 'est. ' + timeStr + ' IST';
+                }
+            }
+            if (dot) {
+                dot.style.background = source === 'LIVE' ? '#10b981' : '#f59e0b';
+                dot.setAttribute('title', source === 'LIVE' ? 'Live Exchange Feed' : 'Fallback Market Estimate');
             }
             return;
         }
 
-        if (timestamp) timestamp.textContent = 'No live feed \u2022 last attempt ' + time + ' IST';
-        if (cue) {
-            cue.textContent = 'DATA UNAVAILABLE';
-            cue.style.background = 'rgba(239,68,68,0.12)';
-            cue.style.color = '#ef4444';
-            cue.style.borderColor = 'rgba(239,68,68,0.3)';
+        if (hasMacroData()) {
+            if (timestamp) timestamp.textContent = 'as of ' + time + ' IST';
+            if (dot) dot.style.background = '#10b981';
+            return;
         }
+
+        if (timestamp) timestamp.textContent = 'No live feed \u2022 last attempt ' + time + ' IST';
+        if (dot) dot.style.background = '#ef4444';
     }
 
     function watchMacroStrip() {
@@ -85,9 +106,9 @@
 
     function init() {
         watchMacroStrip();
-        // Give the first data fetch time to land, then label the panel honestly.
-        window.setTimeout(stampMacroState, 12000);
-        window.setTimeout(stampMacroState, 30000);
+        window.setTimeout(stampMacroState, 2000);
+        window.setTimeout(stampMacroState, 8000);
+        window.setTimeout(stampMacroState, 20000);
     }
 
     if (document.readyState === 'loading') {

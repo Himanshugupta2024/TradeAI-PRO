@@ -91,6 +91,7 @@ class GlobalMacroIntelligence:
     macro_cue_summary: str      # Human-readable summary for Indian traders
     active_sector_alerts: List[Dict[str, str]]
     breaking_news: List[MacroNewsItem]
+    feed_source: str = "LIVE"   # "LIVE" or "FALLBACK"
 
 
 class GlobalMacroFetcher:
@@ -136,17 +137,18 @@ class GlobalMacroFetcher:
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(self._fetch_live)
-                intel = future.result(timeout=4.0)
+                intel = future.result(timeout=8.0)
             self._cached_intel = intel
             self._last_fetch_ts = now
             return intel
         except Exception as e:
             logger.warning("Live global macro fetch timed out or failed (%s) — using fallback intelligence", e)
-            if self._cached_intel is not None:
+            if self._cached_intel is not None and getattr(self._cached_intel, "feed_source", "FALLBACK") == "LIVE":
                 return self._cached_intel
             fallback = self._build_fallback_intel()
             self._cached_intel = fallback
-            self._last_fetch_ts = now
+            # Shorter retry (2 min) if on fallback so live feed can recover promptly
+            self._last_fetch_ts = now - (self.cache_ttl - 120.0)
             return fallback
 
     def _fetch_live(self) -> GlobalMacroIntelligence:
@@ -261,35 +263,52 @@ class GlobalMacroFetcher:
             macro_cue_summary=summary,
             active_sector_alerts=alerts,
             breaking_news=news_items,
+            feed_source="LIVE",
         )
 
-    def _fetch_macro_news(self) -> List[MacroNewsItem]:
-        """Fetch targeted headlines from Google News RSS."""
+    def _fetch_one_rss(self, cat: str, query: str) -> List[MacroNewsItem]:
+        url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
         items: List[MacroNewsItem] = []
-        for cat, query in self.NEWS_STREAMS.items():
-            url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-                with urllib.request.urlopen(req, timeout=2.0) as resp:
-                    xml_data = resp.read()
-                    root = ET.fromstring(xml_data)
-                    rss_items = root.findall(".//item")[:2]
-                    for it in rss_items:
-                        raw_title = it.find("title").text or ""
-                        source = it.find("source").text if it.find("source") is not None else "Financial News"
-                        pub = it.find("pubDate").text or ""
-                        # Polarity
-                        score, sentiment = self._compute_headline_polarity(raw_title)
-                        items.append(MacroNewsItem(
-                            category=cat,
-                            title=raw_title,
-                            source=source,
-                            pub_date=pub[:16],
-                            sentiment=sentiment,
-                            sentiment_score=score,
-                        ))
-            except Exception as e:
-                logger.debug("Failed to fetch RSS news for %s: %s", cat, e)
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                xml_data = resp.read()
+                root = ET.fromstring(xml_data)
+                rss_items = root.findall(".//item")[:2]
+                for it in rss_items:
+                    raw_title = it.find("title").text or ""
+                    source = it.find("source").text if it.find("source") is not None else "Financial News"
+                    pub = it.find("pubDate").text or ""
+                    score, sentiment = self._compute_headline_polarity(raw_title)
+                    items.append(MacroNewsItem(
+                        category=cat,
+                        title=raw_title,
+                        source=source,
+                        pub_date=pub[:16],
+                        sentiment=sentiment,
+                        sentiment_score=score,
+                    ))
+        except Exception as e:
+            logger.debug("Failed to fetch RSS news for %s: %s", cat, e)
+        return items
+
+    def _fetch_macro_news(self) -> List[MacroNewsItem]:
+        """Fetch targeted headlines from Google News RSS concurrently."""
+        items: List[MacroNewsItem] = []
+        import concurrent.futures
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.NEWS_STREAMS)) as executor:
+                futures = [
+                    executor.submit(self._fetch_one_rss, cat, query)
+                    for cat, query in self.NEWS_STREAMS.items()
+                ]
+                for fut in concurrent.futures.as_completed(futures, timeout=4.0):
+                    try:
+                        items.extend(fut.result())
+                    except Exception as exc:
+                        logger.debug("RSS worker failed: %s", exc)
+        except Exception as e:
+            logger.debug("Concurrent RSS fetch error: %s", e)
 
         # Fallback if news failed
         if not items:
@@ -349,6 +368,7 @@ class GlobalMacroFetcher:
             macro_cue_summary="Global cues stable (Brent $74.50/bbl, US S&P 500 steady) — Domestic setup focus",
             active_sector_alerts=[],
             breaking_news=[],
+            feed_source="FALLBACK",
         )
 
     def evaluate_macro_sector_gate(self, symbol: str, direction: str) -> Tuple[bool, Optional[str]]:

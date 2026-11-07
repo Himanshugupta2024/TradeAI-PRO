@@ -26139,7 +26139,58 @@ async function updateAiModelHealthBadge() {
 
         }
 
+        // Update Sidebar System Health & Data Age (Health v2)
+        const titleEl = document.getElementById('sidebarStatusTitle');
+        const subEl = document.getElementById('sidebarStatusSub');
+        const dotEl = document.getElementById('sidebarStatusDot');
 
+        if (titleEl || subEl || dotEl) {
+            const status = String(data.status || 'HEALTHY').toUpperCase();
+            const dataAgeHuman = data.data_age_human;
+            const tier = data.health_tier || {};
+
+            if (titleEl) {
+                if (status === 'HEALTHY' || status === 'OK') {
+                    titleEl.textContent = 'System Healthy';
+                    titleEl.style.color = '#10b981';
+                } else if (status === 'STALE_DATA') {
+                    titleEl.textContent = 'Data Stale';
+                    titleEl.style.color = '#f59e0b';
+                } else if (status === 'WORKER_DOWN') {
+                    titleEl.textContent = 'Worker Lagging';
+                    titleEl.style.color = '#f59e0b';
+                } else {
+                    titleEl.textContent = 'System Degraded';
+                    titleEl.style.color = '#ef4444';
+                }
+            }
+
+            if (dotEl) {
+                if (status === 'HEALTHY' || status === 'OK') {
+                    dotEl.style.background = '#10b981';
+                } else if (status === 'STALE_DATA' || status === 'WORKER_DOWN') {
+                    dotEl.style.background = '#f59e0b';
+                } else {
+                    dotEl.style.background = '#ef4444';
+                }
+            }
+
+            if (subEl) {
+                if (dataAgeHuman) {
+                    subEl.textContent = dataAgeHuman;
+                } else if (data.feed && !data.feed.is_market_open) {
+                    subEl.textContent = 'EOD Snapshot · Market Closed';
+                } else {
+                    subEl.textContent = 'Data: 15m Delayed';
+                }
+                const tooltipParts = [];
+                if (tier.infra) tooltipParts.push(`Infra: ${tier.infra}`);
+                if (tier.worker) tooltipParts.push(`Worker: ${tier.worker}`);
+                if (tier.freshness) tooltipParts.push(`Feed: ${tier.freshness}`);
+                if (data.overall_reason) tooltipParts.push(`(${data.overall_reason})`);
+                subEl.title = tooltipParts.join(' | ') || 'System Health Telemetry';
+            }
+        }
 
     } catch (_) { /* ignore */ }
 
@@ -26375,6 +26426,7 @@ async function loadMacroIntelligence(force = false) {
 
 function renderMacroIntelligence(macro) {
     if (!macro) return;
+    window._lastMacroData = macro;
     const brent = macro.brent_crude;
     const wti = macro.wti_crude;
     const y10 = macro.us_10y_yield;
@@ -26438,7 +26490,7 @@ function renderMacroIntelligence(macro) {
     const sPrice = document.getElementById('macroSp500Price');
     const sSub = document.getElementById('macroSp500Sub');
     if (sPrice && sp) {
-        sPrice.textContent = Number(sp.price).toLocaleString('en-US', { maximumFractionDigits: 1 });
+        sPrice.textContent = Number(sp.price).toLocaleString('en-US', { maximumFractionDigits: 0 });
         if (sSub) {
             sSub.textContent = `${fmtPct(sp.change_pct)} • Wall St`;
             colorPct(sSub, sp.change_pct, false);
@@ -26449,8 +26501,11 @@ function renderMacroIntelligence(macro) {
     const gPrice = document.getElementById('macroGoldPrice');
     const gSub = document.getElementById('macroGoldSub');
     if (gPrice && gold) {
-        gPrice.textContent = `$${Number(gold.price).toFixed(1)}`;
-        if (gSub) gSub.textContent = `${fmtPct(gold.change_pct)} • $/oz`;
+        gPrice.textContent = `$${Number(gold.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        if (gSub) {
+            gSub.textContent = `${fmtPct(gold.change_pct)} • $/oz`;
+            colorPct(gSub, gold.change_pct, false);
+        }
     }
 
     // Cue Pill
@@ -26473,7 +26528,14 @@ function renderMacroIntelligence(macro) {
         sumEl.textContent = macro.macro_cue_summary;
     }
 
-    // Breaking News Stream
+    // Breaking News Stream with word-boundary truncation
+    const truncateWords = (str, maxLen) => {
+        if (!str || str.length <= maxLen) return str;
+        const sub = str.substring(0, maxLen);
+        const lastSpace = sub.lastIndexOf(' ');
+        return (lastSpace > 35 ? sub.substring(0, lastSpace) : sub) + '...';
+    };
+
     const newsEl = document.getElementById('macroNewsStream');
     if (newsEl && Array.isArray(macro.breaking_news) && macro.breaking_news.length > 0) {
         newsEl.innerHTML = macro.breaking_news.slice(0, 4).map(n => {
@@ -26481,7 +26543,7 @@ function renderMacroIntelligence(macro) {
             const tagClass = `tag-${cat.toLowerCase()}`;
             const sentClass = n.sentiment === 'BULLISH' ? 'text-profit' : (n.sentiment === 'BEARISH' ? 'text-loss' : '');
             const titleSafe = (n.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const shortTitle = titleSafe.length > 70 ? titleSafe.substring(0, 70) + '...' : titleSafe;
+            const shortTitle = truncateWords(titleSafe, 68);
             return `
                 <div class="macro-news-pill">
                     <span class="macro-news-tag ${tagClass}">${cat.replace(/_/g, ' ')}</span>

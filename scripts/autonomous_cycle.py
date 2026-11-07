@@ -551,6 +551,19 @@ async def run_single_autonomous_cycle(
         except Exception as scan_err:
             logger.warning("[AutonomousWorker] Could not persist IntradayScan: %s", scan_err)
 
+        # 10c. Persist latest_signals:v1 for API consumption in lightweight mode
+        try:
+            signals_payload = {
+                "version": version,
+                "timestamp": now_iso,
+                "count": len(candidate_signals),
+                "signals": candidate_signals,
+            }
+            await asyncio.to_thread(set_runtime_state, "latest_signals:v1", signals_payload)
+            logger.info("💾 [AutonomousWorker] Persisted %d signals to latest_signals:v1", len(candidate_signals))
+        except Exception as sig_err:
+            logger.warning("[AutonomousWorker] Could not persist latest_signals:v1: %s", sig_err)
+
         # Persist latest worker cycle status for watchdog
         status_payload = {
             "run_id": run_id,

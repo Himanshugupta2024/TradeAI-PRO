@@ -336,17 +336,67 @@ async def health_check():
 
     status_str = "ok" if db_ok and (symbols_loaded > 0 or is_lightweight) else "degraded" if not db_ok else "starting"
 
+    worker_status = None
+    try:
+        from db.runtime_state import get_runtime_state
+        worker_status = get_runtime_state("autonomous_worker:latest_status")
+    except Exception:
+        pass
+
+    try:
+        from api.health_v2 import evaluate_health_v2
+        h2 = evaluate_health_v2(db_ok=db_ok, feed_status=feed_status, worker_status=worker_status)
+    except Exception as exc:
+        logger.warning("Health v2 evaluation fallback: %s", exc)
+        h2 = {
+            "status": status_str,
+            "healthy": db_ok,
+            "health_tier": {"infra": "UP" if db_ok else "DOWN", "worker": "UNKNOWN", "freshness": "UNKNOWN"},
+            "health_reasons": {"infra": "Database connected" if db_ok else "Database down", "worker": "Unknown", "freshness": "Unknown"},
+            "overall_reason": "Health v2 fallback",
+            "data_age_seconds": feed_status.get("age_seconds"),
+            "data_age_human": "Data: 15m Delayed",
+            "is_market_open": is_market_open(),
+            "market_session_status": "UNKNOWN",
+        }
+
+    status_str = "ok" if str(h2.get("status", "")).upper() in ("HEALTHY", "OK") else str(h2.get("status", "degraded")).lower()
+
+    signals_count = len(svc._signal_cache)
+    if signals_count == 0:
+        try:
+            from db.runtime_state import get_runtime_state
+            snap = get_runtime_state("latest_signals:v1")
+            if snap and isinstance(snap, dict):
+                signals_count = int(snap.get("count", len(snap.get("signals", []))))
+        except Exception:
+            pass
+        if signals_count == 0:
+            try:
+                import db.intraday_store as ids
+                latest_scan = ids.load_latest_scan()
+                if latest_scan and latest_scan.get("results"):
+                    signals_count = len(latest_scan["results"])
+            except Exception:
+                pass
+
     return {
         "status": status_str,
-        "healthy": db_ok,
+        "healthy": h2.get("healthy", db_ok),
         "api_health": api_health,
+        "health_tier": h2.get("health_tier", {}),
+        "health_reasons": h2.get("health_reasons", {}),
+        "overall_reason": h2.get("overall_reason", ""),
+        "data_age_seconds": h2.get("data_age_seconds"),
+        "data_age_human": h2.get("data_age_human", "Data: 15m Delayed"),
+        "is_market_open": h2.get("is_market_open", False),
         "market_snapshot_health": feed_status.get("market_snapshot_health", "UNAVAILABLE"),
         "worker_health": feed_status.get("worker_health", "NO_RECENT_RUN"),
         "database": {"connected": db_ok},
         "loading": svc._loading_status,
         "feed": feed_status,
         "symbols_loaded": symbols_loaded,
-        "signals_cached": len(svc._signal_cache),
+        "signals_cached": signals_count,
         "ai_engine": ai_engine_info,
         "providers": (
             getattr(svc, "_get_providers_telemetry", lambda: {})()
@@ -995,6 +1045,34 @@ async def get_all_signals(response: Response):
             "source": "persisted_snapshot",
 
         }
+
+    # Durable runtime_state / intraday_store fallback for lightweight mode
+    if not results:
+        durable_sigs = []
+        try:
+            from db.runtime_state import get_runtime_state
+            snap = get_runtime_state("latest_signals:v1")
+            if snap and isinstance(snap, dict) and snap.get("signals"):
+                durable_sigs = snap["signals"]
+        except Exception:
+            pass
+        if not durable_sigs:
+            try:
+                import db.intraday_store as ids
+                latest_scan = ids.load_latest_scan()
+                if latest_scan and latest_scan.get("results"):
+                    durable_sigs = latest_scan["results"]
+            except Exception:
+                pass
+        if durable_sigs:
+            tracker.set_meta("count", len(durable_sigs))
+            tracker.set_meta("cache_hit", "durable_signals_snapshot")
+            tracker.finish()
+            return {
+                "signals": [apply_signal_freshness(s) for s in durable_sigs],
+                "updated_at": datetime.now().isoformat(),
+                "source": "durable_signals_snapshot",
+            }
 
     tracker.set_meta("count", len(results))
     tracker.set_meta("cache_hit", bool(results))
