@@ -864,20 +864,12 @@ async def _reconcile_open_positions_on_startup() -> None:
         if df is None or getattr(df, "empty", True):
             continue
 
-        bars: list[dict] = []
-        for ts, row in df.iterrows():
-            try:
-                bars.append({
-                    "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
-                    "open": float(row["open"]),
-                    "high": float(row["high"]),
-                    "low": float(row["low"]),
-                    "close": float(row["close"]),
-                })
-            except (KeyError, TypeError, ValueError):
-                continue
-        if bars:
-            bars_by_symbol[trade.symbol] = bars
+        from agents.execution.reconcile_bars import bars_from_frame
+        bars = bars_from_frame(df)
+        if not bars:
+            logger.warning("[Reconcile] %s returned no usable dated bars — skipping replay", trade.symbol)
+            continue
+        bars_by_symbol[trade.symbol] = bars
 
     if not bars_by_symbol:
         logger.info("[Reconcile] no historical bars for %d open position(s)", len(open_trades))

@@ -705,6 +705,14 @@ class PaperTradingEngine:
 
             start_raw = str(trade.last_checked_bar_ts or trade.entry_time or "")
             start_dt = _parse_ist_ts(start_raw)
+            if start_dt is None:
+                # Without a trustworthy anchor the replay window is unbounded and
+                # would evaluate bars from before the trade existed. Refuse.
+                log.warning(
+                    "Reconciliation skipped for #%s %s: no parseable anchor timestamp (%r)",
+                    trade.id, trade.symbol, start_raw,
+                )
+                continue
             is_long = trade.direction in ("LONG", "BUY")
             is_short = trade.direction in ("SHORT", "SELL")
             if not (is_long or is_short):
@@ -715,10 +723,7 @@ class PaperTradingEngine:
                 if not bar_ts:
                     continue
                 bar_dt = _parse_ist_ts(bar_ts)
-                if start_dt is not None and bar_dt is not None:
-                    if bar_dt <= start_dt:
-                        continue
-                elif start_raw and bar_ts <= start_raw:
+                if bar_dt is None or bar_dt <= start_dt:
                     continue
 
                 try:

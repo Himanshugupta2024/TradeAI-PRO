@@ -7,6 +7,7 @@ OPEN because the refresh loop never evaluated the bar that breached it.
 import os
 import tempfile
 
+import pandas as pd
 import pytest
 
 from agents.execution.paper_trading import PaperTradingEngine
@@ -16,6 +17,44 @@ def _engine():
     tf = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
     tf.close()
     return PaperTradingEngine(initial_capital=100_000, log_file=tf.name), tf.name
+
+
+class TestBarConstruction:
+    """fetch_ohlcv returns a RangeIndex plus a `timestamp` column."""
+
+    def _frame(self):
+        return pd.DataFrame(
+            {
+                "timestamp": ["2026-11-05 00:00:00", "2026-11-06 00:00:00"],
+                "open": [858.0, 905.0],
+                "high": [865.0, 915.0],
+                "low": [850.0, 900.0],
+                "close": [860.0, 910.25],
+                "volume": [1000, 2000],
+            }
+        )
+
+    def test_uses_timestamp_column_not_row_index(self):
+        from agents.execution.reconcile_bars import bars_from_frame
+
+        bars = bars_from_frame(self._frame())
+        assert len(bars) == 2
+        assert bars[0]["timestamp"].startswith("2026-11-05")
+        assert bars[-1]["timestamp"].startswith("2026-11-06")
+        # The failure mode: row numbers ending up as timestamps.
+        assert all(not b["timestamp"].isdigit() for b in bars)
+
+    def test_rejects_frame_without_any_timestamps(self):
+        from agents.execution.reconcile_bars import bars_from_frame
+
+        frame = self._frame().drop(columns=["timestamp"])
+        assert bars_from_frame(frame) == []
+
+    def test_empty_frame(self):
+        from agents.execution.reconcile_bars import bars_from_frame
+
+        assert bars_from_frame(pd.DataFrame()) == []
+        assert bars_from_frame(None) == []
 
 
 class TestGapAwareFills:
@@ -137,6 +176,20 @@ class TestReconciliation:
                 {"timestamp": "2026-11-05T15:30:00+05:30", "open": 120.0, "high": 130.0, "low": 119.0, "close": 125.0}
             ]
             assert engine.reconcile_open_trades({"PREENTRY": bars}) == []
+            assert len(engine.open_trades) == 1
+        finally:
+            os.unlink(path)
+
+    def test_reconcile_refuses_without_anchor(self):
+        engine, path = _engine()
+        try:
+            trade = engine.execute("NOANCHOR", "SHORT", 100.0, 105.0, 89.0)
+            trade.entry_time = ""  # no trustworthy lower bound
+            bars = [
+                {"timestamp": "2026-09-01T00:00:00+05:30", "open": 120.0, "high": 130.0, "low": 119.0, "close": 125.0}
+            ]
+            # Unanchored replay used to close at prices from months before entry.
+            assert engine.reconcile_open_trades({"NOANCHOR": bars}) == []
             assert len(engine.open_trades) == 1
         finally:
             os.unlink(path)
