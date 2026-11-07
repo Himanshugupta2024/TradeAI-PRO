@@ -72,7 +72,7 @@
     border: 1px solid var(--tb-border) !important;
     background: var(--tb-surface) !important;
     color: var(--tb-text) !important;
-    font-size: 0.64rem !important;
+    font-size: 0.72rem !important;
     font-weight: 700 !important;
     letter-spacing: 0.07em !important;
     text-transform: uppercase;
@@ -138,7 +138,7 @@
 }
 
 .mood-ticker-chg {
-    font-size: 0.68rem !important;
+    font-size: 0.72rem !important;
     font-weight: 600 !important;
     font-variant-numeric: tabular-nums;
 }
@@ -224,7 +224,7 @@
 }
 
 .search-kbd {
-    font-size: 0.58rem !important;
+    font-size: 0.72rem !important;
     padding: 1px 5px !important;
     border-radius: 4px !important;
     border: 1px solid var(--tb-border) !important;
@@ -376,9 +376,9 @@
     .market-status { display: none !important; }
     .mood-strip { padding: 0 6px !important; }
     .mood-strip-logo .logo-text { font-size: 0.82rem !important; }
-    .mood-ticker-sym { font-size: 0.55rem !important; }
-    .mood-ticker-val { font-size: 0.68rem !important; }
-    .mood-ticker-chg { font-size: 0.62rem !important; }
+    .mood-ticker-sym { font-size: 0.72rem !important; }
+    .mood-ticker-val { font-size: 0.72rem !important; }
+    .mood-ticker-chg { font-size: 0.72rem !important; }
     .mood-ticker {
         display: flex !important;
         overflow-x: auto !important;

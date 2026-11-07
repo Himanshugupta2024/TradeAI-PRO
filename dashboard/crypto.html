@@ -27,7 +27,7 @@
   --cyan:        #22d3ee;
   --text:        #f1f5f9;
   --text2:       #94a3b8;
-  --text3:       #475569;
+  --text3:       #94a3b8;
   --mono:        'JetBrains Mono', monospace;
   --sans:        'Inter', sans-serif;
   --radius:      14px;
@@ -67,9 +67,9 @@ body {
 }
 .logo-icon { color: var(--accent); font-size: 1.3rem; }
 .logo-badge {
-  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  background: var(--accent);
   color: #fff;
-  font-size: 0.6rem;
+  font-size: 0.72rem;
   font-weight: 800;
   padding: 2px 6px;
   border-radius: 4px;
@@ -123,7 +123,7 @@ body {
   width: 7px; height: 7px;
   border-radius: 50%;
   background: var(--green);
-  animation: pulse 2s infinite;
+  /* static dot */
 }
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
@@ -163,7 +163,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--green);
   border: 1px solid rgba(16,185,129,0.3);
@@ -193,7 +193,7 @@ body {
 .coin-card:hover { border-color: rgba(99,102,241,0.4); transform: translateY(-2px); }
 .coin-card.active {
   border-color: rgba(99,102,241,0.9);
-  box-shadow: 0 0 0 1px rgba(99,102,241,0.35), 0 12px 28px rgba(37,99,235,0.15);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 .coin-card:focus-visible {
   outline: 2px solid rgba(99,102,241,0.9);
@@ -246,13 +246,13 @@ body {
   color: var(--text);
 }
 .coin-full {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text3);
   font-weight: 400;
 }
 
 .signal-badge {
-  font-size: 0.65rem;
+  font-size: 0.72rem;
   font-weight: 800;
   padding: 3px 8px;
   border-radius: 5px;
@@ -288,7 +288,7 @@ body {
   border-top: 1px solid var(--border);
 }
 .coin-metric { display: flex; flex-direction: column; gap: 2px; }
-.coin-metric-lbl { font-size: 0.6rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; }
+.coin-metric-lbl { font-size: 0.72rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; }
 .coin-metric-val { font-family: var(--mono); font-size: 0.78rem; font-weight: 600; color: var(--text2); }
 
 .rsi-bar-wrap {
@@ -297,7 +297,7 @@ body {
   align-items: center;
   gap: 0.5rem;
 }
-.rsi-label { font-size: 0.62rem; color: var(--text3); text-transform: uppercase; min-width: 2.5rem; }
+.rsi-label { font-size: 0.70rem; color: var(--text3); text-transform: uppercase; min-width: 2.5rem; }
 .rsi-track {
   flex: 1;
   height: 4px;
@@ -346,7 +346,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   color: var(--text3);
 }
 .coin-detail-tf {
-  font-size: 0.65rem;
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--accent);
   border: 1px solid rgba(99,102,241,0.35);
@@ -379,7 +379,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   z-index: 2;
   pointer-events: none;
   font-family: var(--mono);
-  font-size: 0.61rem;
+  font-size: 0.70rem;
   color: var(--text2);
   background: rgba(2,6,23,0.82);
   border: 1px solid rgba(99,102,241,0.35);
@@ -452,7 +452,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 
 .mover-rank {
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text3);
   text-align: center;
 }
@@ -476,7 +476,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 .mover-pct.down { color: var(--red); }
 
 .rsi-pill {
-  font-size: 0.62rem;
+  font-size: 0.70rem;
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
@@ -488,7 +488,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 .rsi-pill.normal { background: rgba(148,163,184,0.1); color: var(--text2); }
 
 .mover-vol {
-  font-size: 0.62rem;
+  font-size: 0.70rem;
   font-family: var(--mono);
   text-align: right;
   color: var(--yellow);
@@ -507,7 +507,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   flex-wrap: wrap;
 }
 .bar-item { display: flex; flex-direction: column; gap: 2px; }
-.bar-label { font-size: 0.6rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.07em; }
+.bar-label { font-size: 0.72rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.07em; }
 .bar-val { font-family: var(--mono); font-size: 0.9rem; font-weight: 700; }
 .bar-divider { width: 1px; height: 36px; background: var(--border); }
 
@@ -534,7 +534,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 }
 
 .source-badge {
-  font-size: 0.62rem;
+  font-size: 0.70rem;
   padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid rgba(245, 158, 11, 0.35);
@@ -599,7 +599,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 
 .tf-tabs { display: flex; gap: 0.35rem; }
 .tf-btn {
-  font-size: 0.63rem;
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--text3);
   border: 1px solid var(--border);
@@ -644,7 +644,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   gap: 0.4rem;
 }
 .reason-pill {
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   color: var(--text2);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -665,7 +665,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 }
 .signal-row-sym { font-weight: 700; font-size: 0.78rem; }
 .signal-row-action {
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.05em;
   border-radius: 999px;
@@ -678,7 +678,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 .signal-row-conf { font-family: var(--mono); color: var(--text2); font-size: 0.72rem; }
 .signal-row-meta {
   grid-column: 1 / -1;
-  font-size: 0.64rem;
+  font-size: 0.72rem;
   color: var(--text3);
 }
 
@@ -688,7 +688,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   align-items: center;
   justify-content: space-between;
   gap: 0.7rem;
-  font-size: 0.66rem;
+  font-size: 0.72rem;
   color: var(--text3);
   border-top: 1px dashed rgba(148,163,184,0.2);
   padding-top: 0.55rem;
@@ -712,7 +712,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   margin-bottom: 0.7rem;
 }
 .news-sources {
-  font-size: 0.67rem;
+  font-size: 0.72rem;
   color: var(--text3);
 }
 .news-list { display: grid; grid-template-columns: 1fr; gap: 0.45rem; }
@@ -727,7 +727,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   background: rgba(255,255,255,0.01);
 }
 .news-source {
-  font-size: 0.62rem;
+  font-size: 0.70rem;
   font-weight: 700;
   color: var(--cyan);
   border: 1px solid rgba(34,211,238,0.25);
@@ -742,7 +742,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   line-height: 1.4;
 }
 .news-link:hover { color: var(--text); }
-.news-time { display: block; font-size: 0.64rem; color: var(--text3); margin-top: 2px; }
+.news-time { display: block; font-size: 0.72rem; color: var(--text3); margin-top: 2px; }
 
 /* ── Notification Toast ──────────────────────────── */
 .toast-container {
@@ -830,9 +830,9 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   border-radius: 10px;
   padding: 0.7rem 0.85rem;
 }
-.cs-card.long-card  { border-left: 3px solid var(--green); }
-.cs-card.short-card { border-left: 3px solid var(--red); }
-.cs-card.avoid-card { border-left: 3px solid var(--yellow); opacity: 0.82; }
+.cs-card.long-card  { border-top: 2px solid var(--green); }
+.cs-card.short-card { border-top: 2px solid var(--red); }
+.cs-card.avoid-card { border-top: 2px solid var(--yellow); opacity: 0.82; }
 
 .cs-top {
   display: flex;
@@ -842,7 +842,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 }
 .cs-sym { font-weight: 700; font-size: 0.9rem; }
 .cs-signal {
-  font-size: 0.63rem;
+  font-size: 0.72rem;
   font-weight: 800;
   padding: 2px 7px;
   border-radius: 5px;
@@ -856,17 +856,17 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 .cs-rank-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.3rem 0; }
 .cs-rank-bar-wrap { flex: 1; height: 4px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; }
 .cs-rank-bar { height: 100%; border-radius: 2px; transition: width 0.4s; }
-.cs-rank-val { font-family: var(--mono); font-size: 0.68rem; color: var(--text2); min-width: 2.5rem; text-align: right; }
+.cs-rank-val { font-family: var(--mono); font-size: 0.72rem; color: var(--text2); min-width: 2.5rem; text-align: right; }
 
 .cs-thesis { font-size: 0.74rem; color: var(--text2); line-height: 1.4; margin-bottom: 0.3rem; }
-.cs-meta { font-size: 0.66rem; color: var(--text3); display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.cs-meta { font-size: 0.72rem; color: var(--text3); display: flex; gap: 0.6rem; flex-wrap: wrap; }
 .cs-meta span { display: flex; align-items: center; gap: 2px; }
-.cs-conf-line { font-size: 0.66rem; color: var(--accent); margin-top: 0.25rem; }
-.cs-futures-line { font-size: 0.64rem; color: var(--yellow); margin-top: 0.2rem; }
-.cs-blockers { font-size: 0.63rem; color: var(--red); margin-top: 0.25rem; }
+.cs-conf-line { font-size: 0.72rem; color: var(--accent); margin-top: 0.25rem; }
+.cs-futures-line { font-size: 0.72rem; color: var(--yellow); margin-top: 0.2rem; }
+.cs-blockers { font-size: 0.72rem; color: var(--red); margin-top: 0.25rem; }
 .cs-theme-pill {
   display: inline-block;
-  font-size: 0.58rem;
+  font-size: 0.70rem;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 3px;
@@ -893,7 +893,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   background: rgba(255,255,255,0.02);
 }
 .futures-advisory {
-  font-size: 0.6rem;
+  font-size: 0.72rem;
   color: var(--yellow);
   border: 1px solid rgba(245,158,11,0.3);
   background: rgba(245,158,11,0.08);
@@ -912,8 +912,8 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   padding: 0.75rem 1rem;
 }
 .futures-cell-sym { font-size: 0.72rem; font-weight: 700; color: var(--text); margin-bottom: 0.35rem; }
-.futures-cell-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.66rem; color: var(--text3); margin-bottom: 0.18rem; }
-.futures-cell-val { font-family: var(--mono); font-size: 0.68rem; font-weight: 600; color: var(--text2); }
+.futures-cell-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; color: var(--text3); margin-bottom: 0.18rem; }
+.futures-cell-val { font-family: var(--mono); font-size: 0.72rem; font-weight: 600; color: var(--text2); }
 .futures-cell-val.positive { color: var(--green); }
 .futures-cell-val.negative { color: var(--red); }
 .futures-cell-val.warn { color: var(--yellow); }
@@ -946,7 +946,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   border-radius: 999px;
   background: linear-gradient(90deg, #22d3ee, #6366f1);
 }
-.theme-score { font-family: var(--mono); font-size: 0.68rem; text-align: right; color: var(--text2); }
+.theme-score { font-family: var(--mono); font-size: 0.72rem; text-align: right; color: var(--text2); }
 
 .setup-wait {
   text-align: left;
@@ -957,7 +957,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 }
 .setup-wait-title { font-size: 0.7rem; color: var(--text2); font-weight: 700; margin-bottom: 0.35rem; }
 .setup-wait ul { margin: 0; padding-left: 1rem; }
-.setup-wait li { font-size: 0.66rem; color: var(--text3); line-height: 1.45; }
+.setup-wait li { font-size: 0.72rem; color: var(--text3); line-height: 1.45; }
 
 /* ── Why Market Strip ─────────────────────────────── */
 .why-strip {
@@ -998,7 +998,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   color: var(--text2);
 }
 .meme-viral-badge {
-  font-size: 0.62rem;
+  font-size: 0.70rem;
   font-weight: 800;
   padding: 2px 8px;
   border-radius: 999px;
@@ -1012,7 +1012,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 700;
   font-family: var(--mono);
 }
@@ -1029,7 +1029,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   flex-wrap: wrap;
 }
 .meme-filter-btn {
-  font-size: 0.63rem;
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--text3);
   border: 1px solid var(--border);
@@ -1064,7 +1064,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0.9rem 1rem;
-  border-left: 3px solid transparent;
+  border-top: 2px solid transparent;
   position: relative;
   overflow: hidden;
   transition: transform 0.15s, border-color 0.2s;
@@ -1112,7 +1112,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 }
 
 .meme-signal-badge {
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   font-weight: 900;
   padding: 4px 10px;
   border-radius: 6px;
@@ -1152,7 +1152,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   flex-wrap: wrap;
 }
 .meme-metric { display: flex; flex-direction: column; gap: 1px; }
-.meme-metric-lbl { font-size: 0.58rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; }
+.meme-metric-lbl { font-size: 0.70rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; }
 .meme-metric-val { font-family: var(--mono); font-size: 0.72rem; font-weight: 600; color: var(--text2); }
 
 /* RSI mini-bar */
@@ -1162,7 +1162,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   align-items: center;
   gap: 0.4rem;
 }
-.meme-rsi-label { font-size: 0.58rem; color: var(--text3); text-transform: uppercase; min-width: 1.8rem; }
+.meme-rsi-label { font-size: 0.70rem; color: var(--text3); text-transform: uppercase; min-width: 1.8rem; }
 .meme-rsi-track {
   flex: 1;
   height: 4px;
@@ -1174,11 +1174,11 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 .meme-rsi-fill.oversold  { background: var(--green); }
 .meme-rsi-fill.overbought { background: var(--red); }
 .meme-rsi-fill.normal    { background: linear-gradient(90deg, var(--accent), var(--cyan)); }
-.meme-rsi-val { font-family: var(--mono); font-size: 0.68rem; font-weight: 600; min-width: 2rem; text-align: right; }
+.meme-rsi-val { font-family: var(--mono); font-size: 0.72rem; font-weight: 600; min-width: 2rem; text-align: right; }
 
 /* Confidence bar */
 .meme-conf-wrap { margin-top: 0.4rem; display: flex; align-items: center; gap: 0.4rem; }
-.meme-conf-label { font-size: 0.58rem; color: var(--text3); text-transform: uppercase; min-width: 3.2rem; }
+.meme-conf-label { font-size: 0.70rem; color: var(--text3); text-transform: uppercase; min-width: 3.2rem; }
 .meme-conf-track {
   flex: 1;
   height: 4px;
@@ -1192,7 +1192,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   transition: width 0.5s;
   background: linear-gradient(90deg, var(--accent), var(--accent2));
 }
-.meme-conf-val { font-family: var(--mono); font-size: 0.68rem; color: var(--text2); min-width: 2.2rem; text-align: right; }
+.meme-conf-val { font-family: var(--mono); font-size: 0.72rem; color: var(--text2); min-width: 2.2rem; text-align: right; }
 
 /* News sentiment dot */
 .meme-news-row {
@@ -1206,17 +1206,17 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   border-radius: 50%;
   flex-shrink: 0;
 }
-.meme-news-dot.bullish { background: var(--green); box-shadow: 0 0 5px rgba(16,185,129,0.6); }
-.meme-news-dot.bearish { background: var(--red);   box-shadow: 0 0 5px rgba(239,68,68,0.6); }
+.meme-news-dot.bullish { background: var(--green);  }
+.meme-news-dot.bearish { background: var(--red);    }
 .meme-news-dot.neutral { background: var(--text3); }
-.meme-news-text { font-size: 0.64rem; color: var(--text3); }
+.meme-news-text { font-size: 0.72rem; color: var(--text3); }
 
 /* Risk warning */
 .meme-risk-warn {
   margin-top: 0.55rem;
   border-top: 1px solid rgba(245,158,11,0.18);
   padding-top: 0.4rem;
-  font-size: 0.6rem;
+  font-size: 0.72rem;
   color: rgba(245,158,11,0.75);
   display: flex;
   align-items: center;
@@ -1289,7 +1289,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
     <div class="cockpit-panel">
       <div class="cockpit-panel-hd">
         <span class="cockpit-panel-title">🎯 Best Right Now</span>
-        <span id="bestRightNowMeta" style="font-size:0.65rem;color:var(--text3)">—</span>
+        <span id="bestRightNowMeta" style="font-size: 0.72rem;color:var(--text3)">—</span>
       </div>
       <div class="cockpit-panel-body" id="bestRightNow">
         <div class="cockpit-empty">Fetching cockpit intelligence...</div>
@@ -1298,7 +1298,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
     <div class="cockpit-panel">
       <div class="cockpit-panel-hd">
         <span class="cockpit-panel-title">⛔ Avoid For Now</span>
-        <span style="font-size:0.63rem;color:var(--yellow);border:1px solid rgba(245,158,11,0.3);padding:2px 6px;border-radius:4px">Quality-blocked</span>
+        <span style="font-size: 0.72rem;color:var(--yellow);border:1px solid rgba(245,158,11,0.3);padding:2px 6px;border-radius:4px">Quality-blocked</span>
       </div>
       <div class="cockpit-panel-body" id="avoidForNow">
         <div class="cockpit-empty">Loading...</div>
@@ -1319,7 +1319,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   <div class="theme-panel" id="themePanel" style="display:none">
     <div class="futures-panel-hd">
       <span class="cockpit-panel-title">🗂 Theme Leadership</span>
-      <span style="font-size:0.65rem;color:var(--text3)">Avg Quality Score by theme</span>
+      <span style="font-size: 0.72rem;color:var(--text3)">Avg Quality Score by theme</span>
     </div>
     <div class="theme-grid" id="themeGrid"></div>
   </div>
@@ -2644,7 +2644,7 @@ function renderHeroCoins(tickers) {
       </div>
       <div class="coin-price">$${fmtCryptoPrice(price)}</div>
       <div class="coin-change ${isUp ? 'up' : 'down'}">${isUp ? '+' : ''}${pct.toFixed(2)}%
-        ${vs >= 2 ? `<span style="font-size:0.65rem;margin-left:4px;color:var(--yellow)">⚡ Vol×${vs.toFixed(1)}</span>` : ''}
+        ${vs >= 2 ? `<span style="font-size: 0.72rem;margin-left:4px;color:var(--yellow)">⚡ Vol×${vs.toFixed(1)}</span>` : ''}
       </div>
       <div class="sparkline-wrap"><canvas class="sparkline" id="spark-${sym}"></canvas></div>
       <div class="rsi-bar-wrap">

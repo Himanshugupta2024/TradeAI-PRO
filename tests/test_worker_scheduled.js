@@ -51,7 +51,7 @@ async function runTests() {
   };
 
   const result = await handleScheduled({ cron: '*/5 * * * *' }, {}, {}, mockFetch);
-  assert.strictEqual(calledUrl, 'https://trading-api-n1wt.onrender.com/api/health');
+  assert.strictEqual(calledUrl, 'https://trading-api-n1wt.onrender.com/api/health/live');
   assert.strictEqual(calledOptions.method, 'GET');
   assert.strictEqual(calledOptions.headers['User-Agent'], 'TradeAI-Cloudflare-Cron-KeepAlive/1.0');
   assert.strictEqual(calledOptions.headers['Accept'], 'application/json');

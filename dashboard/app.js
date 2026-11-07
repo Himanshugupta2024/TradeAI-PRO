@@ -2861,13 +2861,13 @@ function renderAutonomousFeedUI(rawFeed, { isCached = false } = {}) {
         const timeStr = tsStr ? new Date(tsStr).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) : '';
         const pnlText = (item.pnl_pct !== null && item.pnl_pct !== undefined) ? `<span style="color:${item.pnl_pct >= 0 ? '#10b981' : '#f43f5e'};font-weight:600;">(${item.pnl_pct >= 0 ? '+' : ''}${item.pnl_pct}%)</span>` : '';
         const priceText = item.price ? `₹${Number(item.price).toLocaleString('en-IN')}` : '';
-        const scorePill = item.qs_score > 0 ? `<span style="font-size:10px;color:#38bdf8;background:rgba(56,189,248,0.1);padding:1px 4px;border-radius:3px;">QS ${item.qs_score}</span>` : '';
+        const scorePill = item.qs_score > 0 ? `<span style="font-size:11px;color:#38bdf8;background:rgba(56,189,248,0.1);padding:1px 4px;border-radius:3px;">QS ${item.qs_score}</span>` : '';
 
         return `
             <div class="decision-feed-row" style="display:flex;align-items:center;justify-content:space-between;border-radius:6px;padding:6px 10px;font-size:12px;">
                 <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="font-family:monospace;font-size:10px;color:var(--text-muted,#94a3b8);">${timeStr}</span>
-                    <span style="background:${bgBadge};color:${badgeColor};border:1px solid ${badgeColor}33;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">${escapeHtml(item.action)}</span>
+                    <span style="font-family:monospace;font-size:11px;color:var(--text-muted,#94a3b8);">${timeStr}</span>
+                    <span style="background:${bgBadge};color:${badgeColor};border:1px solid ${badgeColor}33;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;">${escapeHtml(item.action)}</span>
                     <strong style="color:var(--text-primary,#f8fafc);">${escapeHtml(item.symbol)}</strong>
                     ${item.direction && item.direction !== 'HOLD' && item.direction !== 'NEUTRAL' ? `<span style="color:${item.direction === 'LONG' ? '#10b981' : '#f43f5e'};font-weight:600;font-size:11px;">${escapeHtml(item.direction)}</span>` : ''}
                     ${priceText ? `<span style="font-family:monospace;font-size:11px;color:var(--text-muted,#94a3b8);">${priceText}</span>` : ''}
@@ -4755,7 +4755,7 @@ function _renderTopSetups(setups, meta) {
 
 
 
-                    ${freshBadge}${chaseBadge}${s.session_badge ? `<span class="cs-pct-badge" style="background:rgba(99,102,241,0.22);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);font-size:8px;padding:1px 5px;border-radius:4px;margin-left:4px;">${s.session_badge}</span>` : ''}
+                    ${freshBadge}${chaseBadge}${s.session_badge ? `<span class="cs-pct-badge" style="background:rgba(99,102,241,0.22);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);font-size:11px;padding:1px 5px;border-radius:4px;margin-left:4px;">${s.session_badge}</span>` : ''}
 
 
 
@@ -4775,7 +4775,7 @@ function _renderTopSetups(setups, meta) {
 
 
 
-                    <span style="font-size:0.68rem;font-weight:800;color:${qColor}">QS ${s.quality_score} · ${s.quality_grade}</span>
+                    <span style="font-size: 0.72rem;font-weight:800;color:${qColor}">QS ${s.quality_score} · ${s.quality_grade}</span>
 
 
 
@@ -4990,7 +4990,7 @@ function _renderPortfolioCaution(caution) {
 
 
 
-    el.style.borderLeft = `3px solid ${borderColor}`;
+    el.style.borderTop = `2px solid ${borderColor}`;
 
 
 
@@ -6555,11 +6555,11 @@ function _renderCryptoMiniPanel(data) {
 
 
 
-            <span style="font-size:0.62rem;font-weight:800;color:${sigColor};border:1px solid ${sigColor}33;padding:1px 6px;border-radius:4px">${sig}</span>
+            <span style="font-size: 0.70rem;font-weight:800;color:${sigColor};border:1px solid ${sigColor}33;padding:1px 6px;border-radius:4px">${sig}</span>
 
 
 
-            <span style="font-family:monospace;font-size:0.68rem;color:var(--text3)">rank ${cr}</span>
+            <span style="font-family:monospace;font-size: 0.72rem;color:var(--text3)">rank ${cr}</span>
 
 
 
@@ -6639,11 +6639,11 @@ function _renderCryptoMiniPanel(data) {
 
 
 
-            <span style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text2)">₿ Crypto Market</span>
+            <span style="font-size: 0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text2)">₿ Crypto Market</span>
 
 
 
-            <a href="/crypto" style="font-size:0.65rem;color:var(--accent);text-decoration:none;border:1px solid rgba(99,102,241,0.3);padding:2px 8px;border-radius:4px;transition:all 0.15s" onmouseover="this.style.background='rgba(99,102,241,0.1)'" onmouseout="this.style.background=''">Full cockpit →</a>
+            <a href="/crypto" style="font-size: 0.72rem;color:var(--accent);text-decoration:none;border:1px solid rgba(99,102,241,0.3);padding:2px 8px;border-radius:4px;transition:all 0.15s" onmouseover="this.style.background='rgba(99,102,241,0.1)'" onmouseout="this.style.background=''">Full cockpit →</a>
 
 
 
@@ -6659,7 +6659,7 @@ function _renderCryptoMiniPanel(data) {
 
 
 
-                <div style="font-size:0.58rem;color:var(--text3);text-transform:uppercase;margin-bottom:2px">Mood</div>
+                <div style="font-size: 0.70rem;color:var(--text3);text-transform:uppercase;margin-bottom:2px">Mood</div>
 
 
 
@@ -6675,7 +6675,7 @@ function _renderCryptoMiniPanel(data) {
 
 
 
-                <div style="font-size:0.58rem;color:var(--text3);text-transform:uppercase;margin-bottom:2px">BTC 24h</div>
+                <div style="font-size: 0.70rem;color:var(--text3);text-transform:uppercase;margin-bottom:2px">BTC 24h</div>
 
 
 
@@ -6691,7 +6691,7 @@ function _renderCryptoMiniPanel(data) {
 
 
 
-                <div style="font-size:0.58rem;color:var(--text3);text-transform:uppercase;margin-bottom:2px">ETH 24h</div>
+                <div style="font-size: 0.70rem;color:var(--text3);text-transform:uppercase;margin-bottom:2px">ETH 24h</div>
 
 
 
@@ -6707,7 +6707,7 @@ function _renderCryptoMiniPanel(data) {
 
 
 
-                <div style="font-size:0.58rem;color:var(--text3);text-transform:uppercase;margin-bottom:2px">F&G</div>
+                <div style="font-size: 0.70rem;color:var(--text3);text-transform:uppercase;margin-bottom:2px">F&G</div>
 
 
 
@@ -6723,7 +6723,7 @@ function _renderCryptoMiniPanel(data) {
 
 
 
-                <div style="font-size:0.58rem;color:var(--text3);text-transform:uppercase;margin-bottom:2px">Setups</div>
+                <div style="font-size: 0.70rem;color:var(--text3);text-transform:uppercase;margin-bottom:2px">Setups</div>
 
 
 
@@ -8083,10 +8083,10 @@ function renderOverviewActiveTrades(openTrades, summary) {
 
         const currSym = _symCurr(t.symbol);
         const fallbackBadge = isFallback
-            ? `<span class="pos-fallback-badge" style="font-size:0.65rem;font-weight:700;color:#f59e0b;background:rgba(245,158,11,0.15);padding:1px 5px;border-radius:4px;border:1px solid rgba(245,158,11,0.3);margin-left:6px;" title="Real-time quote unavailable. Entry price used as reference.">⚠️ Unquoted Ref</span>`
+            ? `<span class="pos-fallback-badge" style="font-size: 0.72rem;font-weight:700;color:#f59e0b;background:rgba(245,158,11,0.15);padding:1px 5px;border-radius:4px;border:1px solid rgba(245,158,11,0.3);margin-left:6px;" title="Real-time quote unavailable. Entry price used as reference.">⚠️ Unquoted Ref</span>`
             : '';
         const zombieBadge = t.zombie
-            ? `<span class="pos-fallback-badge" style="font-size:0.65rem;font-weight:700;color:#f87171;background:rgba(239,68,68,0.12);padding:1px 5px;border-radius:4px;border:1px solid rgba(239,68,68,0.35);margin-left:6px;" title="Missed scheduled exit: ${(t.zombie_reason || '').replace(/_/g, ' ')}">STALE</span>`
+            ? `<span class="pos-fallback-badge" style="font-size: 0.72rem;font-weight:700;color:#f87171;background:rgba(239,68,68,0.12);padding:1px 5px;border-radius:4px;border:1px solid rgba(239,68,68,0.35);margin-left:6px;" title="Missed scheduled exit: ${(t.zombie_reason || '').replace(/_/g, ' ')}">STALE</span>`
             : '';
         const statusPulse = isFallback
             ? `<span class="pos-status-pulse" style="color:#f59e0b;">⚠️ UNQUOTED REF</span>`
@@ -8352,37 +8352,37 @@ async function openPositionDetail(tradeId) {
             </div>
             <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:16px;">
                 <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
-                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Entry Price</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Entry Price</div>
                     <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#f0f6fc;margin-top:2px;">${currSym}${entry.toFixed(2)}</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">Filled</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);margin-top:2px;">Filled</div>
                 </div>
                 <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
-                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">${isClosed ? 'Exit Price' : (trade.quote_status === 'LAST_SESSION_EOD' ? 'Last Session Mark' : (isFallback || trade.is_entry_fallback ? 'Reference Mark' : 'Live Market LTP'))}</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">${isClosed ? 'Exit Price' : (trade.quote_status === 'LAST_SESSION_EOD' ? 'Last Session Mark' : (isFallback || trade.is_entry_fallback ? 'Reference Mark' : 'Live Market LTP'))}</div>
                     <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#38bdf8;margin-top:2px;">${currSym}${isClosed ? exitPx.toFixed(2) : ltp.toFixed(2)}</div>
-                    <div style="font-size:0.65rem;color:${isClosed ? 'var(--text-muted)' : '#38bdf8'};margin-top:2px;">${isClosed ? (trade.exit_time ? 'Closed ' + new Date(trade.exit_time).toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'}) : 'Closed') : (trade.quote_status === 'LAST_SESSION_EOD' ? 'Last Session EOD' : (isFallback || trade.is_entry_fallback || trade.is_stale_quote ? 'Reference Mark' : 'Real-Time'))}</div>
+                    <div style="font-size: 0.72rem;color:${isClosed ? 'var(--text-muted)' : '#38bdf8'};margin-top:2px;">${isClosed ? (trade.exit_time ? 'Closed ' + new Date(trade.exit_time).toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'}) : 'Closed') : (trade.quote_status === 'LAST_SESSION_EOD' ? 'Last Session EOD' : (isFallback || trade.is_entry_fallback || trade.is_stale_quote ? 'Reference Mark' : 'Real-Time'))}</div>
                 </div>
                 <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
-                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss (SL)</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss (SL)</div>
                     <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:var(--red);margin-top:2px;">${currSym}${sl.toFixed(2)}</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">${slDistPct.toFixed(1)}% away</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);margin-top:2px;">${slDistPct.toFixed(1)}% away</div>
                 </div>
             </div>
 
             <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:16px;">
                 <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
-                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Full Target (TP)</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Full Target (TP)</div>
                     <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:var(--green);margin-top:2px;">${currSym}${tp.toFixed(2)}</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">${tpDistPct > 0 ? tpDistPct.toFixed(1) + '% away' : 'Target Reached'}</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);margin-top:2px;">${tpDistPct > 0 ? tpDistPct.toFixed(1) + '% away' : 'Target Reached'}</div>
                 </div>
                 <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
-                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Partial Target</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Partial Target</div>
                     <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#f59e0b;margin-top:2px;">${trade.partial_target > 0 ? currSym + Number(trade.partial_target).toFixed(2) : '—'}</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">${trade.partial_taken ? '✅ Booked 50%' : 'Pending Scale-out'}</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);margin-top:2px;">${trade.partial_taken ? '✅ Booked 50%' : 'Pending Scale-out'}</div>
                 </div>
                 <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 12px;border-radius:8px;">
-                    <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">Trailing SL</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Trailing SL</div>
                     <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#c084fc;margin-top:2px;">📐 Active</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">Dynamic Lock</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);margin-top:2px;">Dynamic Lock</div>
                 </div>
             </div>
 
@@ -9304,7 +9304,7 @@ function renderMoodSplit(split) {
 
 
 
-                <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">${title}</div>
+                <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">${title}</div>
 
 
 
@@ -9312,7 +9312,7 @@ function renderMoodSplit(split) {
 
 
 
-                <div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.12rem;">${detail}</div>
+                <div style="font-size: 0.72rem;color:var(--text-muted);margin-top:0.12rem;">${detail}</div>
 
 
 
@@ -10454,7 +10454,7 @@ function renderSignals(signals) {
 
 
 
-                <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.69rem;color:var(--text-muted);">
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size: 0.72rem;color:var(--text-muted);">
 
 
 
@@ -10482,7 +10482,7 @@ function renderSignals(signals) {
 
 
 
-                <div style="margin-top:0.35rem;display:flex;justify-content:space-between;gap:0.5rem;font-size:0.67rem;">
+                <div style="margin-top:0.35rem;display:flex;justify-content:space-between;gap:0.5rem;font-size: 0.72rem;">
 
 
 
@@ -10498,11 +10498,11 @@ function renderSignals(signals) {
 
 
 
-                ${driftWarn ? `<div style="margin-top:0.28rem;font-size:0.65rem;color:var(--orange)">${driftWarn}</div>` : ''}
+                ${driftWarn ? `<div style="margin-top:0.28rem;font-size: 0.72rem;color:var(--orange)">${driftWarn}</div>` : ''}
 
 
 
-                ${contextWarning ? `<div style="margin-top:0.28rem;font-size:0.65rem;color:var(--yellow)">${contextWarning}</div>` : ''}
+                ${contextWarning ? `<div style="margin-top:0.28rem;font-size: 0.72rem;color:var(--yellow)">${contextWarning}</div>` : ''}
 
 
 
@@ -10873,7 +10873,7 @@ function updateOpportunitiesGrid(opportunities, meta) {
 
 
 
-                    <span style="font-size:0.65rem;color:${sigColor};border:1px solid ${sigColor};padding:1px 4px;border-radius:3px;">${sigText}</span>
+                    <span style="font-size: 0.72rem;color:${sigColor};border:1px solid ${sigColor};padding:1px 4px;border-radius:3px;">${sigText}</span>
 
 
 
@@ -11428,7 +11428,7 @@ async function loadPortfolio() {
                         <tr onclick="openPositionDetail(${p.id})" style="cursor:pointer;" title="Click to view detailed position analytics">
                             <td>
                                 <b>${p.symbol}</b>
-                                ${p.is_entry_fallback ? `<span style="font-size:0.65rem;color:#f59e0b;background:rgba(245,158,11,0.15);padding:1px 4px;border-radius:3px;margin-left:4px;" title="Unquoted entry reference price">⚠️ Ref</span>` : ''}
+                                ${p.is_entry_fallback ? `<span style="font-size: 0.72rem;color:#f59e0b;background:rgba(245,158,11,0.15);padding:1px 4px;border-radius:3px;margin-left:4px;" title="Unquoted entry reference price">⚠️ Ref</span>` : ''}
                             </td>
                             <td><span class="${sideClass}">${sideText}</span></td>
                             <td>${currSym}${Number(p.entry_price || 0).toFixed(2)}</td>
@@ -11518,7 +11518,7 @@ async function loadPortfolio() {
                     const pnlPct = Number(t.pnl_pct || 0);
                     const sign = pnlVal > 0 ? '+' : (pnlVal < 0 ? '-' : '');
                     const pctSign = pnlPct >= 0 ? '+' : '';
-                    const signalBadge = t.signal_type ? `<div style="font-size:0.65rem;color:var(--text-muted);letter-spacing:0.04em;">${t.signal_type}</div>` : '';
+                    const signalBadge = t.signal_type ? `<div style="font-size: 0.72rem;color:var(--text-muted);letter-spacing:0.04em;">${t.signal_type}</div>` : '';
 
                     return `
                         <tr onclick="openPositionDetail(${t.id})" style="cursor:pointer;" title="Click to view complete trade analytics and execution details">
@@ -11979,7 +11979,7 @@ async function loadLearningStats() {
                             <div class="perf-sym-track" style="height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden;margin:3px 0;">
                                 <div class="perf-sym-fill" style="width:${trades > 0 ? wr : 0}%;background:${c};height:100%;border-radius:3px;"></div>
                             </div>
-                            <div style="font-size:0.68rem;color:var(--text-muted);display:flex;justify-content:space-between;">
+                            <div style="font-size: 0.72rem;color:var(--text-muted);display:flex;justify-content:space-between;">
                                 <span>${trades} sample trade(s)</span>
                                 <span>Avg ${Number(bst.avg_pnl || 0).toFixed(2)}%</span>
                             </div>
@@ -12783,7 +12783,7 @@ function renderMorningShortlist(setups) {
 
 
 
-        <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
+        <div class="card" style="padding:1rem;border-top:2px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
 
 
 
@@ -12803,11 +12803,11 @@ function renderMorningShortlist(setups) {
 
 
 
-                        <span class="signal-badge ${dirClass}" style="font-size:0.65rem;padding:2px 6px;">${s.direction}</span>
+                        <span class="signal-badge ${dirClass}" style="font-size: 0.72rem;padding:2px 6px;">${s.direction}</span>
 
 
 
-                        <span style="font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
+                        <span style="font-size: 0.70rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
 
 
 
@@ -12827,7 +12827,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
+                    <div style="font-size: 0.70rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
 
 
 
@@ -12871,7 +12871,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                <span style="font-size:0.68rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
+                <span style="font-size: 0.72rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
 
 
 
@@ -13207,7 +13207,7 @@ function renderMorningShortlist(setups) {
 
 
 
-        <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
+        <div class="card" style="padding:1rem;border-top:2px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
 
 
 
@@ -13227,11 +13227,11 @@ function renderMorningShortlist(setups) {
 
 
 
-                        <span class="signal-badge ${dirClass}" style="font-size:0.65rem;padding:2px 6px;">${s.direction}</span>
+                        <span class="signal-badge ${dirClass}" style="font-size: 0.72rem;padding:2px 6px;">${s.direction}</span>
 
 
 
-                        <span style="font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
+                        <span style="font-size: 0.70rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
 
 
 
@@ -13251,7 +13251,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
+                    <div style="font-size: 0.70rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
 
 
 
@@ -13295,7 +13295,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                <span style="font-size:0.68rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
+                <span style="font-size: 0.72rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
 
 
 
@@ -13627,7 +13627,7 @@ function renderMorningShortlist(setups) {
 
 
 
-        <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
+        <div class="card" style="padding:1rem;border-top:2px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
 
 
 
@@ -13647,11 +13647,11 @@ function renderMorningShortlist(setups) {
 
 
 
-                        <span class="signal-badge ${dirClass}" style="font-size:0.65rem;padding:2px 6px;">${s.direction}</span>
+                        <span class="signal-badge ${dirClass}" style="font-size: 0.72rem;padding:2px 6px;">${s.direction}</span>
 
 
 
-                        <span style="font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
+                        <span style="font-size: 0.70rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
 
 
 
@@ -13671,7 +13671,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
+                    <div style="font-size: 0.70rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
 
 
 
@@ -13715,7 +13715,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                <span style="font-size:0.68rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
+                <span style="font-size: 0.72rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
 
 
 
@@ -13830,7 +13830,7 @@ function _renderTradeHistory(trades) {
             day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'
         }) : '—';
         const duration = t.duration_human || _fmtDuration(t.entry_time, t.exit_time);
-        const durHtml = duration && duration !== '—' ? `<br><small style="color:var(--text-muted);font-size:0.68rem;">⏱ ${duration}</small>` : '';
+        const durHtml = duration && duration !== '—' ? `<br><small style="color:var(--text-muted);font-size: 0.72rem;">⏱ ${duration}</small>` : '';
         const sign = pnl > 0 ? '+' : (pnl < 0 ? '-' : '');
         const pnlPct = Number(t.pnl_pct || 0);
         const pctSign = pnlPct > 0 ? '+' : '';
@@ -15452,8 +15452,8 @@ async function loadModalBacktest(symbol) {
         const statsOk = Boolean(data.stats_available ?? (tradeCount >= 20));
         const isExploratory = data.sample_status === 'INSUFFICIENT_SAMPLE' || tradeCount < 20;
         const sampleBadge = isExploratory 
-            ? `<span style="font-size:0.65rem;color:var(--yellow);background:rgba(245,158,11,0.12);padding:2px 8px;border-radius:10px;font-weight:700;">⚠️ ${tradeCount < 20 ? `${tradeCount} trades • Exploratory only` : (data.sample_badge || 'Exploratory only')}</span>`
-            : `<span style="font-size:0.65rem;color:var(--green);background:rgba(16,185,129,0.12);padding:2px 8px;border-radius:10px;font-weight:700;">✓ ${data.sample_badge || 'Statistically valid'}</span>`;
+            ? `<span style="font-size: 0.72rem;color:var(--yellow);background:rgba(245,158,11,0.12);padding:2px 8px;border-radius:10px;font-weight:700;">⚠️ ${tradeCount < 20 ? `${tradeCount} trades • Exploratory only` : (data.sample_badge || 'Exploratory only')}</span>`
+            : `<span style="font-size: 0.72rem;color:var(--green);background:rgba(16,185,129,0.12);padding:2px 8px;border-radius:10px;font-weight:700;">✓ ${data.sample_badge || 'Statistically valid'}</span>`;
 
         const wrLabel = statsOk ? 'Win Rate' : 'Win rate (small sample)';
         const sharpeDisplay = statsOk
@@ -15477,7 +15477,7 @@ async function loadModalBacktest(symbol) {
                     <span style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Strategy Backtest</span>
                     ${sampleBadge}
                 </div>
-                <div style="font-size:0.65rem;color:#64748b;font-family:var(--font-mono);">${dataWindow}</div>
+                <div style="font-size: 0.72rem;color:#64748b;font-family:var(--font-mono);">${dataWindow}</div>
             </div>
             <div class="backtest-grid">
                 <div class="bt-metric">
@@ -15520,7 +15520,7 @@ async function loadModalBacktest(symbol) {
                 </div>
                 <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
                     <span style="color:var(--text-muted)">Total costs</span>
-                    <span style="color:var(--red)">-${estCosts.toFixed(2)}% <span style="color:var(--text-muted);font-size:0.63rem">(${tradeCount} trades · ${perTradeCost.toFixed(2)}% each)</span></span>
+                    <span style="color:var(--red)">-${estCosts.toFixed(2)}% <span style="color:var(--text-muted);font-size: 0.72rem">(${tradeCount} trades · ${perTradeCost.toFixed(2)}% each)</span></span>
                 </div>
                 <div style="display:flex;justify-content:space-between;margin-bottom:3px;border-top:1px dashed var(--border-color);padding-top:3px;">
                     <span style="color:var(--text-muted)">Net return</span>
@@ -15529,10 +15529,10 @@ async function loadModalBacktest(symbol) {
                 ${costDrag > 0 ? `
                 <div style="display:flex;justify-content:space-between;margin-top:3px;">
                     <span style="color:var(--text-muted)">Cost drag</span>
-                    <span style="color:var(--yellow);">${Math.round(costDrag)}% <span style="font-size:0.62rem;color:var(--text-muted)">← costs ate most of the edge</span></span>
+                    <span style="color:var(--yellow);">${Math.round(costDrag)}% <span style="font-size: 0.70rem;color:var(--text-muted)">← costs ate most of the edge</span></span>
                 </div>` : ''}
             </div>
-            <div style="font-size:0.63rem;color:#64748b;margin-top:0.4rem;display:flex;justify-content:flex-end;">
+            <div style="font-size: 0.72rem;color:#64748b;margin-top:0.4rem;display:flex;justify-content:flex-end;">
                 <span>${data.cache_status === 'HIT' ? '⚡ Instant (Cache)' : 'Live Model Computed'}</span>
             </div>
         `;
@@ -15578,10 +15578,10 @@ async function loadModalNews(symbol) {
             const rel = item.symbol_relevance || 'COMPANY_SPECIFIC';
             
             const relBadge = rel === 'COMPANY_SPECIFIC'
-                ? '<span style="font-size:0.58rem;background:rgba(16,185,129,0.15);color:var(--green);padding:1px 5px;border-radius:4px;font-weight:700;">COMPANY</span>'
+                ? '<span style="font-size: 0.70rem;background:rgba(16,185,129,0.15);color:var(--green);padding:1px 5px;border-radius:4px;font-weight:700;">COMPANY</span>'
                 : rel === 'SECTOR_RELATED'
-                ? '<span style="font-size:0.58rem;background:rgba(56,189,248,0.15);color:var(--cyan);padding:1px 5px;border-radius:4px;font-weight:700;">SECTOR</span>'
-                : '<span style="font-size:0.58rem;background:rgba(148,163,184,0.15);color:#94a3b8;padding:1px 5px;border-radius:4px;font-weight:700;">MACRO</span>';
+                ? '<span style="font-size: 0.70rem;background:rgba(56,189,248,0.15);color:var(--cyan);padding:1px 5px;border-radius:4px;font-weight:700;">SECTOR</span>'
+                : '<span style="font-size: 0.70rem;background:rgba(148,163,184,0.15);color:#94a3b8;padding:1px 5px;border-radius:4px;font-weight:700;">MACRO</span>';
 
             return `
             <div style="background:rgba(255,255,255,0.02);padding:0.4rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.05);display:flex;justify-content:space-between;align-items:center;gap:8px;">
@@ -15591,7 +15591,7 @@ async function loadModalNews(symbol) {
                         ${titleSafe}
                     </a>
                 </div>
-                <div style="display:flex;align-items:center;gap:6px;font-size:0.65rem;color:#64748b;white-space:nowrap;">
+                <div style="display:flex;align-items:center;gap:6px;font-size: 0.72rem;color:#64748b;white-space:nowrap;">
                     <span>${srcSafe}</span>
                     <span>•</span>
                     <span style="color:#94a3b8;">${ageSafe}</span>
@@ -16388,11 +16388,11 @@ function renderModalInfo(data, symbol, interval, meta) {
 
     let statusBadge = '';
     if (isTargetHit) {
-        statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--green);padding:1px 6px;border-radius:8px;background:rgba(16,185,129,0.15);margin-left:4px;">✓ TARGET HIT</span>';
+        statusBadge = '<span style="font-size: 0.70rem;font-weight:700;color:var(--green);padding:1px 6px;border-radius:8px;background:rgba(16,185,129,0.15);margin-left:4px;">✓ TARGET HIT</span>';
     } else if (isStoppedOut) {
-        statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--red);padding:1px 6px;border-radius:8px;background:rgba(239,68,68,0.15);margin-left:4px;">✕ STOPPED OUT</span>';
+        statusBadge = '<span style="font-size: 0.70rem;font-weight:700;color:var(--red);padding:1px 6px;border-radius:8px;background:rgba(239,68,68,0.15);margin-left:4px;">✕ STOPPED OUT</span>';
     } else if (status === 'STALE') {
-        statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--yellow);padding:1px 6px;border-radius:8px;background:rgba(245,158,11,0.15);margin-left:4px;">⏱ STALE</span>';
+        statusBadge = '<span style="font-size: 0.70rem;font-weight:700;color:var(--yellow);padding:1px 6px;border-radius:8px;background:rgba(245,158,11,0.15);margin-left:4px;">⏱ STALE</span>';
     }
 
     const sigColor = ['LONG','BUY'].includes(displaySig)   ? 'var(--green)'
@@ -16416,7 +16416,7 @@ function renderModalInfo(data, symbol, interval, meta) {
     const localColor = localTrend === 'BULLISH' ? 'var(--green)' : localTrend === 'BEARISH' ? 'var(--red)' : 'var(--text-muted)';
     const macroColor = macroTrend === 'BULLISH' ? 'var(--green)' : macroTrend === 'BEARISH' ? 'var(--red)' : 'var(--text-muted)';
     const isMacroConflict = (localTrend === 'BULLISH' && macroTrend === 'BEARISH') || (localTrend === 'BEARISH' && macroTrend === 'BULLISH');
-    const macroConflictChip = isMacroConflict ? '<span style="font-size:0.62rem;font-weight:700;color:var(--yellow);margin-left:4px;" title="Macro conflict: local timeframe trend opposes daily macro">⚠️ CONFLICT</span>' : '';
+    const macroConflictChip = isMacroConflict ? '<span style="font-size: 0.70rem;font-weight:700;color:var(--yellow);margin-left:4px;" title="Macro conflict: local timeframe trend opposes daily macro">⚠️ CONFLICT</span>' : '';
 
     // Stale check & human age string
     const isSignalStale = Boolean(sig?.stale || sig?.actionable === false || meta?.is_stale);
@@ -16448,7 +16448,7 @@ function renderModalInfo(data, symbol, interval, meta) {
         (['SHORT', 'SELL'].includes(sigDir) && entryDist < -0.25)
     );
     const entryWarningChip = isEntryCrossed ? `
-        <span style="display:inline-block;font-size:0.62rem;font-weight:600;color:var(--yellow);background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);padding:1px 6px;border-radius:4px;margin-top:3px;" title="Limit entry already crossed; chasing risk.">
+        <span style="display:inline-block;font-size: 0.70rem;font-weight:600;color:var(--yellow);background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);padding:1px 6px;border-radius:4px;margin-top:3px;" title="Limit entry already crossed; chasing risk.">
             Price moved ${entryDist >= 0 ? '+' : ''}${entryDist.toFixed(2)}% past entry
         </span>` : '';
 
@@ -16458,7 +16458,7 @@ function renderModalInfo(data, symbol, interval, meta) {
     let confChipsHTML = '';
     if (confPenalties.length > 0) {
         confChipsHTML = `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">` +
-            confPenalties.map(p => `<span style="font-size:0.58rem;background:rgba(239,68,68,0.15);color:var(--red);border-radius:3px;padding:1px 4px;font-family:var(--font-mono);" title="Conflict penalty">${p}</span>`).join('') +
+            confPenalties.map(p => `<span style="font-size: 0.70rem;background:rgba(239,68,68,0.15);color:var(--red);border-radius:3px;padding:1px 4px;font-family:var(--font-mono);" title="Conflict penalty">${p}</span>`).join('') +
             `</div>`;
     }
 
@@ -16471,27 +16471,27 @@ function renderModalInfo(data, symbol, interval, meta) {
             tradeSectionHTML = `
                 <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.55rem;margin-top:0.1rem;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
-                        <span style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Previous Completed Trade</span>
-                        <span style="font-size:0.68rem;color:var(--green);font-weight:700;">✓ Target Achieved (+${gainPct}%)</span>
+                        <span style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Previous Completed Trade</span>
+                        <span style="font-size: 0.72rem;color:var(--green);font-weight:700;">✓ Target Achieved (+${gainPct}%)</span>
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;text-align:center;">
                         <div>
-                            <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
+                            <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
                             <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
                         </div>
                         <div>
-                            <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss</div>
+                            <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss</div>
                             <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${slVal ? curr + slVal.toFixed(2) : '—'}</div>
                         </div>
                         <div>
-                            <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Target Hit</div>
+                            <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">Target Hit</div>
                             <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tpVal ? curr + tpVal.toFixed(2) : '—'}</div>
                         </div>
                     </div>
                 </div>`;
         } else {
             const staleBanner = isSignalStale ? `
-                <div style="grid-column:1/-1;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);color:var(--yellow);padding:5px 8px;border-radius:6px;font-size:0.68rem;font-weight:600;margin-bottom:0.4rem;text-align:center;">
+                <div style="grid-column:1/-1;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);color:var(--yellow);padding:5px 8px;border-radius:6px;font-size: 0.72rem;font-weight:600;margin-bottom:0.4rem;text-align:center;">
                     Last session levels · not actionable ${ageHuman ? `(data ${ageHuman} old)` : ''}
                 </div>` : '';
             const dimStyle = isSignalStale ? 'opacity:0.6;' : '';
@@ -16499,15 +16499,15 @@ function renderModalInfo(data, symbol, interval, meta) {
                 <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.6rem;margin-top:0.1rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;${dimStyle}">
                     ${staleBanner}
                     <div style="text-align:center">
-                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Entry</div>
+                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Entry</div>
                         <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
                     </div>
                     <div style="text-align:center">
-                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Stop Loss</div>
+                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Stop Loss</div>
                         <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${slVal ? curr + slVal.toFixed(2) : '—'}</div>
                     </div>
                     <div style="text-align:center">
-                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Target</div>
+                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Target</div>
                         <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tpVal ? curr + tpVal.toFixed(2) : '—'}</div>
                     </div>
                 </div>`;
@@ -17029,7 +17029,7 @@ function renderContextEventsAccordion(events) {
 
 
 
-                    <span style="font-size:0.68rem;color:${impactColor};font-weight:700;">${impact}</span>
+                    <span style="font-size: 0.72rem;color:${impactColor};font-weight:700;">${impact}</span>
 
 
 
@@ -17411,7 +17411,7 @@ function renderScreener(stocks) {
 
 
 
-                                ${s.sector ? `<span style="font-size:0.58rem;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.08);color:var(--text-muted);font-weight:500;">${s.sector}</span>` : ''}
+                                ${s.sector ? `<span style="font-size: 0.70rem;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.08);color:var(--text-muted);font-weight:500;">${s.sector}</span>` : ''}
 
 
 
@@ -18621,7 +18621,7 @@ function renderTradeFlow(data) {
 
 
                 <span class="tf-date">📅 ${date || ''}</span>
-                <span class="tf-eod-notice" style="font-size:0.68rem;color:var(--text-muted);background:rgba(255,255,255,0.06);padding:2px 7px;border-radius:4px;border:1px solid rgba(255,255,255,0.08);" title="Official NSE cash settlement data publishes daily after 17:30 IST">Settled EOD Session (Today's live flow publishes after 17:30 IST)</span>
+                <span class="tf-eod-notice" style="font-size: 0.72rem;color:var(--text-muted);background:rgba(255,255,255,0.06);padding:2px 7px;border-radius:4px;border:1px solid rgba(255,255,255,0.08);" title="Official NSE cash settlement data publishes daily after 17:30 IST">Settled EOD Session (Today's live flow publishes after 17:30 IST)</span>
 
 
 
@@ -19359,7 +19359,7 @@ async function searchSymbols(query) {
 
 
 
-                    ? `<span style="font-size:0.68rem;color:var(--green);font-family:var(--font-mono);font-weight:700;">₹${r.price.toLocaleString('en-IN')}</span>`
+                    ? `<span style="font-size: 0.72rem;color:var(--green);font-family:var(--font-mono);font-weight:700;">₹${r.price.toLocaleString('en-IN')}</span>`
 
 
 
@@ -19774,11 +19774,11 @@ async function fetchAndShowQuote(symbol) {
 
         let statusBadge = '';
         if (isTargetHit) {
-            statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--green);padding:1px 6px;border-radius:8px;background:rgba(16,185,129,0.15);margin-left:4px;">✓ TARGET HIT</span>';
+            statusBadge = '<span style="font-size: 0.70rem;font-weight:700;color:var(--green);padding:1px 6px;border-radius:8px;background:rgba(16,185,129,0.15);margin-left:4px;">✓ TARGET HIT</span>';
         } else if (isStoppedOut) {
-            statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--red);padding:1px 6px;border-radius:8px;background:rgba(239,68,68,0.15);margin-left:4px;">✕ STOPPED OUT</span>';
+            statusBadge = '<span style="font-size: 0.70rem;font-weight:700;color:var(--red);padding:1px 6px;border-radius:8px;background:rgba(239,68,68,0.15);margin-left:4px;">✕ STOPPED OUT</span>';
         } else if (status === 'STALE') {
-            statusBadge = '<span style="font-size:0.62rem;font-weight:700;color:var(--yellow);padding:1px 6px;border-radius:8px;background:rgba(245,158,11,0.15);margin-left:4px;">⏱ STALE</span>';
+            statusBadge = '<span style="font-size: 0.70rem;font-weight:700;color:var(--yellow);padding:1px 6px;border-radius:8px;background:rgba(245,158,11,0.15);margin-left:4px;">⏱ STALE</span>';
         }
 
         const sigColor = ['LONG','BUY'].includes(displaySig)   ? 'var(--green)'
@@ -19811,20 +19811,20 @@ async function fetchAndShowQuote(symbol) {
                 tradeSectionHTML = `
                     <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.55rem;margin-top:0.1rem;">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
-                            <span style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Previous Completed Trade</span>
-                            <span style="font-size:0.68rem;color:var(--green);font-weight:700;">✓ Target Achieved (+${gainPct}%)</span>
+                            <span style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Previous Completed Trade</span>
+                            <span style="font-size: 0.72rem;color:var(--green);font-weight:700;">✓ Target Achieved (+${gainPct}%)</span>
                         </div>
                         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;text-align:center;">
                             <div>
-                                <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
+                                <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
                                 <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
                             </div>
                             <div>
-                                <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss</div>
+                                <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">Stop Loss</div>
                                 <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${slVal ? curr + slVal.toFixed(2) : '—'}</div>
                             </div>
                             <div>
-                                <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Target Hit</div>
+                                <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">Target Hit</div>
                                 <div style="font-size:0.88rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tpVal ? curr + tpVal.toFixed(2) : '—'}</div>
                             </div>
                         </div>
@@ -19833,15 +19833,15 @@ async function fetchAndShowQuote(symbol) {
                 tradeSectionHTML = `
                     <div class="info-item" style="grid-column:1/-1;border-top:1px solid var(--border-color);padding-top:0.6rem;margin-top:0.1rem;display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;">
                         <div style="text-align:center">
-                            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Entry</div>
+                            <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Entry</div>
                             <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--text-primary);">${curr}${(entryVal||0).toFixed(2)}</div>
                         </div>
                         <div style="text-align:center">
-                            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Stop Loss</div>
+                            <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Stop Loss</div>
                             <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${slVal ? curr + slVal.toFixed(2) : '—'}</div>
                         </div>
                         <div style="text-align:center">
-                            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Target</div>
+                            <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;">Target</div>
                             <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tpVal ? curr + tpVal.toFixed(2) : '—'}</div>
                         </div>
                     </div>`;
@@ -20713,7 +20713,7 @@ function renderSwingSetups(setups) {
 
 
 
-            ? `<div style="font-size:0.62rem;color:var(--text-muted);margin-top:0.35rem;">Last bar: ${(() => { try { return new Date(s.data_as_of).toLocaleString(); } catch (e) { return s.data_as_of; } })()}</div>`
+            ? `<div style="font-size: 0.70rem;color:var(--text-muted);margin-top:0.35rem;">Last bar: ${(() => { try { return new Date(s.data_as_of).toLocaleString(); } catch (e) { return s.data_as_of; } })()}</div>`
 
 
 
@@ -20749,7 +20749,7 @@ function renderSwingSetups(setups) {
 
 
 
-            sectorTagHTML = `<div style="font-size:0.65rem;color:${secColor};background:${secBg};padding:2px 6px;border-radius:4px;display:inline-block;margin-top:0.4rem;border:1px solid ${secColor}40;">${s.sector_tag}</div>`;
+            sectorTagHTML = `<div style="font-size: 0.72rem;color:${secColor};background:${secBg};padding:2px 6px;border-radius:4px;display:inline-block;margin-top:0.4rem;border:1px solid ${secColor}40;">${s.sector_tag}</div>`;
 
 
 
@@ -20769,7 +20769,7 @@ function renderSwingSetups(setups) {
 
 
 
-            slWarningHTML = `<div style="font-size:0.65rem;color:var(--red);margin-top:0.5rem;background:rgba(239,68,68,0.05);padding:4px 6px;border-radius:4px;border:1px solid rgba(239,68,68,0.2);">⚠️ ${s.sl_warning || 'SL Capped — reduce qty'}</div>`;
+            slWarningHTML = `<div style="font-size: 0.72rem;color:var(--red);margin-top:0.5rem;background:rgba(239,68,68,0.05);padding:4px 6px;border-radius:4px;border:1px solid rgba(239,68,68,0.2);">⚠️ ${s.sl_warning || 'SL Capped — reduce qty'}</div>`;
 
 
 
@@ -20793,7 +20793,7 @@ function renderSwingSetups(setups) {
 
 
 
-            volBadge = `<span style="font-size:0.65rem;color:${volColor};border:1px solid var(--border-color);padding:2px 5px;border-radius:3px;">Vol: <b>${s.indicators.vol_ratio}x</b></span>`;
+            volBadge = `<span style="font-size: 0.72rem;color:${volColor};border:1px solid var(--border-color);padding:2px 5px;border-radius:3px;">Vol: <b>${s.indicators.vol_ratio}x</b></span>`;
 
 
 
@@ -20841,7 +20841,7 @@ function renderSwingSetups(setups) {
 
 
 
-            ltpLine = `<div style="font-size:0.68rem;margin-top:0.35rem;padding:3px 6px;border-radius:4px;background:rgba(99,102,241,0.08);border:1px solid var(--border-color,#374151);">
+            ltpLine = `<div style="font-size: 0.72rem;margin-top:0.35rem;padding:3px 6px;border-radius:4px;background:rgba(99,102,241,0.08);border:1px solid var(--border-color,#374151);">
 
 
 
@@ -20873,7 +20873,7 @@ function renderSwingSetups(setups) {
 
 
 
-        <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};position:relative;overflow:hidden;">
+        <div class="card" style="padding:1rem;border-top:2px solid ${dirColor};position:relative;overflow:hidden;">
 
 
 
@@ -20925,7 +20925,7 @@ function renderSwingSetups(setups) {
 
 
 
-                    <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
 
 
 
@@ -20969,7 +20969,7 @@ function renderSwingSetups(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
+                    <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
 
 
 
@@ -20985,7 +20985,7 @@ function renderSwingSetups(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;">SL</div>
+                    <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">SL</div>
 
 
 
@@ -21001,7 +21001,7 @@ function renderSwingSetups(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;" title="Target 1 (Fib if valid, else ATR-based)">T1</div>
+                    <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;" title="Target 1 (Fib if valid, else ATR-based)">T1</div>
 
 
 
@@ -21017,7 +21017,7 @@ function renderSwingSetups(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);text-transform:uppercase;" title="Target 2 (Fib if valid, else ATR-based)">T2</div>
+                    <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;" title="Target 2 (Fib if valid, else ATR-based)">T2</div>
 
 
 
@@ -21313,7 +21313,7 @@ function renderMorningShortlist(setups) {
 
 
 
-        <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
+        <div class="card" style="padding:1rem;border-top:2px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
 
 
 
@@ -21333,11 +21333,11 @@ function renderMorningShortlist(setups) {
 
 
 
-                        <span class="signal-badge ${dirClass}" style="font-size:0.65rem;padding:2px 6px;">${s.direction}</span>
+                        <span class="signal-badge ${dirClass}" style="font-size: 0.72rem;padding:2px 6px;">${s.direction}</span>
 
 
 
-                        <span style="font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
+                        <span style="font-size: 0.70rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
 
 
 
@@ -21357,7 +21357,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                    <div style="font-size:0.62rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
+                    <div style="font-size: 0.70rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
 
 
 
@@ -21401,7 +21401,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                <span style="font-size:0.68rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
+                <span style="font-size: 0.72rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
 
 
 
@@ -22482,13 +22482,13 @@ function _renderIntradayTable(sigs) {
 
         const isExpired = !!s.is_expired;
         const statusBadge = isExpired
-            ? `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(148,163,184,0.12);color:#94a3b8;border:1px solid rgba(148,163,184,0.3);">EXPIRED</span>`
-            : `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(16,185,129,0.12);color:var(--green);border:1px solid rgba(16,185,129,0.35);">ACTIVE</span>`;
+            ? `<span style="font-size: 0.70rem;padding:2px 6px;border-radius:4px;background:rgba(148,163,184,0.12);color:#94a3b8;border:1px solid rgba(148,163,184,0.3);">EXPIRED</span>`
+            : `<span style="font-size: 0.70rem;padding:2px 6px;border-radius:4px;background:rgba(16,185,129,0.12);color:var(--green);border:1px solid rgba(16,185,129,0.35);">ACTIVE</span>`;
 
         const isCrypto = (s.symbol || "").includes("/");
         const feedBadge = isCrypto
-            ? `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(56,189,248,0.1);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);">CRYPTO 24/7</span>`
-            : `<span style="font-size:0.62rem;padding:2px 6px;border-radius:4px;background:rgba(56,189,248,0.1);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);">15m DELAYED</span>`;
+            ? `<span style="font-size: 0.70rem;padding:2px 6px;border-radius:4px;background:rgba(56,189,248,0.1);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);">CRYPTO 24/7</span>`
+            : `<span style="font-size: 0.70rem;padding:2px 6px;border-radius:4px;background:rgba(56,189,248,0.1);color:#38bdf8;border:1px solid rgba(56,189,248,0.25);">15m DELAYED</span>`;
 
         const classification = s.classification || (dir === "LONG" ? (score >= 80 ? "STRONG LONG" : "LONG") : (score >= 80 ? "STRONG SHORT" : "SHORT"));
 
@@ -22497,13 +22497,13 @@ function _renderIntradayTable(sigs) {
                 <td style="padding:${pad};color:var(--text-muted);font-weight:700;font-family:var(--font-mono);">${s.rank || (idx + 1)}</td>
                 <td style="padding:${pad};">
                     <div style="font-weight:800;font-size:0.85rem;color:#fff;">${_escHtml(s.symbol)}</div>
-                    <div style="font-size:0.65rem;color:var(--text-muted);">${_escHtml(s.market || "NSE")}</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);">${_escHtml(s.market || "NSE")}</div>
                 </td>
                 <td style="padding:${pad};">
-                    <span style="font-size:0.68rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${dirColor};border:1px solid ${dirBorder};">${_escHtml(classification)}</span>
+                    <span style="font-size: 0.72rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${dirColor};border:1px solid ${dirBorder};">${_escHtml(classification)}</span>
                 </td>
                 <td style="padding:${pad};">
-                    <span style="font-size:0.65rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${stc.bg};color:${stc.color};border:1px solid ${stc.border};">${_escHtml(s.strategy)}</span>
+                    <span style="font-size: 0.72rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${stc.bg};color:${stc.color};border:1px solid ${stc.border};">${_escHtml(s.strategy)}</span>
                 </td>
                 <td style="padding:${pad};">
                     <div style="display:flex;align-items:center;gap:6px;">
@@ -22524,8 +22524,8 @@ function _renderIntradayTable(sigs) {
                 <td style="padding:${pad};">${statusBadge}</td>
                 <td style="padding:${pad};text-align:right;" onclick="event.stopPropagation();">
                     <div style="display:inline-flex;gap:4px;">
-                        <button type="button" class="btn btn-secondary" onclick="openIntradayDrawer('${_escHtml(s.symbol)}')" style="font-size:0.68rem;padding:0.22rem 0.5rem;" title="View Confluence Breakdown & Chart">🔍</button>
-                        <button type="button" class="btn btn-primary" onclick="takePaperTrade('${_escHtml(s.symbol)}', '${_escHtml(s.direction)}', ${Number(s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, '${_escHtml(s.strategy || "INTRADAY")}', this)" style="font-size:0.68rem;padding:0.22rem 0.55rem;background:linear-gradient(135deg,#4f46e5 0%,#3b82f6 100%);color:#fff;border:none;border-radius:4px;font-weight:700;">⚡ Trade</button>
+                        <button type="button" class="btn btn-secondary" onclick="openIntradayDrawer('${_escHtml(s.symbol)}')" style="font-size: 0.72rem;padding:0.22rem 0.5rem;" title="View Confluence Breakdown & Chart">🔍</button>
+                        <button type="button" class="btn btn-primary" onclick="takePaperTrade('${_escHtml(s.symbol)}', '${_escHtml(s.direction)}', ${Number(s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, '${_escHtml(s.strategy || "INTRADAY")}', this)" style="font-size: 0.72rem;padding:0.22rem 0.55rem;background:linear-gradient(135deg,#4f46e5 0%,#3b82f6 100%);color:#fff;border:none;border-radius:4px;font-weight:700;">⚡ Trade</button>
                     </div>
                 </td>
             </tr>
@@ -22564,17 +22564,17 @@ function _renderIntradayCards(sigs) {
         const tgtFmt = s.target_1 != null ? "₹" + Number(s.target_1).toFixed(2) : (s.target != null ? "₹" + Number(s.target).toFixed(2) : "—");
 
         const rvolBadge = s.rvol != null
-            ? `<span style="font-size:0.65rem;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.35);">RVOL ${Number(s.rvol).toFixed(1)}x</span>`
+            ? `<span style="font-size: 0.72rem;font-weight:700;padding:2px 6px;border-radius:4px;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.35);">RVOL ${Number(s.rvol).toFixed(1)}x</span>`
             : "";
 
         return `
-            <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};transition:transform 0.15s,box-shadow 0.15s;cursor:pointer;" onclick="openIntradayDrawer('${_escHtml(s.symbol)}')">
+            <div class="card" style="padding:1rem;border-top:2px solid ${dirColor};transition:transform 0.15s,box-shadow 0.15s;cursor:pointer;" onclick="openIntradayDrawer('${_escHtml(s.symbol)}')">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
                     <div>
                         <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
                             <strong style="font-size:1.05rem;color:var(--text-primary);">${_escHtml(s.symbol)}</strong>
-                            <span style="font-size:0.68rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${dirColor};border:1px solid ${dirBorder};">${_escHtml(s.classification || dir)}</span>
-                            <span style="font-size:0.65rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${stc.bg};color:${stc.color};border:1px solid ${stc.border};">${_escHtml(s.strategy)}</span>
+                            <span style="font-size: 0.72rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${dirColor};border:1px solid ${dirBorder};">${_escHtml(s.classification || dir)}</span>
+                            <span style="font-size: 0.72rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${stc.bg};color:${stc.color};border:1px solid ${stc.border};">${_escHtml(s.strategy)}</span>
                             ${rvolBadge}
                         </div>
                     </div>
@@ -22592,15 +22592,15 @@ function _renderIntradayCards(sigs) {
 
                 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.5rem;margin-bottom:0.5rem;">
                     <div style="text-align:center;padding:0.35rem;background:rgba(255,255,255,0.03);border-radius:6px;">
-                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
+                        <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">Entry</div>
                         <div style="font-weight:700;font-family:var(--font-mono);font-size:0.85rem;color:var(--text-primary);">${entryFmt}</div>
                     </div>
                     <div style="text-align:center;padding:0.35rem;background:rgba(239,68,68,0.06);border-radius:6px;">
-                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;">SL</div>
+                        <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">SL</div>
                         <div style="font-weight:700;font-family:var(--font-mono);font-size:0.85rem;color:var(--red);">${slFmt}</div>
                     </div>
                     <div style="text-align:center;padding:0.35rem;background:rgba(16,185,129,0.06);border-radius:6px;">
-                        <div style="font-size:0.58rem;color:var(--text-muted);text-transform:uppercase;">Target 1</div>
+                        <div style="font-size: 0.70rem;color:var(--text-muted);text-transform:uppercase;">Target 1</div>
                         <div style="font-weight:700;font-family:var(--font-mono);font-size:0.85rem;color:var(--green);">${tgtFmt}</div>
                     </div>
                 </div>
@@ -22694,10 +22694,10 @@ async function openIntradayDrawer(symbol) {
             const max = Number(f.max || 100);
             const pct = Math.min(100, Math.max(0, (score / max) * 100));
             const color = f.status === "POSITIVE" ? "var(--green)" : (f.status === "WARNING" ? "#f59e0b" : (f.status === "NEGATIVE" ? "var(--red)" : "#818cf8"));
-            const detailTxt = f.detail ? `<div style="font-size:0.62rem;color:var(--text-muted);margin-top:2px;">${_escHtml(f.detail)}</div>` : "";
+            const detailTxt = f.detail ? `<div style="font-size: 0.70rem;color:var(--text-muted);margin-top:2px;">${_escHtml(f.detail)}</div>` : "";
             return `
                 <div style="background:rgba(255,255,255,0.02);padding:0.4rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.04);">
-                    <div style="display:flex;justify-content:space-between;font-size:0.68rem;margin-bottom:3px;">
+                    <div style="display:flex;justify-content:space-between;font-size: 0.72rem;margin-bottom:3px;">
                         <span style="color:#cbd5e1;font-weight:600;">${_escHtml(f.name || "")}</span>
                         <span style="font-family:var(--font-mono);font-weight:700;color:${color};">${score.toFixed(1)} / ${max}</span>
                     </div>
@@ -22734,7 +22734,7 @@ async function openIntradayDrawer(symbol) {
 
         techEl.innerHTML = items.map(it => `
             <div style="background:rgba(0,0,0,0.25);padding:0.35rem 0.5rem;border-radius:5px;border:1px solid rgba(255,255,255,0.04);">
-                <div style="font-size:0.58rem;color:var(--text-muted);">${it.label}</div>
+                <div style="font-size: 0.70rem;color:var(--text-muted);">${it.label}</div>
                 <div style="font-size:0.75rem;font-weight:700;font-family:var(--font-mono);color:#fff;">${it.val}</div>
             </div>
         `).join("");
@@ -24032,7 +24032,7 @@ function renderEdgeNewsPanel(newsData) {
                     ${titleSafe}
                 </a>
             </div>
-            <span style="font-size:0.65rem;color:#64748b;white-space:nowrap;">${srcSafe}</span>
+            <span style="font-size: 0.72rem;color:#64748b;white-space:nowrap;">${srcSafe}</span>
         </div>`;
     }).join('');
 }
@@ -24128,13 +24128,13 @@ async function openEdgeResearchDrawer(symbol, assetClass = 'nse') {
                     return `
                     <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);padding:0.5rem 0.75rem;border-radius:6px;border:1px solid rgba(255,255,255,0.05);">
                         <div style="display:flex;align-items:center;gap:0.5rem;">
-                            <span style="font-size:0.65rem;">${statusBadge}</span>
+                            <span style="font-size: 0.72rem;">${statusBadge}</span>
                             <strong style="font-size:0.8rem;color:#f8fafc;">${_escHtml(f.label || f.name)}</strong>
-                            <span style="font-size:0.68rem;color:#64748b;">${effWeightStr}</span>
+                            <span style="font-size: 0.72rem;color:#64748b;">${effWeightStr}</span>
                         </div>
                         <div style="text-align:right;">
                             <span style="font-family:var(--font-mono);font-weight:800;font-size:0.85rem;color:${f.value > 0 ? '#10b981' : (f.value < 0 ? '#ef4444' : '#8b949e')};">${valStr}</span>
-                            <div style="font-size:0.68rem;color:#94a3b8;max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_escHtml(f.detail || '')}</div>
+                            <div style="font-size: 0.72rem;color:#94a3b8;max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_escHtml(f.detail || '')}</div>
                         </div>
                     </div>`;
                 }).join('');
@@ -24675,7 +24675,7 @@ async function loadEdgeRiskGauge() {
 
 
 
-                            <div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;">${_escHtml(k)}</div>
+                            <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">${_escHtml(k)}</div>
 
 
 
@@ -25077,7 +25077,7 @@ function renderInrStrip(rates, statusPill = null) {
         const rate = Number(effectiveRates[sym] || 0);
         if (rate <= 0) return '';
         const decimals = sym.includes('JPY') ? 3 : 2;
-        const subLabel = rateSourceLabel ? `<span style="font-size:0.65rem;color:var(--text-muted);font-weight:400;margin-left:4px;">(${rateSourceLabel})</span>` : '';
+        const subLabel = rateSourceLabel ? `<span style="font-size: 0.72rem;color:var(--text-muted);font-weight:400;margin-left:4px;">(${rateSourceLabel})</span>` : '';
         return `
             <div style="display:flex;flex-direction:column;gap:2px;">
                 <span style="font-size:0.75rem;font-weight:600;color:var(--text-primary,#f8fafc);">${escapeHtml(sym)}${subLabel}</span>
@@ -25119,10 +25119,10 @@ function renderForexSessions(sessions, currentIst) {
             <div class="intel-card" style="padding:0.6rem 0.75rem;background:${statusBg};border:1px solid ${statusBdr};border-radius:6px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;">
                     <strong style="font-size:0.82rem;">${_escHtml(name)}</strong>
-                    <span style="font-size:0.62rem;font-weight:800;padding:1px 5px;border-radius:3px;color:${statusColor};border:1px solid ${statusColor};">${isOpen ? '● OPEN' : 'CLOSED'}</span>
+                    <span style="font-size: 0.70rem;font-weight:800;padding:1px 5px;border-radius:3px;color:${statusColor};border:1px solid ${statusColor};">${isOpen ? '● OPEN' : 'CLOSED'}</span>
                 </div>
                 <div style="font-size:0.7rem;color:var(--text-muted);">${_escHtml(s.start || '')} - ${_escHtml(s.end || '')} IST</div>
-                <div style="font-size:0.68rem;color:var(--text-muted);margin-top:0.2rem;">Pairs: <span style="color:var(--text-primary);">${_escHtml(pairs || '—')}</span></div>
+                <div style="font-size: 0.72rem;color:var(--text-muted);margin-top:0.2rem;">Pairs: <span style="color:var(--text-primary);">${_escHtml(pairs || '—')}</span></div>
             </div>
         `;
     }).join('');
@@ -25268,7 +25268,7 @@ function renderTopForexSetups(topSetups) {
 
                     <div style="text-align:right;">
 
-                        <span style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">Score</span>
+                        <span style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Score</span>
 
                         <span style="font-size:1.2rem;font-weight:800;color:var(--green);font-family:var(--font-mono);margin-left:4px;">${score}</span>
 
@@ -25338,7 +25338,7 @@ function renderTopForexSetups(topSetups) {
 
                 <div style="display:flex;justify-content:space-between;align-items:center;">
 
-                    <span style="font-size:0.65rem;font-weight:700;color:var(--green);background:rgba(16,185,129,0.12);padding:3px 8px;border-radius:4px;border:1px solid rgba(16,185,129,0.3);">
+                    <span style="font-size: 0.72rem;font-weight:700;color:var(--green);background:rgba(16,185,129,0.12);padding:3px 8px;border-radius:4px;border:1px solid rgba(16,185,129,0.3);">
 
                         ● QUALIFIED SETUP
 
@@ -25502,7 +25502,7 @@ function renderForexSignals(setups, filter = 'all') {
 
         return `
 
-            <div class="card" style="padding:1rem;border-left:3px solid ${dirColor};background:${isQualified ? 'var(--bg-card)' : 'rgba(255,255,255,0.015)'};">
+            <div class="card" style="padding:1rem;border-top:2px solid ${dirColor};background:${isQualified ? 'var(--bg-card)' : 'rgba(255,255,255,0.015)'};">
 
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.75rem;">
 
@@ -25512,9 +25512,9 @@ function renderForexSignals(setups, filter = 'all') {
 
                             <strong style="font-size:1.1rem;color:var(--text-primary);">${_escHtml(s.symbol)}</strong>
 
-                            <span style="font-size:0.68rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${isLong ? 'var(--green)' : 'var(--red)'};border:1px solid ${dirBdr};">${_escHtml(dir)}</span>
+                            <span style="font-size: 0.72rem;font-weight:800;padding:2px 7px;border-radius:4px;background:${dirBg};color:${isLong ? 'var(--green)' : 'var(--red)'};border:1px solid ${dirBdr};">${_escHtml(dir)}</span>
 
-                            <span style="font-size:0.65rem;padding:2px 6px;background:rgba(255,255,255,0.06);border-radius:4px;color:var(--text-muted);">${pattern}</span>
+                            <span style="font-size: 0.72rem;padding:2px 6px;background:rgba(255,255,255,0.06);border-radius:4px;color:var(--text-muted);">${pattern}</span>
 
                         </div>
 
@@ -25544,7 +25544,7 @@ function renderForexSignals(setups, filter = 'all') {
 
                     <div>
 
-                        <div style="font-size:0.58rem;color:var(--text-muted);">Price</div>
+                        <div style="font-size: 0.70rem;color:var(--text-muted);">Price</div>
 
                         <div style="font-size:0.78rem;font-weight:700;font-family:var(--font-mono);">${price}</div>
 
@@ -25552,7 +25552,7 @@ function renderForexSignals(setups, filter = 'all') {
 
                     <div>
 
-                        <div style="font-size:0.58rem;color:var(--text-muted);">Entry</div>
+                        <div style="font-size: 0.70rem;color:var(--text-muted);">Entry</div>
 
                         <div style="font-size:0.78rem;font-weight:700;font-family:var(--font-mono);">${entry}</div>
 
@@ -25560,7 +25560,7 @@ function renderForexSignals(setups, filter = 'all') {
 
                     <div>
 
-                        <div style="font-size:0.58rem;color:var(--text-muted);">SL</div>
+                        <div style="font-size: 0.70rem;color:var(--text-muted);">SL</div>
 
                         <div style="font-size:0.78rem;font-weight:700;font-family:var(--font-mono);color:var(--red);">${sl}</div>
 
@@ -25568,7 +25568,7 @@ function renderForexSignals(setups, filter = 'all') {
 
                     <div>
 
-                        <div style="font-size:0.58rem;color:var(--text-muted);">Target</div>
+                        <div style="font-size: 0.70rem;color:var(--text-muted);">Target</div>
 
                         <div style="font-size:0.78rem;font-weight:700;font-family:var(--font-mono);color:var(--green);">${tgt}</div>
 
@@ -25576,7 +25576,7 @@ function renderForexSignals(setups, filter = 'all') {
 
                     <div>
 
-                        <div style="font-size:0.58rem;color:var(--text-muted);">R:R</div>
+                        <div style="font-size: 0.70rem;color:var(--text-muted);">R:R</div>
 
                         <div style="font-size:0.78rem;font-weight:700;font-family:var(--font-mono);color:var(--teal);">${rr}</div>
 
@@ -25586,7 +25586,7 @@ function renderForexSignals(setups, filter = 'all') {
 
 
 
-                <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;font-size:0.68rem;color:var(--text-muted);margin-bottom:0.75rem;">
+                <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;font-size: 0.72rem;color:var(--text-muted);margin-bottom:0.75rem;">
 
                     <span style="background:rgba(255,255,255,0.04);padding:2px 6px;border-radius:3px;">RSI: <strong style="color:var(--text-primary);">${rsiVal}</strong></span>
 
@@ -25604,7 +25604,7 @@ function renderForexSignals(setups, filter = 'all') {
 
                     ${isQualified ? `
 
-                        <span style="font-size:0.65rem;font-weight:700;color:var(--green);background:rgba(16,185,129,0.12);padding:2px 7px;border-radius:4px;border:1px solid rgba(16,185,129,0.3);">
+                        <span style="font-size: 0.72rem;font-weight:700;color:var(--green);background:rgba(16,185,129,0.12);padding:2px 7px;border-radius:4px;border:1px solid rgba(16,185,129,0.3);">
 
                             QUALIFIED PAPER SETUP
 
@@ -25618,13 +25618,13 @@ function renderForexSignals(setups, filter = 'all') {
 
                     ` : `
 
-                        <span style="font-size:0.65rem;font-weight:600;color:var(--amber,#f59e0b);background:rgba(245,158,11,0.1);padding:2px 7px;border-radius:4px;">
+                        <span style="font-size: 0.72rem;font-weight:600;color:var(--amber,#f59e0b);background:rgba(245,158,11,0.1);padding:2px 7px;border-radius:4px;">
 
                             ${_escHtml(s.skip_reason || 'SKIP — Filtered')}
 
                         </span>
 
-                        <span style="font-size:0.65rem;color:var(--text-muted);">Paper trade inactive</span>
+                        <span style="font-size: 0.72rem;color:var(--text-muted);">Paper trade inactive</span>
 
                     `}
 
@@ -25890,7 +25890,7 @@ async function loadNsePredictionTab() {
 
 
 
-                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.68rem;color:var(--text-muted);margin-top:2px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;font-size: 0.72rem;color:var(--text-muted);margin-top:2px;">
 
 
 
@@ -27341,17 +27341,17 @@ function renderNextDayPickCard(pick, index) {
             <div style="text-align: center;">
                 <div style="font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase;">Entry Trigger</div>
                 <div style="font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin-top: 2px; font-family: var(--font-mono, monospace);">${entryDisplay}</div>
-                <span style="font-size: 0.68rem; color: var(--text-muted);">${escapeHtml(setup.trigger_zone || setup.trigger_condition || '—')}</span>
+                <span style="font-size: 0.72rem; color: var(--text-muted);">${escapeHtml(setup.trigger_zone || setup.trigger_condition || '—')}</span>
             </div>
             <div style="text-align: center; border-left: 1px solid var(--border-color); border-right: 1px solid var(--border-color);">
                 <div style="font-size: 0.7rem; color: #ef4444; text-transform: uppercase;">Stop Loss</div>
                 <div style="font-size: 0.95rem; font-weight: 700; color: #ef4444; margin-top: 2px; font-family: var(--font-mono, monospace);">${slDisplay}</div>
-                <span style="font-size: 0.68rem; color: var(--text-muted);">Risk: ${riskPct}</span>
+                <span style="font-size: 0.72rem; color: var(--text-muted);">Risk: ${riskPct}</span>
             </div>
             <div style="text-align: center;">
                 <div style="font-size: 0.7rem; color: #10b981; text-transform: uppercase;">Target (TP1)</div>
                 <div style="font-size: 0.95rem; font-weight: 700; color: #10b981; margin-top: 2px; font-family: var(--font-mono, monospace);">${targetDisplay}</div>
-                <span style="font-size: 0.68rem; color: var(--text-muted);">Gain: ${rewardPct === '—' ? '—' : '+' + rewardPct}</span>
+                <span style="font-size: 0.72rem; color: var(--text-muted);">Gain: ${rewardPct === '—' ? '—' : '+' + rewardPct}</span>
             </div>
         </div>
 
@@ -27760,7 +27760,7 @@ async function loadDedicatedWatchlist() {
                             <span class="watchlist-name">${_escHtml(compName)}</span>
                         </div>
                         <div style="display:flex;align-items:center;gap:6px;">
-                            <span style="font-size:0.65rem;font-weight:800;padding:2px 8px;border-radius:4px;background:rgba(239,68,68,0.12);color:var(--red,#ef4444);border:1px solid rgba(239,68,68,0.3);">
+                            <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:rgba(239,68,68,0.12);color:var(--red,#ef4444);border:1px solid rgba(239,68,68,0.3);">
                                 OFFLINE / RETRY
                             </span>
                         </div>
@@ -27768,11 +27768,11 @@ async function loadDedicatedWatchlist() {
 
                     <div class="watchlist-price-row" style="padding: 0.6rem 0; opacity: 0.85;">
                         <div>
-                            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
+                            <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
                             <div style="font-size: 0.9rem; font-weight: 700; color: var(--text-muted); font-family: var(--font-mono);">Quote Unavailable</div>
                         </div>
                         <div style="text-align:right;">
-                            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
+                            <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
                             <div style="font-size: 0.9rem; color: var(--text-muted); font-family: var(--font-mono);">--</div>
                         </div>
                     </div>
@@ -27832,10 +27832,10 @@ async function loadDedicatedWatchlist() {
                         <span class="watchlist-name">${_escHtml(compName)}</span>
                     </div>
                     <div style="display:flex;align-items:center;gap:6px;">
-                        <span style="font-size:0.65rem;font-weight:800;padding:2px 8px;border-radius:4px;background:${sigBg};color:${sigColor};border:1px solid ${sigBorder};">
+                        <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:${sigBg};color:${sigColor};border:1px solid ${sigBorder};">
                             ${signalLabel}
                         </span>
-                        <span style="font-size:0.62rem;font-family:var(--font-mono);color:var(--text-muted);background:rgba(255,255,255,0.03);padding:2px 5px;border-radius:4px;">
+                        <span style="font-size: 0.70rem;font-family:var(--font-mono);color:var(--text-muted);background:rgba(255,255,255,0.03);padding:2px 5px;border-radius:4px;">
                             ${conf}/100
                         </span>
                     </div>
@@ -27843,11 +27843,11 @@ async function loadDedicatedWatchlist() {
 
                 <div class="watchlist-price-row">
                     <div>
-                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
+                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
                         <div class="watchlist-ltp">₹${Number(ltp).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
                     </div>
                     <div style="text-align:right;">
-                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
+                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
                         <div class="watchlist-chg ${chgClass}">${chgStr}</div>
                     </div>
                 </div>

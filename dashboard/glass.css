@@ -129,7 +129,7 @@ html[data-skin="glass"] .terminal-session-alert {
     -webkit-backdrop-filter: blur(16px) !important;
     backdrop-filter: blur(16px) !important;
     border: 1px solid rgba(245, 158, 11, 0.30) !important;
-    border-left: 4px solid #f59e0b !important;
+    border: 1px solid rgba(245, 158, 11, 0.4) !important;
     color: #fbbf24 !important;
     box-shadow: 0 8px 24px -6px rgba(245, 158, 11, 0.25) !important;
     border-radius: var(--radius-md);
@@ -441,7 +441,7 @@ html[data-skin="glass"][data-theme="light"] .terminal-session-alert {
     -webkit-backdrop-filter: blur(16px) !important;
     backdrop-filter: blur(16px) !important;
     border: 1px solid rgba(245, 158, 11, 0.35) !important;
-    border-left: 4px solid #d97706 !important;
+    border: 1px solid rgba(217, 119, 6, 0.4) !important;
     color: #92400e !important;
     box-shadow: 0 6px 18px -4px rgba(217, 119, 6, 0.15) !important;
 }
