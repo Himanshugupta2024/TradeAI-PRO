@@ -26,20 +26,17 @@ def require_admin(
     If key is missing: 401 Unauthorized.
     If key is invalid: 403 Forbidden.
     """
-    settings_key = (getattr(settings, "ADMIN_API_KEY", "") or "").strip()
-    env_key = os.environ.get("ADMIN_API_KEY", "").strip() if "ADMIN_API_KEY" in os.environ else ""
+    settings_key = getattr(settings, "ADMIN_API_KEY", None)
+    env_key = os.environ.get("ADMIN_API_KEY")
 
-    if "pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST"):
-        if getattr(settings, "ADMIN_API_KEY", None) == "":
-            admin_key = ""
-        elif settings_key and settings_key != "tradeai-secure-pass-2026":
-            admin_key = settings_key
-        elif "ADMIN_API_KEY" in os.environ and os.environ.get("ADMIN_API_KEY") != "tradeai-secure-pass-2026":
-            admin_key = env_key
-        else:
-            admin_key = ""
+    if settings_key == "":
+        admin_key = ""
+    elif settings_key is not None and settings_key != "tradeai-secure-pass-2026":
+        admin_key = settings_key.strip()
+    elif env_key is not None:
+        admin_key = env_key.strip()
     else:
-        admin_key = env_key or settings_key
+        admin_key = ""
     is_prod = bool(
         getattr(settings, "IS_PRODUCTION", False)
         or os.getenv("RENDER")
@@ -56,16 +53,34 @@ def require_admin(
         logger.warning("ADMIN_API_KEY not set; allowing admin endpoint in development mode")
         return True
 
-    DEFAULT_DEV_PLACEHOLDER = "change_this_to_a_strong_random_secret_in_production"
-    if admin_key == DEFAULT_DEV_PLACEHOLDER:
+    DEFAULT_DEV_PLACEHOLDERS = {
+        "change_this_to_a_strong_random_secret_in_production",
+        "tradeai-secure-pass-2026",
+    }
+    if admin_key in DEFAULT_DEV_PLACEHOLDERS:
         if is_prod:
             logger.error("Admin endpoint accessed but ADMIN_API_KEY is using insecure default placeholder in production")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Admin authentication misconfigured. Please set a custom ADMIN_API_KEY in production.",
             )
-        logger.warning("ADMIN_API_KEY is using default dev placeholder; permitting request in development mode")
-        return True
+        # In development mode with default placeholder, permit unauthenticated requests for ease of testing
+        provided_key = None
+        if isinstance(x_admin_key, str) and x_admin_key.strip():
+            provided_key = x_admin_key.strip()
+        elif isinstance(x_api_key, str) and x_api_key.strip():
+            provided_key = x_api_key.strip()
+        elif isinstance(authorization, str) and authorization.strip().lower().startswith("bearer "):
+            provided_key = authorization.strip()[7:].strip()
+
+        if provided_key is None:
+            return True
+        if secrets.compare_digest(provided_key, admin_key):
+            return True
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid admin API key",
+        )
 
     provided_key = None
     if isinstance(x_admin_key, str) and x_admin_key.strip():
