@@ -66,6 +66,12 @@ def _stale_threshold_seconds(symbol, now=None):
         return CRYPTO_MAX_AGE_SEC
     reference = (now or datetime.now(timezone.utc)).astimezone(IST)
     minutes = reference.hour * 60 + reference.minute
+    try:
+        from agents.market_intelligence.nse_holidays import is_holiday
+        if is_holiday(reference.date()):
+            return NSE_WEEKEND_MAX_AGE_SEC
+    except Exception:
+        pass
     if reference.weekday() < 5 and (9 * 60 + 15) <= minutes <= (15 * 60 + 30):
         return NSE_OPEN_MAX_AGE_SEC
     if reference.weekday() >= 5:
@@ -215,6 +221,12 @@ async def resolve_open_trades_valuation(engine, svc, *, refresh_stale: bool = Fa
         if "/" in str(symbol):
             return True  # 24/7 crypto
         ref_ist = dt_utc.astimezone(IST)
+        try:
+            from agents.market_intelligence.nse_holidays import is_holiday
+            if is_holiday(ref_ist.date()):
+                return False
+        except Exception:
+            pass
         mins = ref_ist.hour * 60 + ref_ist.minute
         return ref_ist.weekday() < 5 and (9 * 60 + 15) <= mins <= (15 * 60 + 30)
 

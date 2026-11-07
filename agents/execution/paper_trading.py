@@ -768,10 +768,11 @@ class PaperTradingEngine:
 
         total_equity = self.capital + unrealized_pnl
         closed = [t for t in self.trades if t.status != "OPEN"]
-        inr_closed = [
-            t for t in closed
-            if not (getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and getattr(t, "quote_currency", "INR") != "INR")
-        ]
+        def _is_unconverted_legacy(t):
+            qc = getattr(t, "quote_currency", None) or ("USDT" if "/" in str(getattr(t, "symbol", "")) else "INR")
+            return getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and qc != "INR"
+
+        inr_closed = [t for t in closed if not _is_unconverted_legacy(t)]
         realized_pnl = sum(self._trade_total_pnl(t) for t in inr_closed)
 
         return {
@@ -822,14 +823,12 @@ class PaperTradingEngine:
             }
 
         # Quarantine unconverted non-INR legacy trades from INR totals (F05)
-        inr_closed = [
-            t for t in closed
-            if not (getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and getattr(t, "quote_currency", "INR") != "INR")
-        ]
-        unconverted_legacy = [
-            t for t in closed
-            if getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and getattr(t, "quote_currency", "INR") != "INR"
-        ]
+        def _is_unconverted_legacy(t):
+            qc = getattr(t, "quote_currency", None) or ("USDT" if "/" in str(getattr(t, "symbol", "")) else "INR")
+            return getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and qc != "INR"
+
+        inr_closed = [t for t in closed if not _is_unconverted_legacy(t)]
+        unconverted_legacy = [t for t in closed if _is_unconverted_legacy(t)]
 
         pnls = [self._trade_total_pnl(t) for t in inr_closed]
         wins = [t for t in inr_closed if self._trade_total_pnl(t) > 1e-6]

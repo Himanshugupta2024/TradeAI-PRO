@@ -46,6 +46,13 @@ def test_session_classification():
     assert res_crypto.bar_age_seconds == 2700.0  # 45 minutes
     assert res_crypto.is_stale is False
 
+    # 5. Gazetted NSE holiday on a weekday (e.g. Republic Day Jan 26, 2026 Monday at 11:00 IST) -> CLOSED_HOLIDAY, is_stale == True
+    holiday_now = datetime(2026, 1, 26, 11, 0, 0, tzinfo=IST)
+    holiday_bar = datetime(2026, 1, 23, 15, 30, 0, tzinfo=IST)
+    res_holiday = classify_session(now=holiday_now, bar_ts=holiday_bar, symbol="RELIANCE")
+    assert res_holiday.market_state == "CLOSED_HOLIDAY"
+    assert res_holiday.is_stale is True
+
 
 def test_cost_reconciliation():
     # 1. gross_return = 1.95, costs = 1.71 -> net_return == 0.24

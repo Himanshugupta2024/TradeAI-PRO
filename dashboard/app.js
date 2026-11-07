@@ -8267,6 +8267,7 @@ async function openPositionDetail(tradeId) {
     const tp = Number(trade.target || 0);
     const qty = Number(trade.quantity || 1);
     const initQty = Number(trade.initial_quantity || qty);
+    const isFallback = Boolean(trade.is_entry_fallback || trade.quote_source === 'ENTRY_FALLBACK' || trade.pnl_status === 'UNPRICED');
 
     // Current price / LTP
     const cachedTick = (typeof marketDataCache === 'object' && marketDataCache) ? marketDataCache[sym] : null;
@@ -10154,13 +10155,17 @@ function renderSignals(signals) {
         const numEntry = Number(sig.entry || sig.close || 0);
         const numSl = Number(sig.stop_loss || 0);
         const numTp = Number(sig.target || 0);
-        const hasValidGeometry = numEntry > 0 && numSl > 0 && numTp > 0 && Math.abs(numEntry - numSl) > 0.0001 && Math.abs(numEntry - numTp) > 0.0001;
+        const isLongSignal = ['LONG', 'BUY'].includes(String(sig.signal || '').toUpperCase());
+        const isShortSignal = ['SHORT', 'SELL'].includes(String(sig.signal || '').toUpperCase());
+        const hasValidGeometry = numEntry > 0 && numSl > 0 && numTp > 0 && (
+            isLongSignal ? (numSl < numEntry && numEntry < numTp) :
+            isShortSignal ? (numTp < numEntry && numEntry < numSl) :
+            false
+        );
 
-        const isActionable = ['LONG', 'BUY', 'SHORT', 'SELL'].includes(String(sig.signal || '').toUpperCase()) && !isSkip && !isStale && !isBlocked && hasValidGeometry;
+        const isActionable = (isLongSignal || isShortSignal) && !isSkip && !isStale && !isBlocked && hasValidGeometry;
 
-
-
-        const tradeDir = ['LONG', 'BUY'].includes(String(sig.signal || '').toUpperCase()) ? 'LONG' : 'SHORT';
+        const tradeDir = isLongSignal ? 'LONG' : 'SHORT';
 
 
 
@@ -12299,7 +12304,7 @@ async function loadPerformance() {
 
 
 
-        _setKpi('pkWorstVal',   (hasTrades && m.worst_trade != null) ? `₹${Number(m.worst_trade).toFixed(0)}` : '—', 'negative');
+        _setKpi('pkWorstVal',   (hasTrades && m.worst_trade != null) ? `${Number(m.worst_trade) < 0 ? '-' : ''}₹${Math.abs(Number(m.worst_trade)).toFixed(0)}` : '—', 'negative');
 
 
 
@@ -12379,7 +12384,7 @@ async function loadPerformance() {
 
 
 
-        document.getElementById('metAvgLoss').textContent = `₹${(m.avg_loss || 0).toFixed(0)}`;
+        document.getElementById('metAvgLoss').textContent = `${Number(m.avg_loss || 0) < 0 ? '-' : ''}₹${Math.abs(Number(m.avg_loss || 0)).toFixed(0)}`;
 
 
 
@@ -23785,8 +23790,16 @@ function renderEdgeMetrics(overviewData, setups) {
     // 5. Macro & Energy Alert
     const mVal = document.getElementById('eeMacroAlertVal');
     const mSub = document.getElementById('eeMacroAlertSub');
-    if (mVal) mVal.textContent = 'Low Crude Benefit';
-    if (mSub) mSub.textContent = 'Brent $104.80 (-10.9%) · Calendar Clear';
+    const brent = window._lastMacroData && window._lastMacroData.brent_crude;
+    if (brent && brent.price != null) {
+        const bPrice = Number(brent.price).toFixed(2);
+        const bPct = Number(brent.change_pct || 0);
+        if (mVal) mVal.textContent = bPct <= -2.0 ? 'Low Crude Benefit' : (bPct >= 2.0 ? 'High Energy Risk' : 'Crude Stable');
+        if (mSub) mSub.textContent = `Brent $${bPrice} (${bPct >= 0 ? '+' : ''}${bPct.toFixed(1)}%) · Macro Active`;
+    } else {
+        if (mVal) mVal.textContent = 'Macro Monitoring';
+        if (mSub) mSub.textContent = 'Macro radar active · No active alerts';
+    }
 }
 
 function renderEdgeTable() {
@@ -25084,7 +25097,7 @@ function renderTopForexSetups(topSetups) {
 
         const pattern = _escHtml(s.pattern || 'Trend Setup');
 
-        const consensus = _escHtml(s.ai_consensus || '4/4');
+        const consensus = _escHtml(s.ai_consensus || '—');
 
 
 
@@ -25438,7 +25451,7 @@ function renderForexSignals(setups, filter = 'all') {
 
                     <span style="background:rgba(255,255,255,0.04);padding:2px 6px;border-radius:3px;">AI Prob: <strong style="color:var(--text-primary);">${winProb}%</strong></span>
 
-                    <span style="background:rgba(255,255,255,0.04);padding:2px 6px;border-radius:3px;">Consensus: <strong style="color:var(--text-primary);">${_escHtml(s.ai_consensus || '3/4')}</strong></span>
+                    <span style="background:rgba(255,255,255,0.04);padding:2px 6px;border-radius:3px;">Consensus: <strong style="color:var(--text-primary);">${_escHtml(s.ai_consensus || '—')}</strong></span>
 
                 </div>
 
@@ -27084,9 +27097,9 @@ function renderNextDayPickCard(pick, index) {
     const rewardPct = (hasValidLevels && entryPrice > 0) ? `${((Math.abs(targetPrice - entryPrice) / entryPrice) * 100).toFixed(1)}%` : '—';
 
     const scenarios = pick.scenarios || {};
-    const bullScenario = scenarios.bull || scenarios.bull_case || 'Breakout expansion above trigger level with volume expansion';
-    const baseScenario = scenarios.base || scenarios.base_case || 'Trend continuation toward planned primary target';
-    const invalidationRule = scenarios.invalidation || scenarios.invalidation_rule || 'Break below stop loss voids setup immediately';
+    const bullScenario = scenarios.bull || scenarios.bull_case || '— (Scenario not provided)';
+    const baseScenario = scenarios.base || scenarios.base_case || '— (Plan not provided)';
+    const invalidationRule = scenarios.invalidation || scenarios.invalidation_rule || '— (Invalidation rule not specified)';
 
     const catalysts = pick.news_catalysts || pick.catalysts || [];
     const catalystHtml = catalysts.length > 0
@@ -27096,7 +27109,7 @@ function renderNextDayPickCard(pick, index) {
             const impact = c.impact ? ` (${c.impact})` : '';
             return `<li style="margin-bottom: 4px; color: var(--text-secondary); font-size: 0.78rem;"><strong>${escapeHtml(source + headline)}</strong>${escapeHtml(impact)}</li>`;
           }).join('')
-        : '<li style="color: var(--text-muted); font-size: 0.78rem;">No negative filings; sector technical confluence verified.</li>';
+        : '<li style="color: var(--text-muted); font-size: 0.78rem;">No verified news catalysts recorded for this session.</li>';
 
     const techLevels = pick.technical_levels || pick.technical_alignment || {};
     const rsiVal = techLevels.rsi14 ?? techLevels.rsi ?? null;
@@ -27116,7 +27129,7 @@ function renderNextDayPickCard(pick, index) {
             </div>
             <div style="text-align: right;">
                 <div style="font-size: 1.1rem; font-weight: 700; color: #10b981; font-family: var(--font-mono, monospace);">${rrRatio}</div>
-                <span style="font-size: 0.7rem; color: var(--text-muted);">Minimum &ge; 1.5x Gate</span>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">${hasValidLevels ? 'Minimum &ge; 1.5x Gate' : 'Levels incomplete'}</span>
             </div>
         </div>
 
@@ -27125,7 +27138,7 @@ function renderNextDayPickCard(pick, index) {
             <div style="text-align: center;">
                 <div style="font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase;">Entry Trigger</div>
                 <div style="font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin-top: 2px; font-family: var(--font-mono, monospace);">${entryDisplay}</div>
-                <span style="font-size: 0.68rem; color: var(--text-muted);">${escapeHtml(setup.trigger_zone || setup.trigger_condition || 'Pullback / Breakout')}</span>
+                <span style="font-size: 0.68rem; color: var(--text-muted);">${escapeHtml(setup.trigger_zone || setup.trigger_condition || '—')}</span>
             </div>
             <div style="text-align: center; border-left: 1px solid var(--border-color); border-right: 1px solid var(--border-color);">
                 <div style="font-size: 0.7rem; color: #ef4444; text-transform: uppercase;">Stop Loss</div>
@@ -27156,7 +27169,7 @@ function renderNextDayPickCard(pick, index) {
 
         <!-- Footer: Technical & Status -->
         <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 0.6rem; font-size: 0.72rem; color: var(--text-muted);">
-            <div>RSI: <strong>${rsiDisplay}</strong> · Confluence: <strong>${escapeHtml(pick.eligibility || 'QUALIFIED')}</strong></div>
+            <div>RSI: <strong>${rsiDisplay}</strong> · Confluence: <strong>${escapeHtml(pick.eligibility || '— (unverified)')}</strong></div>
             <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; padding: 2px 6px; border-radius: 4px;">STATUS: ${escapeHtml(pick.outcome_status || pick.status || 'PENDING')}</span>
         </div>
     </div>`;
@@ -27199,7 +27212,7 @@ async function loadNextDayPicksHistory() {
                         <td style="padding: 0.6rem 0.75rem; font-weight: 700;">${escapeHtml(o.symbol)}</td>
                         <td style="padding: 0.6rem 0.75rem;">${escapeHtml(o.direction || 'LONG')}</td>
                         <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono, monospace);">₹${o.entry || '--'} / ₹${o.sl || '--'} / ₹${o.tp || '--'}</td>
-                        <td style="padding: 0.6rem 0.75rem; font-weight: 600; color: #10b981;">${(o.rr || 1.8).toFixed(1)}x</td>
+                        <td style="padding: 0.6rem 0.75rem; font-weight: 600; color: #10b981;">${(o.rr != null && Number.isFinite(Number(o.rr))) ? `${Number(o.rr).toFixed(1)}x` : '—'}</td>
                         <td style="padding: 0.6rem 0.75rem;"><span style="color: ${resColor}; font-weight: 700;">${escapeHtml(o.status || 'PENDING')}</span></td>
                         <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono, monospace);">${o.realized_r !== undefined ? `${o.realized_r.toFixed(2)}R` : '--'}</td>
                     </tr>`;

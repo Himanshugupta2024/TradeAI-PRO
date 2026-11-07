@@ -229,8 +229,19 @@ def classify_session(
         threshold = 90.0 * 60 if "/" in str(symbol) else (30.0 * 60 if market_open else 18.0 * 3600)
 
     # Market state determination
+    is_holiday_flag = False
+    try:
+        from agents.market_intelligence.nse_holidays import is_holiday
+        if "/" not in str(symbol) and (is_holiday(now_ist.date()) or is_holiday(bar_ist.date())):
+            is_holiday_flag = True
+    except Exception:
+        pass
+
     is_weekend = (now_ist.weekday() >= 5) or (bar_ist.weekday() >= 5 and market_open is not True)
-    if is_weekend:
+    if is_holiday_flag and market_open is not True:
+        market_state = "CLOSED_HOLIDAY"
+        is_stale = True
+    elif is_weekend:
         market_state = "CLOSED_WEEKEND"
         is_stale = True
     elif market_open is True:

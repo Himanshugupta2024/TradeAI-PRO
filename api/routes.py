@@ -3797,7 +3797,7 @@ async def get_portfolio():
     closed_trades = engine.get_history(limit=2000)
     inr_closed_trades = [
         t for t in closed_trades
-        if not (t.get("fx_status") == "LEGACY_UNCONVERTED" and (t.get("quote_currency") or "INR") != "INR")
+        if not (t.get("fx_status") == "LEGACY_UNCONVERTED" and (t.get("quote_currency") or ("USDT" if "/" in str(t.get("symbol", "")) else "INR")) != "INR")
     ]
 
     now_ist = datetime.now(tz=ist_tz)
@@ -4304,7 +4304,7 @@ async def get_performance():
     # Quarantine unconverted non-INR trades from INR ledger calculations (F05)
     inr_closed_trades = [
         t for t in closed_trades
-        if not (t.get("fx_status") == "LEGACY_UNCONVERTED" and (t.get("quote_currency") or "INR") != "INR")
+        if not (t.get("fx_status") == "LEGACY_UNCONVERTED" and (t.get("quote_currency") or ("USDT" if "/" in str(t.get("symbol", "")) else "INR")) != "INR")
     ]
     wins = [t for t in inr_closed_trades if _trade_total_pnl(t) > 1e-6]
     losses = [t for t in inr_closed_trades if _trade_total_pnl(t) < -1e-6]

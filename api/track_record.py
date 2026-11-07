@@ -134,7 +134,8 @@ def build_track_record(
     inr_closed: list[dict] = []
     unconverted_trades: list[dict] = []
     for t in closed:
-        if t.get("fx_status") == "LEGACY_UNCONVERTED" and (t.get("quote_currency") or "INR") != "INR":
+        qc = t.get("quote_currency") or ("USDT" if "/" in str(t.get("symbol", "")) else "INR")
+        if t.get("fx_status") == "LEGACY_UNCONVERTED" and qc != "INR":
             unconverted_trades.append(t)
         else:
             inr_closed.append(t)

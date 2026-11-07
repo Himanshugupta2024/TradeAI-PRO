@@ -717,11 +717,12 @@ def _get_feed_status() -> dict[str, object]:
 
 
 def is_market_open() -> bool:
-    """Return True if current time is within NSE trading hours (09:15 - 15:30 IST, Mon-Fri)."""
+    """Return True if current time is within NSE trading hours (09:15 - 15:30 IST, Mon-Fri, non-holiday)."""
     try:
         from zoneinfo import ZoneInfo
+        from agents.market_intelligence.nse_holidays import is_holiday
         now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
-        if now_ist.weekday() >= 5:
+        if now_ist.weekday() >= 5 or is_holiday(now_ist.date()):
             return False
         total_mins = now_ist.hour * 60 + now_ist.minute
         return (9 * 60 + 15) <= total_mins <= (15 * 60 + 30)

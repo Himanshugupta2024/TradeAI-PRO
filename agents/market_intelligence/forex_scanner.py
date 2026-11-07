@@ -394,23 +394,18 @@ def scan_forex_setup(
         rr_actual = (abs(tp1 - entry) / sl_dist) if sl_dist > 0 else 0.0
 
     # Step 6: AI Ensemble & Win Probability (Inference)
-    ai_consensus = "3/4"
-    win_probability = 65.0
-    model_votes = {
-        "xgboost": {"direction": direction, "confidence": 72.0},
-        "lightgbm": {"direction": direction, "confidence": 70.0},
-        "lstm": {"direction": direction, "confidence": 64.0},
-        "logistic": {"direction": direction, "confidence": 62.0},
-    }
+    ai_consensus = "—"
+    win_probability = 50.0
+    model_votes: dict[str, Any] = {}
 
     try:
         from agents.ai_engine.ensemble import predict_advanced
         ai_res = predict_advanced(df_4h, symbol=symbol, offline=True)
         if ai_res and ai_res.get("direction") not in ("SKIP", "empty_df"):
-            win_probability = float(ai_res.get("calibrated_trade_win_probability", 65.0))
-            agr = ai_res.get("ensemble_agreement", 3)
-            tot = ai_res.get("n_active_models", 4)
-            ai_consensus = f"{agr}/{tot}"
+            win_probability = float(ai_res.get("calibrated_trade_win_probability", 50.0))
+            agr = ai_res.get("ensemble_agreement", 0)
+            tot = ai_res.get("n_active_models", 0)
+            ai_consensus = f"{agr}/{tot}" if tot > 0 else "—"
             if "model_votes" in ai_res and ai_res["model_votes"]:
                 model_votes = ai_res["model_votes"]
     except Exception as e:
