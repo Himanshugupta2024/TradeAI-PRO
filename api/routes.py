@@ -7894,33 +7894,32 @@ async def search_quote(symbol: str):
         # ── Fallback to yFinance (NSE + global) ──────
 
         if df is None:
-
             from agents.market_intelligence.nse_fetcher import NSE_SYMBOLS
 
-            is_known_nse = clean_base in NSE_SYMBOLS or clean_base in settings.NSE_TICKER_MAP
-
-            target_first = NSE_SYMBOLS.get(clean_base, f"{clean_base}.NS") if is_known_nse else clean
+            if clean_base in settings.NSE_TICKER_MAP:
+                target_first = settings.NSE_TICKER_MAP[clean_base]
+                is_known_nse = True
+            elif clean_base in NSE_SYMBOLS:
+                target_first = NSE_SYMBOLS[clean_base]
+                is_known_nse = True
+            elif "/" not in clean and not clean.startswith("^"):
+                # Default Indian equities directly to .NS to eliminate wasteful failed queries on US tickers
+                target_first = f"{clean_base}.NS"
+                is_known_nse = True
+            else:
+                target_first = clean
+                is_known_nse = False
 
             # 1st attempt: targeted symbol (NSE ticker for Indian stocks, raw symbol for global)
-
             df = await asyncio.to_thread(fetch_arbitrary_symbol, target_first)
-
             if df is not None and not df.empty and is_known_nse:
-
                 clean = clean_base
 
-            # 2nd attempt: fallback if 1st attempt failed
-
-            if (df is None or df.empty) and "/" not in clean:
-
-                fallback_ticker = clean if is_known_nse else f"{clean_base}.NS"
-
-                logger.info("Trying fallback ticker: %s", fallback_ticker)
-
-                df = await asyncio.to_thread(fetch_arbitrary_symbol, fallback_ticker)
-
+            # 2nd attempt: fallback if 1st attempt failed (e.g. global ticker without .NS)
+            if (df is None or df.empty) and target_first != clean:
+                logger.info("Trying fallback ticker: %s", clean)
+                df = await asyncio.to_thread(fetch_arbitrary_symbol, clean)
                 if df is not None and not df.empty:
-
                     clean = clean_base
 
             if df is None or df.empty:
@@ -8049,6 +8048,9 @@ async def search_quote(symbol: str):
         round(float(last["MACD_hist"]), 4) if pd.notna(last.get("MACD_hist")) else None
 
     )
+
+    # Free heap and trim glibc malloc pages to protect Render 512MB RAM cap
+    svc._force_free_memory()
 
     return {
 

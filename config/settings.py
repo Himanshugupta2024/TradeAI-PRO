@@ -88,8 +88,14 @@ NSE_SYMBOLS = [s.strip() for s in _nse_env.split(",") if s.strip()] if _nse_env 
 # yfinance ticker mapping for NSE
 NSE_TICKER_MAP = {
     "NIFTY 50": "^NSEI",
+    "NIFTY": "^NSEI",
+    "NIFTY50": "^NSEI",
     "BANKNIFTY": "^NSEBANK",
+    "BANK NIFTY": "^NSEBANK",
+    "BANK_NIFTY": "^NSEBANK",
+    "CNXNIFTY": "^NSEI",
     "SENSEX": "^BSESN",
+    "BSESN": "^BSESN",
     "RELIANCE": "RELIANCE.NS",
     "PREMIERENE": "PREMIERENE.NS",
     "TCS": "TCS.NS",

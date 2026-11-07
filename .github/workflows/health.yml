@@ -39,8 +39,20 @@ jobs:
             python scripts/check_production_health.py
           fi
           code=$?
+          echo "probe initial exit code: $code"
+          # If critical, allow 30s grace window in case Render was mid-deploy or cold-starting, then retry once
+          if [ "$code" -ge 2 ]; then
+            echo "Probe returned code $code (critical). Waiting 30s for container warm-up/redeploy to settle before retry..."
+            sleep 30
+            if [ -n "$HEALTH_WEBHOOK" ]; then
+              python scripts/check_production_health.py --webhook "$HEALTH_WEBHOOK"
+            else
+              python scripts/check_production_health.py
+            fi
+            code=$?
+            echo "probe retry exit code: $code"
+          fi
           set -e
-          echo "probe exit code: $code"
           # 0 = healthy, 1 = degraded (allowed), 2 = critical (fails the job)
           if [ "$code" -ge 2 ]; then
             exit 1

@@ -56,7 +56,7 @@ def _fetch(url: str, timeout: float = 15.0, accept: str = "*/*"):
 def _fetch_with_retry(
     url: str,
     accept: str = "*/*",
-    delays: tuple[float, ...] = (0.0, 10.0, 25.0),
+    delays: tuple[float, ...] = (0.0, 10.0, 20.0, 30.0),
 ) -> tuple[int, dict, str]:
     """Retry transient Render cold-start responses (0/429/502/503/504)."""
     result: tuple[int, dict, str] = (0, {}, "")

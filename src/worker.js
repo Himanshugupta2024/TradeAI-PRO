@@ -150,11 +150,26 @@ function applyAntiPoisoningHeaders(headers) {
   headers.set("Pragma", "no-cache");
 }
 
+// Helper to strip anti-cache query parameters (_ts, _, timestamp, t) so edge cache keys are uniform
+function getNormalizedCacheKey(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    u.searchParams.delete("_ts");
+    u.searchParams.delete("_");
+    u.searchParams.delete("timestamp");
+    u.searchParams.delete("t");
+    return u.toString();
+  } catch (_) {
+    return rawUrl;
+  }
+}
+
 // Helper to store response in Cloudflare edge cache using exact request.url string
 async function storeInEdgeCache(cache, urlStr, originResponse) {
   if (!originResponse.ok || originResponse.status !== 200) return; // strictly cache only HTTP 200
   if (!cache || typeof cache.put !== "function") return;
   try {
+    const normUrl = getNormalizedCacheKey(urlStr);
     const now = Date.now();
     const cacheHeaders = new Headers(originResponse.headers);
     cacheHeaders.set("X-SWR-Cached-At", String(now));
@@ -169,7 +184,7 @@ async function storeInEdgeCache(cache, urlStr, originResponse) {
       statusText: originResponse.statusText,
       headers: cacheHeaders,
     });
-    await cache.put(urlStr, cachedResponse);
+    await cache.put(normUrl, cachedResponse);
   } catch (err) {
     // Non-fatal cache store failure
   }
@@ -201,8 +216,9 @@ export default {
       const cache = typeof caches !== "undefined" ? caches.default : null;
 
       // Check Edge Cache only for approved public GET endpoints
+      const cacheKey = isPublicCacheable ? getNormalizedCacheKey(request.url) : request.url;
       if (isPublicCacheable && cache) {
-        const cachedResponse = await cache.match(request.url);
+        const cachedResponse = await cache.match(cacheKey);
         if (cachedResponse) {
           const cachedAt = parseInt(cachedResponse.headers.get("X-SWR-Cached-At") || "0", 10);
           const ageSec = Math.max(0, Math.floor((Date.now() - cachedAt) / 1000));
@@ -229,7 +245,7 @@ export default {
                 });
                 const revalRes = await fetch(revalReq);
                 if (revalRes.status === 200) {
-                  await storeInEdgeCache(cache, request.url, revalRes);
+                  await storeInEdgeCache(cache, cacheKey, revalRes);
                 }
               } catch (revalErr) {
                 // Background fetch failed, stale entry remains until physical expiry
@@ -268,7 +284,7 @@ export default {
       } catch (err) {
         if (isPublicCacheable && cache) {
           try {
-            const stale = await cache.match(request.url);
+            const stale = await cache.match(cacheKey);
             if (stale) {
               const res = new Response(stale.body, stale);
               res.headers.set("CF-Cache-Status", "STALE-FALLBACK-ERR");
@@ -295,7 +311,7 @@ export default {
       // NOTE: 403 (Section 6A Focus Mode / admin lock) is strictly excluded so administrative locks are honored immediately.
       if (isPublicCacheable && cache && (originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 429 || originResponse.status === 504)) {
         try {
-          const stale = await cache.match(request.url);
+          const stale = await cache.match(cacheKey);
           if (stale) {
             const res = new Response(stale.body, stale);
             res.headers.set("CF-Cache-Status", "STALE-FALLBACK-503");
@@ -310,7 +326,7 @@ export default {
       // Public Cacheable: Store in cache and return MISS with unified headers
       if (isPublicCacheable && originResponse.status === 200) {
         if (cache) {
-          const storePromise = storeInEdgeCache(cache, request.url, originResponse.clone());
+          const storePromise = storeInEdgeCache(cache, cacheKey, originResponse.clone());
           if (ctx && typeof ctx.waitUntil === "function") {
             ctx.waitUntil(storePromise);
           } else {

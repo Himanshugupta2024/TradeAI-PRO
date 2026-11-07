@@ -64,24 +64,19 @@ async function fetchSafeJSON(url, options = {}, timeoutMs = 12000) {
         const opts = { ...options, signal: controller.signal };
         let res = await fetch(url, opts);
 
-        // Fallback between Cloudflare Worker proxy and direct Render origin
-        if ((!res.ok || res.status === 502 || res.status === 503) && res.status !== 429 && (url.startsWith('/') || !url.startsWith('http'))) {
-            try {
-                const directUrl = `https://trading-api-n1wt.onrender.com${url.startsWith('/') ? '' : '/'}${url}`;
-                const fbRes = await fetch(directUrl, opts);
-                if (fbRes.ok) res = fbRes;
-            } catch (_) {}
-        } else if ((!res.ok || res.status === 429) && url.includes('onrender.com')) {
-            try {
-                const pathOnly = new URL(url).pathname + new URL(url).search;
-                const fbRes = await fetch(pathOnly, opts);
-                if (fbRes.ok) res = fbRes;
-            } catch (_) {}
-        }
-
-        const ct = res.headers.get('content-type') || '';
+        const ct = (res.headers.get('content-type') || '').toLowerCase();
         if (!res.ok) {
-            return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+            let errData = {};
+            if (ct.includes('application/json')) {
+                try { errData = await res.json(); } catch (_) {}
+            }
+            return {
+                ok: false,
+                status: res.status,
+                error: errData.error || (res.status === 429 ? 'Rate limit in effect. Retrying shortly...' : `HTTP ${res.status}`),
+                detail: errData,
+                data: errData
+            };
         }
         if (!ct.includes('application/json')) {
             return { ok: false, status: res.status, error: 'Non-JSON response' };
@@ -2604,7 +2599,7 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
         const adminKey = (typeof localStorage !== 'undefined') ? (localStorage.getItem('tradeai_admin_key') || localStorage.getItem('admin_api_key')) : null;
         if (adminKey && adminKey.trim()) reqHeaders['X-API-Key'] = adminKey.trim();
 
-        let targetUrl = `${API}/api/autonomous/status?_ts=${Date.now()}`;
+        let targetUrl = `${API}/api/autonomous/status`;
         let res;
         try {
             res = await fetchWithTimeout(targetUrl, {
@@ -2615,8 +2610,8 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
             // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
             // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
             const fallbackUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
-                ? `/api/autonomous/status?_ts=${Date.now()}`
-                : `https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`;
+                ? `/api/autonomous/status`
+                : `${API}/api/autonomous/status`;
             try {
                 res = await fetchWithTimeout(fallbackUrl, {
                     signal: _autonomousStatusController.signal,
@@ -2631,8 +2626,8 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
             // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
             // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
             const altUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
-                ? `/api/autonomous/status?_ts=${Date.now()}`
-                : `https://trading-api-n1wt.onrender.com/api/autonomous/status?_ts=${Date.now()}`;
+                ? `/api/autonomous/status`
+                : `${API}/api/autonomous/status`;
             try {
                 const altRes = await fetchWithTimeout(altUrl, {
                     signal: _autonomousStatusController.signal,
@@ -2750,7 +2745,7 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
         const adminKey = (typeof localStorage !== 'undefined') ? (localStorage.getItem('tradeai_admin_key') || localStorage.getItem('admin_api_key')) : null;
         if (adminKey && adminKey.trim()) reqHeaders['X-API-Key'] = adminKey.trim();
 
-        let targetUrl = `${API}/api/autonomous/feed?limit=25&_ts=${Date.now()}`;
+        let targetUrl = `${API}/api/autonomous/feed?limit=25`;
         let res;
         try {
             res = await fetchWithTimeout(targetUrl, {
@@ -2761,8 +2756,8 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
             // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
             // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
             const fallbackUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
-                ? `/api/autonomous/feed?limit=25&_ts=${Date.now()}`
-                : `https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`;
+                ? `/api/autonomous/feed?limit=25`
+                : `${API}/api/autonomous/feed?limit=25`;
             try {
                 res = await fetchWithTimeout(fallbackUrl, {
                     signal: _autonomousFeedController.signal,
@@ -2777,8 +2772,8 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
             // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
             // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
             const altUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
-                ? `/api/autonomous/feed?limit=25&_ts=${Date.now()}`
-                : `https://trading-api-n1wt.onrender.com/api/autonomous/feed?limit=25&_ts=${Date.now()}`;
+                ? `/api/autonomous/feed?limit=25`
+                : `${API}/api/autonomous/feed?limit=25`;
             try {
                 const altRes = await fetchWithTimeout(altUrl, {
                     signal: _autonomousFeedController.signal,
