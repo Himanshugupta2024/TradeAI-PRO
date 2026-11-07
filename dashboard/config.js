@@ -23,8 +23,13 @@
     if (isLocalhost && (window.location.port === '5500' || window.location.port === '3000' || window.location.port === '5173')) {
         apiBase = 'http://127.0.0.1:8000';
         wsBase = '127.0.0.1:8000';
-    } else if (isCloudflareWorkers || isCloudflarePages || isVercel) {
-        // Direct Render Origin for API & WS — avoids Cloudflare-to-Cloudflare proxy chaining & egress rate-limits
+    } else if (isCloudflareWorkers) {
+        // Cloudflare Worker acts as edge reverse proxy & SWR cache
+        apiBase = '';
+        wsBase = window.location.host;
+        wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    } else if (isCloudflarePages || isVercel) {
+        // Direct Render Origin for external static-only hosts
         apiBase = 'https://trading-api-n1wt.onrender.com';
         wsBase = 'trading-api-n1wt.onrender.com';
         wsProto = 'wss:';
