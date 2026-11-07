@@ -65,7 +65,7 @@ async function fetchSafeJSON(url, options = {}, timeoutMs = 12000) {
         let res = await fetch(url, opts);
 
         // Fallback between Cloudflare Worker proxy and direct Render origin
-        if ((!res.ok || res.status === 429 || res.status === 502 || res.status === 503) && (url.startsWith('/') || !url.startsWith('http'))) {
+        if ((!res.ok || res.status === 502 || res.status === 503) && res.status !== 429 && (url.startsWith('/') || !url.startsWith('http'))) {
             try {
                 const directUrl = `https://trading-api-n1wt.onrender.com${url.startsWith('/') ? '' : '/'}${url}`;
                 const fbRes = await fetch(directUrl, opts);
@@ -668,12 +668,14 @@ document.addEventListener('DOMContentLoaded', () => {
     hydrateAutonomousFromStorage();
 
     loadOverviewFast();
-    // Stagger peripheral requests by 200-800ms to stay within Render free-tier concurrent connection caps
-    setTimeout(() => loadAutonomousFeed(), 200);
-    setTimeout(() => loadAllData({ background: false }), 450);
-    setTimeout(() => loadPortfolio(), 750);
-    setTimeout(() => updateAiModelHealthBadge(), 1050);
-    setTimeout(() => connectPriceWebSocket(), 1400);
+    // Stagger peripheral requests across 300-2500ms to stay within Render free-tier concurrent connection caps
+    setTimeout(() => loadAutonomousFeed(), 300);
+    setTimeout(() => loadAllData({ background: false }), 800);
+    if (typeof currentTab !== 'undefined' && currentTab === 'portfolio') {
+        setTimeout(() => loadPortfolio(), 1400);
+    }
+    setTimeout(() => updateAiModelHealthBadge(), 1800);
+    setTimeout(() => connectPriceWebSocket(), 2400);
 
     startBackgroundRefresh();
 
@@ -27495,6 +27497,9 @@ function removeFromWatchlist(sym) {
     const clean = sym.trim().toUpperCase().replace('.NS', '');
     if (_watchlist.has(clean)) {
         _watchlist.delete(clean);
+        if (typeof _watchlistQuoteCache !== 'undefined') {
+            delete _watchlistQuoteCache[clean];
+        }
         _saveWatchlist();
         updateWatchlistBadge();
         if (currentTab === 'watchlist') loadDedicatedWatchlist();
@@ -27533,6 +27538,63 @@ function updateModalPinButton(sym) {
     const isPinned = _watchlist.has(sym);
     pinBtn.textContent = isPinned ? '★ In Watchlist' : '☆ Pin to Watchlist';
     pinBtn.className = isPinned ? 'modal-pin-btn pinned' : 'modal-pin-btn';
+}
+
+let _watchlistQuoteCache = {}; // in-memory quote cache: { [sym]: { ltp, changePct, signalLabel, conf, entry, sl, tp, isError, ts } }
+
+async function _fetchWatchlistQuote(sym) {
+    const cached = _watchlistQuoteCache[sym];
+    if (cached && (Date.now() - cached.ts < 60000) && !cached.isError) {
+        return cached;
+    }
+    try {
+        const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 10000);
+        if (qRes.ok && qRes.data) {
+            const d = qRes.data;
+            const ltp = Number(d.close || 0);
+            const sig = d.signal || {};
+            const changePct = Number(sig.change_pct ?? d.change_pct ?? 0);
+            const rawSig = sig.signal || (ltp > 0 ? 'MONITOR' : 'UNAVAILABLE');
+            const signalLabel = rawSig.toUpperCase();
+            const conf = sig.confidence || 65;
+            const entry = Number(sig.entry || ltp);
+            const sl = Number(sig.stop_loss || (ltp > 0 ? ltp * 0.98 : 0));
+            const tp = Number(sig.target || (ltp > 0 ? ltp * 1.035 : 0));
+            const quoteObj = {
+                ltp,
+                changePct,
+                signalLabel,
+                conf,
+                entry,
+                sl,
+                tp,
+                isError: ltp === 0,
+                ts: Date.now()
+            };
+            if (ltp > 0) {
+                _watchlistQuoteCache[sym] = quoteObj;
+            }
+            return quoteObj;
+        }
+    } catch (_) {}
+    return {
+        ltp: 0,
+        changePct: 0,
+        signalLabel: 'UNAVAILABLE',
+        conf: 0,
+        entry: 0,
+        sl: 0,
+        tp: 0,
+        isError: true,
+        ts: Date.now()
+    };
+}
+
+async function retryWatchlistSymbol(sym) {
+    if (!sym) return;
+    delete _watchlistQuoteCache[sym];
+    showToast(`Retrying ${sym} quote...`, 'info');
+    await loadDedicatedWatchlist();
 }
 
 async function loadDedicatedWatchlist() {
@@ -27587,40 +27649,112 @@ async function loadDedicatedWatchlist() {
     };
 
     const signalsMap = {};
-    if (window._allSignalsCache && Array.isArray(window._allSignalsCache)) {
-        window._allSignalsCache.forEach(s => {
-            if (s.symbol) signalsMap[s.symbol.toUpperCase()] = s;
-        });
+    const sigPool = (Array.isArray(allSignals) && allSignals.length > 0)
+        ? allSignals
+        : (window._allSignalsCache || []);
+    sigPool.forEach(s => {
+        if (s && s.symbol) {
+            const k = s.symbol.toUpperCase().replace('.NS', '').trim();
+            signalsMap[k] = s;
+        }
+    });
+
+    // Paced batching (concurrency cap: 2) to protect Render 512MB RAM and avoid Cloudflare 429
+    const quotes = {};
+    for (let i = 0; i < list.length; i += 2) {
+        const batch = list.slice(i, i + 2);
+        const batchResults = await Promise.all(batch.map(async (sym) => {
+            const sig = signalsMap[sym];
+            if (sig && (sig.close || sig.entry)) {
+                const ltp = Number(sig.close || sig.entry || 0);
+                return {
+                    sym,
+                    data: {
+                        ltp,
+                        changePct: Number(sig.change_pct || 0),
+                        signalLabel: sig.signal || 'MONITOR',
+                        conf: sig.confidence || 65,
+                        entry: Number(sig.entry || ltp),
+                        sl: Number(sig.stop_loss || (ltp > 0 ? ltp * 0.98 : 0)),
+                        tp: Number(sig.target || (ltp > 0 ? ltp * 1.035 : 0)),
+                        isError: false,
+                        ts: Date.now()
+                    }
+                };
+            }
+            const q = await _fetchWatchlistQuote(sym);
+            return { sym, data: q };
+        }));
+        batchResults.forEach(r => { quotes[r.sym] = r.data; });
     }
 
-    const cardsHtml = await Promise.all(list.map(async (sym) => {
-        const sig = signalsMap[sym];
+    const cardsHtml = list.map((sym) => {
         const compName = companyNames[sym] || `${sym} · NSE Equity`;
-        
-        let ltp = sig?.close || sig?.entry || 0;
-        let changePct = sig?.change_pct || 0;
-        let signalLabel = sig?.signal || 'MONITOR';
-        let conf = sig?.confidence || 65;
-        let entry = sig?.entry || ltp;
-        let sl = sig?.stop_loss || (ltp > 0 ? ltp * 0.98 : 0);
-        let tp = sig?.target || (ltp > 0 ? ltp * 1.035 : 0);
+        const q = quotes[sym] || { ltp: 0, isError: true };
 
-        if (!ltp || ltp === 0) {
-            try {
-                const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 6000);
-                if (qRes.ok && qRes.data) {
-                    const d = qRes.data;
-                    ltp = Number(d.close || 0);
-                    if (d.signal) {
-                        signalLabel = d.signal.signal || signalLabel;
-                        conf = d.signal.confidence || conf;
-                        entry = d.signal.entry || ltp;
-                        sl = d.signal.stop_loss || sl;
-                        tp = d.signal.target || tp;
-                    }
-                }
-            } catch (_) {}
+        if (q.isError || !q.ltp || q.ltp === 0) {
+            return `
+                <div class="watchlist-card watchlist-card-error" style="border-color: rgba(239,68,68,0.25);">
+                    <div class="watchlist-header">
+                        <div class="watchlist-sym-block">
+                            <span class="watchlist-sym">${sym}</span>
+                            <span class="watchlist-name">${_escHtml(compName)}</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span style="font-size:0.65rem;font-weight:800;padding:2px 8px;border-radius:4px;background:rgba(239,68,68,0.12);color:var(--red,#ef4444);border:1px solid rgba(239,68,68,0.3);">
+                                OFFLINE / RETRY
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="watchlist-price-row" style="padding: 0.6rem 0; opacity: 0.85;">
+                        <div>
+                            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
+                            <div style="font-size: 0.9rem; font-weight: 700; color: var(--text-muted); font-family: var(--font-mono);">Quote Unavailable</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
+                            <div style="font-size: 0.9rem; color: var(--text-muted); font-family: var(--font-mono);">--</div>
+                        </div>
+                    </div>
+
+                    <div class="watchlist-levels" style="opacity: 0.6;">
+                        <div>
+                            <div class="watchlist-lvl-label">Entry Ref</div>
+                            <div class="watchlist-lvl-val">--</div>
+                        </div>
+                        <div>
+                            <div class="watchlist-lvl-label">Stop Loss</div>
+                            <div class="watchlist-lvl-val">--</div>
+                        </div>
+                        <div>
+                            <div class="watchlist-lvl-label">Target (TP)</div>
+                            <div class="watchlist-lvl-val">--</div>
+                        </div>
+                    </div>
+
+                    <div class="watchlist-actions" style="display:flex;align-items:center;gap:6px;">
+                        <button class="watchlist-inspect-btn" onclick="retryWatchlistSymbol('${sym}')" style="background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.35); color: #60a5fa;" title="Retry loading ${sym} quote">
+                            🔄 Retry Fetch
+                        </button>
+                        <button class="watchlist-inspect-btn" onclick="fetchAndShowQuote('${sym}')" title="Inspect ${sym} chart modal">
+                            ⚡ Inspect
+                        </button>
+                        <button class="watchlist-remove-btn" onclick="removeFromWatchlist('${sym}')" title="Remove ${sym} from Watchlist">
+                            ✕
+                        </button>
+                    </div>
+                </div>
+            `;
         }
+
+        const ltp = q.ltp;
+        const changePct = q.changePct;
+        const signalLabel = q.signalLabel;
+        const conf = q.conf;
+        const entry = q.entry;
+        const sl = q.sl;
+        const tp = q.tp;
 
         const isLong = ['LONG', 'BUY'].includes(signalLabel.toUpperCase());
         const isShort = ['SHORT', 'SELL'].includes(signalLabel.toUpperCase());
@@ -27684,7 +27818,7 @@ async function loadDedicatedWatchlist() {
                 </div>
             </div>
         `;
-    }));
+    });
 
     grid.innerHTML = cardsHtml.join('');
 }

@@ -138,11 +138,24 @@ class TestChallengerBackendStressAndGuards(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls._saved_env = {
+            k: os.environ[k]
+            for k in ("LIGHTWEIGHT_API_MODE", "INITIAL_LOAD_ENABLED", "BACKGROUND_REFRESH_ENABLED")
+            if k in os.environ
+        }
         os.environ["LIGHTWEIGHT_API_MODE"] = "true"
         os.environ["INITIAL_LOAD_ENABLED"] = "false"
         os.environ["BACKGROUND_REFRESH_ENABLED"] = "false"
         from server import app
         cls.client = TestClient(app, raise_server_exceptions=False)
+
+    @classmethod
+    def tearDownClass(cls):
+        for k in ("LIGHTWEIGHT_API_MODE", "INITIAL_LOAD_ENABLED", "BACKGROUND_REFRESH_ENABLED"):
+            if k in cls._saved_env:
+                os.environ[k] = cls._saved_env[k]
+            else:
+                os.environ.pop(k, None)
 
     def test_concurrency_repeated_probing_stability(self):
         """

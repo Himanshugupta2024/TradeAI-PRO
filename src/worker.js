@@ -68,6 +68,14 @@ function harden(response) {
 // Strict Allowlist of Public Market-Data Endpoints eligible for shared edge caching
 const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/overview/intelligence",
+  "/api/dashboard/overview",
+  "/api/nse/dashboard",
+  "/api/stats",
+  "/api/crypto/intelligence",
+  "/api/morning-scan",
+  "/api/market-control/status",
+  "/api/autonomous/feed",
+  "/api/autonomous/status",
   "/api/signals/all",
   "/api/signals/winrate",
   "/api/signals/leaderboard",
@@ -89,6 +97,7 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/edge/risk-gauge",
   "/api/research/next-day-picks",
   "/api/research/next-day-picks/history",
+  "/api/paper/open",
   "/api/health",
   "/api/health/live",
 ]);
@@ -100,7 +109,8 @@ function isPathCacheable(pathname) {
     pathname.startsWith("/api/news/") ||
     pathname.startsWith("/api/search/") ||
     pathname.startsWith("/api/swing/symbol/") ||
-    pathname.startsWith("/api/forex/ohlcv/")
+    pathname.startsWith("/api/forex/ohlcv/") ||
+    pathname.startsWith("/api/trades")
   ) {
     return true;
   }

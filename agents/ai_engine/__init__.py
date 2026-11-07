@@ -9,6 +9,7 @@ from agents.ai_engine.fallback_predictor import predict_direction, predict_batch
 
 try:
     from agents.ai_engine.lstm_model import TradingLSTM, TORCH_AVAILABLE  # noqa: F401
-    from agents.ai_engine.trainer import prepare_sequences, train_model  # noqa: F401
+    if TORCH_AVAILABLE:
+        from agents.ai_engine.trainer import prepare_sequences, train_model  # noqa: F401
 except ImportError:
     TORCH_AVAILABLE = False

@@ -336,12 +336,14 @@ async def health_check():
 
     symbols_loaded = len(svc._market_data)
     is_lightweight = os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes")
-    if symbols_loaded == 0 and (is_lightweight or feed_status.get("source") in ("WORKER_DB", "INTRADAY_STORE")):
+    initial_load_disabled = os.getenv("INITIAL_LOAD_ENABLED", "true").lower() in ("0", "false", "no")
+    is_ready_on_demand = svc._loading_status.get("ready", False) or initial_load_disabled
+    if symbols_loaded == 0 and (is_lightweight or is_ready_on_demand or feed_status.get("source") in ("WORKER_DB", "INTRADAY_STORE")):
         symbols_loaded = len(svc.TOP_NSE_SYMBOLS) if getattr(svc, "TOP_NSE_SYMBOLS", None) else 20
 
     uptime_sec = round(time.time() - getattr(svc, "_SERVER_START_TIME", time.time()), 1)
 
-    status_str = "ok" if db_ok and (symbols_loaded > 0 or is_lightweight) else "degraded" if not db_ok else "starting"
+    status_str = "ok" if db_ok and (symbols_loaded > 0 or is_lightweight or is_ready_on_demand) else "degraded" if not db_ok else "starting"
 
     worker_status = None
     try:
@@ -367,7 +369,13 @@ async def health_check():
             "market_session_status": "UNKNOWN",
         }
 
-    status_str = "ok" if str(h2.get("status", "")).upper() in ("HEALTHY", "OK") else str(h2.get("status", "degraded")).lower()
+    h2_status = str(h2.get("status", "degraded")).upper()
+    if h2_status in ("HEALTHY", "OK"):
+        status_str = "ok"
+    elif h2_status in ("STARTING",):
+        status_str = "starting"
+    else:
+        status_str = "degraded" 
 
     signals_count = len(svc._signal_cache)
     if signals_count == 0:

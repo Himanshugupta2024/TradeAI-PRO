@@ -421,21 +421,44 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
         conf = float(stat_result.get("confidence", 50.0))
         prob_up = float(stat_result.get("prob_up", 50.0 if direction != "DOWN" else 30.0))
         prob_down = float(stat_result.get("prob_down", 50.0 if direction != "UP" else 30.0))
+        anomaly_tier = "CLEAN"
+        is_vetoed = False
+        try:
+            from agents.ai_engine.anomaly_detector import detect_anomalies
+            anomaly_res = detect_anomalies(df)
+            anomaly_tier = anomaly_res.get("anomaly_tier", "CLEAN")
+            is_vetoed = anomaly_res.get("is_vetoed", False)
+            if is_vetoed:
+                direction = "SKIP"
+        except Exception:
+            pass
         res = {
             "direction": direction,
             "confidence": round(conf, 1),
             "raw_ensemble_score": conf,
+            "calibrated_trade_win_probability": round(conf, 1),
             "calibrated_trade_win_prob": round(conf, 1),
             "prob_up": prob_up,
             "prob_down": prob_down,
             "model_contributions": {"statistical": 1.0, "xgboost": 0.0, "lightgbm": 0.0, "lstm": 0.0, "logistic": 0.0},
-            "anomaly_tier": "CLEAN",
-            "is_vetoed": False,
+            "anomaly_tier": anomaly_tier,
+            "is_vetoed": is_vetoed,
             "confidence_multiplier": 1.0,
             "consensus_multiplier": 1.0,
             "agreement_count": 1,
             "meta_learner_active": False,
             "lightweight_mode": True,
+            "trend_regime": "NEUTRAL",
+            "volatility_regime": "NORMAL",
+            "trend_score": 0.0,
+            "volatility_score": 0.5,
+            "model_votes": {
+                "statistical": stat_result,
+                "xgboost": {"direction": "NEUTRAL", "confidence": 0.0},
+                "lightgbm": {"direction": "NEUTRAL", "confidence": 0.0},
+                "lstm": {"direction": "NEUTRAL", "confidence": 0.0},
+                "logistic": {"direction": "NEUTRAL", "confidence": 0.0},
+            },
         }
         if cache_key is not None:
             with _ENSEMBLE_CACHE_LOCK:
