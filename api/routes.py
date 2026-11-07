@@ -33,9 +33,9 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from starlette.requests import Request as FastApiRequest
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
-from api.security import require_admin
+from api.security import require_admin, get_authenticated_account
 
 from api.data_honesty import (
     apply_signal_freshness,
@@ -305,10 +305,11 @@ async def favicon():
     return Response(status_code=204)
 
 @router.api_route("/api/health", methods=["GET", "HEAD"])
-
-async def health_check():
-
+async def health_check(response: Response = None):
     """Health check endpoint — shows loading progress, server status, and DB availability."""
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
 
     try:
 
@@ -434,8 +435,11 @@ async def health_check():
     }
 
 @router.api_route("/api/ready", methods=["GET", "HEAD"])
-async def readiness_check():
+async def readiness_check(response: Response = None):
     """Readiness probe: verifies DB connectivity and that market data or snapshots are available."""
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
     try:
         db_ok = await _check_db_connectivity_with_retry()
     except Exception:
@@ -458,6 +462,10 @@ async def readiness_check():
 
         return JSONResponse(
             status_code=503,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+            },
             content={
                 "ready": False,
                 "status": "degraded" if not db_ok else "warming_up",
@@ -635,30 +643,22 @@ async def get_system_data_health():
     }
 
 @router.get("/api/health/live")
-
-async def liveness_check():
-
+async def liveness_check(response: Response = None):
     """Ultra-lightweight liveness probe (sub-1ms)."""
-
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
     start_t = getattr(svc, "_SERVER_START_TIME", time.time())
-
     return {
-
         "status": "alive",
-
         "uptime_seconds": round(time.time() - start_t, 2),
-
         "timestamp": datetime.now(timezone.utc).isoformat(),
-
     }
 
 @router.get("/api/health/ready")
-
-async def health_ready_check():
-
+async def health_ready_check(response: Response = None):
     """Readiness probe alias for standard k8s/cloud health checks."""
-
-    return await readiness_check()
+    return await readiness_check(response=response)
 
 @router.get("/api/health/providers")
 
@@ -2731,9 +2731,9 @@ async def get_current_signal(symbol: str):
     return result
 
 @router.get("/api/trades")
-async def get_trades(limit: int = Query(50, le=100)):
+async def get_trades(limit: int = Query(50, le=100), account_id: str = Depends(get_authenticated_account)):
     """Get recent trade history from real paper trading engine (newest first)."""
-    engine = svc._get_engine()
+    engine = svc.get_engine_for_account(account_id)
     raw_history = await asyncio.to_thread(engine.get_history, limit)
     enriched = []
     for t in raw_history:
@@ -2981,7 +2981,7 @@ async def resolve_paper_trades():
 
 @router.post("/api/paper/trade", dependencies=[Depends(require_admin)])
 
-async def place_paper_trade_endpoint(payload: dict):
+async def place_paper_trade_endpoint(payload: dict, account_id: str = Depends(get_authenticated_account)):
 
     """Manually place a paper trade from the dashboard."""
 
@@ -3079,7 +3079,7 @@ async def place_paper_trade_endpoint(payload: dict):
 
     direction = norm_dir
 
-    engine = svc._get_engine()
+    engine = svc.get_engine_for_account(account_id)
 
     trade = engine.execute(
 
@@ -3164,10 +3164,10 @@ async def place_paper_trade_endpoint(payload: dict):
     }
 
 @router.get("/api/paper/open")
-async def get_open_paper_trades_endpoint():
+async def get_open_paper_trades_endpoint(account_id: str = Depends(get_authenticated_account)):
     """Get all currently open paper trades with unified live pricing and valuation."""
     from api.valuation import resolve_open_trades_valuation
-    engine = svc._get_engine()
+    engine = svc.get_engine_for_account(account_id)
     val = await resolve_open_trades_valuation(engine, svc, refresh_stale=True)
     trades = [mark_trade_pricing(t) for t in val["open_trades"]]
     summary = dict(val["summary"])
@@ -3189,11 +3189,11 @@ async def get_open_paper_trades_endpoint():
 
 @router.post("/api/paper/close/{trade_id}", dependencies=[Depends(require_admin)])
 
-async def close_paper_trade_endpoint(trade_id: int, payload: dict | None = None):
+async def close_paper_trade_endpoint(trade_id: int, payload: dict | None = None, account_id: str = Depends(get_authenticated_account)):
 
     """Manually close an open paper trade at exit price."""
 
-    engine = svc._get_engine()
+    engine = svc.get_engine_for_account(account_id)
 
     payload = payload or {}
 
@@ -3238,7 +3238,7 @@ async def close_paper_trade_endpoint(trade_id: int, payload: dict | None = None)
     return {"status": "closed", "trade": trade_dict, "stats": engine.get_stats()}
 
 @router.post("/api/paper/close-bulk", dependencies=[Depends(require_admin)])
-async def close_paper_trades_bulk(payload: dict | None = None):
+async def close_paper_trades_bulk(payload: dict | None = None, account_id: str = Depends(get_authenticated_account)):
     """Close a group of open paper trades at the last known price.
 
     Modes: ``intraday`` (default), ``zombie``, ``all``, ``ids``.
@@ -3252,7 +3252,7 @@ async def close_paper_trades_bulk(payload: dict | None = None):
 
     mode = str(payload.get("mode") or "intraday").lower()
     dry_run = bool(payload.get("dry_run"))
-    engine = svc._get_engine()
+    engine = svc.get_engine_for_account(account_id)
     targets = select_bulk_targets(engine.open_trades, mode=mode, ids=payload.get("ids"))
 
     closed: list[dict] = []
@@ -3300,12 +3300,12 @@ async def close_paper_trades_bulk(payload: dict | None = None):
     }
 
 @router.post("/api/paper/capital", dependencies=[Depends(require_admin)])
-async def set_paper_capital_endpoint(payload: dict | None = None):
+async def set_paper_capital_endpoint(payload: dict | None = None, account_id: str = Depends(get_authenticated_account)):
     """Reconfigure self-learning paper capital and reset portfolio baseline."""
     payload = payload or {}
     capital = float(payload.get("capital") or 100000.0)
     clear_trades = bool(payload.get("clear_trades", False))
-    engine = svc._get_engine()
+    engine = svc.get_engine_for_account(account_id)
     new_stats = engine.reset_account(new_capital=capital, clear_trades=clear_trades)
     return {
         "status": "ok",
@@ -3314,9 +3314,9 @@ async def set_paper_capital_endpoint(payload: dict | None = None):
     }
 
 @router.post("/api/paper/reset", dependencies=[Depends(require_admin)])
-async def reset_paper_trading_endpoint(capital: float = Query(100000.0, ge=1000.0)):
+async def reset_paper_trading_endpoint(capital: float = Query(100000.0, ge=1000.0), account_id: str = Depends(get_authenticated_account)):
     """Reset paper trading portfolio and self-learning state."""
-    engine = svc._get_engine()
+    engine = svc.get_engine_for_account(account_id)
     new_stats = engine.reset_account(new_capital=capital, clear_trades=True)
     return {
         "status": "ok",
@@ -3788,7 +3788,7 @@ async def get_learning_outcomes(limit: int = Query(100, le=500)):
 
 @router.get("/api/portfolio")
 
-async def get_portfolio():
+async def get_portfolio(account_id: str = Depends(get_authenticated_account)):
 
     """Get open positions and unrealized P&L from real trading engine."""
 
@@ -3898,7 +3898,7 @@ async def get_portfolio():
 
             return "Others"
 
-    engine = svc._get_engine()
+    engine = svc.get_engine_for_account(account_id)
     from api.valuation import resolve_open_trades_valuation
     val = await resolve_open_trades_valuation(engine, svc, refresh_stale=True)
     open_trades = val.get("open_trades", [])

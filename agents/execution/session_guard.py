@@ -178,17 +178,17 @@ def evaluate_data_freshness(
         bar_ist = ts_utc.astimezone(_IST)
         today_ist = get_current_ist_time().date()
 
-        # Check if bar is from prior day
-        if bar_ist.date() < today_ist:
-            return "EOD", age_seconds
-
         # Daily candle check: often 00:00:00
         if bar_ist.hour == 0 and bar_ist.minute == 0 and bar_ist.second == 0:
             return "EOD", age_seconds
 
-        # Check for weekend candle
+        # Check for weekend candle on intraday bars
         if bar_ist.weekday() >= 5:
             return "IMPOSSIBLE_SESSION_TIME", age_seconds
+
+        # Check if bar is from prior day
+        if bar_ist.date() < today_ist:
+            return "EOD", age_seconds
 
         # Check market session window (09:15 to 15:30 IST)
         bar_time_minutes = bar_ist.hour * 60 + bar_ist.minute

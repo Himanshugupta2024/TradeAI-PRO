@@ -925,7 +925,10 @@ import os
 
 
 def get_model_status() -> dict:
-    """Return status of all models in the ensemble."""
+    """Return status of all models in the ensemble, distinguishing lightweight baseline from full execution."""
+    from datetime import datetime, timezone
+    now_ts = datetime.now(timezone.utc).isoformat()
+
     if _is_lightweight_mode():
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         models_dir = os.path.join(base_dir, "models")
@@ -933,43 +936,53 @@ def get_model_status() -> dict:
         def _has_model(fname: str) -> bool:
             return os.path.exists(os.path.join("models", fname)) or os.path.exists(os.path.join(models_dir, fname))
 
-        xgb_fitted = _has_model("xgb_model.pkl")
-        lgbm_fitted = _has_model("lgbm_model.pkl")
-        lstm_fitted = _has_model("best_model.pt")
-        logit_fitted = _has_model("logistic_model.pkl")
-        meta_fitted = _has_model("meta_learner.pkl")
-        calib_fitted = _has_model("calibrator.pkl")
+        xgb_disk = _has_model("xgb_model.pkl")
+        lgbm_disk = _has_model("lgbm_model.pkl")
+        lstm_disk = _has_model("best_model.pt")
+        logit_disk = _has_model("logistic_model.pkl")
+        meta_disk = _has_model("meta_learner.pkl")
+        calib_disk = _has_model("calibrator.pkl")
 
-        fitted_count = sum([xgb_fitted, lgbm_fitted, lstm_fitted, logit_fitted])
-        total_ml = 4
-
-        if fitted_count == total_ml and calib_fitted:
-            mode = "Ensemble V2 (4/4 ML + Calibrated)"
-            badge_short = "🧠 Ensemble 4/4 • Calibrated"
-        elif fitted_count == total_ml:
-            mode = "Ensemble V2 (4/4 ML Fitted)"
-            badge_short = "🧠 Ensemble (4/4 ML)"
-        elif fitted_count > 0:
-            mode = f"Hybrid Ensemble ({fitted_count}/{total_ml} ML fitted)"
-            badge_short = f"🧠 AI: Hybrid ({fitted_count}/{total_ml} ML)"
-        else:
-            mode = "Statistical Heuristic (0/4 models fitted)"
-            badge_short = "🧠 AI: Heuristic (0/4 ML)"
+        mode = "Lightweight Mode (Statistical Heuristic + Calibrator)" if calib_disk else "Lightweight Mode (Statistical Heuristic)"
+        badge_short = "⚡ Lightweight • Calibrated" if calib_disk else "⚡ Lightweight Mode"
 
         return {
             "mode": mode,
-            "fitted_count": fitted_count,
-            "total_ml_models": total_ml,
+            "active_inference_mode": "LIGHTWEIGHT_BASELINE",
+            "fitted_count": 0,  # 0 ML models executing in memory (respects 512MB RAM cap)
+            "executing_in_memory": False,
+            "total_ml_models": 4,
             "statistical_heuristic": True,
-            "xgboost_fitted": xgb_fitted,
-            "lightgbm_fitted": lgbm_fitted,
-            "lstm_fitted": lstm_fitted,
-            "logistic_fitted": logit_fitted,
-            "meta_learner_fitted": meta_fitted,
-            "calibrator_fitted": calib_fitted,
+            "xgboost_fitted": False,
+            "lightgbm_fitted": False,
+            "lstm_fitted": False,
+            "logistic_fitted": False,
+            "meta_learner_fitted": False,
+            "calibrator_fitted": calib_disk,
+            "calibration_status": {
+                "calibrated": calib_disk,
+                "method": "Sigmoid Scaling" if calib_disk else "None",
+            },
+            "model_availability": {
+                "xgboost": xgb_disk,
+                "lightgbm": lgbm_disk,
+                "lstm": lstm_disk,
+                "logistic": logit_disk,
+                "meta_learner": meta_disk,
+                "calibrator": calib_disk,
+            },
+            "models_executing": {
+                "xgboost": False,
+                "lightgbm": False,
+                "lstm": False,
+                "logistic": False,
+                "meta_learner": False,
+                "calibrator": calib_disk,
+            },
             "badge_text": f"AI Engine: {mode}",
             "badge_short": badge_short,
             "lightweight_mode": True,
+            "last_inference": now_ts,
         }
 
     xgb_fitted = False
@@ -1035,9 +1048,13 @@ def get_model_status() -> dict:
         mode = "Statistical Heuristic (0/4 models fitted)"
         badge_short = "🧠 AI: Heuristic (0/4 ML)"
 
+    from datetime import datetime, timezone
+    now_ts = datetime.now(timezone.utc).isoformat()
     return {
         "mode": mode,
+        "active_inference_mode": "FULL_ENSEMBLE",
         "fitted_count": fitted_count,
+        "executing_in_memory": True,
         "total_ml_models": total_ml,
         "statistical_heuristic": True,
         "xgboost_fitted": xgb_fitted,
@@ -1046,6 +1063,28 @@ def get_model_status() -> dict:
         "logistic_fitted": logit_fitted,
         "meta_learner_fitted": meta_fitted,
         "calibrator_fitted": calib_fitted,
+        "calibration_status": {
+            "calibrated": calib_fitted,
+            "method": "Sigmoid Scaling" if calib_fitted else "None",
+        },
+        "model_availability": {
+            "xgboost": xgb_fitted,
+            "lightgbm": lgbm_fitted,
+            "lstm": lstm_fitted,
+            "logistic": logit_fitted,
+            "meta_learner": meta_fitted,
+            "calibrator": calib_fitted,
+        },
+        "models_executing": {
+            "xgboost": xgb_fitted,
+            "lightgbm": lgbm_fitted,
+            "lstm": lstm_fitted,
+            "logistic": logit_fitted,
+            "meta_learner": meta_fitted,
+            "calibrator": calib_fitted,
+        },
         "badge_text": f"AI Engine: {mode}",
         "badge_short": badge_short,
+        "lightweight_mode": False,
+        "last_inference": now_ts,
     }

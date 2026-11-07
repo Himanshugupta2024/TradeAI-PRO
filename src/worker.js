@@ -99,10 +99,22 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/edge/risk-gauge",
   "/api/research/next-day-picks",
   "/api/research/next-day-picks/history",
-  "/api/health",
 ]);
 
+// Health and readiness routes must NEVER be cached by Cloudflare edge.
+// Caching them allows origin downtime or cold starts to be masked by stale responses.
+function isHealthOrReadinessPath(pathname) {
+  return (
+    pathname === "/api/health" ||
+    pathname.startsWith("/api/health/") ||
+    pathname === "/api/ready" ||
+    pathname.startsWith("/api/ready/") ||
+    pathname === "/api/system/data-health"
+  );
+}
+
 function isPathCacheable(pathname) {
+  if (isHealthOrReadinessPath(pathname)) return false;
   if (PUBLIC_CACHEABLE_PATHS.has(pathname)) return true;
   if (
     pathname.startsWith("/api/backtest/") ||
@@ -412,6 +424,9 @@ export default {
             clientHeaders.set("Retry-After", retryAfter);
           }
         }
+      } else if (isHealthOrReadinessPath(url.pathname)) {
+        clientHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        clientHeaders.set("Pragma", "no-cache");
       } else if (
         privateState ||
         request.method !== "GET"

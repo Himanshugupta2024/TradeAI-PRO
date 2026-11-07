@@ -836,11 +836,25 @@ def _stable_regime(symbol: str, new_regime: MarketRegime) -> MarketRegime:
         return MarketRegime(confirmed)
 
 
+_engines: dict[str, PaperTradingEngine] = {}
+
+def get_engine_for_account(account_id: str = "default") -> PaperTradingEngine:
+    """Get or create the paper trading engine for a specific isolated account."""
+    clean_id = (account_id or "default").strip().lower()
+    if not clean_id or not clean_id.replace("-", "").replace("_", "").isalnum():
+        clean_id = "default"
+    if clean_id not in _engines:
+        _engines[clean_id] = PaperTradingEngine(
+            initial_capital=100_000.0,
+            account_id=clean_id,
+        )
+    return _engines[clean_id]
+
 def _get_engine() -> PaperTradingEngine:
     """Get or create the paper trading engine (loads real trade history)."""
     global _engine
     if _engine is None:
-        _engine = PaperTradingEngine(initial_capital=100_000)
+        _engine = get_engine_for_account("default")
     return _engine
 
 
@@ -4441,3 +4455,22 @@ class SnapshotBroadcaster:
 
 
 broadcaster = SnapshotBroadcaster()
+
+async def warmup_priority_quotes() -> None:
+    """Pre-warm in-memory quotes for top priority NIFTY symbols so search_quote responds instantly."""
+    priority = ["RELIANCE", "HDFCBANK", "TCS", "INFY", "ICICIBANK", "VEDL"]
+    logger.info("[Warmup] Pre-warming %d priority NIFTY quotes in background...", len(priority))
+    for sym in priority:
+        if sym in _market_data:
+            continue
+        try:
+            from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
+            target = f"{sym}.NS"
+            df = await asyncio.to_thread(fetch_arbitrary_symbol, target, "5d", "5m")
+            if df is not None and not df.empty:
+                df = calculate_indicators(df)
+                _market_data[sym] = df
+                logger.debug("[Warmup] Warmed %s (%d bars)", sym, len(df))
+        except Exception as e:
+            logger.debug("[Warmup] Failed for %s: %s", sym, e)
+        await asyncio.sleep(0.5)

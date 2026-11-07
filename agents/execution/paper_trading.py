@@ -56,7 +56,7 @@ def _parse_ist_ts(value) -> Optional[datetime]:
         parsed = parsed.replace(tzinfo=_IST)
     return parsed.astimezone(_IST)
 from config.logger import get_logger
-from agents.execution.trailing_sl import TrailingStopManager
+from agents.execution.trailing_sl import TrailingStopManager, TRAILING_STATE_FILE
 from agents.execution.position_sizing import calculate_position_size
 
 log = get_logger(__name__)
@@ -159,7 +159,9 @@ class PaperTradingEngine:
         initial_capital: float = 100_000.0,
         log_file: str = "paper_trades.json",
         state_key: str | None = None,
+        account_id: str = "default",
     ):
+        self.account_id = (account_id or "default").strip().lower()
         self.initial_capital = initial_capital
         self.capital = initial_capital
         self.log_file = log_file
@@ -170,6 +172,10 @@ class PaperTradingEngine:
         }
         if state_key is not None:
             self._state_key = state_key
+        elif self.account_id != "default":
+            self._state_key = f"paper_trading_state:account:{self.account_id}"
+            if log_file in ("paper_trades.json", "logs/paper_trades.json"):
+                self.log_file = f"logs/paper_trades_{self.account_id}.json"
         elif log_file in ("paper_trades.json", "logs/paper_trades.json") or os.path.abspath(log_file) in default_state_paths:
             self._state_key = os.getenv("PAPER_TRADING_STATE_KEY", "paper_trading_state:v1")
         else:
@@ -184,8 +190,9 @@ class PaperTradingEngine:
         self._circuit_breaker_reason = ""
         self.last_rejection_reason: str = ""
 
-        # Trailing SL manager
-        self.trailing_manager = TrailingStopManager()
+        # Trailing SL manager with account-isolated state file
+        trailing_file = f"trailing_sl_state_{self.account_id}.json" if self.account_id != "default" else TRAILING_STATE_FILE
+        self.trailing_manager = TrailingStopManager(state_file=trailing_file)
 
         # Cooldown tracker: symbol → candles remaining
         self._cooldowns: dict[str, int] = {}
@@ -1553,6 +1560,17 @@ class PaperTradingEngine:
                 self.open_trades.append(trade)
 
         self._trade_counter = max((t.id for t in self.trades), default=0)
+
+        # Restore trailing SL tracking for any reloaded open trades
+        for trade in self.open_trades:
+            if self.trailing_manager.get_sl(trade.id) is None:
+                self.trailing_manager.register(
+                    trade_id=trade.id,
+                    direction=trade.direction,
+                    entry=trade.entry_price,
+                    sl=trade.stop_loss,
+                    atr=0.0,
+                )
 
     def _load(self):
         """Load state from DB runtime state, with automatic legacy key migration and fail-loud DB safety."""

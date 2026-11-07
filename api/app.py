@@ -360,6 +360,8 @@ def _lifespan_context():
                 svc.logger.debug("Warm bar probe non-blocking failure: %s", e)
 
         _spawn_task(_warm_bar_probe(), name="warm_bar_probe")
+        if hasattr(svc, "warmup_priority_quotes"):
+            _spawn_task(svc.warmup_priority_quotes(), name="warmup_priority_quotes")
 
 
 
