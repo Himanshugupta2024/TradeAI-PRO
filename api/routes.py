@@ -7933,19 +7933,10 @@ async def search_quote(symbol: str):
 
             df = calculate_indicators(df)
 
-            htf_df = await asyncio.to_thread(fetch_arbitrary_symbol, clean, "60d", "1d")
-
-            if htf_df is None or htf_df.empty:
-
-                # For dynamic NSE symbols, also try with .NS for HTF
-
-                nse_htf = f"{clean_base}.NS"
-
-                htf_df = await asyncio.to_thread(
-
-                    fetch_arbitrary_symbol, nse_htf, "60d", "1d"
-
-                )
+            htf_target = target_first if is_known_nse else (f"{clean_base}.NS" if "/" not in clean else clean)
+            htf_df = await asyncio.to_thread(fetch_arbitrary_symbol, htf_target, "60d", "1d")
+            if (htf_df is None or htf_df.empty) and htf_target != clean:
+                htf_df = await asyncio.to_thread(fetch_arbitrary_symbol, clean, "60d", "1d")
 
             if htf_df is not None and not htf_df.empty and len(htf_df) >= 20:
 

@@ -19659,19 +19659,39 @@ async function fetchAndShowQuote(symbol) {
 
         if (!resObj.ok) {
             const err = resObj.data || {};
+            const status = resObj.status || 0;
             const detailObj = (typeof err.detail === 'object' && err.detail !== null) ? err.detail : ((typeof resObj.detail === 'object' && resObj.detail !== null) ? resObj.detail : {});
-            const errMsg = err.error || err.detail?.error || resObj.error || resObj.detail?.error || 'Symbol not found on NSE or yFinance';
-            const detailMsg = detailObj.message || detailObj.hint || '';
+            let titleText = 'Symbol Not Found';
+            let errMsg = err.error || err.detail?.error || resObj.error || 'Symbol not found on NSE or yFinance';
+            let detailMsg = detailObj.message || detailObj.hint || '';
+            let showNseHint = true;
+
+            if (status === 429) {
+                titleText = 'Rate Limited (Too Many Requests)';
+                errMsg = 'Cloudflare or API rate limit active. Please wait a few seconds and retry.';
+                showNseHint = false;
+            } else if (status === 502 || status === 503 || status === 504) {
+                titleText = 'Data Feed Starting / Waking Up';
+                errMsg = 'The market data backend is cold-starting or busy. Please retry in a few seconds.';
+                showNseHint = false;
+            } else if (errMsg === 'Failed to fetch' || errMsg === 'Timeout' || status === 0) {
+                titleText = 'Connection Timeout';
+                errMsg = 'Market data fetch took longer than expected or backend is waking up.';
+                showNseHint = false;
+            }
+
             titleEl.textContent = symbol.toUpperCase();
             infoGrid.innerHTML = `
                 <div style="grid-column:1/-1;text-align:center;padding:2rem;">
                     <div style="font-size:2rem;margin-bottom:0.75rem;">⚠️</div>
-                    <div style="color:var(--red);font-weight:600;margin-bottom:0.5rem;">Symbol Not Found</div>
-                    <div style="color:var(--text-muted);font-size:0.8rem;">${_escHtml(errMsg)}</div>
-                    ${detailMsg ? `<div style="color:var(--text-secondary);font-size:0.75rem;margin-top:0.35rem;">${_escHtml(detailMsg)}</div>` : ''}
-                    <div style="margin-top:1rem;font-size:0.75rem;color:var(--text-muted);">
+                    <div style="color:var(--red);font-weight:600;margin-bottom:0.5rem;">${titleText}</div>
+                    <div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:0.75rem;">${_escHtml(errMsg)}</div>
+                    ${detailMsg ? `<div style="color:var(--text-secondary);font-size:0.75rem;margin-bottom:0.75rem;">${_escHtml(detailMsg)}</div>` : ''}
+                    <button class="btn btn-secondary" onclick="openSymbolModal('${symbol}')" style="margin-bottom:0.75rem;padding:0.35rem 0.9rem;font-size:0.75rem;cursor:pointer;">🔄 Retry Fetch</button>
+                    ${showNseHint ? `
+                    <div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-muted);">
                         Make sure the NSE symbol is correct (e.g. <code style="color:var(--cyan)">PRECWIRE</code>, <code style="color:var(--cyan)">VEDL</code>)
-                    </div>
+                    </div>` : ''}
                 </div>`;
             return;
         }
