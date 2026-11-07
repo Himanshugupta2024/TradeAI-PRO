@@ -119,3 +119,34 @@ class TestTrackRecord:
     def test_no_initial_capital_reports_null(self):
         record = build_track_record([_trade("TCS", 1.0)])
         assert record["initial_capital"] is None
+
+    def test_net_pnl_zero_fallback_to_total_pnl(self):
+        # F04: if net_pnl is 0.0 or uncosted, fall back to total_pnl
+        trade = _trade("TCS", pnl=250.0, net_pnl=0.0, total_pnl=250.0)
+        assert trade_pnl(trade) == 250.0
+
+    def test_quarantine_legacy_unconverted_trade(self):
+        # F05: legacy unconverted non-INR trade must be quarantined from INR totals
+        trades = [
+            _trade("TCS", 100.0, quote_currency="INR"),
+            _trade("ETH/USDT", -295.88, quote_currency="USDT", fx_status="LEGACY_UNCONVERTED"),
+        ]
+        record = build_track_record(trades, initial_capital=10000.0)
+        assert record["total_trades"] == 1  # Only 1 INR trade counted in INR ledger
+        assert record["pnl"] == 100.0
+        assert len(record["unconverted_legacy_trades"]) == 1
+        assert record["unconverted_legacy_trades"][0]["symbol"] == "ETH/USDT"
+
+    def test_breakeven_trade_separated(self):
+        # F16: trade with 0 PnL should be counted as breakeven, not loss
+        trades = [
+            _trade("TCS", 100.0),
+            _trade("INFY", -50.0),
+            _trade("SBIN", 0.0),
+        ]
+        record = build_track_record(trades)
+        assert record["total_trades"] == 3
+        assert record["wins"] == 1
+        assert record["losses"] == 1
+        assert record["breakevens"] == 1
+

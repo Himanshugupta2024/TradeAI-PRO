@@ -75,6 +75,7 @@ class MacroNewsItem:
     pub_date: str
     sentiment: str     # BULLISH / BEARISH / NEUTRAL
     sentiment_score: float  # -1.0 to +1.0
+    link: str = ""     # Clickable article link
 
 
 @dataclass
@@ -137,7 +138,7 @@ class GlobalMacroFetcher:
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(self._fetch_live)
-                intel = future.result(timeout=8.0)
+                intel = future.result(timeout=12.0)
             self._cached_intel = intel
             self._last_fetch_ts = now
             return intel
@@ -158,7 +159,7 @@ class GlobalMacroFetcher:
         quotes: Dict[str, CommodityQuote] = {}
 
         try:
-            df = yf.download(symbols, period="5d", interval="1d", progress=False, timeout=3.0)
+            df = yf.download(symbols, period="5d", interval="1d", progress=False, timeout=7.0)
             if not df.empty and "Close" in df.columns:
                 close_df = df["Close"]
                 for key, (sym, name, unit) in self.TICKERS.items():
@@ -271,15 +272,21 @@ class GlobalMacroFetcher:
         items: List[MacroNewsItem] = []
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-            with urllib.request.urlopen(req, timeout=3.0) as resp:
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
                 xml_data = resp.read()
                 root = ET.fromstring(xml_data)
-                rss_items = root.findall(".//item")[:2]
+                rss_items = root.findall(".//item")[:5]
                 for it in rss_items:
-                    raw_title = it.find("title").text or ""
+                    raw_title = (it.find("title").text or "").strip()
+                    if not raw_title or "Press Releases" in raw_title or len(raw_title) < 18:
+                        continue
+                    link = (it.find("link").text or "").strip() if it.find("link") is not None else ""
                     source = it.find("source").text if it.find("source") is not None else "Financial News"
+                    if f" - {source}" in raw_title:
+                        raw_title = raw_title.replace(f" - {source}", "").strip()
                     pub = it.find("pubDate").text or ""
                     score, sentiment = self._compute_headline_polarity(raw_title)
+                    fallback_url = f"https://news.google.com/search?q={urllib.parse.quote(raw_title)}"
                     items.append(MacroNewsItem(
                         category=cat,
                         title=raw_title,
@@ -287,7 +294,10 @@ class GlobalMacroFetcher:
                         pub_date=pub[:16],
                         sentiment=sentiment,
                         sentiment_score=score,
+                        link=link or fallback_url,
                     ))
+                    if len(items) >= 2:
+                        break
         except Exception as e:
             logger.debug("Failed to fetch RSS news for %s: %s", cat, e)
         return items
@@ -344,13 +354,13 @@ class GlobalMacroFetcher:
 
     def _default_val(self, key: str) -> Tuple[float, float]:
         defaults = {
-            "brent": (74.50, -0.4),
-            "wti": (70.20, -0.3),
-            "yield_10y": (4.25, 0.0),
-            "dxy": (103.80, -0.1),
-            "sp500": (5850.0, 0.4),
-            "nasdaq": (18500.0, 0.6),
-            "gold": (2740.0, 0.2),
+            "brent": (98.30, 0.4),
+            "wti": (90.80, 0.3),
+            "yield_10y": (4.86, 0.0),
+            "dxy": (102.30, -0.1),
+            "sp500": (7370.0, 0.4),
+            "nasdaq": (24500.0, 0.6),
+            "gold": (4060.0, 0.2),
         }
         return defaults.get(key, (100.0, 0.0))
 

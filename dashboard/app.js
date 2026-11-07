@@ -26545,13 +26545,29 @@ function renderMacroIntelligence(macro) {
         }
     }
 
-    // Macro Summary Text
+    // Macro Summary Text with Clickable Sector Stock Chips
     const sumEl = document.getElementById('macroSummaryText');
     if (sumEl && macro.macro_cue_summary) {
-        sumEl.textContent = macro.macro_cue_summary;
+        let text = (macro.macro_cue_summary || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const symbolMap = {
+            'Asian Paints': 'ASIANPAINT',
+            'Berger': 'BERGEPAINT',
+            'IndiGo': 'INDIGO',
+            'BPCL': 'BPCL',
+            'IOC': 'IOC',
+            'HPCL': 'HPCL',
+            'ONGC': 'ONGC',
+            'Oil India': 'OIL',
+            'Reliance': 'RELIANCE'
+        };
+        for (const [name, sym] of Object.entries(symbolMap)) {
+            const regex = new RegExp(`\\b${name}\\b`, 'gi');
+            text = text.replace(regex, `<span class="macro-stock-chip" onclick="fetchAndShowQuote('${sym}')" title="Inspect ${sym} on NSE">${name}</span>`);
+        }
+        sumEl.innerHTML = text;
     }
 
-    // Breaking News Stream with word-boundary truncation
+    // Breaking News Stream with clickable verified links
     const truncateWords = (str, maxLen) => {
         if (!str || str.length <= maxLen) return str;
         const sub = str.substring(0, maxLen);
@@ -26566,12 +26582,15 @@ function renderMacroIntelligence(macro) {
             const tagClass = `tag-${cat.toLowerCase()}`;
             const sentClass = n.sentiment === 'BULLISH' ? 'text-profit' : (n.sentiment === 'BEARISH' ? 'text-loss' : '');
             const titleSafe = (n.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const shortTitle = truncateWords(titleSafe, 68);
+            const shortTitle = truncateWords(titleSafe, 72);
+            const sourceSafe = (n.source || 'News').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const link = n.link || `https://news.google.com/search?q=${encodeURIComponent(n.title || cat)}`;
             return `
-                <div class="macro-news-pill">
+                <a href="${link}" target="_blank" rel="noopener noreferrer" class="macro-news-pill macro-news-link" title="${titleSafe} — Source: ${sourceSafe}">
                     <span class="macro-news-tag ${tagClass}">${cat.replace(/_/g, ' ')}</span>
-                    <span class="${sentClass}" title="${titleSafe}">${shortTitle}</span>
-                </div>
+                    <span class="${sentClass}">${shortTitle}</span>
+                    <span class="macro-news-src">${sourceSafe} ↗</span>
+                </a>
             `;
         }).join('');
     }

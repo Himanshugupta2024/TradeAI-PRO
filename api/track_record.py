@@ -26,11 +26,28 @@ def _as_float(value: Any, default: float = 0.0) -> float:
 
 def trade_pnl(trade: dict) -> float:
     """Rupee P&L for one closed trade, net of estimated costs when available."""
-    if trade.get("cost_profile") and trade.get("net_pnl") is not None:
+    if trade.get("cost_profile") and trade.get("cost_profile") != "UNAVAILABLE":
+        net = _as_float(trade.get("net_pnl"))
+        if abs(net) > 1e-9:
+            return net
+
+    for key in ("total_pnl", "pnl_inr", "realized_pnl"):
+        val = trade.get(key)
+        if val is not None and abs(_as_float(val)) > 1e-9:
+            return _as_float(val)
+
+    if trade.get("net_pnl") is not None and abs(_as_float(trade.get("net_pnl"))) > 1e-9:
         return _as_float(trade.get("net_pnl"))
-    for key in ("net_pnl", "total_pnl", "pnl_inr", "realized_pnl"):
+
+    if trade.get("pnl") is not None:
+        pnl_calc = _as_float(trade.get("pnl")) * _as_float(trade.get("quantity"), 1.0)
+        if abs(pnl_calc) > 1e-9:
+            return pnl_calc
+
+    for key in ("total_pnl", "net_pnl", "pnl_inr", "realized_pnl"):
         if trade.get(key) is not None:
             return _as_float(trade.get(key))
+
     return _as_float(trade.get("pnl")) * _as_float(trade.get("quantity"), 1.0)
 
 
@@ -45,6 +62,10 @@ def _trade_return_pct(trade: dict) -> Optional[float]:
 
 
 def _normalise_trade(trade: dict) -> dict:
+    qc = trade.get("quote_currency") or ("USDT" if "/" in str(trade.get("symbol", "")) else "INR")
+    fx_status = trade.get("fx_status") or "ACTIVE"
+    gross = trade.get("total_pnl")
+    gross_val = _as_float(gross) if gross is not None else trade_pnl(trade)
     return {
         "id": trade.get("id"),
         "symbol": trade.get("symbol"),
@@ -53,8 +74,10 @@ def _normalise_trade(trade: dict) -> dict:
         "entry_price": _as_float(trade.get("entry_price")),
         "exit_price": _as_float(trade.get("exit_price")),
         "quantity": _as_float(trade.get("quantity"), 1.0),
+        "quote_currency": qc,
+        "fx_status": fx_status,
         "pnl": round(trade_pnl(trade), 2),
-        "gross_pnl": round(_as_float(trade.get("total_pnl")), 2),
+        "gross_pnl": round(gross_val, 2),
         "estimated_costs": round(_as_float(trade.get("estimated_costs")), 2),
         "net_pnl": round(trade_pnl(trade), 2),
         "return_pct": _trade_return_pct(trade),
@@ -66,8 +89,9 @@ def _normalise_trade(trade: dict) -> dict:
 
 def _summarise(trades: list[dict]) -> dict:
     pnls = [trade_pnl(t) for t in trades]
-    wins = [p for p in pnls if p > 0]
-    losses = [p for p in pnls if p <= 0]
+    wins = [p for p in pnls if p > 1e-6]
+    losses = [p for p in pnls if p < -1e-6]
+    breakevens = [p for p in pnls if abs(p) <= 1e-6]
     gross_profit = sum(wins)
     gross_loss = abs(sum(losses))
     total = sum(pnls)
@@ -76,6 +100,7 @@ def _summarise(trades: list[dict]) -> dict:
         "total_trades": len(trades),
         "wins": len(wins),
         "losses": len(losses),
+        "breakevens": len(breakevens),
         "win_rate_pct": round(len(wins) / len(trades) * 100.0, 1) if trades else 0.0,
         "pnl": round(total, 2),
         "gross_profit": round(gross_profit, 2),
@@ -105,17 +130,27 @@ def build_track_record(
 
     closed.sort(key=lambda t: str(t.get("exit_time") or t.get("timestamp") or ""))
 
-    overall = _summarise(closed)
-    normalised = [_normalise_trade(t) for t in closed]
+    # Quarantine unconverted non-INR legacy trades from INR totals (F05)
+    inr_closed: list[dict] = []
+    unconverted_trades: list[dict] = []
+    for t in closed:
+        if t.get("fx_status") == "LEGACY_UNCONVERTED" and (t.get("quote_currency") or "INR") != "INR":
+            unconverted_trades.append(t)
+        else:
+            inr_closed.append(t)
 
-    # Equity curve and drawdown
+    overall = _summarise(inr_closed)
+    normalised = [_normalise_trade(t) for t in closed]
+    inr_normalised = [_normalise_trade(t) for t in inr_closed]
+
+    # Equity curve and drawdown based on INR trades
     start_equity = _as_float(initial_capital) if initial_capital is not None else 0.0
     equity = start_equity
     peak = start_equity
     max_dd = 0.0
     max_dd_pct = 0.0
     curve = []
-    for trade in normalised:
+    for trade in inr_normalised:
         equity += trade["pnl"]
         peak = max(peak, equity)
         if peak > 0:
@@ -127,7 +162,7 @@ def build_track_record(
 
     # Per-year
     by_year: dict[str, list[dict]] = defaultdict(list)
-    for trade in closed:
+    for trade in inr_closed:
         stamp = str(trade.get("exit_time") or trade.get("timestamp") or "")
         by_year[stamp[:4] if len(stamp) >= 4 else "unknown"].append(trade)
     per_year = [
@@ -137,7 +172,7 @@ def build_track_record(
 
     # Per-strategy
     by_strategy: dict[str, list[dict]] = defaultdict(list)
-    for trade in closed:
+    for trade in inr_closed:
         key = str(trade.get("signal_type") or trade.get("strategy") or "UNKNOWN").upper()
         by_strategy[key].append(trade)
     per_strategy = [
@@ -173,6 +208,7 @@ def build_track_record(
         "per_strategy": per_strategy,
         "per_symbol": per_symbol,
         "trades": normalised,
+        "unconverted_legacy_trades": [_normalise_trade(t) for t in unconverted_trades],
         "disclaimer": (
             "Paper trading only. No broker connection, no real orders. "
             "Not investment advice. Not a SEBI-registered research analyst or investment adviser. "
