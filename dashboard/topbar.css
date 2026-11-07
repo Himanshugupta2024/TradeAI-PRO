@@ -57,7 +57,7 @@
 }
 
 .mood-strip-logo .logo-badge {
-    font-size: 0.5rem !important;
+    font-size: 0.70rem !important;
     font-weight: 800 !important;
     padding: 2px 5px !important;
     border-radius: 4px !important;
@@ -124,7 +124,7 @@
 }
 
 .mood-ticker-sym {
-    font-size: 0.6rem !important;
+    font-size: 0.70rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.08em !important;
     color: var(--tb-muted) !important;
@@ -163,12 +163,12 @@
     display: inline-flex;
     align-items: center;
     gap: 6px !important;
-    font-size: 0.6rem !important;
+    font-size: 0.70rem !important;
     flex-shrink: 0 !important;
 }
 
 #v2PipelineText {
-    font-size: 0.6rem !important;
+    font-size: 0.70rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.04em;
     color: #7dd3fc !important;
@@ -260,7 +260,7 @@
     border: 1px solid var(--tb-border) !important;
     background: var(--tb-surface) !important;
     color: var(--tb-muted) !important;
-    font-size: 0.6rem !important;
+    font-size: 0.70rem !important;
     font-weight: 700 !important;
     letter-spacing: 0.04em;
     display: inline-flex;
@@ -276,7 +276,7 @@
     border-radius: var(--tb-radius);
     border: 1px solid var(--tb-border);
     background: var(--tb-surface);
-    font-size: 0.6rem !important;
+    font-size: 0.70rem !important;
     font-weight: 700 !important;
     letter-spacing: 0.07em;
     gap: 6px !important;
