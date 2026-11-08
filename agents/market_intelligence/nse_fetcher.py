@@ -528,6 +528,12 @@ CRYPTO_SEARCH_SYMBOLS = {
     "ENA/USDT":   "ENA/USDT",
     "WLD/USDT":   "WLD/USDT",
     "DYDX/USDT":  "DYDX/USDT",
+    "CHILLGUY/USDT": "CHILLGUY/USDT",
+    "PNUT/USDT":     "PNUT/USDT",
+    "MOODENG/USDT":  "MOODENG/USDT",
+    "GOAT/USDT":     "GOAT/USDT",
+    "NEIRO/USDT":    "NEIRO/USDT",
+    "ACT/USDT":      "ACT/USDT",
 }
 
 
@@ -568,6 +574,32 @@ def _crypto_search_rank(display_name: str, q: str) -> tuple[int, int]:
     return (99, len(display_name))
 
 
+
+# Common crypto name and meme aliases mapped to standard pairs
+CRYPTO_ALIASES: dict[str, str] = {
+    "JUST A CHILL GUY": "CHILLGUY/USDT",
+    "CHILL GUY": "CHILLGUY/USDT",
+    "CHILLGUY": "CHILLGUY/USDT",
+    "CHILL": "CHILLGUY/USDT",
+    "DOGECOIN": "DOGE/USDT",
+    "SHIBA INU": "SHIB/USDT",
+    "PEANUT": "PNUT/USDT",
+    "PEANUT THE SQUIRREL": "PNUT/USDT",
+    "MOO DENG": "MOODENG/USDT",
+    "MOODENG": "MOODENG/USDT",
+    "GOATSEUS MAXIMUS": "GOAT/USDT",
+    "GOAT": "GOAT/USDT",
+    "BITCOIN": "BTC/USDT",
+    "ETHEREUM": "ETH/USDT",
+    "SOLANA": "SOL/USDT",
+    "BINANCE COIN": "BNB/USDT",
+    "RIPPLE": "XRP/USDT",
+    "CARDANO": "ADA/USDT",
+    "AVALANCHE": "AVAX/USDT",
+    "POLKADOT": "DOT/USDT",
+    "CHAINLINK": "LINK/USDT",
+    "POLYGON": "POL/USDT",
+}
 
 # Common company name aliases mapped to NSE ticker symbols
 COMPANY_ALIASES: dict[str, str] = {
@@ -621,6 +653,13 @@ def search_symbols(query: str) -> list[dict]:
         q_clean = q.replace("/", "").replace("-", "")
         if q_clean in sym_upper or q_clean in ticker.upper().replace("/", ""):
             crypto_rows.append({"symbol": display_name, "ticker": ticker, "type": "CRYPTO"})
+
+    # Check crypto aliases (e.g. "JUST A CHILL GUY" -> "CHILLGUY/USDT")
+    for alias_name, target_pair in CRYPTO_ALIASES.items():
+        if q in alias_name or alias_name in q:
+            if not any(r["symbol"] == target_pair for r in crypto_rows):
+                crypto_rows.insert(0, {"symbol": target_pair, "ticker": target_pair, "type": "CRYPTO"})
+
     crypto_rows.sort(key=lambda r: _crypto_search_rank(r["symbol"], q))
     results.extend(crypto_rows)
 

@@ -7962,9 +7962,13 @@ async def search_quote(symbol: str):
     # Auto-normalize bare crypto symbols or USDT pairs: e.g. "SOL" -> "SOL/USDT", "BTC" -> "BTC/USDT", "SOLUSDT" -> "SOL/USDT"
     if "/" not in clean:
         clean_compact = clean.upper().replace(" ", "")
-        from agents.market_intelligence.nse_fetcher import CRYPTO_SEARCH_SYMBOLS
+        clean_upper = clean.upper().strip()
+        from agents.market_intelligence.nse_fetcher import CRYPTO_SEARCH_SYMBOLS, CRYPTO_ALIASES
         crypto_base_names = {k.split("/")[0] for k in CRYPTO_SEARCH_SYMBOLS}
-        if clean_compact.endswith("USDT") and len(clean_compact) > 4:
+        if clean_upper in CRYPTO_ALIASES:
+            clean = CRYPTO_ALIASES[clean_upper]
+            clean_base = clean
+        elif clean_compact.endswith("USDT") and len(clean_compact) > 4:
             clean = f"{clean_compact[:-4]}/USDT"
             clean_base = clean
         elif clean_compact in crypto_base_names:

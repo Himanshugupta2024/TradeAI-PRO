@@ -79,6 +79,38 @@ def _init_exchange() -> ccxt.binance:
     })
 
 
+def _fetch_binance_futures_fallback(
+    symbol: str, timeframe: str, since_days: int = 30
+) -> pd.DataFrame:
+    """Fallback fetcher for Binance Futures public REST (no API key required)."""
+    import urllib.request
+    import json
+    clean_sym = symbol.replace("/", "").replace("-", "").upper()
+    url = f"https://fapi.binance.com/fapi/v1/klines?symbol={clean_sym}&interval={timeframe}&limit=500"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 TradeAI-PRO"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status == 200:
+                raw = json.loads(resp.read().decode())
+                if isinstance(raw, list) and len(raw) > 0:
+                    df = pd.DataFrame(
+                        raw,
+                        columns=[
+                            "timestamp", "open", "high", "low", "close", "volume",
+                            "close_time", "qav", "num_trades", "taker_base_vol", "taker_quote_vol", "ignore"
+                        ]
+                    )
+                    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+                    for col in ["open", "high", "low", "close", "volume"]:
+                        df[col] = df[col].astype(float)
+                    df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+                    log.info("[Binance Futures Fallback] Fetched %d candles for %s (%s)", len(df), clean_sym, timeframe)
+                    return df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    except Exception as e:
+        log.debug("Binance futures fallback failed for %s: %s", symbol, e)
+    return pd.DataFrame()
+
+
 def _fetch_yahoo_crypto_fallback(
     symbol: str, timeframe: str, since_days: int = settings.HISTORICAL_DAYS
 ) -> pd.DataFrame:
@@ -146,8 +178,12 @@ def fetch_historical(
 
     exchange = _init_exchange()
     if not _is_supported_spot_symbol(exchange, symbol):
+        # Try Binance Futures public REST for futures-listed tokens (e.g. CHILLGUY, PNUT, MOODENG)
+        df_futures = _fetch_binance_futures_fallback(symbol, timeframe, since_days)
+        if not df_futures.empty:
+            return df_futures
         _mark_symbol_unsupported(symbol)
-        _warn_unsupported_once(symbol, "not listed on Binance spot")
+        _warn_unsupported_once(symbol, "not listed on Binance spot or futures")
         return pd.DataFrame()
 
     since_dt = datetime.now(timezone.utc) - timedelta(days=since_days)

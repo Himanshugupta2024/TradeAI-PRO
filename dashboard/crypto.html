@@ -2260,6 +2260,18 @@ async function selectCoinFromUI(symbol, scroll = true) {
   if (!raw) return;
   const normalized = raw.endsWith('USDT') ? raw : `${raw}USDT`;
   if (!tickerCache?.[normalized]) {
+    try {
+      let tRes = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${normalized}`);
+      if (!tRes.ok) {
+        tRes = await fetch(`${BINANCE_API}/ticker/24hr?symbol=${normalized}`);
+      }
+      if (tRes.ok) {
+        const tData = await tRes.json();
+        tickerCache[normalized] = tData;
+      }
+    } catch (_) {}
+  }
+  if (!tickerCache?.[normalized]) {
     showToast(`${normalized} is not in current live feed`, 'info');
     return;
   }
@@ -2315,6 +2327,22 @@ async function fetchTickers() {
   );
   tickerCache = {};
   usdt.forEach(t => { tickerCache[t.symbol] = t; });
+
+  // Merge futures tickers for high-demand meme coins and futures-listed tokens (e.g. CHILLGUY, PNUT, MOODENG)
+  try {
+    const fapiRes = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
+    if (fapiRes.ok) {
+      const fapiData = await fapiRes.json();
+      if (Array.isArray(fapiData)) {
+        fapiData.forEach(t => {
+          if (t.symbol && t.symbol.endsWith('USDT') && !tickerCache[t.symbol]) {
+            tickerCache[t.symbol] = t;
+          }
+        });
+      }
+    }
+  } catch (_) { /* futures merge optional */ }
+
   return usdt;
 }
 
@@ -2365,6 +2393,13 @@ async function fetchKlines(symbol, interval = signalTimeframe) {
       const res = await fetch(`${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}&limit=80`);
       if (res.ok) data = await res.json();
     } catch (_) { /* direct failed */ }
+
+    if (!Array.isArray(data)) {
+      try {
+        const fapiRes = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=80`);
+        if (fapiRes.ok) data = await fapiRes.json();
+      } catch (_) { /* fapi failed */ }
+    }
 
     if (!Array.isArray(data)) {
       try {
@@ -3333,7 +3368,128 @@ function attachDetailChartHover() {
 }
 
 
-// ── Crypto Search Implementation ──────────────────────────
+// ── Crypto Search Implementation with Full Alias & Meme Resolution ──
+const CRYPTO_NAME_MAP = {
+  'JUST A CHILL GUY': 'CHILLGUY',
+  'CHILL GUY': 'CHILLGUY',
+  'CHILLGUY': 'CHILLGUY',
+  'CHILL': 'CHILLGUY',
+  'DOGECOIN': 'DOGE',
+  'DOGE': 'DOGE',
+  'SHIBA INU': 'SHIB',
+  'SHIBA': 'SHIB',
+  'SHIB': 'SHIB',
+  'DOGWIFHAT': 'WIF',
+  'WIF': 'WIF',
+  'PEPE': 'PEPE',
+  'BONK': 'BONK',
+  'FLOKI': 'FLOKI',
+  'PEANUT THE SQUIRREL': 'PNUT',
+  'PEANUT': 'PNUT',
+  'PNUT': 'PNUT',
+  'MOO DENG': 'MOODENG',
+  'MOODENG': 'MOODENG',
+  'GOATSEUS MAXIMUS': 'GOAT',
+  'GOATSEUS': 'GOAT',
+  'GOAT': 'GOAT',
+  'BITCOIN': 'BTC',
+  'ETHEREUM': 'ETH',
+  'ETHER': 'ETH',
+  'SOLANA': 'SOL',
+  'BINANCE COIN': 'BNB',
+  'RIPPLE': 'XRP',
+  'CARDANO': 'ADA',
+  'AVALANCHE': 'AVAX',
+  'NEAR PROTOCOL': 'NEAR',
+  'CHAINLINK': 'LINK',
+  'POLKADOT': 'DOT',
+  'LITECOIN': 'LTC',
+  'POLYGON': 'POL',
+  'MATIC': 'MATIC',
+  'SUI': 'SUI',
+  'FETCH AI': 'FET',
+  'FETCH.AI': 'FET',
+  'TONCOIN': 'TON',
+  'APTOS': 'APT',
+  'KASPA': 'KAS',
+  'STELLAR': 'XLM',
+  'BITCOIN CASH': 'BCH',
+  'INTERNET COMPUTER': 'ICP',
+  'HEDERA': 'HBAR',
+  'BITTENSOR': 'TAO',
+  'STACKS': 'STX',
+  'FILECOIN': 'FIL',
+  'UNISWAP': 'UNI',
+  'COSMOS': 'ATOM',
+  'FANTOM': 'FTM',
+  'OPTIMISM': 'OP',
+  'ARBITRUM': 'ARB',
+  'THORCHAIN': 'RUNE',
+  'CELESTIA': 'TIA',
+  'JUPITER': 'JUP',
+  'ETHENA': 'ENA',
+  'WORLDCOIN': 'WLD',
+  'CAT IN A DOGS WORLD': 'MEW',
+  'BOOK OF MEME': 'BOME'
+};
+
+const CRYPTO_FULL_NAMES = {
+  'CHILLGUY': 'Just a Chill Guy',
+  'BTC': 'Bitcoin',
+  'ETH': 'Ethereum',
+  'SOL': 'Solana',
+  'BNB': 'BNB',
+  'XRP': 'Ripple',
+  'DOGE': 'Dogecoin',
+  'SHIB': 'Shiba Inu',
+  'PEPE': 'Pepe',
+  'WIF': 'dogwifhat',
+  'BONK': 'Bonk',
+  'FLOKI': 'Floki',
+  'PNUT': 'Peanut the Squirrel',
+  'MOODENG': 'Moo Deng',
+  'GOAT': 'Goatseus Maximus',
+  'SUI': 'Sui',
+  'NEAR': 'Near Protocol',
+  'LINK': 'Chainlink',
+  'DOT': 'Polkadot',
+  'LTC': 'Litecoin',
+  'POL': 'Polygon',
+  'MATIC': 'Polygon',
+  'ADA': 'Cardano',
+  'AVAX': 'Avalanche',
+  'RENDER': 'Render',
+  'INJ': 'Injective',
+  'FET': 'Artificial Superintelligence Alliance',
+  'TON': 'Toncoin',
+  'APT': 'Aptos',
+  'KAS': 'Kaspa',
+  'XLM': 'Stellar',
+  'BCH': 'Bitcoin Cash',
+  'ICP': 'Internet Computer',
+  'HBAR': 'Hedera',
+  'TAO': 'Bittensor',
+  'STX': 'Stacks',
+  'AAVE': 'Aave',
+  'FIL': 'Filecoin',
+  'UNI': 'Uniswap',
+  'ATOM': 'Cosmos',
+  'FTM': 'Fantom',
+  'OP': 'Optimism',
+  'ARB': 'Arbitrum',
+  'SEI': 'Sei',
+  'RUNE': 'THORChain',
+  'POPCAT': 'Popcat',
+  'BRETT': 'Brett',
+  'MEW': 'cat in a dogs world',
+  'BOME': 'BOOK OF MEME',
+  'TIA': 'Celestia',
+  'JUP': 'Jupiter',
+  'ENA': 'Ethena',
+  'WLD': 'Worldcoin',
+  'DYDX': 'dYdX'
+};
+
 function initCryptoSearch() {
   const input = document.getElementById('cryptoSearchInput');
   const wrap = document.getElementById('cryptoSearchWrap');
@@ -3347,8 +3503,9 @@ function initCryptoSearch() {
   let selectedIndex = -1;
   let currentMatches = [];
 
-  function performSearch() {
-    const q = (input.value || '').trim().toUpperCase();
+  async function performSearch() {
+    const rawQ = (input.value || '').trim();
+    const q = rawQ.toUpperCase();
     if (!q) {
       dropdown.style.display = 'none';
       if (clearBtn) clearBtn.style.display = 'none';
@@ -3358,24 +3515,53 @@ function initCryptoSearch() {
     if (clearBtn) clearBtn.style.display = '';
     if (kbd) kbd.style.display = 'none';
 
-    // Search tickerCache (which contains all live Binance tickers)
-    const allSymbols = Object.keys(tickerCache || {});
+    // 1. Resolve alias or full coin name (e.g. "JUST A CHILL GUY" -> "CHILLGUY")
+    let mappedTicker = CRYPTO_NAME_MAP[q] || null;
+    if (!mappedTicker) {
+      for (const [name, sym] of Object.entries(CRYPTO_NAME_MAP)) {
+        if (q.includes(name) || name.includes(q)) {
+          mappedTicker = sym;
+          break;
+        }
+      }
+    }
+
     const cleanQ = q.replace(/[^A-Z0-9]/g, '');
 
-    // Score and filter
+    // 2. If mappedTicker found (e.g. CHILLGUY) and not yet in tickerCache, probe Binance Futures/Spot immediately
+    const mappedSym = mappedTicker ? `${mappedTicker}USDT` : null;
+    if (mappedSym && !tickerCache[mappedSym]) {
+      try {
+        let pRes = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${mappedSym}`);
+        if (!pRes.ok) pRes = await fetch(`${BINANCE_API}/ticker/24hr?symbol=${mappedSym}`);
+        if (pRes.ok) {
+          const tData = await pRes.json();
+          tickerCache[mappedSym] = tData;
+        }
+      } catch (_) {}
+    }
+
+    // 3. Search tickerCache (Spot + Futures)
+    const allSymbols = Object.keys(tickerCache || {});
     const scored = [];
+
     allSymbols.forEach(sym => {
       if (!sym.endsWith('USDT')) return;
       const base = sym.replace('USDT', '');
+      const fullName = CRYPTO_FULL_NAMES[base] || `${base} Coin`;
       let score = 0;
-      if (base === cleanQ) score = 100;
-      else if (base.startsWith(cleanQ)) score = 50 - (base.length - cleanQ.length);
-      else if (base.includes(cleanQ)) score = 20;
-      else if (sym.includes(cleanQ)) score = 10;
+
+      if (mappedTicker && base === mappedTicker) score = 250;
+      else if (base === cleanQ) score = 200;
+      else if (fullName.toUpperCase().includes(q)) score = 150;
+      else if (base.startsWith(cleanQ)) score = 80 - (base.length - cleanQ.length);
+      else if (base.includes(cleanQ)) score = 40;
+      else if (sym.includes(cleanQ)) score = 20;
+
       if (score > 0) {
         const t = tickerCache[sym];
         const vol = parseFloat(t?.quoteVolume || 0);
-        scored.push({ sym, base, score, vol, t });
+        scored.push({ sym, base, fullName, score, vol, t });
       }
     });
 
@@ -3385,7 +3571,7 @@ function initCryptoSearch() {
     selectedIndex = currentMatches.length > 0 ? 0 : -1;
 
     if (currentMatches.length === 0) {
-      resultsEl.innerHTML = `<div class="crypto-search-empty">No crypto found matching "<strong>${_esc(q)}</strong>"</div>`;
+      resultsEl.innerHTML = `<div class="crypto-search-empty">No crypto found matching "<strong>${_esc(rawQ)}</strong>"</div>`;
     } else {
       resultsEl.innerHTML = currentMatches.map((item, idx) => {
         const t = item.t;
@@ -3398,8 +3584,8 @@ function initCryptoSearch() {
             <div class="crypto-search-item-left">
               <span class="crypto-search-sym-badge">${item.base}</span>
               <div>
-                <span class="crypto-search-name">${item.base}/USDT</span>
-                <span class="crypto-search-pair">· Binance</span>
+                <span class="crypto-search-name">${_esc(item.fullName)}</span>
+                <span class="crypto-search-pair">${item.base}/USDT · Binance</span>
               </div>
             </div>
             <div class="crypto-search-item-right">
@@ -3422,21 +3608,23 @@ function initCryptoSearch() {
     dropdown.style.display = 'block';
   }
 
-  function selectOrAddCryptoCoin(symbol) {
+  async function selectOrAddCryptoCoin(symbol) {
     if (!symbol) return;
     dropdown.style.display = 'none';
     input.value = '';
     if (clearBtn) clearBtn.style.display = 'none';
     if (kbd) kbd.style.display = '';
 
+    const base = symbol.replace('USDT', '');
+    const fullName = CRYPTO_FULL_NAMES[base] || `${base} Coin`;
+
     // Check if symbol is already in HERO_COINS
     const exists = HERO_COINS.some(c => c.sym === symbol);
     if (!exists) {
-      const base = symbol.replace('USDT', '');
       HERO_COINS.push({
         sym: symbol,
         label: base,
-        full: `${base} Coin`,
+        full: fullName,
         iconClass: base.toLowerCase()
       });
       // Re-render hero coins so it appears in the cards grid
@@ -3444,7 +3632,7 @@ function initCryptoSearch() {
     }
 
     // Select the coin and show its full detailed chart & klines!
-    selectCoinFromUI(symbol, true);
+    await selectCoinFromUI(symbol, true);
   }
 
   input.addEventListener('input', performSearch);
