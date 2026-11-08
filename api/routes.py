@@ -4714,19 +4714,16 @@ async def get_regime(symbol: str):
     }
 
 @router.get("/api/stats")
-
 async def get_stats():
-
     """Get dashboard summary statistics from real trading engine."""
-
     engine = svc._get_engine()
-    prices = {}
-    for sym, d in svc._market_data.items():
-        if isinstance(d, pd.DataFrame) and not d.empty and "close" in d.columns:
-            prices[sym] = {"close": float(d["close"].iloc[-1])}
-        elif isinstance(d, dict) and "close" in d:
-            prices[sym] = {"close": float(d["close"])}
-    stats = engine.get_stats(current_prices=prices)
+    from api.valuation import resolve_open_trades_valuation
+    val = await resolve_open_trades_valuation(engine, svc)
+    val_summary = val.get("summary", {}) if isinstance(val, dict) else {}
+    stats = engine.get_stats() if engine else {}
+    unrealized_pnl = float(val_summary.get("unrealized_pnl", 0.0))
+    cash_capital = float(val_summary.get("cash_capital", stats.get("capital", 100000.0)))
+    total_equity = float(val_summary.get("total_equity", cash_capital + unrealized_pnl))
 
     return {
 
@@ -4746,23 +4743,16 @@ async def get_stats():
 
         "total_pnl": stats.get("total_pnl", 0),
 
-        "unrealized_pnl": stats.get("unrealized_pnl", 0),
-
+        "unrealized_pnl": unrealized_pnl,
         "avg_pnl": stats.get("avg_pnl", 0),
-
         "best_trade": stats.get("best_trade", 0),
-
         "worst_trade": stats.get("worst_trade", 0),
-
-        "capital": stats.get("total_equity", stats.get("capital", 100000)),
-
-        "cash_capital": stats.get("capital", 100000),
-
+        "capital": total_equity,
+        "cash_capital": cash_capital,
+        "total_equity": total_equity,
         "initial_capital": stats.get("initial_capital", 100000),
-
-        "deployed_margin": stats.get("deployed_margin", 0),
-
-        "free_cash": stats.get("free_cash", stats.get("capital", 100000)),
+        "deployed_margin": val_summary.get("deployed_margin", stats.get("deployed_margin", 0)),
+        "free_cash": val_summary.get("free_cash", stats.get("free_cash", cash_capital)),
 
         "open_trades": stats.get("open_trades", len(engine.get_open_trades())),
 

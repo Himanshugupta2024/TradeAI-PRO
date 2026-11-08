@@ -508,14 +508,14 @@ function hydrateFromLocalStorageCache() {
             } catch (_) {}
         }
         const raw = localStorage.getItem('tradeai_cached_signals_v1');
-
-
-
         if (!raw) return;
-
-
-
         const cached = JSON.parse(raw);
+        const cacheAgeMs = cached.updated_at ? (Date.now() - new Date(cached.updated_at).getTime()) : Infinity;
+        if (isNaN(cacheAgeMs) || cacheAgeMs > 24 * 60 * 60 * 1000) {
+            console.debug('[Hydrate] Local cache is stale (>24h). Discarding.');
+            localStorage.removeItem('tradeai_cached_signals_v1');
+            return;
+        }
 
 
 
@@ -1284,13 +1284,10 @@ function connectPriceWebSocket() {
 
 
                 if (data.market_mood) {
-
-
-
                     updateMarketMood(data.market_mood);
-
-
-
+                    if (typeof updateMoodStripUI === 'function') {
+                        updateMoodStripUI(data.market_mood);
+                    }
                 }
 
 
@@ -3070,8 +3067,16 @@ async function loadOverviewFast() {
                     uEl.style.color = u > 0 ? '#10b981' : (u < 0 ? '#ef4444' : '#8b949e');
                 }
             }
+            if (Array.isArray(data.positions) && data.positions.length > 0) {
+                _lastOpenTrades = data.positions;
+            }
+            if (data.initial_capital !== undefined) {
+                const seedEl = document.getElementById('statCapitalSeed');
+                const mtmVal = Number(data.unrealized_pnl || 0);
+                if (seedEl) seedEl.textContent = `Seed: ${_fmtMoney(data.initial_capital)} • MTM: ${mtmVal >= 0 ? '+' : ''}${_fmtMoney(mtmVal)}`;
+            }
             if (data.total_pnl !== undefined) {
-                const pnlEl = document.getElementById('statTotalPnl');
+                const pnlEl = document.getElementById('statTotalPnl') || document.getElementById('statPnl');
                 if (pnlEl) {
                     const p = Number(data.total_pnl);
                     pnlEl.textContent = _fmtSignedMoney(p);
@@ -8499,45 +8504,39 @@ window.closePositionDetailModal = closePositionDetailModal;
 function updateStatsStrip(stats) {
     const fmt = (v) => _fmtMoney(v);
 
+    let u = stats && stats.unrealized_pnl != null ? Number(stats.unrealized_pnl) : 0;
+    if (u === 0 && Array.isArray(_lastOpenTrades) && _lastOpenTrades.length > 0) {
+        const openMtm = _lastOpenTrades.reduce((sum, t) => {
+            const val = Number(t.unrealized_pnl ?? t.unrealized_inr ?? t.pnl ?? 0);
+            return sum + (isNaN(val) ? 0 : val);
+        }, 0);
+        if (openMtm !== 0) {
+            u = openMtm;
+        }
+    }
 
-
-    const cap = stats && (stats.total_equity != null ? stats.total_equity : (stats.capital != null ? stats.capital : stats.initial_capital));
-
-
+    let cap = stats && (stats.total_equity != null ? Number(stats.total_equity) : (stats.capital != null ? Number(stats.capital) : Number(stats.initial_capital)));
+    if (u !== 0 && stats && stats.cash_capital != null && (!stats.total_equity || Number(stats.capital) === Number(stats.cash_capital))) {
+        cap = Number(stats.cash_capital) + u;
+    }
 
     const capEl = document.getElementById('statCapital');
-
-    if (capEl) capEl.textContent = cap != null ? fmt(cap) : '—';
-
-
+    if (capEl) capEl.textContent = cap != null && !isNaN(cap) ? fmt(cap) : '—';
 
     const seedEl = document.getElementById('statCapitalSeed');
-
     if (seedEl && stats && stats.initial_capital != null) {
-
-        seedEl.textContent = `Seed: ${fmt(stats.initial_capital)}`;
-
+        seedEl.textContent = `Seed: ${fmt(stats.initial_capital)} • MTM: ${u >= 0 ? '+' : ''}${fmt(u)}`;
     }
-
-
 
     const uEl = document.getElementById('statUnrealizedPnl');
-
     if (uEl && _unpricedPositions > 0) {
         _applyUnpricedMtm();
-    } else if (uEl && stats && stats.unrealized_pnl != null) {
-
-        const u = Number(stats.unrealized_pnl);
-
+    } else if (uEl) {
         uEl.textContent = `MTM: ${u >= 0 ? '+' : ''}${fmt(u)}`;
-
         uEl.style.color = u > 0 ? 'var(--green, #10b981)' : (u < 0 ? 'var(--red, #ef4444)' : 'var(--text-muted, #8b949e)');
-
     }
 
-
-
-    const pnlEl = document.getElementById('statPnl');
+    const pnlEl = document.getElementById('statPnl') || document.getElementById('statTotalPnl');
 
 
 
@@ -23211,9 +23210,8 @@ function initMoodStrip() {
 
 
 
-async function refreshMoodStrip() {
-
-    if (document.hidden) return;
+async function refreshMoodStrip(force = false) {
+    if (document.hidden && !force && window._authoritativeMoodLoaded) return;
 
 
 
@@ -23342,7 +23340,13 @@ function updateMoodStripFromCache() {
         }
         if (!tick) return;
 
-
+        // If authoritative mood endpoint already loaded SENSEX/NIFTY/BANKNIFTY, don't overwrite with unverified signal cache
+        if (window._authoritativeMoodLoaded && (id === 'moodSensex' || id === 'moodNifty' || id === 'moodBanknifty')) {
+            const currentEl = document.getElementById(id);
+            if (currentEl && currentEl.textContent && currentEl.textContent !== '—') {
+                return;
+            }
+        }
 
         const el = document.getElementById(id);
 
@@ -23535,6 +23539,27 @@ function updateMoodStripUI(data) {
             chgEl.className = 'mood-ticker-chg ' + (v >= 0 ? 'up' : 'dn');
         }
     }
+
+    if (data.sensex_close && Number(data.sensex_close) > 0) {
+        marketDataCache['SENSEX'] = { close: data.sensex_close, change_pct: data.sensex_24hr_change };
+        marketDataCache['^BSESN'] = marketDataCache['SENSEX'];
+        marketDataCache['BSE_SENSEX'] = marketDataCache['SENSEX'];
+    }
+    if (data.nifty_close && Number(data.nifty_close) > 0) {
+        marketDataCache['NIFTY'] = { close: data.nifty_close, change_pct: data.nifty_24hr_change };
+        marketDataCache['NIFTY 50'] = marketDataCache['NIFTY'];
+        marketDataCache['^NSEI'] = marketDataCache['NIFTY'];
+    }
+    if (data.banknifty_close && Number(data.banknifty_close) > 0) {
+        marketDataCache['BANKNIFTY'] = { close: data.banknifty_close, change_pct: data.banknifty_24hr_change };
+        marketDataCache['^NSEBANK'] = marketDataCache['BANKNIFTY'];
+        marketDataCache['BANK_NIFTY'] = marketDataCache['BANKNIFTY'];
+    }
+    if (data.btc_price && Number(data.btc_price) > 0) {
+        marketDataCache['BTC/USDT'] = { close: data.btc_price, change_pct: data.btc_24hr_change };
+        marketDataCache['BTCUSDT'] = marketDataCache['BTC/USDT'];
+    }
+    window._authoritativeMoodLoaded = true;
 
     _setTickerSlot('moodNifty', 'moodNiftyChg', data.nifty_close, data.nifty_24hr_change);
     _setTickerSlot('moodSensex', 'moodSensexChg', data.sensex_close, data.sensex_24hr_change);

@@ -900,18 +900,27 @@ class PaperTradingEngine:
 
     def get_portfolio_equity(self, current_prices: dict = None) -> dict:
         """Calculate live equity including floating mark-to-market (MTM) of open trades."""
-        current_prices = current_prices or {}
+        current_prices = dict(current_prices or {})
+        if not current_prices:
+            try:
+                from db.runtime_state import get_runtime_state
+                snap = get_runtime_state("latest_market_snapshot", {}) or {}
+                if isinstance(snap, dict) and "prices" in snap:
+                    current_prices = dict(snap["prices"])
+            except Exception:
+                pass
         unrealized_pnl = 0.0
         deployed_margin = 0.0
 
         for trade in self.open_trades:
             price_info = current_prices.get(trade.symbol) or {}
+            trade_cur = getattr(trade, "current_price", None) or trade.entry_price
             if isinstance(price_info, dict):
-                cur_price = float(price_info.get("close", trade.entry_price))
+                cur_price = float(price_info.get("close", trade_cur) or trade_cur)
             elif isinstance(price_info, (int, float)):
                 cur_price = float(price_info)
             else:
-                cur_price = trade.entry_price
+                cur_price = float(trade_cur)
 
             from agents.execution.currency import FXRateService, to_decimal, quantize_inr
             qty = trade.quantity

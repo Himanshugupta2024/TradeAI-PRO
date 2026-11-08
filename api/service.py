@@ -3409,7 +3409,13 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
 
     # ── System / risk state ──────────────────────────────────────────────────
     engine = _get_engine()
-    stats = engine.get_stats()
+    prices: dict[str, Any] = {}
+    for sym, d in _market_data.items():
+        if isinstance(d, pd.DataFrame) and not d.empty and "close" in d.columns:
+            prices[sym] = {"close": float(d["close"].iloc[-1])}
+        elif isinstance(d, dict) and "close" in d:
+            prices[sym] = {"close": float(d["close"])}
+    stats = engine.get_stats(current_prices=prices)
     risk = engine.get_risk_state()
     open_trades = len(engine.get_open_trades())
 
@@ -4409,7 +4415,7 @@ class SnapshotBroadcaster:
             pass
 
         engine = _get_engine()
-        stats = engine.get_stats()
+        stats = engine.get_stats(current_prices=prices)
         mood = await asyncio.to_thread(_compute_market_mood)
 
         return {
