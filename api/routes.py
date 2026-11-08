@@ -5362,11 +5362,15 @@ async def get_trade_flow():
 
     data["updated_at"] = datetime.now().isoformat()
 
-    # Persist official NSE data for recovery after a Render process restart.
+    # Persist each newly fetched official NSE snapshot once, not on every poll.
     if data.get("source") == "NSE" and data.get("real_data") is True and not data.get("stale"):
         try:
-            from db.runtime_state import set_runtime_state
-            await asyncio.to_thread(set_runtime_state, "tradeflow_snapshot:v1", data)
+            from agents.market_intelligence import market_data as tradeflow_module
+            fetched_at = data.get("fetched_at")
+            if fetched_at and fetched_at != tradeflow_module._tradeflow_persisted_fetched_at:
+                from db.runtime_state import set_runtime_state
+                await asyncio.to_thread(set_runtime_state, "tradeflow_snapshot:v1", data)
+                tradeflow_module._tradeflow_persisted_fetched_at = fetched_at
         except Exception as exc:
             logger.warning("Tradeflow snapshot persistence skipped: %s", exc)
 
