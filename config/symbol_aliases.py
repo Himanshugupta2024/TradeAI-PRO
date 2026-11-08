@@ -3,5 +3,5 @@ Symbol alias mappings for renamed, transitioned, or multi-ticker instruments.
 """
 
 SYMBOL_ALIASES = {
-    "TATAMOTORS": ["TATAMOTORS.NS", "TMPV", "TATAMOTORSCV.NS"],
+    "TATAMOTORS": ["TMPV", "TMCV.NS", "TMPV.NS", "TATAMOTORSCV.NS", "TATAMOTORS.NS"],
 }

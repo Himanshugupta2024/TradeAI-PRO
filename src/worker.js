@@ -121,7 +121,8 @@ function isPathCacheable(pathname) {
     pathname.startsWith("/api/news/") ||
     pathname.startsWith("/api/search/") ||
     pathname.startsWith("/api/swing/symbol/") ||
-    pathname.startsWith("/api/forex/ohlcv/")
+    pathname.startsWith("/api/forex/ohlcv/") ||
+    pathname.startsWith("/api/watchlist/quotes")
   ) {
     return true;
   }

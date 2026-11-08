@@ -27545,6 +27545,138 @@ function updateModalPinButton(sym) {
 
 let _watchlistQuoteCache = {}; // in-memory quote cache: { [sym]: { ltp, changePct, signalLabel, conf, entry, sl, tp, isError, ts } }
 
+function _renderWatchlistCard(sym, q, compName) {
+    if (!q || q.isError || !q.ltp || q.ltp === 0) {
+        return `
+            <div class="watchlist-card watchlist-card-syncing" id="wl-card-${sym}" style="border-color: rgba(59,130,246,0.25);">
+                <div class="watchlist-header">
+                    <div class="watchlist-sym-block">
+                        <span class="watchlist-sym">${sym}</span>
+                        <span class="watchlist-name">${_escHtml(compName)}</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);">
+                            SYNCING FEED
+                        </span>
+                    </div>
+                </div>
+
+                <div class="watchlist-price-row" style="padding: 0.6rem 0; opacity: 0.85;">
+                    <div>
+                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
+                        <div style="font-size: 0.9rem; font-weight: 700; color: #94a3b8; font-family: var(--font-mono); display:flex; align-items:center; gap:6px;">
+                            <span class="spinner-inline" style="width:10px;height:10px;border:2px solid rgba(148,163,184,0.2);border-top-color:#60a5fa;border-radius:50%;display:inline-block;"></span>
+                            Syncing Quote...
+                        </div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
+                        <div style="font-size: 0.9rem; color: var(--text-muted); font-family: var(--font-mono);">--</div>
+                    </div>
+                </div>
+
+                <div class="watchlist-levels" style="opacity: 0.6;">
+                    <div>
+                        <div class="watchlist-lvl-label">Entry Ref</div>
+                        <div class="watchlist-lvl-val">--</div>
+                    </div>
+                    <div>
+                        <div class="watchlist-lvl-label">Stop Loss</div>
+                        <div class="watchlist-lvl-val">--</div>
+                    </div>
+                    <div>
+                        <div class="watchlist-lvl-label">Target (TP)</div>
+                        <div class="watchlist-lvl-val">--</div>
+                    </div>
+                </div>
+
+                <div class="watchlist-actions" style="display:flex;align-items:center;gap:6px;">
+                    <button class="watchlist-inspect-btn" onclick="retryWatchlistSymbol('${sym}')" style="background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.35); color: #60a5fa;" title="Retry loading ${sym} quote">
+                        🔄 Retry
+                    </button>
+                    <button class="watchlist-inspect-btn" onclick="fetchAndShowQuote('${sym}')" title="Inspect ${sym} chart modal">
+                        ⚡ Inspect
+                    </button>
+                    <button class="watchlist-remove-btn" onclick="removeFromWatchlist('${sym}')" title="Remove ${sym} from Watchlist">
+                        ✕
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    const ltp = q.ltp;
+    const changePct = q.changePct || 0;
+    const signalLabel = q.signalLabel || 'MONITOR';
+    const conf = q.conf || 65;
+    const entry = q.entry || ltp;
+    const sl = q.sl || (ltp * 0.98);
+    const tp = q.tp || (ltp * 1.035);
+
+    const isLong = ['LONG', 'BUY'].includes(signalLabel.toUpperCase());
+    const isShort = ['SHORT', 'SELL'].includes(signalLabel.toUpperCase());
+    const sigColor = isLong ? 'var(--green, #10b981)' : (isShort ? 'var(--red, #ef4444)' : '#94a3b8');
+    const sigBg = isLong ? 'rgba(16,185,129,0.12)' : (isShort ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)');
+    const sigBorder = isLong ? 'rgba(16,185,129,0.3)' : (isShort ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.1)');
+
+    const chgClass = changePct >= 0 ? 'text-profit' : 'text-loss';
+    const chgStr = `${changePct >= 0 ? '+' : ''}${Number(changePct).toFixed(2)}%`;
+
+    return `
+        <div class="watchlist-card" id="wl-card-${sym}">
+            <div class="watchlist-header">
+                <div class="watchlist-sym-block">
+                    <span class="watchlist-sym">${sym}</span>
+                    <span class="watchlist-name">${_escHtml(compName)}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:${sigBg};color:${sigColor};border:1px solid ${sigBorder};">
+                        ${signalLabel}
+                    </span>
+                    <span style="font-size: 0.70rem;font-family:var(--font-mono);color:var(--text-muted);background:rgba(255,255,255,0.03);padding:2px 5px;border-radius:4px;">
+                        ${conf}/100
+                    </span>
+                </div>
+            </div>
+
+            <div class="watchlist-price-row">
+                <div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
+                    <div class="watchlist-ltp">₹${Number(ltp).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
+                    <div class="watchlist-chg ${chgClass}">${chgStr}</div>
+                </div>
+            </div>
+
+            <div class="watchlist-levels">
+                <div>
+                    <div class="watchlist-lvl-label">Entry Ref</div>
+                    <div class="watchlist-lvl-val" style="color:var(--text-primary);">₹${Number(entry || ltp).toFixed(1)}</div>
+                </div>
+                <div>
+                    <div class="watchlist-lvl-label" style="color:var(--red,#ef4444);">Stop Loss</div>
+                    <div class="watchlist-lvl-val" style="color:var(--red,#ef4444);">₹${Number(sl).toFixed(1)}</div>
+                </div>
+                <div>
+                    <div class="watchlist-lvl-label" style="color:var(--green,#10b981);">Target (TP)</div>
+                    <div class="watchlist-lvl-val" style="color:var(--green,#10b981);">₹${Number(tp).toFixed(1)}</div>
+                </div>
+            </div>
+
+            <div class="watchlist-actions">
+                <button class="watchlist-inspect-btn" onclick="fetchAndShowQuote('${sym}')" title="Inspect ${sym} 5m/15m chart and technical indicators">
+                    ⚡ Inspect Chart & Setup
+                </button>
+                <button class="watchlist-remove-btn" onclick="removeFromWatchlist('${sym}')" title="Remove ${sym} from Watchlist">
+                    ✕
+                </button>
+            </div>
+        </div>
+    `;
+}
+
 async function _fetchWatchlistQuote(sym) {
     const cached = _watchlistQuoteCache[sym];
     if (cached && (Date.now() - cached.ts < 60000) && !cached.isError) {
@@ -27565,6 +27697,7 @@ async function _fetchWatchlistQuote(sym) {
                 sl: Number((ltp * 0.98).toFixed(1)),
                 tp: Number((ltp * 1.035).toFixed(1)),
                 isError: false,
+                isSyncing: false,
                 ts: Date.now()
             };
             _watchlistQuoteCache[sym] = quoteObj;
@@ -27572,10 +27705,10 @@ async function _fetchWatchlistQuote(sym) {
         }
     }
 
-    // 2. Fetch fast lightweight market quote from /api/market/{sym}?limit=2&interval=5m (~1.8s)
+    // 2. Fetch fast lightweight market quote from /api/market/{sym}?limit=2&interval=5m (~1.2s)
     try {
         const cleanSym = encodeURIComponent(sym.replace('.NS', '').trim());
-        const mRes = await fetchSafeJSON(`${API}/api/market/${cleanSym}?limit=2&interval=5m`, {}, 15000);
+        const mRes = await fetchSafeJSON(`${API}/api/market/${cleanSym}?limit=2&interval=5m`, {}, 4000);
         if (mRes.ok && mRes.data && Array.isArray(mRes.data.data) && mRes.data.data.length > 0) {
             const candles = mRes.data.data;
             const last = candles[candles.length - 1];
@@ -27598,6 +27731,7 @@ async function _fetchWatchlistQuote(sym) {
                     sl: Number(sl.toFixed(1)),
                     tp: Number(tp.toFixed(1)),
                     isError: false,
+                    isSyncing: false,
                     ts: Date.now()
                 };
                 _watchlistQuoteCache[sym] = quoteObj;
@@ -27606,9 +27740,9 @@ async function _fetchWatchlistQuote(sym) {
         }
     } catch (_) {}
 
-    // 3. Fallback to /api/search/quote/{sym} with resilient 25s timeout
+    // 3. Fallback to /api/search/quote/{sym} (fast 4s timeout)
     try {
-        const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 25000);
+        const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 4000);
         if (qRes.ok && qRes.data) {
             const d = qRes.data;
             const ltp = Number(d.close || 0);
@@ -27629,6 +27763,7 @@ async function _fetchWatchlistQuote(sym) {
                 sl,
                 tp,
                 isError: ltp === 0,
+                isSyncing: false,
                 ts: Date.now()
             };
             if (ltp > 0) {
@@ -27647,6 +27782,7 @@ async function _fetchWatchlistQuote(sym) {
         sl: 0,
         tp: 0,
         isError: true,
+        isSyncing: true,
         ts: Date.now()
     };
 }
@@ -27654,11 +27790,22 @@ async function _fetchWatchlistQuote(sym) {
 async function retryWatchlistSymbol(sym) {
     if (!sym) return;
     delete _watchlistQuoteCache[sym];
+    const cardEl = document.getElementById(`wl-card-${sym}`);
+    if (cardEl) {
+        cardEl.style.opacity = '0.7';
+    }
     showToast(`Retrying ${sym} quote...`, 'info');
-    await loadDedicatedWatchlist();
+    const q = await _fetchWatchlistQuote(sym);
+    if (q && q.ltp > 0) {
+        _watchlistQuoteCache[sym] = q;
+        showToast(`Updated ${sym} quote: ₹${q.ltp}`, 'success');
+    } else {
+        showToast(`Could not fetch quote for ${sym}`, 'warning');
+    }
+    await loadDedicatedWatchlist({ silent: true });
 }
 
-async function loadDedicatedWatchlist() {
+async function loadDedicatedWatchlist(options = {}) {
     const grid = document.getElementById('watchlistGrid');
     updateWatchlistBadge();
     if (!grid) return;
@@ -27679,13 +27826,6 @@ async function loadDedicatedWatchlist() {
         `;
         return;
     }
-
-    grid.innerHTML = `
-        <div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--text-muted);">
-            <div class="loader" style="margin: 0 auto 0.75rem;"></div>
-            Fetching real-time quotes & institutional levels for ${list.length} priority stocks...
-        </div>
-    `;
 
     const companyNames = {
         'RELIANCE': 'Reliance Industries Ltd.',
@@ -27709,6 +27849,18 @@ async function loadDedicatedWatchlist() {
         'TATASTEEL': 'Tata Steel Ltd.'
     };
 
+    // 1. Instant optimistic / cached render (0ms):
+    // If grid has no cards yet, render instant cards from cache/skeletons so the user never sees a blank screen!
+    const hasExistingCards = grid.querySelectorAll('.watchlist-card').length > 0;
+    if (!hasExistingCards && !options.silent) {
+        const initialCards = list.map(sym => {
+            const compName = companyNames[sym] || `${sym} · NSE Equity`;
+            const cached = _watchlistQuoteCache[sym];
+            return _renderWatchlistCard(sym, cached || { ltp: 0, isError: true }, compName);
+        });
+        grid.innerHTML = initialCards.join('');
+    }
+
     const signalsMap = {};
     const sigPool = [
         ...(Array.isArray(allSignals) ? allSignals : (allSignals?.signals || [])),
@@ -27726,234 +27878,123 @@ async function loadDedicatedWatchlist() {
         }
     });
 
-    // 1. Bulk pre-fetch via single round-trip /api/watchlist/quotes
-    const quotes = {};
+    // 2. Bulk fast pre-fetch via /api/watchlist/quotes (single round-trip, max 6s)
     let bulkQuotes = {};
     try {
         const symQuery = encodeURIComponent(list.join(','));
-        const bulkRes = await fetchSafeJSON(`${API}/api/watchlist/quotes?symbols=${symQuery}`, {}, 12000);
+        const bulkRes = await fetchSafeJSON(`${API}/api/watchlist/quotes?symbols=${symQuery}`, {}, 6000);
         if (bulkRes.ok && bulkRes.data && bulkRes.data.quotes) {
             bulkQuotes = bulkRes.data.quotes;
         }
     } catch (_) {}
 
-    // 2. Map results with fallback to signal pool and individual fetcher
-    let hasSyncingSymbols = false;
-    for (let i = 0; i < list.length; i += 2) {
-        const batch = list.slice(i, i + 2);
-        const batchResults = await Promise.all(batch.map(async (sym) => {
-            const bQuote = bulkQuotes[sym];
-            if (bQuote && Number(bQuote.ltp || 0) > 0) {
-                const ltp = Number(bQuote.ltp);
-                const qObj = {
-                    ltp,
-                    changePct: Number(bQuote.change_pct || 0),
-                    signalLabel: bQuote.signal || 'MONITOR',
-                    conf: Number(bQuote.confidence || 65),
-                    entry: Number(bQuote.entry || ltp),
-                    sl: Number(bQuote.stop_loss || (ltp * 0.98)),
-                    tp: Number(bQuote.target || (ltp * 1.035)),
-                    isError: false,
-                    isSyncing: false,
-                    ts: Date.now()
-                };
-                _watchlistQuoteCache[sym] = qObj;
-                return { sym, data: qObj };
-            }
+    // 3. Resolve quotes for all symbols without blocking on individual network calls
+    const quotes = {};
+    const missingSymbols = [];
 
-            const sig = signalsMap[sym];
-            if (sig && (sig.close || sig.entry)) {
-                const ltp = Number(sig.close || sig.entry || 0);
-                const qObj = {
-                    ltp,
-                    changePct: Number(sig.change_pct || 0),
-                    signalLabel: sig.signal || 'MONITOR',
-                    conf: sig.confidence || 65,
-                    entry: Number(sig.entry || ltp),
-                    sl: Number(sig.stop_loss || (ltp > 0 ? ltp * 0.98 : 0)),
-                    tp: Number(sig.target || (ltp > 0 ? ltp * 1.035 : 0)),
-                    isError: false,
-                    isSyncing: false,
-                    ts: Date.now()
-                };
-                _watchlistQuoteCache[sym] = qObj;
-                return { sym, data: qObj };
-            }
-
-            const q = await _fetchWatchlistQuote(sym);
-            if (q.isError || !q.ltp) {
-                if (typeof marketDataCache !== 'undefined' && marketDataCache[sym] && marketDataCache[sym].close) {
-                    const ltp = Number(marketDataCache[sym].close || 0);
-                    if (ltp > 0) {
-                        return {
-                            sym,
-                            data: {
-                                ltp,
-                                changePct: Number(marketDataCache[sym].change_pct || 0),
-                                signalLabel: 'MONITOR',
-                                conf: 60,
-                                entry: ltp,
-                                sl: Number((ltp * 0.98).toFixed(1)),
-                                tp: Number((ltp * 1.035).toFixed(1)),
-                                isError: false,
-                                isSyncing: true,
-                                isCachedFallback: true,
-                                ts: Date.now()
-                            }
-                        };
-                    }
-                }
-                hasSyncingSymbols = true;
-            }
-            return { sym, data: q };
-        }));
-        batchResults.forEach(r => { quotes[r.sym] = r.data; });
-    }
-
-    const cardsHtml = list.map((sym) => {
-        const compName = companyNames[sym] || `${sym} · NSE Equity`;
-        const q = quotes[sym] || { ltp: 0, isError: true };
-
-        if (q.isError || !q.ltp || q.ltp === 0) {
-            return `
-                <div class="watchlist-card watchlist-card-syncing" style="border-color: rgba(59,130,246,0.25);">
-                    <div class="watchlist-header">
-                        <div class="watchlist-sym-block">
-                            <span class="watchlist-sym">${sym}</span>
-                            <span class="watchlist-name">${_escHtml(compName)}</span>
-                        </div>
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);">
-                                SYNCING FEED
-                            </span>
-                        </div>
-                    </div>
-
-                    <div class="watchlist-price-row" style="padding: 0.6rem 0; opacity: 0.85;">
-                        <div>
-                            <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
-                            <div style="font-size: 0.9rem; font-weight: 700; color: #94a3b8; font-family: var(--font-mono); display:flex; align-items:center; gap:6px;">
-                                <span class="spinner-inline" style="width:10px;height:10px;border:2px solid rgba(148,163,184,0.2);border-top-color:#60a5fa;border-radius:50%;display:inline-block;"></span>
-                                Syncing Quote...
-                            </div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
-                            <div style="font-size: 0.9rem; color: var(--text-muted); font-family: var(--font-mono);">--</div>
-                        </div>
-                    </div>
-
-                    <div class="watchlist-levels" style="opacity: 0.6;">
-                        <div>
-                            <div class="watchlist-lvl-label">Entry Ref</div>
-                            <div class="watchlist-lvl-val">--</div>
-                        </div>
-                        <div>
-                            <div class="watchlist-lvl-label">Stop Loss</div>
-                            <div class="watchlist-lvl-val">--</div>
-                        </div>
-                        <div>
-                            <div class="watchlist-lvl-label">Target (TP)</div>
-                            <div class="watchlist-lvl-val">--</div>
-                        </div>
-                    </div>
-
-                    <div class="watchlist-actions" style="display:flex;align-items:center;gap:6px;">
-                        <button class="watchlist-inspect-btn" onclick="retryWatchlistSymbol('${sym}')" style="background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.35); color: #60a5fa;" title="Retry loading ${sym} quote">
-                            🔄 Retry
-                        </button>
-                        <button class="watchlist-inspect-btn" onclick="fetchAndShowQuote('${sym}')" title="Inspect ${sym} chart modal">
-                            ⚡ Inspect
-                        </button>
-                        <button class="watchlist-remove-btn" onclick="removeFromWatchlist('${sym}')" title="Remove ${sym} from Watchlist">
-                            ✕
-                        </button>
-                    </div>
-                </div>
-            `;
+    list.forEach(sym => {
+        const bQuote = bulkQuotes[sym];
+        if (bQuote && Number(bQuote.ltp || 0) > 0) {
+            const ltp = Number(bQuote.ltp);
+            const qObj = {
+                ltp,
+                changePct: Number(bQuote.change_pct || 0),
+                signalLabel: bQuote.signal || 'MONITOR',
+                conf: Number(bQuote.confidence || 65),
+                entry: Number(bQuote.entry || ltp),
+                sl: Number(bQuote.stop_loss || (ltp * 0.98)),
+                tp: Number(bQuote.target || (ltp * 1.035)),
+                isError: false,
+                isSyncing: false,
+                ts: Date.now()
+            };
+            _watchlistQuoteCache[sym] = qObj;
+            quotes[sym] = qObj;
+            return;
         }
 
-        const ltp = q.ltp;
-        const changePct = q.changePct;
-        const signalLabel = q.signalLabel;
-        const conf = q.conf;
-        const entry = q.entry;
-        const sl = q.sl;
-        const tp = q.tp;
+        const sig = signalsMap[sym];
+        if (sig && (sig.close || sig.entry)) {
+            const ltp = Number(sig.close || sig.entry || 0);
+            const qObj = {
+                ltp,
+                changePct: Number(sig.change_pct || 0),
+                signalLabel: sig.signal || 'MONITOR',
+                conf: sig.confidence || 65,
+                entry: Number(sig.entry || ltp),
+                sl: Number(sig.stop_loss || (ltp > 0 ? ltp * 0.98 : 0)),
+                tp: Number(sig.target || (ltp > 0 ? ltp * 1.035 : 0)),
+                isError: false,
+                isSyncing: false,
+                ts: Date.now()
+            };
+            _watchlistQuoteCache[sym] = qObj;
+            quotes[sym] = qObj;
+            return;
+        }
 
-        const isLong = ['LONG', 'BUY'].includes(signalLabel.toUpperCase());
-        const isShort = ['SHORT', 'SELL'].includes(signalLabel.toUpperCase());
-        const sigColor = isLong ? 'var(--green, #10b981)' : (isShort ? 'var(--red, #ef4444)' : '#94a3b8');
-        const sigBg = isLong ? 'rgba(16,185,129,0.12)' : (isShort ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)');
-        const sigBorder = isLong ? 'rgba(16,185,129,0.3)' : (isShort ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.1)');
+        if (typeof marketDataCache !== 'undefined' && marketDataCache[sym] && marketDataCache[sym].close) {
+            const ltp = Number(marketDataCache[sym].close || 0);
+            if (ltp > 0) {
+                const qObj = {
+                    ltp,
+                    changePct: Number(marketDataCache[sym].change_pct || 0),
+                    signalLabel: 'MONITOR',
+                    conf: 60,
+                    entry: ltp,
+                    sl: Number((ltp * 0.98).toFixed(1)),
+                    tp: Number((ltp * 1.035).toFixed(1)),
+                    isError: false,
+                    isSyncing: false,
+                    isCachedFallback: true,
+                    ts: Date.now()
+                };
+                _watchlistQuoteCache[sym] = qObj;
+                quotes[sym] = qObj;
+                return;
+            }
+        }
 
-        const chgClass = changePct >= 0 ? 'text-profit' : 'text-loss';
-        const chgStr = `${changePct >= 0 ? '+' : ''}${Number(changePct).toFixed(2)}%`;
-
-        return `
-            <div class="watchlist-card">
-                <div class="watchlist-header">
-                    <div class="watchlist-sym-block">
-                        <span class="watchlist-sym">${sym}</span>
-                        <span class="watchlist-name">${_escHtml(compName)}</span>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:${sigBg};color:${sigColor};border:1px solid ${sigBorder};">
-                            ${signalLabel}
-                        </span>
-                        <span style="font-size: 0.70rem;font-family:var(--font-mono);color:var(--text-muted);background:rgba(255,255,255,0.03);padding:2px 5px;border-radius:4px;">
-                            ${conf}/100
-                        </span>
-                    </div>
-                </div>
-
-                <div class="watchlist-price-row">
-                    <div>
-                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
-                        <div class="watchlist-ltp">₹${Number(ltp).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
-                        <div class="watchlist-chg ${chgClass}">${chgStr}</div>
-                    </div>
-                </div>
-
-                <div class="watchlist-levels">
-                    <div>
-                        <div class="watchlist-lvl-label">Entry Ref</div>
-                        <div class="watchlist-lvl-val" style="color:var(--text-primary);">₹${Number(entry || ltp).toFixed(1)}</div>
-                    </div>
-                    <div>
-                        <div class="watchlist-lvl-label" style="color:var(--red,#ef4444);">Stop Loss</div>
-                        <div class="watchlist-lvl-val" style="color:var(--red,#ef4444);">₹${Number(sl).toFixed(1)}</div>
-                    </div>
-                    <div>
-                        <div class="watchlist-lvl-label" style="color:var(--green,#10b981);">Target (TP)</div>
-                        <div class="watchlist-lvl-val" style="color:var(--green,#10b981);">₹${Number(tp).toFixed(1)}</div>
-                    </div>
-                </div>
-
-                <div class="watchlist-actions">
-                    <button class="watchlist-inspect-btn" onclick="fetchAndShowQuote('${sym}')" title="Inspect ${sym} 5m/15m chart and technical indicators">
-                        ⚡ Inspect Chart & Setup
-                    </button>
-                    <button class="watchlist-remove-btn" onclick="removeFromWatchlist('${sym}')" title="Remove ${sym} from Watchlist">
-                        ✕
-                    </button>
-                </div>
-            </div>
-        `;
+        const cached = _watchlistQuoteCache[sym];
+        if (cached && cached.ltp > 0) {
+            quotes[sym] = cached;
+        } else {
+            quotes[sym] = { ltp: 0, isError: true, isSyncing: true };
+            missingSymbols.push(sym);
+        }
     });
 
+    // 4. Update all cards immediately in DOM!
+    const cardsHtml = list.map((sym) => {
+        const compName = companyNames[sym] || `${sym} · NSE Equity`;
+        return _renderWatchlistCard(sym, quotes[sym], compName);
+    });
     grid.innerHTML = cardsHtml.join('');
 
-    if (hasSyncingSymbols && !window._watchlistAutoRetryTimer) {
+    // 5. Non-blocking asynchronous background resolution for missing symbols
+    if (missingSymbols.length > 0) {
+        missingSymbols.forEach(sym => {
+            _fetchWatchlistQuote(sym).then(q => {
+                if (q && q.ltp > 0) {
+                    _watchlistQuoteCache[sym] = q;
+                    const cardEl = document.getElementById(`wl-card-${sym}`);
+                    if (cardEl) {
+                        const compName = companyNames[sym] || `${sym} · NSE Equity`;
+                        cardEl.outerHTML = _renderWatchlistCard(sym, q, compName);
+                    }
+                }
+            }).catch(() => {});
+        });
+    }
+
+    // 6. Silent auto-refresh every 20s only while on watchlist tab, never wiping the DOM
+    if (missingSymbols.length > 0 && !window._watchlistAutoRetryTimer) {
         window._watchlistAutoRetryTimer = setTimeout(() => {
             window._watchlistAutoRetryTimer = null;
             if (typeof currentTab !== 'undefined' && currentTab === 'watchlist') {
-                loadDedicatedWatchlist();
+                loadDedicatedWatchlist({ silent: true });
             }
-        }, 3500);
+        }, 20000);
     }
 }
 

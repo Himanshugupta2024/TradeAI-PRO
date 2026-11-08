@@ -2676,11 +2676,12 @@ async def get_market_data(
                 from config.symbol_aliases import SYMBOL_ALIASES
                 aliases = SYMBOL_ALIASES.get(clean_sym, [])
                 candidate_aliases = [a for a in aliases if a not in (clean_sym, f"{clean_sym}.NS")]
-                if candidate_aliases:
-                    first_alias = candidate_aliases[0]
+                for alias in candidate_aliases:
                     df = await asyncio.to_thread(
-                        fetch_arbitrary_symbol, first_alias, period, interval
+                        fetch_arbitrary_symbol, alias, period, interval
                     )
+                    if df is not None and not df.empty:
+                        break
             except Exception:
                 pass
 
@@ -2780,7 +2781,7 @@ async def get_watchlist_quotes(symbols: str = Query(..., description="Comma-sepa
         if not quote:
             try:
                 from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
-                df = await asyncio.to_thread(fetch_arbitrary_symbol, f"{sym}.NS", "5d", "5m")
+                df = await asyncio.to_thread(fetch_arbitrary_symbol, sym, "5d", "5m")
                 if df is not None and not df.empty:
                     df = calculate_indicators(df)
                     svc._market_data[sym] = df

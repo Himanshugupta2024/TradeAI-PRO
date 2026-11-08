@@ -80,7 +80,7 @@ NSE_SYMBOLS = {
     "MARUTI":      "MARUTI.NS",
     "TITAN":       "TITAN.NS",
     "WIPRO":       "WIPRO.NS",
-    "TATAMOTORS":  "TATAMOTORS.NS",   # Tata Motors (main listing)
+    "TATAMOTORS":  "TMCV.NS",         # Tata Motors (demerger: TMCV.NS)
     "SWIGGY":      "SWIGGY.NS",        # Swiggy — food delivery
     "SUNPHARMA":   "SUNPHARMA.NS",
     "ULTRACEMCO":  "ULTRACEMCO.NS",
@@ -193,6 +193,9 @@ NSE_SYMBOLS = {
 
 # Reverse map: yf ticker → display name
 _YF_TO_DISPLAY = {v: k for k, v in NSE_SYMBOLS.items()}
+_YF_TO_DISPLAY["TMCV.NS"] = "TATAMOTORS"
+_YF_TO_DISPLAY["TMPV.NS"] = "TATAMOTORS"
+_YF_TO_DISPLAY["TATAMOTORS.NS"] = "TATAMOTORS"
 
 # ── Cache to avoid hammering yfinance ────────────────────
 _cache: dict[str, dict] = {}
