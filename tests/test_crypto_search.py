@@ -48,6 +48,30 @@ def test_crypto_alias_resolution_just_a_chill_guy():
     assert any(r["symbol"] == "MOODENG/USDT" for r in moodeng_res)
 
 
+def test_binance_futures_fallback_parsing(monkeypatch):
+    """Unit test for Binance futures JSON response parsing without live network."""
+    import urllib.request
+    import json
+    fake_data = [
+        [1700000000000, "0.10", "0.12", "0.09", "0.11", "50000.0", 1700003600000, "5500.0", 100, "25000.0", "2750.0", "0"],
+        [1700003600000, "0.11", "0.13", "0.10", "0.12", "60000.0", 1700007200000, "6600.0", 120, "30000.0", "3300.0", "0"],
+    ]
+    class FakeResponse:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self):
+            return json.dumps(fake_data).encode("utf-8")
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: FakeResponse())
+    df = _fetch_binance_futures_fallback("CHILLGUY/USDT", "1h")
+    assert not df.empty
+    assert "close" in df.columns
+    assert len(df) == 2
+
+
+@pytest.mark.integration
 def test_binance_futures_fallback_chillguy():
     """Verify that Binance Futures public REST returns candles for CHILLGUY."""
     df = _fetch_binance_futures_fallback("CHILLGUY/USDT", "1h")

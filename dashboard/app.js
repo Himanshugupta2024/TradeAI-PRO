@@ -27215,7 +27215,7 @@ async function loadNextDayPicks(reportId = null) {
         // Render Session & Header KPI
         const targetSession = report.target_session || {};
         if (sessionPill) {
-            const dateStr = targetSession.date || 'T+1 Session';
+            const dateStr = targetSession.date || report.target_session_label || report.target_session_date || 'T+1 Session';
             const hoursStr = targetSession.hours || '09:15 - 15:30 IST';
             sessionPill.textContent = `Target: ${dateStr} (${hoursStr})`;
         }
@@ -27233,11 +27233,16 @@ async function loadNextDayPicks(reportId = null) {
             qualifiedCountEl.style.color = qCount > 0 ? '#10b981' : '#f59e0b';
         }
         if (generatedAtEl) {
-            const rawGen = report.generated_at || report.generated_at_ist;
+            const rawGen = report.generated_at_ist || report.generated_at;
             let genTime = '--';
             if (rawGen) {
-                const d = new Date(rawGen);
-                genTime = !isNaN(d.getTime()) ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : String(rawGen).replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
+                const istMatch = String(rawGen).match(/(\d{2}:\d{2}(?::\d{2})?)\s*(IST)?/);
+                if (istMatch) {
+                    genTime = istMatch[1] + (istMatch[2] ? ' ' + istMatch[2] : ' IST');
+                } else {
+                    const d = new Date(rawGen);
+                    genTime = !isNaN(d.getTime()) ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : String(rawGen);
+                }
             }
             generatedAtEl.textContent = genTime;
         }
