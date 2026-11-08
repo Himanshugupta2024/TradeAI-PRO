@@ -4,7 +4,7 @@
  * 2. Edge proxy request routing, SWR edge caching, and cache poisoning prevention (worker.fetch).
  */
 import assert from 'node:assert';
-import worker, { handleScheduled } from '../src/worker.js';
+import worker, { handleScheduled, getNormalizedCacheKey } from '../src/worker.js';
 
 // In-memory mock Cache implementation adhering to Cloudflare Worker Cache API
 class MockCache {
@@ -37,6 +37,23 @@ class MockCache {
 }
 
 async function runTests() {
+  console.log('Test 0: symbols query parameters are canonicalized for edge caching...');
+  const normalizedSymbolsUrl = getNormalizedCacheKey(
+    'https://tradeai-pro.tradingpro.workers.dev/api/watchlist/quotes?symbols=vedl,%20sbin,RELIANCE,vedl&_ts=123&foo=bar'
+  );
+  assert.strictEqual(
+    normalizedSymbolsUrl,
+    'https://tradeai-pro.tradingpro.workers.dev/api/watchlist/quotes?foo=bar&symbols=RELIANCE%2CSBIN%2CVEDL'
+  );
+
+  const emptySymbolsUrl = getNormalizedCacheKey(
+    'https://tradeai-pro.tradingpro.workers.dev/api/watchlist/quotes?symbols=%20%2C%20&_ts=456'
+  );
+  assert.strictEqual(
+    emptySymbolsUrl,
+    'https://tradeai-pro.tradingpro.workers.dev/api/watchlist/quotes'
+  );
+  console.log('✓ Test 0 passed.');
   console.log('Test 1: handleScheduled sends GET request to backend /api/health...');
   let calledUrl = null;
   let calledOptions = null;
