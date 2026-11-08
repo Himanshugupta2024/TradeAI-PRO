@@ -30,6 +30,7 @@ import yfinance as yf
 from db.ohlcv_cache import (
     ensure_ohlcv_cache_table,
     get_latest_timestamp,
+    purge_ohlcv_cache,
     read_cached_ohlcv,
     upsert_ohlcv,
 )
@@ -56,6 +57,41 @@ _configure_yfinance_runtime()
 # NOTE: No duplicate tickers — each display name must map to a UNIQUE ticker
 # (duplicates cause the same DataFrame to be shared between symbols, making
 # them show identical prices/RSI/indicators on the dashboard).
+# The TATAMOTORS display symbol now resolves to TMCV.NS after the demerger.
+# Never reuse legacy OHLCV rows stored under the old display-name cache key.
+_LEGACY_TATAMOTORS_CACHE_PURGED = False
+_LEGACY_TATAMOTORS_CACHE_PURGE_LOCK = threading.Lock()
+
+
+def _persistent_ohlcv_cache_symbol(display_name: str, ticker: str) -> str:
+    """Return a ticker-scoped persistent cache key for corporate-action migrations."""
+    global _LEGACY_TATAMOTORS_CACHE_PURGED
+
+    if display_name != "TATAMOTORS" or ticker != "TMCV.NS":
+        return display_name
+
+    # Purge the pre-demerger rows once per process. The new key below remains
+    # isolated even if a purge cannot complete (e.g. a transient cache DB error).
+    if not _LEGACY_TATAMOTORS_CACHE_PURGED:
+        with _LEGACY_TATAMOTORS_CACHE_PURGE_LOCK:
+            if not _LEGACY_TATAMOTORS_CACHE_PURGED:
+                try:
+                    removed = purge_ohlcv_cache("TATAMOTORS")
+                    logger.info(
+                        "Purged %d legacy pre-demerger TATAMOTORS OHLCV rows",
+                        removed,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Could not purge legacy TATAMOTORS OHLCV rows; "
+                        "continuing with isolated TMCV cache key"
+                    )
+                finally:
+                    _LEGACY_TATAMOTORS_CACHE_PURGED = True
+
+    return "TATAMOTORS@TMCV.NS"
+
+
 NSE_SYMBOLS = {
     # Indices  — NIFTY BANK removed (same ticker as BANKNIFTY = ^NSEBANK)
     "NIFTY 50":    "^NSEI",
@@ -349,9 +385,11 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
         logger.debug(f"Cache hit: {display_name}")
         return _cache[cache_key]["df"].copy()  # return copy so callers can't mutate cache
 
-    # Persistent cache read path first.
-    cached_df = read_cached_ohlcv(display_name, interval, period=period)
-    latest_cached_ts = get_latest_timestamp(display_name, interval)
+    # Persistent cache read path first. Use ticker identity for corporate-action
+    # migrations so TMCV.NS cannot inherit the old TATAMOTORS price history.
+    persistent_cache_symbol = _persistent_ohlcv_cache_symbol(display_name, ticker)
+    cached_df = read_cached_ohlcv(persistent_cache_symbol, interval, period=period)
+    latest_cached_ts = get_latest_timestamp(persistent_cache_symbol, interval)
     now = datetime.now()
 
     interval_sec = _INTERVAL_SECONDS.get(interval, 300)
@@ -439,8 +477,8 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
                 return cached_df.copy()
             return None
 
-        upsert_ohlcv(display_name, interval, df, source="yfinance")
-        merged_df = read_cached_ohlcv(display_name, interval, period=period)
+        upsert_ohlcv(persistent_cache_symbol, interval, df, source="yfinance")
+        merged_df = read_cached_ohlcv(persistent_cache_symbol, interval, period=period)
         if merged_df.empty:
             merged_df = df
 
