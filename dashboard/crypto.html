@@ -3534,7 +3534,8 @@ function initCryptoSearch() {
     const mappedSym = mappedTicker ? `${mappedTicker}USDT` : null;
     if (mappedSym && !tickerCache[mappedSym]) {
       try {
-        let pRes = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${mappedSym}`);
+        let pRes = await fetch(`${API}/api/crypto/proxy/binance/24hr?symbol=${mappedSym}`);
+        if (!pRes.ok) pRes = await fetch(`https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${mappedSym}`);
         if (!pRes.ok) pRes = await fetch(`${BINANCE_API}/ticker/24hr?symbol=${mappedSym}`);
         if (pRes.ok) {
           const tData = await pRes.json();
