@@ -90,6 +90,21 @@ def get_latest_timestamp(symbol: str, timeframe: str) -> Optional[datetime]:
         return None
 
 
+def purge_ohlcv_cache(symbol: str) -> int:
+    """Purge cached candles for a specific symbol (e.g. after corporate demerger or ticker migration)."""
+    ensure_ohlcv_cache_table()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM ohlcv_cache
+            WHERE symbol = ?
+            """,
+            (symbol,),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
 def upsert_ohlcv(
     symbol: str,
     timeframe: str,

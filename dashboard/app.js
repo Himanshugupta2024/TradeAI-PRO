@@ -27479,9 +27479,23 @@ function addToWatchlist(sym) {
         _watchlist.add(clean);
         _saveWatchlist();
         updateWatchlistBadge();
-        if (currentTab === 'watchlist') loadDedicatedWatchlist();
         updateModalPinButton(clean);
-        showToast(`★ Added ${clean} to Priority Watchlist`, 'success');
+        showToast(`\u2605 Added ${clean} to Priority Watchlist`, 'success');
+        if (typeof currentTab !== 'undefined' && currentTab === 'watchlist') {
+            const grid = document.getElementById('watchlistGrid');
+            if (grid) {
+                if (!grid.querySelector('.watchlist-card')) {
+                    grid.innerHTML = '';
+                }
+                if (!document.getElementById(`wl-card-${clean}`)) {
+                    const compName = (typeof companyNames !== 'undefined' && companyNames[clean]) ? companyNames[clean] : `${clean} · NSE Equity`;
+                    const cached = _watchlistQuoteCache[clean];
+                    const cardHtml = _renderWatchlistCard(clean, cached || { ltp: 0, isLoading: true, isError: false }, compName);
+                    grid.insertAdjacentHTML('beforeend', cardHtml);
+                }
+            }
+            loadDedicatedWatchlist({ silent: true });
+        }
     } else {
         showToast(`${clean} is already in Watchlist`, 'info');
     }
@@ -27497,9 +27511,32 @@ function removeFromWatchlist(sym) {
         }
         _saveWatchlist();
         updateWatchlistBadge();
-        if (currentTab === 'watchlist') loadDedicatedWatchlist();
         updateModalPinButton(clean);
         showToast(`Removed ${clean} from Watchlist`, 'info');
+
+        const cardEl = document.getElementById(`wl-card-${clean}`);
+        if (cardEl) cardEl.remove();
+
+        const grid = document.getElementById('watchlistGrid');
+        if (grid && _watchlist.size === 0) {
+            grid.innerHTML = `
+                <div style="grid-column: 1/-1; text-align: center; padding: 3rem 1rem; background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.1); border-radius: 10px;">
+                    <div style="font-size: 2.2rem; margin-bottom: 0.75rem;">\u2B50</div>
+                    <h3 style="color: var(--text-primary); margin-bottom: 0.5rem; font-size: 1.1rem;">Your Priority Watchlist is Empty</h3>
+                    <p style="color: var(--text-muted); font-size: 0.8rem; max-width: 420px; margin: 0 auto 1.2rem;">
+                        Add your high-conviction NSE assets above using the Quick Add bar, or click any suggestion pill to begin monitoring.
+                    </p>
+                    <button class="btn btn-primary btn-sm" onclick="addToWatchlist('RELIANCE'); addToWatchlist('HDFCBANK'); addToWatchlist('VEDL');">
+                        + Load Core Tier-1 Leaders
+                    </button>
+                </div>
+            `;
+            return;
+        }
+
+        if (typeof currentTab !== 'undefined' && currentTab === 'watchlist') {
+            loadDedicatedWatchlist({ silent: true });
+        }
     }
 }
 
@@ -27538,17 +27575,25 @@ function updateModalPinButton(sym) {
 let _watchlistQuoteCache = {}; // in-memory quote cache: { [sym]: { ltp, changePct, signalLabel, conf, entry, sl, tp, isError, ts } }
 
 function _renderWatchlistCard(sym, q, compName) {
-    if (!q || q.isError || !q.ltp || q.ltp === 0) {
+    const isErr = Boolean(q && q.isError && !q.isLoading);
+    const isLdg = Boolean(!q || q.isLoading || (!q.ltp && !isErr));
+    if (isErr || isLdg || !q || !q.ltp || q.ltp === 0) {
+        const badgeLabel = isErr ? 'FEED OFFLINE' : 'SYNCING FEED';
+        const badgeBg = isErr ? 'rgba(239,68,68,0.12)' : 'rgba(59,130,246,0.12)';
+        const badgeCol = isErr ? '#f87171' : '#60a5fa';
+        const badgeBrd = isErr ? 'rgba(239,68,68,0.3)' : 'rgba(59,130,246,0.3)';
+        const markStatus = isErr ? 'Quote Unavailable' : 'Syncing Quote...';
+        const spinnerHtml = isErr ? '' : `<span class="spinner-inline" style="width:10px;height:10px;border:2px solid rgba(148,163,184,0.2);border-top-color:#60a5fa;border-radius:50%;display:inline-block;"></span>`;
         return `
-            <div class="watchlist-card watchlist-card-syncing" id="wl-card-${sym}" style="border-color: rgba(59,130,246,0.25);">
+            <div class="watchlist-card watchlist-card-syncing" id="wl-card-${sym}" style="border-color: ${badgeBrd};">
                 <div class="watchlist-header">
                     <div class="watchlist-sym-block">
                         <span class="watchlist-sym">${sym}</span>
                         <span class="watchlist-name">${_escHtml(compName)}</span>
                     </div>
                     <div style="display:flex;align-items:center;gap:6px;">
-                        <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);">
-                            SYNCING FEED
+                        <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:${badgeBg};color:${badgeCol};border:1px solid ${badgeBrd};">
+                            ${badgeLabel}
                         </span>
                     </div>
                 </div>
@@ -27557,8 +27602,8 @@ function _renderWatchlistCard(sym, q, compName) {
                     <div>
                         <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
                         <div style="font-size: 0.9rem; font-weight: 700; color: #94a3b8; font-family: var(--font-mono); display:flex; align-items:center; gap:6px;">
-                            <span class="spinner-inline" style="width:10px;height:10px;border:2px solid rgba(148,163,184,0.2);border-top-color:#60a5fa;border-radius:50%;display:inline-block;"></span>
-                            Syncing Quote...
+                            ${spinnerHtml}
+                            ${markStatus}
                         </div>
                     </div>
                     <div style="text-align:right;">
@@ -27797,16 +27842,18 @@ async function retryWatchlistSymbol(sym) {
     await loadDedicatedWatchlist({ silent: true });
 }
 
+let _watchlistReqSeq = 0;
+
 async function loadDedicatedWatchlist(options = {}) {
     const grid = document.getElementById('watchlistGrid');
     updateWatchlistBadge();
     if (!grid) return;
 
-    const list = [..._watchlist];
+    const list = [..._watchlist]; // Guardrail 1: Preserve user's original insertion order in UI!
     if (list.length === 0) {
         grid.innerHTML = `
             <div style="grid-column: 1/-1; text-align: center; padding: 3rem 1rem; background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.1); border-radius: 10px;">
-                <div style="font-size: 2.2rem; margin-bottom: 0.75rem;">⭐</div>
+                <div style="font-size: 2.2rem; margin-bottom: 0.75rem;">\u2B50</div>
                 <h3 style="color: var(--text-primary); margin-bottom: 0.5rem; font-size: 1.1rem;">Your Priority Watchlist is Empty</h3>
                 <p style="color: var(--text-muted); font-size: 0.8rem; max-width: 420px; margin: 0 auto 1.2rem;">
                     Add your high-conviction NSE assets above using the Quick Add bar, or click any suggestion pill to begin monitoring.
@@ -27842,16 +27889,36 @@ async function loadDedicatedWatchlist(options = {}) {
     };
 
     // 1. Instant optimistic / cached render (0ms):
-    // If grid has no cards yet, render instant cards from cache/skeletons so the user never sees a blank screen!
+    // If grid has no cards yet, render instant cards in user order with isLoading: true (never false error flash!)
     const hasExistingCards = grid.querySelectorAll('.watchlist-card').length > 0;
     if (!hasExistingCards && !options.silent) {
         const initialCards = list.map(sym => {
             const compName = companyNames[sym] || `${sym} · NSE Equity`;
             const cached = _watchlistQuoteCache[sym];
-            return _renderWatchlistCard(sym, cached || { ltp: 0, isError: true }, compName);
+            return _renderWatchlistCard(sym, cached || { ltp: 0, isLoading: true, isError: false }, compName);
         });
         grid.innerHTML = initialCards.join('');
+    } else {
+        // Guardrail 1: Check if any new symbol in list is missing from grid, append its skeleton immediately
+        list.forEach(sym => {
+            if (!document.getElementById(`wl-card-${sym}`)) {
+                const compName = companyNames[sym] || `${sym} · NSE Equity`;
+                const cached = _watchlistQuoteCache[sym];
+                const cardHtml = _renderWatchlistCard(sym, cached || { ltp: 0, isLoading: true, isError: false }, compName);
+                grid.insertAdjacentHTML('beforeend', cardHtml);
+            }
+        });
+        // Remove any cards in grid that are not in _watchlist
+        grid.querySelectorAll('.watchlist-card').forEach(el => {
+            const elId = el.id || '';
+            const sym = elId.replace('wl-card-', '');
+            if (sym && !_watchlist.has(sym)) {
+                el.remove();
+            }
+        });
     }
+
+    const seq = ++_watchlistReqSeq;
 
     const signalsMap = {};
     const sigPool = [
@@ -27870,21 +27937,35 @@ async function loadDedicatedWatchlist(options = {}) {
         }
     });
 
-    // 2. Bulk fast pre-fetch via /api/watchlist/quotes (single round-trip, max 6s)
+    // 2. Bulk fast pre-fetch via /api/watchlist/quotes
+    // Guardrail 1: ONLY sort/dedup when constructing the network query string!
     let bulkQuotes = {};
     try {
-        const symQuery = encodeURIComponent(list.join(','));
-        const bulkRes = await fetchSafeJSON(`${API}/api/watchlist/quotes?symbols=${symQuery}`, {}, 6000);
+        const sortedNetworkSymbols = [...new Set(list)].sort();
+        const symQuery = encodeURIComponent(sortedNetworkSymbols.join(','));
+        const bulkRes = await fetchSafeJSON(`${API}/api/watchlist/quotes?symbols=${symQuery}`, {}, 12000);
+        
+        // Guardrail 1: Discard superseded response if a newer request started or watchlist changed
+        if (seq !== _watchlistReqSeq) return;
+
         if (bulkRes.ok && bulkRes.data && bulkRes.data.quotes) {
             bulkQuotes = bulkRes.data.quotes;
         }
-    } catch (_) {}
+    } catch (_) {
+        if (seq !== _watchlistReqSeq) return;
+    }
 
-    // 3. Resolve quotes for all symbols without blocking on individual network calls
+    // 3. Resolve quotes in user order, verifying symbol still exists in _watchlist
     const quotes = {};
     const missingSymbols = [];
 
-    list.forEach(sym => {
+    // Filter to only active watchlist symbols (race condition protection)
+    const activeList = list.filter(sym => _watchlist.has(sym));
+    if (activeList.length === 0) {
+        return;
+    }
+
+    activeList.forEach(sym => {
         const bQuote = bulkQuotes[sym];
         if (bQuote && Number(bQuote.ltp || 0) > 0) {
             const ltp = Number(bQuote.ltp);
@@ -27897,6 +27978,7 @@ async function loadDedicatedWatchlist(options = {}) {
                 sl: Number(bQuote.stop_loss || (ltp * 0.98)),
                 tp: Number(bQuote.target || (ltp * 1.035)),
                 isError: false,
+                isLoading: false,
                 isSyncing: false,
                 ts: Date.now()
             };
@@ -27917,6 +27999,7 @@ async function loadDedicatedWatchlist(options = {}) {
                 sl: Number(sig.stop_loss || (ltp > 0 ? ltp * 0.98 : 0)),
                 tp: Number(sig.target || (ltp > 0 ? ltp * 1.035 : 0)),
                 isError: false,
+                isLoading: false,
                 isSyncing: false,
                 ts: Date.now()
             };
@@ -27937,6 +28020,7 @@ async function loadDedicatedWatchlist(options = {}) {
                     sl: Number((ltp * 0.98).toFixed(1)),
                     tp: Number((ltp * 1.035).toFixed(1)),
                     isError: false,
+                    isLoading: false,
                     isSyncing: false,
                     isCachedFallback: true,
                     ts: Date.now()
@@ -27951,26 +28035,36 @@ async function loadDedicatedWatchlist(options = {}) {
         if (cached && cached.ltp > 0) {
             quotes[sym] = cached;
         } else {
-            quotes[sym] = { ltp: 0, isError: true, isSyncing: true };
+            quotes[sym] = { ltp: 0, isLoading: true, isError: false, isSyncing: true };
             missingSymbols.push(sym);
         }
     });
 
-    // 4. Update all cards immediately in DOM!
-    const cardsHtml = list.map((sym) => {
+    if (seq !== _watchlistReqSeq) return;
+
+    // 4. Update existing cards in place without destroying DOM focus or changing UI order!
+    activeList.forEach((sym) => {
+        if (!_watchlist.has(sym)) return;
         const compName = companyNames[sym] || `${sym} · NSE Equity`;
-        return _renderWatchlistCard(sym, quotes[sym], compName);
+        const cardEl = document.getElementById(`wl-card-${sym}`);
+        const cardHtml = _renderWatchlistCard(sym, quotes[sym], compName);
+        if (cardEl) {
+            cardEl.outerHTML = cardHtml;
+        } else {
+            grid.insertAdjacentHTML('beforeend', cardHtml);
+        }
     });
-    grid.innerHTML = cardsHtml.join('');
 
     // 5. Non-blocking asynchronous background resolution for missing symbols
     if (missingSymbols.length > 0) {
         missingSymbols.forEach(sym => {
+            if (!_watchlist.has(sym)) return;
             _fetchWatchlistQuote(sym).then(q => {
+                if (seq !== _watchlistReqSeq || !_watchlist.has(sym)) return;
                 if (q && q.ltp > 0) {
                     _watchlistQuoteCache[sym] = q;
                     const cardEl = document.getElementById(`wl-card-${sym}`);
-                    if (cardEl) {
+                    if (cardEl && _watchlist.has(sym)) {
                         const compName = companyNames[sym] || `${sym} · NSE Equity`;
                         cardEl.outerHTML = _renderWatchlistCard(sym, q, compName);
                     }
@@ -27989,7 +28083,6 @@ async function loadDedicatedWatchlist(options = {}) {
         }, 20000);
     }
 }
-
 
 // Centralized delegated click handler for data-action buttons (CSP hardening)
 document.addEventListener('click', (e) => {

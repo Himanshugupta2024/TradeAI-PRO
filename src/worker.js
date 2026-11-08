@@ -178,7 +178,7 @@ function applyAntiPoisoningHeaders(headers) {
   headers.set("Pragma", "no-cache");
 }
 
-// Helper to strip anti-cache query parameters (_ts, _, timestamp, t) so edge cache keys are uniform
+// Helper to strip anti-cache query parameters (_ts, _, timestamp, t) and canonicalize parameters so edge cache keys are uniform
 function getNormalizedCacheKey(rawUrl) {
   try {
     const u = new URL(rawUrl);
@@ -186,6 +186,26 @@ function getNormalizedCacheKey(rawUrl) {
     u.searchParams.delete("_");
     u.searchParams.delete("timestamp");
     u.searchParams.delete("t");
+
+    // Guardrail 2: Normalize symbols parameter (split, trim, uppercase, dedup, sort)
+    if (u.searchParams.has("symbols")) {
+      const rawSyms = u.searchParams.get("symbols") || "";
+      const sortedSyms = rawSyms
+        .split(",")
+        .map(s => s.trim().toUpperCase())
+        .filter(Boolean)
+        .sort();
+      const dedupedSyms = [...new Set(sortedSyms)];
+      if (dedupedSyms.length > 0) {
+        u.searchParams.set("symbols", dedupedSyms.join(","));
+      } else {
+        u.searchParams.delete("symbols");
+      }
+    }
+
+    // Sort query parameters for canonical cache key ordering
+    u.searchParams.sort();
+
     return u.toString();
   } catch (_) {
     return rawUrl;

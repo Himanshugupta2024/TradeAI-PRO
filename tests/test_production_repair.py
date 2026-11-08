@@ -98,6 +98,22 @@ async def test_system_data_health_endpoint():
         assert "status" in subs[s] or "state" in subs[s]
 
 
+@pytest.mark.asyncio
+async def test_system_memory_endpoint():
+    """Verify /api/system/memory returns RSS memory, limit, and safety guardrails."""
+    from api.routes import get_system_memory_telemetry
+    res = await get_system_memory_telemetry()
+    assert "status" in res
+    assert res["status"] in ("HEALTHY", "WARNING", "CRITICAL")
+    assert "rss_mb" in res
+    assert res["rss_mb"] > 0.0
+    assert res["limit_mb"] == 512.0
+    assert "headroom_mb" in res
+    assert "usage_pct" in res
+    assert "platform" in res
+    assert "timestamp" in res
+
+
 # ── 3. Instrument Tick Size & Precision Normalization ───────────────────────
 
 def test_instrument_tick_sizes():
@@ -132,12 +148,13 @@ def test_normalize_price_to_tick_directions():
 
 def test_short_paper_trade_geometry_and_raw_preservation():
     """Verify PaperTradingEngine validates SHORT geometry and preserves raw vs final values."""
-    engine = PaperTradingEngine()
+    engine = PaperTradingEngine(initial_capital=500000.0)
     engine.trades = []
     engine._cooldowns.clear()
     engine.capital = 500000.0
     engine.balance = 500000.0
-    engine._consecutive_losses = 0
+    engine.initial_capital = 500000.0
+    engine.reset_circuit_breaker()
 
     trade = engine.execute(
         symbol="DOGEUSDT",

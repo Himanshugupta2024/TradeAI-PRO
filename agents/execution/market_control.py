@@ -59,7 +59,8 @@ def is_nse_activity_window_active(dt: Optional[datetime] = None) -> Tuple[bool, 
     if now.tzinfo is not None:
         now_ist = now.astimezone(_IST)
     else:
-        now_ist = now.replace(tzinfo=_IST)
+        # Guardrail 3: Naive datetimes (e.g. from Render UTC container) must be assumed UTC first, then converted to IST
+        now_ist = now.replace(tzinfo=timezone.utc).astimezone(_IST)
 
     current_date = now_ist.date()
 

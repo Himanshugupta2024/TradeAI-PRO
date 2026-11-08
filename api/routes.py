@@ -399,6 +399,13 @@ async def health_check(response: Response = None):
                 except Exception:
                     pass
 
+    memory_rss_mb = None
+    try:
+        from utils.memory_profiler import get_process_rss_mb
+        memory_rss_mb = get_process_rss_mb(collect_gc=False)
+    except Exception:
+        pass
+
     return {
         "status": status_str,
         "healthy": h2.get("healthy", db_ok),
@@ -431,6 +438,7 @@ async def health_check(response: Response = None):
             else feed_status.get("last_update")
         ),
         "uptime_seconds": uptime_sec,
+        "memory_rss_mb": memory_rss_mb,
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -485,6 +493,44 @@ async def readiness_check(response: Response = None):
         "db_connected": db_ok,
         "last_refresh": svc._last_refresh.isoformat() if svc._last_refresh != datetime.min else None,
     }
+
+
+@router.api_route("/api/system/memory", methods=["GET", "HEAD"])
+async def get_system_memory_telemetry(response: Response = None):
+    """Real-time process RSS memory and Render 512MB RAM guardrail telemetry."""
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+
+    import platform
+    from utils.memory_profiler import check_memory_guardrail
+
+    guard = check_memory_guardrail()
+    rss_mb = float(guard.get("current_rss_mb", 0.0))
+    limit_mb = 512.0
+    usage_pct = round((rss_mb / limit_mb) * 100.0, 1)
+
+    status = "HEALTHY"
+    if rss_mb >= guard.get("max_peak_mb", 430.0):
+        status = "CRITICAL"
+    elif rss_mb >= guard.get("max_steady_mb", 380.0):
+        status = "WARNING"
+
+    return {
+        "status": status,
+        "rss_mb": rss_mb,
+        "unit": "MB",
+        "limit_mb": limit_mb,
+        "headroom_mb": guard.get("headroom_mb", round(max(0.0, limit_mb - rss_mb), 2)),
+        "usage_pct": usage_pct,
+        "max_steady_mb": guard.get("max_steady_mb", 380.0),
+        "max_peak_mb": guard.get("max_peak_mb", 430.0),
+        "is_safe": guard.get("is_safe", True),
+        "warning": guard.get("warning", False),
+        "platform": platform.system(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
 
 @router.get("/api/system/data-health")
 async def get_system_data_health():
