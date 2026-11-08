@@ -27505,6 +27505,8 @@ function removeFromWatchlist(sym) {
     if (!sym) return;
     const clean = sym.trim().toUpperCase().replace('.NS', '');
     if (_watchlist.has(clean)) {
+        // Invalidate any pending bulk quote response immediately, including when this removes the last item.
+        _watchlistReqSeq += 1;
         _watchlist.delete(clean);
         if (typeof _watchlistQuoteCache !== 'undefined') {
             delete _watchlistQuoteCache[clean];
@@ -27849,7 +27851,9 @@ async function loadDedicatedWatchlist(options = {}) {
     updateWatchlistBadge();
     if (!grid) return;
 
-    const list = [..._watchlist]; // Guardrail 1: Preserve user's original insertion order in UI!
+    // Invalidate every older request before any early return (including an empty watchlist).
+    const seq = ++_watchlistReqSeq;
+    const list = [..._watchlist]; // Preserve the user's original insertion order in UI.
     if (list.length === 0) {
         grid.innerHTML = `
             <div style="grid-column: 1/-1; text-align: center; padding: 3rem 1rem; background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.1); border-radius: 10px;">
@@ -27917,8 +27921,6 @@ async function loadDedicatedWatchlist(options = {}) {
             }
         });
     }
-
-    const seq = ++_watchlistReqSeq;
 
     const signalsMap = {};
     const sigPool = [
