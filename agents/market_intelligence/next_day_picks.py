@@ -469,48 +469,33 @@ def analyze_candidate(
         1
     )
 
-    # 4. Construct Planned Trade Setup (Strict R:R >= 1.5x)
+    # 4. Construct Planned Trade Setup (Realistic R:R 1.6x–2.0x, Bounded to Daily ATR Expected Move)
     if bias == "LONG":
         trigger_price = round(close * 1.002, 2)
         trigger_zone = f"₹{round(trigger_price * 0.998, 2)} – ₹{round(trigger_price * 1.005, 2)}"
-        stop_loss = round(max(close - (1.5 * atr), s1 * 0.995), 2)
-        risk = trigger_price - stop_loss
-        if risk <= 0:
-            risk = round(trigger_price * 0.015, 2)
-            stop_loss = round(trigger_price - risk, 2)
+        # Structural stop: place below S1 or 0.65x ATR buffer (bounded to 0.6x–1.0x ATR to survive morning noise)
+        raw_risk = max(0.65 * atr, trigger_price - s1)
+        risk = round(max(0.6 * atr, min(1.0 * atr, raw_risk)), 2)
+        stop_loss = round(trigger_price - risk, 2)
 
-        # Dynamic technical target based on real resistance levels (R1 / R2 / ATR expansion)
-        if r1 > trigger_price and (r1 - trigger_price) >= (1.5 * risk):
-            target_1 = round(r1, 2)
-        elif r2 > trigger_price and (r2 - trigger_price) >= (1.5 * risk):
-            target_1 = round(r2, 2)
-        else:
-            target_1 = round(trigger_price + max(1.6 * risk, 1.8 * atr), 2)
-
-        reward = target_1 - trigger_price
+        # Realistic target: 1.75x risk (aligned with 1.0x–1.4x ATR, avoiding fantasy 7% projections)
+        reward = round(1.75 * risk, 2)
+        target_1 = round(trigger_price + reward, 2)
         rr_ratio = round(reward / risk, 2)
-        target_2 = round(r2 if r2 > target_1 else target_1 + (1.2 * atr), 2)
-        invalidation = f"Avoid if gap down opens below ₹{stop_loss} (S1: ₹{s1}) or NIFTY plunges >1% at 09:15 open."
+        target_2 = round(target_1 + (0.5 * atr), 2)
+        invalidation = f"Avoid if gap down opens below ₹{stop_loss} (risk buffer breached) or NIFTY plunges >1% at 09:15 open."
     else:
         trigger_price = round(close * 0.998, 2)
         trigger_zone = f"₹{round(trigger_price * 0.995, 2)} – ₹{round(trigger_price * 1.002, 2)}"
-        stop_loss = round(min(close + (1.5 * atr), r1 * 1.005), 2)
-        risk = stop_loss - trigger_price
-        if risk <= 0:
-            risk = round(trigger_price * 0.015, 2)
-            stop_loss = round(trigger_price + risk, 2)
+        raw_risk = max(0.65 * atr, r1 - trigger_price)
+        risk = round(max(0.6 * atr, min(1.0 * atr, raw_risk)), 2)
+        stop_loss = round(trigger_price + risk, 2)
 
-        if s1 < trigger_price and (trigger_price - s1) >= (1.5 * risk):
-            target_1 = round(s1, 2)
-        elif s2 < trigger_price and (trigger_price - s2) >= (1.5 * risk):
-            target_1 = round(s2, 2)
-        else:
-            target_1 = round(trigger_price - max(1.6 * risk, 1.8 * atr), 2)
-
-        reward = trigger_price - target_1
+        reward = round(1.75 * risk, 2)
+        target_1 = round(trigger_price - reward, 2)
         rr_ratio = round(reward / risk, 2)
-        target_2 = round(s2 if s2 < target_1 else target_1 - (1.2 * atr), 2)
-        invalidation = f"Avoid if gap up opens above ₹{stop_loss} (R1: ₹{r1}) or strong morning sector surge."
+        target_2 = round(target_1 - (0.5 * atr), 2)
+        invalidation = f"Avoid if gap up opens above ₹{stop_loss} (resistance breached) or strong morning sector surge."
 
     # Minimum Risk:Reward Gate Enforcement
     if rr_ratio < 1.5:
@@ -607,10 +592,10 @@ def analyze_candidate(
             "planned_condition_note": "Planned conditions for research analysis. Not a live execution order.",
         },
         "model_participation": {
-            "participating_models": ["XGBoost-v2", "LightGBM-v2", "RuleConfluenceEngine"],
+            "participating_models": ["RuleConfluenceEngine", "TechnicalCatalystBlender"],
             "confidence": model_score,
-            "calibration_status": "Monotonic Confluence Scoring",
-            "notes": "Score is a multi-factor ranking index, NOT a guaranteed win probability.",
+            "calibration_status": "Multi-Factor Confluence Index (Heuristic)",
+            "notes": "Score is a transparent confluence index blending technical levels, ATR geometry, and verified RSS news catalysts. No uncalibrated black-box claims.",
         },
         "outcome_status": "PENDING",
         "outcome_details": None,
@@ -705,9 +690,27 @@ def generate_next_day_picks(
         except Exception as exc:
             logger.debug("Screening skipped symbol %s: %s", sym, exc)
 
-    # Stage 2: Rank & Filter
+    # Stage 2: Rank & Sector Diversification Filter
     candidates.sort(key=lambda x: x["rank_score"], reverse=True)
-    selected_picks = candidates[:max_picks]
+
+    # Enforce sector diversification: max 1 pick per sector for the primary slots
+    selected_picks = []
+    seen_sectors = set()
+    for cand in candidates:
+        sec = cand.get("sector")
+        if sec not in seen_sectors:
+            selected_picks.append(cand)
+            seen_sectors.add(sec)
+            if len(selected_picks) >= max_picks:
+                break
+
+    # If fewer than max_picks due to sector variety, fill remaining slots by highest score
+    if len(selected_picks) < max_picks:
+        for cand in candidates:
+            if cand not in selected_picks:
+                selected_picks.append(cand)
+                if len(selected_picks) >= max_picks:
+                    break
 
     for idx, pick in enumerate(selected_picks, 1):
         pick["rank"] = idx
@@ -857,11 +860,13 @@ def resolve_report_outcomes(
                         "loss_pct": round(((stop - trigger) / trigger) * 100, 2),
                     }
                 else:
-                    pick["outcome_status"] = "TRIGGERED"
+                    pnl_pct = round(((actual_close - trigger) / trigger) * 100, 2)
+                    pick["outcome_status"] = "EXPIRED_AT_CLOSE"
                     pick["outcome_details"] = {
                         "entry_fill": trigger,
-                        "session_close": actual_close,
-                        "unrealized_pct": round(((actual_close - trigger) / trigger) * 100, 2),
+                        "exit_price": actual_close,
+                        "pnl_pct": pnl_pct,
+                        "reason": f"Session closed at 15:30 IST at ₹{actual_close} ({pnl_pct:+.2f}%) without touching Target ₹{t1} or Stop ₹{stop}."
                     }
             else:
                 pick["outcome_status"] = "NOT_TRIGGERED"
@@ -898,11 +903,13 @@ def resolve_report_outcomes(
                         "loss_pct": round(((trigger - stop) / trigger) * 100, 2),
                     }
                 else:
-                    pick["outcome_status"] = "TRIGGERED"
+                    pnl_pct = round(((trigger - actual_close) / trigger) * 100, 2)
+                    pick["outcome_status"] = "EXPIRED_AT_CLOSE"
                     pick["outcome_details"] = {
                         "entry_fill": trigger,
-                        "session_close": actual_close,
-                        "unrealized_pct": round(((trigger - actual_close) / trigger) * 100, 2),
+                        "exit_price": actual_close,
+                        "pnl_pct": pnl_pct,
+                        "reason": f"Session closed at 15:30 IST at ₹{actual_close} ({pnl_pct:+.2f}%) without touching Target ₹{t1} or Stop ₹{stop}."
                     }
             else:
                 pick["outcome_status"] = "NOT_TRIGGERED"

@@ -3080,39 +3080,22 @@ async function loadOverviewFast() {
             }
             const pSummary = data.portfolio_summary || data;
             if (pSummary) {
-                const totalClosed = Number(pSummary.total_trades ?? pSummary.closed_trades ?? 0);
-                const eligibleCount = Number(pSummary.eligible_trades ?? totalClosed);
-                const excludedLegacy = Number(pSummary.excluded_legacy_trades ?? 0);
+                const statSummary = typeof formatTradeStatsSummary === 'function'
+                    ? formatTradeStatsSummary(pSummary)
+                    : { winRateDisplay: '—', subText: '0 closed trades', titleText: '', closedSubDetail: '0 closed' };
                 const openCount = Number(pSummary.open_positions_count ?? (Array.isArray(data.positions) ? data.positions.length : 0));
                 const wrEl = document.getElementById('statWinRate');
                 if (wrEl) {
-                    wrEl.textContent = (eligibleCount > 0 && pSummary.win_rate != null) ? `${Number(pSummary.win_rate).toFixed(1)}%` : '—';
+                    wrEl.textContent = statSummary.winRateDisplay;
                 }
                 const wrSub = document.getElementById('statWinRateSub');
                 if (wrSub) {
-                    const wins = Number(pSummary.winning_trades ?? 0);
-                    const be = Number(pSummary.breakeven_trades ?? 0);
-                    const losses = Number(pSummary.losing_trades ?? Math.max(0, eligibleCount - wins - be));
-                    const bePart = be > 0 ? ` / ${be}BE` : '';
-                    const sampleTag = (eligibleCount > 0 && eligibleCount < 30) ? ' • Small Sample' : '';
-                    let titleText = `${wins}W / ${losses}L${bePart} on ${eligibleCount} eligible closed trades.`;
-                    if (excludedLegacy > 0) {
-                        titleText += ` (${excludedLegacy} legacy non-INR trade${excludedLegacy > 1 ? 's' : ''} excluded from win rate)`;
-                    }
-                    if (eligibleCount > 0 && eligibleCount < 30) {
-                        titleText += ' Sample size < 30.';
-                    }
-                    if (eligibleCount > 0) {
-                        wrSub.textContent = `${wins}W / ${losses}L${bePart} • ${eligibleCount} trades${sampleTag}`;
-                        wrSub.title = titleText;
-                    } else {
-                        wrSub.textContent = '0 closed trades';
-                        wrSub.title = '';
-                    }
+                    wrSub.textContent = statSummary.subText;
+                    wrSub.title = statSummary.titleText;
                 }
                 const subTradesEl = document.getElementById('statTradesSubDetail');
                 if (subTradesEl) {
-                    subTradesEl.textContent = `${totalClosed} closed${excludedLegacy > 0 ? ` (${eligibleCount} INR)` : ''}`;
+                    subTradesEl.textContent = statSummary.closedSubDetail;
                 }
                 const tradesEl = document.getElementById('statTrades');
                 if (tradesEl && openCount != null) {
@@ -8591,27 +8574,15 @@ function updateStatsStrip(stats) {
     const openTrades = stats?.open_trades != null ? Number(stats.open_trades) : liveOpenCount;
     const effectiveOpen = Math.max(openTrades, liveOpenCount);
 
-    const eligibleTrades = Number(stats?.eligible_trades ?? closedTrades);
-    const excludedLegacyTrades = Number(stats?.excluded_legacy_trades ?? 0);
-    document.getElementById('statWinRate').textContent = (eligibleTrades > 0 && stats.win_rate != null) ? `${Number(stats.win_rate).toFixed(1)}%` : '—';
+    const statSummary = typeof formatTradeStatsSummary === 'function'
+        ? formatTradeStatsSummary(stats, closedTrades)
+        : { winRateDisplay: '—', subText: '0 closed trades', titleText: '', closedSubDetail: `${closedTrades} closed` };
+
+    document.getElementById('statWinRate').textContent = statSummary.winRateDisplay;
     const wrSub = document.getElementById('statWinRateSub');
     if (wrSub) {
-        const wins = Number(stats?.winning_trades ?? 0);
-        const be = Number(stats?.breakeven_trades ?? 0);
-        const losses = Number(stats?.losing_trades ?? Math.max(0, eligibleTrades - wins - be));
-        const bePart = be > 0 ? ` / ${be}BE` : '';
-        const sampleTag = (eligibleTrades > 0 && eligibleTrades < 30) ? ' • Small Sample' : '';
-        let titleText = `${wins}W / ${losses}L${bePart} on ${eligibleTrades} eligible closed trades.`;
-        if (excludedLegacyTrades > 0) {
-            titleText += ` (${excludedLegacyTrades} legacy non-INR trade${excludedLegacyTrades > 1 ? 's' : ''} excluded from win rate)`;
-        }
-        if (eligibleTrades > 0) {
-            wrSub.textContent = `${wins}W / ${losses}L${bePart} • ${eligibleTrades} trades${sampleTag}`;
-            wrSub.title = titleText;
-        } else {
-            wrSub.textContent = '0 closed trades';
-            wrSub.title = '';
-        }
+        wrSub.textContent = statSummary.subText;
+        wrSub.title = statSummary.titleText;
     }
 
     // Hero metric tile is "Open Positions", so the primary number is ALWAYS the count of active open positions!
@@ -8621,7 +8592,7 @@ function updateStatsStrip(stats) {
     }
     const subTradesEl = document.getElementById('statTradesSubDetail');
     if (subTradesEl) {
-        subTradesEl.textContent = `${closedTrades} closed`;
+        subTradesEl.textContent = statSummary.closedSubDetail;
     }
 
 
