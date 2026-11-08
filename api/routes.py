@@ -9031,6 +9031,7 @@ async def serve_legal():
 
 @router.api_route("/admin", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/admin/", methods=["GET", "HEAD"], include_in_schema=False)
+@router.api_route("/admin.html", methods=["GET", "HEAD"], include_in_schema=False)
 async def serve_admin():
     """Serve the operator / administrative console."""
     admin_path = os.path.join(STATIC_DIR, "admin.html")
