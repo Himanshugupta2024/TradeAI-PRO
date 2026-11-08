@@ -24004,9 +24004,15 @@ function renderEdgeFlowPanel(flowData, overviewData) {
     const datePill = document.getElementById('eeFlowDatePill');
 
     if (flowData) {
-        if (datePill && flowData.date) datePill.textContent = `${flowData.date} · NSE`;
-        if (fiiVal) fiiVal.textContent = flowData.fii_net ? `+₹${Number(flowData.fii_net).toFixed(2)} Cr` : '+₹3,114.68 Cr';
-        if (diiVal) diiVal.textContent = flowData.dii_net ? `₹${Number(flowData.dii_net).toFixed(2)} Cr` : '-₹392.20 Cr';
+        const helpers = window.TradeflowHelpers || {};
+        const fiiNet = helpers.getInstitutionalFlowNet ? helpers.getInstitutionalFlowNet(flowData, 'FII/FPI') : null;
+        const diiNet = helpers.getInstitutionalFlowNet ? helpers.getInstitutionalFlowNet(flowData, 'DII') : null;
+        if (datePill) {
+            const source = flowData.source || 'Source unavailable';
+            datePill.textContent = `${flowData.date || 'Latest available'} · ${source}${flowData.stale ? ' · STALE' : ''}`;
+        }
+        if (fiiVal) fiiVal.textContent = helpers.formatInstitutionalNetCr ? helpers.formatInstitutionalNetCr(fiiNet) : '—';
+        if (diiVal) diiVal.textContent = helpers.formatInstitutionalNetCr ? helpers.formatInstitutionalNetCr(diiNet) : '—';
     }
 
     if (overviewData && overviewData.sector_rotation && rotStrip) {
@@ -26377,7 +26383,11 @@ function applyAiBadgeState(ai) {
     const badgeCockpit = document.getElementById('aiModelBadgeCockpit');
     if (badgeCockpit) {
         badgeCockpit.textContent = ai.badge_text || `AI Engine: ${ai.mode}`;
-        if (ai.fitted_count >= 3) {
+        if (ai.lightweight_mode) {
+            badgeCockpit.style.background = 'rgba(56,189,248,0.15)';
+            badgeCockpit.style.color = '#38bdf8';
+            badgeCockpit.style.borderColor = 'rgba(56,189,248,0.3)';
+        } else if (ai.fitted_count >= 3) {
             badgeCockpit.style.background = 'rgba(16,185,129,0.15)';
             badgeCockpit.style.color = '#10b981';
             badgeCockpit.style.borderColor = 'rgba(16,185,129,0.3)';
@@ -26411,74 +26421,6 @@ async function updateAiModelHealthBadge() {
         if (!ai) return;
         applyAiBadgeState(ai);
         try { localStorage.setItem('tradeai_ai_engine_v2', JSON.stringify(ai)); } catch (_) {}
-
-
-
-
-
-
-
-        const badgeHeader = document.getElementById('aiEngineStatusBadge');
-
-
-
-        if (badgeHeader) {
-
-
-
-            badgeHeader.textContent = ai.badge_short || (ai.fitted_count === 4 
-
-
-
-                ? 'Models: 4/4 Active' 
-
-
-
-                : (ai.fitted_count > 0 ? `Hybrid (${ai.fitted_count}/4 Models)` : 'Rule-Based Engine'));
-
-
-
-            badgeHeader.title = ai.badge_text || 'AI Engine Status';
-
-
-
-            if (ai.fitted_count >= 3) {
-
-
-
-                badgeHeader.style.background = 'rgba(16,185,129,0.15)';
-
-
-
-                badgeHeader.style.color = '#10b981';
-
-
-
-                badgeHeader.style.borderColor = 'rgba(16,185,129,0.3)';
-
-
-
-            } else {
-
-
-
-                badgeHeader.style.background = 'rgba(245,158,11,0.12)';
-
-
-
-                badgeHeader.style.color = 'var(--amber, #f59e0b)';
-
-
-
-                badgeHeader.style.borderColor = 'rgba(245,158,11,0.3)';
-
-
-
-            }
-
-
-
-        }
 
 
 
@@ -26537,40 +26479,6 @@ async function updateAiModelHealthBadge() {
 
 
 
-
-        const badgeCockpit = document.getElementById('aiModelBadgeCockpit');
-
-
-
-        if (badgeCockpit) {
-
-
-
-            badgeCockpit.textContent = ai.badge_text || `AI Engine: ${ai.mode}`;
-
-
-
-            if (ai.fitted_count >= 3) {
-
-
-
-                badgeCockpit.style.background = 'rgba(16,185,129,0.15)';
-
-
-
-                badgeCockpit.style.color = '#10b981';
-
-
-
-                badgeCockpit.style.borderColor = 'rgba(16,185,129,0.3)';
-
-
-
-            }
-
-
-
-        }
 
         // Update Sidebar System Health & Data Age (Health v2)
         const titleEl = document.getElementById('sidebarStatusTitle');
