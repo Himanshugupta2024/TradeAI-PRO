@@ -1430,12 +1430,12 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   </div>
 
   <div class="header-right">
-    <button class="notif-btn" id="notifBtn" onclick="toggleNotifications()">🔔 Alerts Off</button>
+    <button class="notif-btn" id="notifBtn" aria-pressed="false" onclick="toggleNotifications()">🔔 Alerts Off</button>
     <div class="refresh-status">
       <div class="pulse-dot" id="pulseDot"></div>
       <span id="lastRefreshTime">—</span>
     </div>
-    <button class="manual-refresh" id="refreshBtn" onclick="fetchAll(true)">↻</button>
+    <button class="manual-refresh" id="refreshBtn" aria-label="Refresh crypto market data" title="Refresh crypto market data" onclick="fetchAll(true)">↻</button>
     <a class="nav-back" href="/">← Dashboard</a>
   </div>
 </header>
@@ -3014,11 +3014,13 @@ async function toggleNotifications() {
     }
     notifEnabled = true;
     document.getElementById('notifBtn').textContent = '🔔 Alerts ON';
+    document.getElementById('notifBtn').setAttribute('aria-pressed', 'true');
     document.getElementById('notifBtn').classList.add('enabled');
     showToast('Notifications enabled — 5% moves, BTC threshold, and RSI extremes', 'info');
   } else {
     notifEnabled = false;
     document.getElementById('notifBtn').textContent = '🔔 Alerts Off';
+    document.getElementById('notifBtn').setAttribute('aria-pressed', 'false');
     document.getElementById('notifBtn').classList.remove('enabled');
   }
 }
