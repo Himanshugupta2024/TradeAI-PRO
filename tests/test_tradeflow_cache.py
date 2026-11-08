@@ -20,6 +20,7 @@ def _snapshot(fetched_at):
 def test_restore_tradeflow_cache_preserves_fetch_age(monkeypatch):
     monkeypatch.setattr(market_data, "_tradeflow_cache", {})
     monkeypatch.setattr(market_data, "_tradeflow_fetched_at", 0.0)
+    monkeypatch.setattr(market_data, "_tradeflow_persisted_fetched_at", None)
     fetched_at = datetime.now(timezone.utc) - timedelta(minutes=12)
 
     assert market_data.restore_tradeflow_cache(_snapshot(fetched_at)) is True
@@ -30,6 +31,7 @@ def test_restore_tradeflow_cache_preserves_fetch_age(monkeypatch):
     assert restored["stale"] is True
     assert 11.9 <= restored["age_minutes"] <= 12.1
     assert abs(market_data._tradeflow_fetched_at - fetched_at.timestamp()) < 0.01
+    assert market_data._tradeflow_persisted_fetched_at == fetched_at.isoformat()
 
 
 def test_restore_recent_tradeflow_cache_remains_fresh(monkeypatch):
