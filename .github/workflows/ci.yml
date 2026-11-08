@@ -32,6 +32,20 @@ jobs:
       - name: Run tests (exclude integration)
         run: pytest -m "not integration" -q
 
+  worker-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run Cloudflare Worker unit tests
+        run: node --experimental-default-type=module tests/test_worker_scheduled.js
+
   tradvix:
     runs-on: ubuntu-latest
     timeout-minutes: 10
