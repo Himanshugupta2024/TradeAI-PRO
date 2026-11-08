@@ -3091,8 +3091,8 @@ async function loadOverviewFast() {
                 const wrSub = document.getElementById('statWinRateSub');
                 if (wrSub) {
                     const wins = Number(pSummary.winning_trades ?? 0);
-                    const losses = Number(pSummary.losing_trades ?? Math.max(0, eligibleCount - wins));
                     const be = Number(pSummary.breakeven_trades ?? 0);
+                    const losses = Number(pSummary.losing_trades ?? Math.max(0, eligibleCount - wins - be));
                     const bePart = be > 0 ? ` / ${be}BE` : '';
                     const sampleTag = (eligibleCount > 0 && eligibleCount < 30) ? ' • Small Sample' : '';
                     let titleText = `${wins}W / ${losses}L${bePart} on ${eligibleCount} eligible closed trades.`;
@@ -8596,9 +8596,9 @@ function updateStatsStrip(stats) {
     document.getElementById('statWinRate').textContent = (eligibleTrades > 0 && stats.win_rate != null) ? `${Number(stats.win_rate).toFixed(1)}%` : '—';
     const wrSub = document.getElementById('statWinRateSub');
     if (wrSub) {
-        const wins = Number(stats?.winning_trades || 0);
-        const losses = Number(stats?.losing_trades || Math.max(0, eligibleTrades - wins));
-        const be = Number(stats?.breakeven_trades || 0);
+        const wins = Number(stats?.winning_trades ?? 0);
+        const be = Number(stats?.breakeven_trades ?? 0);
+        const losses = Number(stats?.losing_trades ?? Math.max(0, eligibleTrades - wins - be));
         const bePart = be > 0 ? ` / ${be}BE` : '';
         const sampleTag = (eligibleTrades > 0 && eligibleTrades < 30) ? ' • Small Sample' : '';
         let titleText = `${wins}W / ${losses}L${bePart} on ${eligibleTrades} eligible closed trades.`;
