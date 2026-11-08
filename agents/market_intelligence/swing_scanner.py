@@ -32,6 +32,11 @@ import numpy as np
 import pandas as pd
 
 from config import settings
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+_IST = ZoneInfo("Asia/Kolkata")
+
 from risk.swing_risk import (
     calculate_swing_position_size,
     calculate_swing_sl_tp,
@@ -147,6 +152,33 @@ def assign_calibrated_winrate(s: SwingSetup) -> SwingSetup:
 
 
 # ── Utility helpers ──────────────────────────────────────────────────────────
+
+
+def get_completed_eod_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure the DataFrame used for Swing scanning ends at the last COMPLETED EOD session.
+    If the last bar is for today and today's cash session is still active (before 15:30 IST),
+    exclude today's incomplete candle so pattern calculations (RSI, ATR, breakouts)
+    operate strictly on verified, completed daily closes.
+    """
+    if df is None or df.empty or len(df) < 2:
+        return df
+
+    now_ist = datetime.now(_IST)
+    market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+
+    last_ts = _last_bar_timestamp(df)
+    if pd.isna(last_ts):
+        return df
+
+    last_date = last_ts.date() if hasattr(last_ts, "date") else None
+    today_date = now_ist.date()
+
+    if last_date == today_date and now_ist < market_close:
+        # Today's daily bar is still forming/incomplete! Use completed bars up to yesterday.
+        return df.iloc[:-1].copy()
+
+    return df
 
 
 def _last_bar_timestamp(df: pd.DataFrame):
@@ -903,6 +935,13 @@ def scan_swing_setups(
             }
         )
 
+    if df is None or df.empty or len(df) < 30:
+        if stages_out is not None:
+            stages_out["blocked"] = "insufficient_bars"
+        return []
+
+    # Enforce completed EOD bar policy: drop forming candle if market currently active
+    df = get_completed_eod_df(df)
     if df is None or df.empty or len(df) < 30:
         if stages_out is not None:
             stages_out["blocked"] = "insufficient_bars"

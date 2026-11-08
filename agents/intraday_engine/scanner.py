@@ -236,18 +236,33 @@ def scan_intraday_setups(
 
         if getattr(settings, "INTRADAY_LIVE_FEED_ENABLED", True):
             try:
-                from agents.data_ingestion.nse_live_quote import get_nse_live_quote
+                from agents.data_ingestion.nse_live_quote import (
+                    get_nse_live_quote,
+                    validate_quote_for_trade,
+                )
                 from agents.intraday_engine.fetcher import merge_live_candle_overlay
 
                 quote = get_nse_live_quote(s)
                 if quote is not None:
-                    df = merge_live_candle_overlay(raw_df, quote)
-                    data_status = "LIVE"
+                    is_eligible, reason = validate_quote_for_trade(quote, trade_type="INTRADAY")
+                    if is_eligible:
+                        df = merge_live_candle_overlay(raw_df, quote)
+                        data_status = "LIVE"
+                    else:
+                        logger.info(
+                            "intraday %s blocked by staleness gate: %s (source=%s, freshness=%s)",
+                            s,
+                            reason,
+                            getattr(quote, "source", None),
+                            getattr(quote, "freshness_seconds", None),
+                        )
+                        continue
                 else:
-                    df = raw_df
+                    logger.debug("intraday %s skipped: no live quote available", s)
+                    continue
             except Exception as exc:
-                logger.debug("intraday live overlay fallback to pure 5m for %s: %s", s, exc)
-                df = raw_df
+                logger.debug("intraday live overlay fallback error for %s: %s", s, exc)
+                continue
         else:
             df = raw_df
 
