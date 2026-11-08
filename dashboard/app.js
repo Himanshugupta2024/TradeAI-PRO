@@ -8527,7 +8527,7 @@ function updateStatsStrip(stats) {
 
     const seedEl = document.getElementById('statCapitalSeed');
     if (seedEl && stats && stats.initial_capital != null) {
-        seedEl.textContent = `Seed: ${fmt(stats.initial_capital)} • MTM: ${u >= 0 ? '+' : ''}${fmt(u)}`;
+        seedEl.textContent = `Seed: ${fmt(stats.initial_capital)}`;
     }
 
     const uEl = document.getElementById('statUnrealizedPnl');
