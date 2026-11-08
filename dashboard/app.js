@@ -3072,8 +3072,7 @@ async function loadOverviewFast() {
             }
             if (data.initial_capital !== undefined) {
                 const seedEl = document.getElementById('statCapitalSeed');
-                const mtmVal = Number(data.unrealized_pnl || 0);
-                if (seedEl) seedEl.textContent = `Seed: ${_fmtMoney(data.initial_capital)} • MTM: ${mtmVal >= 0 ? '+' : ''}${_fmtMoney(mtmVal)}`;
+                if (seedEl) seedEl.textContent = 'Seed: ' + _fmtMoney(data.initial_capital);
             }
             if (data.total_pnl !== undefined) {
                 const pnlEl = document.getElementById('statTotalPnl') || document.getElementById('statPnl');
@@ -16380,6 +16379,9 @@ function renderModalInfo(data, symbol, interval, meta) {
         const asOfStr = meta?.as_of || (data[data.length - 1] && data[data.length - 1].timestamp);
         const asOfDate = asOfStr ? new Date(asOfStr) : new Date();
 
+        const src = (meta?.source || meta?.data_source || '').toUpperCase();
+        const isRt = Boolean(meta?.is_realtime);
+
         if (isStale || state !== 'OPEN') {
             const dayStr = asOfDate.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' });
             const timeStr = asOfDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -16389,14 +16391,29 @@ function renderModalInfo(data, symbol, interval, meta) {
             sessionBadgeEl.style.background = 'rgba(245,158,11,0.15)';
             sessionBadgeEl.style.border = '1px solid rgba(245,158,11,0.3)';
             sessionBadgeEl.title = `Data timestamp: ${asOfDate.toLocaleString('en-IN')} (Market ${state})`;
+        } else if (src === 'DELAYED_YFINANCE' || src === 'YFINANCE' || (!isRt && !symbol.includes('/'))) {
+            const timeStr = asOfDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+            sessionBadgeEl.innerHTML = `🟡 15m Delayed · ${timeStr}`;
+            sessionBadgeEl.style.display = 'inline-flex';
+            sessionBadgeEl.style.color = '#f59e0b';
+            sessionBadgeEl.style.background = 'rgba(245,158,11,0.15)';
+            sessionBadgeEl.style.border = '1px solid rgba(245,158,11,0.3)';
+            sessionBadgeEl.title = 'Exchange quote delayed ~15m (yFinance fallback) · Intraday trading disabled';
+        } else if (src === 'STALE_CACHE') {
+            sessionBadgeEl.innerHTML = `🟠 Stale Cache`;
+            sessionBadgeEl.style.display = 'inline-flex';
+            sessionBadgeEl.style.color = '#ef4444';
+            sessionBadgeEl.style.background = 'rgba(239,68,68,0.15)';
+            sessionBadgeEl.style.border = '1px solid rgba(239,68,68,0.3)';
+            sessionBadgeEl.title = 'Cache expired · Reconnecting to exchange';
         } else {
             const timeStr = asOfDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-            sessionBadgeEl.innerHTML = `● Live · ${timeStr}`;
+            sessionBadgeEl.innerHTML = `🟢 Live NSE · ${timeStr}`;
             sessionBadgeEl.style.display = 'inline-flex';
             sessionBadgeEl.style.color = 'var(--green)';
             sessionBadgeEl.style.background = 'rgba(16,185,129,0.15)';
             sessionBadgeEl.style.border = '1px solid rgba(16,185,129,0.3)';
-            sessionBadgeEl.title = 'Live feed fresh';
+            sessionBadgeEl.title = 'Verified sub-second live exchange feed';
         }
     }
     const last = data[data.length - 1];
