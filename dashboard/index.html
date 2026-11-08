@@ -4755,7 +4755,7 @@
                     </div>
                 </div>
                 <div class="watchlist-quick-add" style="display:flex;align-items:center;gap:0.5rem;">
-                    <input type="text" id="watchlistAddInput" placeholder="Add NSE symbol (e.g. VEDL, SBIN)..." 
+                    <input type="text" id="watchlistAddInput" aria-label="Add NSE stock symbol to watchlist" placeholder="Add NSE symbol (e.g. VEDL, SBIN)..." 
                            style="background:rgba(2,6,23,0.7);border:1px solid var(--border-color);border-radius:6px;padding:0.45rem 0.85rem;color:#f8fafc;font-size:0.82rem;width:230px;outline:none;"
                            onkeydown="if(event.key==='Enter') addInputStockToWatchlist()" />
                     <button class="btn btn-primary btn-sm" onclick="addInputStockToWatchlist()" style="padding:0.45rem 0.9rem;font-size:0.82rem;font-weight:700;border-radius:6px;cursor:pointer;">+ Add Stock</button>
@@ -6149,7 +6149,7 @@
 
                 <label for="swingSymbolSearch" style="font-size:0.76rem;color:var(--text-muted);white-space:nowrap;">Look up symbol</label>
 
-                <input id="swingSymbolSearch" class="screener-search" type="text" placeholder="e.g. RELIANCE, TCS" maxlength="24" autocomplete="off" style="min-width:140px;max-width:200px;" />
+                <input id="swingSymbolSearch" aria-label="Search for a swing trading symbol" class="screener-search" type="text" placeholder="e.g. RELIANCE, TCS" maxlength="24" autocomplete="off" style="min-width:140px;max-width:200px;" />
 
                 <button type="button" class="toggle-btn" id="swingSymbolSearchBtn" onclick="lookupSwingSymbol()">Search</button>
 
@@ -6310,7 +6310,7 @@
                 <!-- Row 1: Search & Direction & Score Filter -->
                 <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;">
                     <div style="position:relative;flex:1;min-width:180px;">
-                        <input type="text" id="idSearchInput" oninput="applyIntradayFilters()" placeholder="🔍 Filter by symbol (e.g. RELIANCE, TCS)..." style="width:100%;padding:0.35rem 0.65rem;font-size:0.74rem;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.12);border-radius:5px;color:#fff;">
+                        <input type="text" id="idSearchInput" aria-label="Filter intraday setups by symbol" oninput="applyIntradayFilters()" placeholder="🔍 Filter by symbol (e.g. RELIANCE, TCS)..." style="width:100%;padding:0.35rem 0.65rem;font-size:0.74rem;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.12);border-radius:5px;color:#fff;">
                     </div>
                     <div style="display:inline-flex;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:2px;">
                         <button type="button" class="toggle-btn active" data-dir="all" onclick="setIntradayDir('all')" style="font-size:0.7rem;padding:0.22rem 0.6rem;border:none;">All Bias</button>
@@ -8166,7 +8166,7 @@
                 Enabling Crypto & Forex processing initiates 24/7 background market feeds, indicator calculation, and provider polling. Enter the operator password to confirm override:
             </p>
             <div style="margin-bottom: 1rem;">
-                <input type="password" id="marketControlPasswordInput" placeholder="Operator Password" style="width: 100%; box-sizing: border-box; padding: 0.6rem 0.8rem; background: #1e293b; border: 1px solid #475569; border-radius: 6px; color: #f8fafc; font-size: 0.88rem; outline: none;" onkeydown="if(event.key==='Enter') submitMarketControlPassword()" />
+                <input type="password" id="marketControlPasswordInput" aria-label="Operator password" placeholder="Operator Password" style="width: 100%; box-sizing: border-box; padding: 0.6rem 0.8rem; background: #1e293b; border: 1px solid #475569; border-radius: 6px; color: #f8fafc; font-size: 0.88rem; outline: none;" onkeydown="if(event.key==='Enter') submitMarketControlPassword()" />
                 <div id="marketControlErrorMsg" style="color: #ef4444; font-size: 0.75rem; margin-top: 0.4rem; display: none;"></div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap: 0.6rem;">
