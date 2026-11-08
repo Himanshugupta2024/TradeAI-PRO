@@ -1023,13 +1023,13 @@ async def get_dashboard_overview():
         "dominant_regime": dominant_regime,
 
         "ai_engine": {
-
-            "mode": "Ensemble V2 (4/4 ML Fitted)",
-
-            "fitted_count": 4,
-
-            "ready": True
-
+            "mode": ai_status.get("mode", "Statistical Heuristic"),
+            "fitted_count": ai_status.get("fitted_count", 0),
+            "ready": bool(ai_status.get("ready", True)),
+            "badge_short": ai_status.get("badge_short", "🧠 AI: Heuristic"),
+            "badge_text": ai_status.get("badge_text", f"AI Engine: {ai_status.get('mode', 'Statistical Heuristic')}"),
+            "lightweight_mode": bool(ai_status.get("lightweight_mode", False)),
+            "active_inference_mode": ai_status.get("active_inference_mode"),
         },
 
         "risk_state": {
