@@ -9426,12 +9426,58 @@ _binance_proxy_cache = {
     "timestamp": 0.0,
     "payload": None,
 }
+_binance_symbol_cache = {}
 _binance_klines_cache = {}
 
 @router.get("/api/crypto/proxy/binance/24hr")
-async def proxy_binance_24hr():
-    """Proxy Binance 24hr ticker with 15s caching to resolve CSP and direct provider fetch issues (F08)."""
+async def proxy_binance_24hr(symbol: str | None = Query(default=None)):
+    """Proxy Binance 24hr ticker with 15s caching to resolve CSP and provider fetch issues (F08).
+    Supports optional ?symbol= parameter with automatic Binance Futures fallback for meme tokens (e.g. CHILLGUY).
+    """
     now = time.time()
+    import httpx
+
+    # Case 1: Specific symbol query (e.g. ?symbol=CHILLGUYUSDT)
+    if symbol:
+        sym = symbol.strip().upper()
+        cached_sym = _binance_symbol_cache.get(sym)
+        if cached_sym and (now - cached_sym["timestamp"] < 15.0):
+            return JSONResponse(
+                content=cached_sym["payload"],
+                headers={"Cache-Control": "public, max-age=15", "X-Cache": "HIT"},
+            )
+
+        endpoints = [
+            f"https://data-api.binance.vision/api/v3/ticker/24hr?symbol={sym}",
+            f"https://api.binance.com/api/v3/ticker/24hr?symbol={sym}",
+            f"https://fapi.binance.com/fapi/v1/ticker/24hr?symbol={sym}",
+        ]
+        for url in endpoints:
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    resp = await client.get(url, headers={"User-Agent": "TradeAI-Pro/1.0"})
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if isinstance(data, dict) and data.get("symbol"):
+                            _binance_symbol_cache[sym] = {"timestamp": now, "payload": data}
+                            return JSONResponse(
+                                content=data,
+                                headers={"Cache-Control": "public, max-age=15", "X-Cache": "MISS"},
+                            )
+            except Exception as exc:
+                logger.warning("Binance single ticker proxy fetch failed for %s: %s", url, exc)
+
+        if cached_sym:
+            return JSONResponse(
+                content=cached_sym["payload"],
+                headers={"Cache-Control": "public, max-age=5", "X-Cache": "STALE"},
+            )
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Symbol {sym} unavailable across Binance Spot and Futures.", "status": "NOT_FOUND"},
+        )
+
+    # Case 2: Bulk 24hr tickers
     if _binance_proxy_cache["payload"] and (now - _binance_proxy_cache["timestamp"] < 15.0):
         return JSONResponse(
             content=_binance_proxy_cache["payload"],
@@ -9439,10 +9485,9 @@ async def proxy_binance_24hr():
         )
 
     endpoints = [
-        "https://api.binance.com/api/v3/ticker/24hr",
         "https://data-api.binance.vision/api/v3/ticker/24hr",
+        "https://api.binance.com/api/v3/ticker/24hr",
     ]
-    import httpx
     for url in endpoints:
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
@@ -9450,6 +9495,20 @@ async def proxy_binance_24hr():
                 if resp.status_code == 200:
                     data = resp.json()
                     if isinstance(data, list):
+                        # Merge prominent meme/futures tickers that may not exist on spot
+                        try:
+                            f_resp = await client.get("https://fapi.binance.com/fapi/v1/ticker/24hr", headers={"User-Agent": "TradeAI-Pro/1.0"})
+                            if f_resp.status_code == 200:
+                                f_data = f_resp.json()
+                                if isinstance(f_data, list):
+                                    existing_syms = {t.get("symbol") for t in data if isinstance(t, dict)}
+                                    for ft in f_data:
+                                        if isinstance(ft, dict) and ft.get("symbol") and ft.get("symbol").endswith("USDT"):
+                                            if ft["symbol"] not in existing_syms:
+                                                data.append(ft)
+                        except Exception as f_exc:
+                            logger.debug("Optional futures ticker merge skipped: %s", f_exc)
+
                         _binance_proxy_cache["timestamp"] = now
                         _binance_proxy_cache["payload"] = data
                         return JSONResponse(
@@ -9472,9 +9531,12 @@ async def proxy_binance_24hr():
 
 @router.get("/api/crypto/proxy/binance/klines")
 async def proxy_binance_klines(symbol: str = Query(...), interval: str = Query("1h"), limit: int = Query(80)):
-    """Proxy Binance klines with 20s caching to resolve CSP and provider fetch issues (F08)."""
+    """Proxy Binance klines with 20s caching to resolve CSP and provider fetch issues (F08).
+    Supports Spot with automatic fallback to Binance Futures for meme tokens (e.g. CHILLGUY).
+    """
     now = time.time()
-    cache_key = f"{symbol}_{interval}_{limit}"
+    sym = symbol.strip().upper()
+    cache_key = f"{sym}_{interval}_{limit}"
     cached = _binance_klines_cache.get(cache_key)
     if cached and (now - cached["timestamp"] < 20.0):
         return JSONResponse(
@@ -9483,8 +9545,9 @@ async def proxy_binance_klines(symbol: str = Query(...), interval: str = Query("
         )
 
     endpoints = [
-        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
-        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={sym}&interval={interval}&limit={limit}",
+        f"https://api.binance.com/api/v3/klines?symbol={sym}&interval={interval}&limit={limit}",
+        f"https://fapi.binance.com/fapi/v1/klines?symbol={sym}&interval={interval}&limit={limit}",
     ]
     import httpx
     for u in endpoints:
