@@ -61,12 +61,27 @@ def is_nse_activity_window_active(dt: Optional[datetime] = None) -> Tuple[bool, 
     else:
         now_ist = now.replace(tzinfo=_IST)
 
+    current_date = now_ist.date()
+
+    # 0. Special Scheduled Session Check (e.g. Diwali Muhurat Trading)
+    from agents.market_intelligence.nse_holidays import get_special_trading_session
+    special = get_special_trading_session(current_date)
+    if special:
+        start_time, end_time, session_name = special
+        now_time = now_ist.time()
+        now_time_sec = dtime(now_time.hour, now_time.minute, now_time.second)
+        if start_time <= now_time_sec < end_time:
+            return True, f"SESSION_ACTIVE:{session_name}"
+        if now_time_sec < start_time:
+            return False, "NSE_PRE_MARKET"
+        if now_time_sec >= end_time:
+            return False, "NSE_POST_MARKET"
+
     # 1. Weekend Check (Monday=0 ... Sunday=6)
     if now_ist.weekday() >= 5:
         return False, "NSE_CLOSED_WEEKEND"
 
     # 2. Holiday Check
-    current_date = now_ist.date()
     if is_holiday(current_date):
         h_name = get_holiday_name(current_date)
         return False, f"NSE_MARKET_HOLIDAY:{h_name}" if h_name else "NSE_MARKET_HOLIDAY"

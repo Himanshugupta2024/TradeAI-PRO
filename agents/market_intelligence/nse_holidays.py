@@ -4,8 +4,8 @@ Maintains official scheduled trading holidays for NSE cash equities.
 """
 
 from __future__ import annotations
-from datetime import date
-from typing import Dict, Set
+from datetime import date, time as dtime
+from typing import Dict, Set, Optional, Tuple
 
 # Official NSE Standard Equity Trading Holidays (2025, 2026, 2027)
 NSE_HOLIDAYS_MAP: Dict[date, str] = {
@@ -59,6 +59,13 @@ NSE_HOLIDAYS_MAP: Dict[date, str] = {
 
 NSE_HOLIDAYS_SET: Set[date] = set(NSE_HOLIDAYS_MAP.keys())
 
+# Special scheduled trading sessions (e.g. Diwali Muhurat Trading, disaster recovery sessions)
+# Format: {date: (start_time, end_time, session_name)}
+SPECIAL_TRADING_SESSIONS: Dict[date, Tuple[dtime, dtime, str]] = {
+    # 2026 Diwali Muhurat Trading: 14:20:00 to 15:30:00 IST
+    date(2026, 11, 8): (dtime(14, 20, 0), dtime(15, 30, 0), "Diwali Muhurat Trading"),
+}
+
 
 def is_holiday(d: date) -> bool:
     """Check if the given date is an official scheduled NSE trading holiday."""
@@ -68,3 +75,8 @@ def is_holiday(d: date) -> bool:
 def get_holiday_name(d: date) -> str:
     """Return holiday name or empty string if not a holiday."""
     return NSE_HOLIDAYS_MAP.get(d, "")
+
+
+def get_special_trading_session(d: date) -> Optional[Tuple[dtime, dtime, str]]:
+    """Return special scheduled trading session (start_time, end_time, session_name) or None."""
+    return SPECIAL_TRADING_SESSIONS.get(d)

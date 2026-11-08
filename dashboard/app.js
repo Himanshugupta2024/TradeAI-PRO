@@ -16607,85 +16607,34 @@ function updateDynamicMarketStatus() {
 
 
     const t = _getIstDate();
-
-
-
     const jsDay = new Date(Date.UTC(t.year, t.month - 1, t.day)).getUTCDay();
-
-
-
-    const isWeekend = (jsDay === 0 || jsDay === 6);
-
-
-
     const mins = t.hour * 60 + t.minute;
 
+    // Special scheduled sessions (e.g. Diwali Muhurat Trading on Sunday 8 Nov 2026: 14:20 to 15:30 IST)
+    const isMuhuratDay = (t.year === 2026 && t.month === 11 && t.day === 8);
+    const isMuhuratOpen = isMuhuratDay && (mins >= 14 * 60 + 20 && mins <= 15 * 60 + 30);
+    const isMuhuratPre = isMuhuratDay && (mins >= 14 * 60 + 5 && mins < 14 * 60 + 20);
 
-
-    const isPreMarket = !isWeekend && (mins >= 9 * 60 && mins < 9 * 60 + 15);
-
-
-
-    const isOpen = !isWeekend && (mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30);
-
-
-
-
-
-
+    const isWeekend = !isMuhuratDay && (jsDay === 0 || jsDay === 6);
+    const isPreMarket = isMuhuratPre || (!isWeekend && (mins >= 9 * 60 && mins < 9 * 60 + 15));
+    const isOpen = isMuhuratOpen || (!isWeekend && (mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30));
 
     if (isOpen) {
-
-
-
-        if (_wsConnected) {
-
-
-
+        if (isMuhuratOpen) {
+            el.innerHTML = '<span class="status-dot live" style="background:#10b981;box-shadow:0 0 8px #10b981;"></span><span style="color:#10b981;font-weight:700;letter-spacing:0.04em;">NSE OPEN · MUHURAT TRADING</span>';
+            el.title = 'Diwali Muhurat Trading Session Active (14:20 - 15:30 IST) · Samvat 2083';
+        } else if (_wsConnected) {
             el.innerHTML = '<span class="status-dot live" style="background:#10b981;"></span><span style="color:#10b981;font-weight:700;letter-spacing:0.04em;">NSE OPEN · 15m DELAYED</span>';
-
-
-
             el.title = 'NSE Indian Market Open (09:15 - 15:30 IST) | Quotes delayed ~15m per exchange compliance on zero-cost public feed. WebSocket active.';
-
-
-
         } else {
-
-
-
             el.innerHTML = '<span class="status-dot" style="background:#f59e0b;box-shadow:0 0 6px rgba(245,158,11,0.6);"></span><span style="color:#f59e0b;font-weight:700;letter-spacing:0.04em;">NSE OPEN · SYNCING</span>';
-
-
-
             el.title = 'Indian Market Open (09:15 - 15:30 IST) | Reconnecting to live feed';
-
-
-
         }
-
-
-
     } else if (isPreMarket) {
-
-
-
         el.innerHTML = '<span class="status-dot" style="background:#eab308;"></span><span style="color:#eab308;font-weight:700;letter-spacing:0.04em;">NSE PRE-OPEN</span>';
-
-
-
-        el.title = 'Pre-market session active (09:00 - 09:15 IST)';
-
-
-
+        el.title = isMuhuratPre ? 'Diwali Muhurat Pre-open Session (14:05 - 14:20 IST)' : 'Pre-market session active (09:00 - 09:15 IST)';
     } else {
-
-
-
         el.innerHTML = '<span class="status-dot" style="background:#ef4444;"></span><span style="color:#94a3b8;font-weight:600;letter-spacing:0.04em;">NSE CLOSED</span>';
-
-
-
         el.title = `Market closed. Next session: ${typeof _nextNseOpenLabel === 'function' ? _nextNseOpenLabel() : '09:15 AM IST'}`;
     }
 
@@ -16694,7 +16643,7 @@ function updateDynamicMarketStatus() {
     const eePill = document.getElementById('eeLiveStatusPill');
     if (eeText && eePill) {
         if (isOpen) {
-            eeText.textContent = 'NSE OPEN · 15m Delayed';
+            eeText.textContent = isMuhuratOpen ? 'NSE OPEN · MUHURAT TRADING' : 'NSE OPEN · 15m Delayed';
             eePill.className = 'ee-telemetry-pill live';
         } else if (isPreMarket) {
             eeText.textContent = 'NSE PRE-OPEN';
