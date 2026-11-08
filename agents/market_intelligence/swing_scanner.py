@@ -73,6 +73,7 @@ class SwingSetup:
     setup_date: str = ""  # ISO date the setup was detected (for stale badge)
     data_as_of: str = ""  # ISO timestamp of last daily bar used for this scan
     data_stale: bool = False  # True if last bar exceeded SWING_MAX_BAR_AGE_DAYS (still returned if scanned)
+    completed_eod_verified: bool = True  # True only if computed strictly on completed closed daily session
     # Multi-pattern confluence (same-symbol merge in dedupe)
     confluence_count: int = 1  # How many patterns agreed (same direction)
     confluence_patterns: str = ""  # Semicolon-separated pattern names when merged
@@ -949,8 +950,27 @@ def scan_swing_setups(
 
     last_ts = _last_bar_timestamp(df)
     data_as_of_str = _data_as_of_iso(last_ts)
+
+    # Verify that the last bar is indeed a completed closed session
+    now_ist = datetime.now(_IST)
+    market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+    last_date = last_ts.date() if hasattr(last_ts, "date") else None
+    today_date = now_ist.date()
+
+    is_eod_completed = bool(
+        not pd.isna(last_ts)
+        and (last_date < today_date or now_ist >= market_close)
+    )
+
     if stages_out is not None:
         stages_out["last_bar"] = data_as_of_str or None
+        stages_out["completed_eod_verified"] = is_eod_completed
+
+    if not is_eod_completed:
+        logger.debug("Swing skip %s: last bar %s is an incomplete forming candle", symbol, last_date)
+        if stages_out is not None:
+            stages_out["blocked"] = "uncompleted_eod_bar"
+        return []
         if not pd.isna(last_ts):
             stages_out["bar_age_days"] = round(_bar_age_days(last_ts), 2)
     max_age = float(getattr(settings, "SWING_MAX_BAR_AGE_DAYS", 0) or 0)

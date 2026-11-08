@@ -264,6 +264,12 @@ def scan_intraday_setups(
                 logger.debug("intraday live overlay fallback error for %s: %s", s, exc)
                 continue
         else:
+            if getattr(settings, "INTRADAY_REQUIRE_LIVE_FEED", True):
+                logger.info(
+                    "intraday %s blocked: live feed is disabled and live quotes are required for trade signals (fail-closed)",
+                    s,
+                )
+                continue
             df = raw_df
 
         if df is None or df.empty:

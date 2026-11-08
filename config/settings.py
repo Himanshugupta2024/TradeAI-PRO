@@ -164,6 +164,7 @@ INTRADAY_SUPERTREND_HIGHVOL_ATR_PCT = float(os.getenv("INTRADAY_SUPERTREND_HIGHV
 
 # Intraday Live Feed, RVOL, and Index Confluence settings
 INTRADAY_LIVE_FEED_ENABLED = os.getenv("INTRADAY_LIVE_FEED_ENABLED", "true").lower() in ("true", "1", "yes")
+INTRADAY_REQUIRE_LIVE_FEED = os.getenv("INTRADAY_REQUIRE_LIVE_FEED", "true").lower() in ("true", "1", "yes")
 INTRADAY_MIN_RVOL = float(os.getenv("INTRADAY_MIN_RVOL", "1.5"))
 INTRADAY_RVOL_GATE_ENABLED = os.getenv("INTRADAY_RVOL_GATE_ENABLED", "true").lower() in ("true", "1", "yes")
 INTRADAY_INDEX_CONFLUENCE_GATE = os.getenv("INTRADAY_INDEX_CONFLUENCE_GATE", "true").lower() in ("true", "1", "yes")

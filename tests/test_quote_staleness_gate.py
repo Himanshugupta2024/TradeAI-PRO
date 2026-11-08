@@ -291,3 +291,57 @@ def test_backward_compatibility():
     assert "is_realtime" in d
     assert "trade_eligible" in d
     assert "status_reason" in d
+
+
+def test_intraday_live_feed_disabled_blocks_signals_fail_closed(monkeypatch: pytest.MonkeyPatch):
+    """When INTRADAY_LIVE_FEED_ENABLED is False and REQUIRE_LIVE_FEED is True, fail-closed blocks trade signals."""
+    from agents.intraday_engine.scanner import scan_intraday_setups
+    from agents.intraday_engine.types import IntradaySignal
+    from config import settings
+
+    monkeypatch.setattr(settings, "INTRADAY_LIVE_FEED_ENABLED", False)
+    monkeypatch.setattr(settings, "INTRADAY_REQUIRE_LIVE_FEED", True)
+
+    def _dummy_strat(sym: str, df: pd.DataFrame) -> IntradaySignal:
+        return IntradaySignal(
+            symbol=sym, strategy="ORB", direction="LONG", score=90.0,
+            entry=100.0, stop_loss=95.0, target=110.0, qty=10,
+        )
+
+    # Synthetic 5m DataFrame
+    now = datetime.now(_IST)
+    rows = [{"timestamp": now - timedelta(minutes=5 * i), "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 100000.0} for i in range(20)]
+    df = pd.DataFrame(rows)
+
+    with patch("agents.intraday_engine.scanner.fetch_5m", return_value=df), \
+         patch("agents.intraday_engine.scanner._is_fresh_intraday", return_value=True), \
+         patch("agents.intraday_engine.scanner.STRATS", (_dummy_strat,)), \
+         patch("agents.intraday_engine.scanner.is_entry_cutoff_active", return_value=False), \
+         patch("agents.intraday_engine.scanner.should_square_off_now", return_value=False):
+
+        signals = scan_intraday_setups(["RELIANCE"])
+        # Must be empty because live feed is required (fail-closed)
+        assert len(signals) == 0
+
+
+def test_swing_setup_binds_completed_eod_verified():
+    """SwingSetup dataclass must expose completed_eod_verified."""
+    from agents.market_intelligence.swing_scanner import SwingSetup
+
+    setup = SwingSetup(
+        symbol="TCS",
+        pattern="Pullback-to-EMA20",
+        direction="LONG",
+        strength=85,
+        entry_zone=3900.0,
+        stop_loss=3820.0,
+        target_1=4050.0,
+        target_2=4150.0,
+        risk_reward=2.1,
+        timeframe="5-10 days",
+        description="Test swing setup",
+        indicators={"RSI_14": 52.0},
+        completed_eod_verified=True,
+    )
+    assert setup.completed_eod_verified is True
+    assert getattr(setup, "data_as_of", "") == ""

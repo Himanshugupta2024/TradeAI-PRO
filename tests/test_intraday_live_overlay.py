@@ -102,6 +102,7 @@ def test_rvol_gate_blocks_low_volume_signals(monkeypatch: pytest.MonkeyPatch):
 def test_index_confluence_blocks_divergent_trades(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "INTRADAY_INDEX_CONFLUENCE_GATE", True)
     monkeypatch.setattr(settings, "INTRADAY_LIVE_FEED_ENABLED", False)
+    monkeypatch.setattr(settings, "INTRADAY_REQUIRE_LIVE_FEED", False)
 
     # 1. Bearish parent index (NIFTY is dumping below VWAP)
     bearish_nifty = {

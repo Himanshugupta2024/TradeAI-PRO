@@ -16381,6 +16381,8 @@ function renderModalInfo(data, symbol, interval, meta) {
 
         const src = (meta?.source || meta?.data_source || '').toUpperCase();
         const isRt = Boolean(meta?.is_realtime);
+        const reason = (meta?.status_reason || '').toUpperCase();
+        const hasExchangeTs = Boolean(meta?.data_timestamp);
 
         if (isStale || state !== 'OPEN') {
             const dayStr = asOfDate.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' });
@@ -16391,7 +16393,7 @@ function renderModalInfo(data, symbol, interval, meta) {
             sessionBadgeEl.style.background = 'rgba(245,158,11,0.15)';
             sessionBadgeEl.style.border = '1px solid rgba(245,158,11,0.3)';
             sessionBadgeEl.title = `Data timestamp: ${asOfDate.toLocaleString('en-IN')} (Market ${state})`;
-        } else if (src === 'DELAYED_YFINANCE' || src === 'YFINANCE' || (!isRt && !symbol.includes('/'))) {
+        } else if (src === 'DELAYED_YFINANCE' || src === 'YFINANCE') {
             const timeStr = asOfDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
             sessionBadgeEl.innerHTML = `🟡 15m Delayed · ${timeStr}`;
             sessionBadgeEl.style.display = 'inline-flex';
@@ -16406,6 +16408,13 @@ function renderModalInfo(data, symbol, interval, meta) {
             sessionBadgeEl.style.background = 'rgba(239,68,68,0.15)';
             sessionBadgeEl.style.border = '1px solid rgba(239,68,68,0.3)';
             sessionBadgeEl.title = 'Cache expired · Reconnecting to exchange';
+        } else if (!hasExchangeTs || reason === 'TIMESTAMP_UNKNOWN_FAIL_CLOSED' || (!isRt && !symbol.includes('/'))) {
+            sessionBadgeEl.innerHTML = `⚪ Timestamp Unverified`;
+            sessionBadgeEl.style.display = 'inline-flex';
+            sessionBadgeEl.style.color = '#94a3b8';
+            sessionBadgeEl.style.background = 'rgba(148,163,184,0.15)';
+            sessionBadgeEl.style.border = '1px solid rgba(148,163,184,0.3)';
+            sessionBadgeEl.title = 'Exchange timestamp missing or unverified · Fail-closed mode (New trades halted)';
         } else {
             const timeStr = asOfDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
             sessionBadgeEl.innerHTML = `🟢 Live NSE · ${timeStr}`;
