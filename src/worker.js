@@ -179,7 +179,7 @@ function applyAntiPoisoningHeaders(headers) {
 }
 
 // Helper to strip anti-cache query parameters (_ts, _, timestamp, t) and canonicalize parameters so edge cache keys are uniform
-function getNormalizedCacheKey(rawUrl) {
+export function getNormalizedCacheKey(rawUrl) {
   try {
     const u = new URL(rawUrl);
     u.searchParams.delete("_ts");
