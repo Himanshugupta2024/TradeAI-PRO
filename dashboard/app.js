@@ -114,6 +114,35 @@ const _STATIC_NSE_SYMBOLS = [
     "RITES", "HGINFRA", "CAPLIPOINT"
 ];
 
+// Pre-loaded top crypto pairs for 0ms instant client-side search autocomplete
+const _STATIC_CRYPTO_SYMBOLS = [
+    { symbol: "BTC/USDT", ticker: "BTC/USDT", base: "BTC", type: "CRYPTO" },
+    { symbol: "ETH/USDT", ticker: "ETH/USDT", base: "ETH", type: "CRYPTO" },
+    { symbol: "SOL/USDT", ticker: "SOL/USDT", base: "SOL", type: "CRYPTO" },
+    { symbol: "BNB/USDT", ticker: "BNB/USDT", base: "BNB", type: "CRYPTO" },
+    { symbol: "XRP/USDT", ticker: "XRP/USDT", base: "XRP", type: "CRYPTO" },
+    { symbol: "DOGE/USDT", ticker: "DOGE/USDT", base: "DOGE", type: "CRYPTO" },
+    { symbol: "ADA/USDT", ticker: "ADA/USDT", base: "ADA", type: "CRYPTO" },
+    { symbol: "AVAX/USDT", ticker: "AVAX/USDT", base: "AVAX", type: "CRYPTO" },
+    { symbol: "SUI/USDT", ticker: "SUI/USDT", base: "SUI", type: "CRYPTO" },
+    { symbol: "NEAR/USDT", ticker: "NEAR/USDT", base: "NEAR", type: "CRYPTO" },
+    { symbol: "LINK/USDT", ticker: "LINK/USDT", base: "LINK", type: "CRYPTO" },
+    { symbol: "DOT/USDT", ticker: "DOT/USDT", base: "DOT", type: "CRYPTO" },
+    { symbol: "LTC/USDT", ticker: "LTC/USDT", base: "LTC", type: "CRYPTO" },
+    { symbol: "SHIB/USDT", ticker: "SHIB/USDT", base: "SHIB", type: "CRYPTO" },
+    { symbol: "PEPE/USDT", ticker: "PEPE/USDT", base: "PEPE", type: "CRYPTO" },
+    { symbol: "WIF/USDT", ticker: "WIF/USDT", base: "WIF", type: "CRYPTO" },
+    { symbol: "BONK/USDT", ticker: "BONK/USDT", base: "BONK", type: "CRYPTO" },
+    { symbol: "FLOKI/USDT", ticker: "FLOKI/USDT", base: "FLOKI", type: "CRYPTO" },
+    { symbol: "RENDER/USDT", ticker: "RENDER/USDT", base: "RENDER", type: "CRYPTO" },
+    { symbol: "INJ/USDT", ticker: "INJ/USDT", base: "INJ", type: "CRYPTO" },
+    { symbol: "FET/USDT", ticker: "FET/USDT", base: "FET", type: "CRYPTO" },
+    { symbol: "TON/USDT", ticker: "TON/USDT", base: "TON", type: "CRYPTO" },
+    { symbol: "APT/USDT", ticker: "APT/USDT", base: "APT", type: "CRYPTO" },
+    { symbol: "UNI/USDT", ticker: "UNI/USDT", base: "UNI", type: "CRYPTO" },
+    { symbol: "AAVE/USDT", ticker: "AAVE/USDT", base: "AAVE", type: "CRYPTO" }
+];
+
 // ── TradeAI-PRO Currency & Market Display Helpers ──────────────────────────
 function _symCurr(sym) {
     if (!sym) return '₹';
@@ -19180,11 +19209,16 @@ async function searchSymbols(query) {
         return;
     }
 
-    // 1. Instant client-side matches for immediate 0ms UI feedback
-    const quickMatches = (typeof _STATIC_NSE_SYMBOLS !== 'undefined' ? _STATIC_NSE_SYMBOLS : [])
+    // 1. Instant client-side matches for immediate 0ms UI feedback (NSE + Crypto)
+    const quickCrypto = (typeof _STATIC_CRYPTO_SYMBOLS !== 'undefined' ? _STATIC_CRYPTO_SYMBOLS : [])
+        .filter(c => c.base.includes(q) || c.symbol.includes(q))
+        .slice(0, 3)
+        .map(c => ({ symbol: c.symbol, ticker: c.ticker, type: 'CRYPTO', tracked: c.symbol in (marketDataCache || {}) }));
+    const quickNSE = (typeof _STATIC_NSE_SYMBOLS !== 'undefined' ? _STATIC_NSE_SYMBOLS : [])
         .filter(sym => sym.includes(q))
-        .slice(0, 5)
+        .slice(0, 5 - quickCrypto.length)
         .map(sym => ({ symbol: sym, ticker: `${sym}.NS`, type: 'NSE', tracked: sym in (marketDataCache || {}) }));
+    const quickMatches = [...quickCrypto, ...quickNSE];
 
     if (quickMatches.length > 0) {
         resultsEl.innerHTML = quickMatches.map(r => `
@@ -19656,7 +19690,16 @@ async function fetchAndShowQuote(symbol) {
 
 
         const urlSym = symbol.replace(/\//g, '-');
-        const resObj = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(urlSym)}`, {}, 20000);
+        let resObj = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(urlSym)}`, {}, 20000);
+
+        if (!resObj.ok && (resObj.status === 0 || resObj.status === 502 || resObj.status === 503 || resObj.status === 504 || resObj.error === 'Failed to fetch' || resObj.error === 'Timeout')) {
+            const loaderP = infoGrid.querySelector('p');
+            if (loaderP) {
+                loaderP.textContent = `Backend waking up... Retrying ${symbol.toUpperCase()} (attempt 2/2)...`;
+            }
+            await new Promise(r => setTimeout(r, 1200));
+            resObj = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(urlSym)}`, {}, 25000);
+        }
 
         if (!resObj.ok) {
             const err = resObj.data || {};
@@ -19675,9 +19718,9 @@ async function fetchAndShowQuote(symbol) {
                 titleText = 'Data Feed Starting / Waking Up';
                 errMsg = 'The market data backend is cold-starting or busy. Please retry in a few seconds.';
                 showNseHint = false;
-            } else if (errMsg === 'Failed to fetch' || errMsg === 'Timeout' || status === 0) {
-                titleText = 'Connection Timeout';
-                errMsg = 'Market data fetch took longer than expected or backend is waking up.';
+            } else if (errMsg === 'Failed to fetch' || errMsg === 'Timeout' || status === 0 || (typeof errMsg === 'string' && errMsg.toLowerCase().includes('failed to fetch'))) {
+                titleText = 'Backend Reconnecting / Cold-Starting';
+                errMsg = 'Market data backend is waking up or network timed out. Click below to retry.';
                 showNseHint = false;
             }
 

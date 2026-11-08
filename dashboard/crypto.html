@@ -1246,6 +1246,156 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
 @media (max-width: 900px) {
   .insight-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Crypto Search in Header ───────────────────────── */
+.crypto-search-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  margin: 0 1rem;
+}
+.crypto-search-box {
+  display: flex;
+  align-items: center;
+  background: rgba(22, 27, 46, 0.85);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 0.75rem;
+  height: 36px;
+  transition: all 0.2s ease;
+}
+.crypto-search-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  background: rgba(26, 32, 53, 0.95);
+}
+.crypto-search-icon {
+  font-size: 0.85rem;
+  color: var(--text3);
+  margin-right: 0.5rem;
+  pointer-events: none;
+}
+.crypto-search-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 0.82rem;
+  width: 100%;
+  font-family: inherit;
+}
+.crypto-search-input::placeholder {
+  color: var(--text3);
+}
+.crypto-search-kbd {
+  font-size: 0.68rem;
+  color: var(--text3);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-left: 0.4rem;
+  pointer-events: none;
+}
+.crypto-search-clear {
+  background: transparent;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 2px 4px;
+  border-radius: 50%;
+  line-height: 1;
+}
+.crypto-search-clear:hover {
+  color: var(--text);
+}
+.crypto-search-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #0f1322;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  max-height: 380px;
+  overflow-y: auto;
+  backdrop-filter: blur(12px);
+}
+.crypto-search-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.85rem;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background 0.15s ease;
+}
+.crypto-search-item:last-child {
+  border-bottom: none;
+}
+.crypto-search-item:hover, .crypto-search-item.selected {
+  background: rgba(99, 102, 241, 0.15);
+}
+.crypto-search-item-left {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.crypto-search-sym-badge {
+  background: rgba(99, 102, 241, 0.2);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.crypto-search-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.crypto-search-pair {
+  font-size: 0.72rem;
+  color: var(--text3);
+}
+.crypto-search-item-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.crypto-search-price {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.crypto-search-pct {
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.crypto-search-pct.up { color: var(--green); }
+.crypto-search-pct.down { color: var(--red); }
+.crypto-search-empty {
+  padding: 1rem;
+  text-align: center;
+  color: var(--text3);
+  font-size: 0.8rem;
+}
+@media (max-width: 768px) {
+  .crypto-search-wrap {
+    max-width: 200px;
+    margin: 0 0.5rem;
+  }
+  .crypto-search-kbd {
+    display: none;
+  }
+}
+
 </style>
 <link rel="stylesheet" href="/static/glass-crypto.css">
 <script src="/static/skin.js"></script>
@@ -1265,6 +1415,20 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
     <span>TradeAI</span>
     <span class="logo-badge">PRO</span>
   </div>
+
+  <!-- Crypto Search Bar -->
+  <div class="crypto-search-wrap" id="cryptoSearchWrap">
+    <div class="crypto-search-box">
+      <span class="crypto-search-icon">🔍</span>
+      <input type="text" id="cryptoSearchInput" class="crypto-search-input" placeholder="Search crypto (e.g. SOL, DOGE, PEPE)... (/)" autocomplete="off" spellcheck="false" aria-label="Search crypto symbol">
+      <kbd class="crypto-search-kbd" id="cryptoSearchKbd">/</kbd>
+      <button type="button" id="cryptoSearchClear" class="crypto-search-clear" style="display:none" aria-label="Clear search">✕</button>
+    </div>
+    <div class="crypto-search-dropdown" id="cryptoSearchDropdown" style="display:none">
+      <div class="crypto-search-results" id="cryptoSearchResults"></div>
+    </div>
+  </div>
+
   <div class="header-right">
     <button class="notif-btn" id="notifBtn" onclick="toggleNotifications()">🔔 Alerts Off</button>
     <div class="refresh-status">
@@ -3168,6 +3332,198 @@ function attachDetailChartHover() {
   });
 }
 
+
+// ── Crypto Search Implementation ──────────────────────────
+function initCryptoSearch() {
+  const input = document.getElementById('cryptoSearchInput');
+  const wrap = document.getElementById('cryptoSearchWrap');
+  const dropdown = document.getElementById('cryptoSearchDropdown');
+  const resultsEl = document.getElementById('cryptoSearchResults');
+  const clearBtn = document.getElementById('cryptoSearchClear');
+  const kbd = document.getElementById('cryptoSearchKbd');
+  if (!input || !dropdown || !resultsEl) return;
+
+  const _esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  let selectedIndex = -1;
+  let currentMatches = [];
+
+  function performSearch() {
+    const q = (input.value || '').trim().toUpperCase();
+    if (!q) {
+      dropdown.style.display = 'none';
+      if (clearBtn) clearBtn.style.display = 'none';
+      if (kbd) kbd.style.display = '';
+      return;
+    }
+    if (clearBtn) clearBtn.style.display = '';
+    if (kbd) kbd.style.display = 'none';
+
+    // Search tickerCache (which contains all live Binance tickers)
+    const allSymbols = Object.keys(tickerCache || {});
+    const cleanQ = q.replace(/[^A-Z0-9]/g, '');
+
+    // Score and filter
+    const scored = [];
+    allSymbols.forEach(sym => {
+      if (!sym.endsWith('USDT')) return;
+      const base = sym.replace('USDT', '');
+      let score = 0;
+      if (base === cleanQ) score = 100;
+      else if (base.startsWith(cleanQ)) score = 50 - (base.length - cleanQ.length);
+      else if (base.includes(cleanQ)) score = 20;
+      else if (sym.includes(cleanQ)) score = 10;
+      if (score > 0) {
+        const t = tickerCache[sym];
+        const vol = parseFloat(t?.quoteVolume || 0);
+        scored.push({ sym, base, score, vol, t });
+      }
+    });
+
+    // Sort by match score then 24h volume
+    scored.sort((a, b) => b.score - a.score || b.vol - a.vol);
+    currentMatches = scored.slice(0, 10);
+    selectedIndex = currentMatches.length > 0 ? 0 : -1;
+
+    if (currentMatches.length === 0) {
+      resultsEl.innerHTML = `<div class="crypto-search-empty">No crypto found matching "<strong>${_esc(q)}</strong>"</div>`;
+    } else {
+      resultsEl.innerHTML = currentMatches.map((item, idx) => {
+        const t = item.t;
+        const price = parseFloat(t?.lastPrice || 0);
+        const pct = parseFloat(t?.priceChangePercent || 0);
+        const isUp = pct >= 0;
+        const isSelected = idx === selectedIndex ? 'selected' : '';
+        return `
+          <div class="crypto-search-item ${isSelected}" data-sym="${item.sym}" data-idx="${idx}">
+            <div class="crypto-search-item-left">
+              <span class="crypto-search-sym-badge">${item.base}</span>
+              <div>
+                <span class="crypto-search-name">${item.base}/USDT</span>
+                <span class="crypto-search-pair">· Binance</span>
+              </div>
+            </div>
+            <div class="crypto-search-item-right">
+              <span class="crypto-search-price">$${fmtCryptoPrice(price)}</span>
+              <span class="crypto-search-pct ${isUp ? 'up' : 'down'}">${isUp ? '+' : ''}${pct.toFixed(2)}%</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Click listener
+      resultsEl.querySelectorAll('.crypto-search-item').forEach(el => {
+        el.addEventListener('click', () => {
+          const sym = el.getAttribute('data-sym');
+          selectOrAddCryptoCoin(sym);
+        });
+      });
+    }
+
+    dropdown.style.display = 'block';
+  }
+
+  function selectOrAddCryptoCoin(symbol) {
+    if (!symbol) return;
+    dropdown.style.display = 'none';
+    input.value = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (kbd) kbd.style.display = '';
+
+    // Check if symbol is already in HERO_COINS
+    const exists = HERO_COINS.some(c => c.sym === symbol);
+    if (!exists) {
+      const base = symbol.replace('USDT', '');
+      HERO_COINS.push({
+        sym: symbol,
+        label: base,
+        full: `${base} Coin`,
+        iconClass: base.toLowerCase()
+      });
+      // Re-render hero coins so it appears in the cards grid
+      renderHeroCoins(tickerCache);
+    }
+
+    // Select the coin and show its full detailed chart & klines!
+    selectCoinFromUI(symbol, true);
+  }
+
+  input.addEventListener('input', performSearch);
+  input.addEventListener('focus', () => {
+    if (input.value.trim()) performSearch();
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (dropdown.style.display === 'none' || currentMatches.length === 0) {
+      if (e.key === 'Enter') {
+        const q = input.value.trim().toUpperCase();
+        if (q) {
+          const sym = q.endsWith('USDT') ? q : `${q}USDT`;
+          if (tickerCache[sym]) {
+            selectOrAddCryptoCoin(sym);
+          }
+        }
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedIndex = (selectedIndex + 1) % currentMatches.length;
+      updateSelectedVisual();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedIndex = (selectedIndex - 1 + currentMatches.length) % currentMatches.length;
+      updateSelectedVisual();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (selectedIndex >= 0 && selectedIndex < currentMatches.length) {
+        selectOrAddCryptoCoin(currentMatches[selectedIndex].sym);
+      }
+    } else if (e.key === 'Escape') {
+      dropdown.style.display = 'none';
+      input.blur();
+    }
+  });
+
+  function updateSelectedVisual() {
+    resultsEl.querySelectorAll('.crypto-search-item').forEach((el, idx) => {
+      if (idx === selectedIndex) {
+        el.classList.add('selected');
+        el.scrollIntoView({ block: 'nearest' });
+      } else {
+        el.classList.remove('selected');
+      }
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      input.focus();
+      dropdown.style.display = 'none';
+      clearBtn.style.display = 'none';
+      if (kbd) kbd.style.display = '';
+    });
+  }
+
+  // Keyboard shortcut: '/' focuses search
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && document.activeElement !== input && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+      e.preventDefault();
+      input.focus();
+      input.select();
+    }
+  });
+
+  // Close dropdown when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!wrap.contains(e.target)) {
+      dropdown.style.display = 'none';
+    }
+  });
+}
+
+
 document.addEventListener('DOMContentLoaded', () => {
   const tabs = document.querySelectorAll('#signalTfTabs .tf-btn');
   tabs.forEach((btn) => {
@@ -3187,6 +3543,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   window.addEventListener('resize', scheduleDetailChartRedraw);
   attachDetailChartHover();
+  initCryptoSearch();
 
   fetchAll(true);
 });

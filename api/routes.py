@@ -7646,6 +7646,8 @@ async def search_symbol_list(q: str = Query("", min_length=0, max_length=30)):
 
     nse_hits = sum(1 for r in results if r.get("type") == "NSE")
 
+    from agents.market_intelligence.nse_fetcher import CRYPTO_SEARCH_SYMBOLS
+    crypto_keys = {k.replace("/", "") for k in CRYPTO_SEARCH_SYMBOLS} | {k.split("/")[0] for k in CRYPTO_SEARCH_SYMBOLS}
     is_likely_nse = (
 
         nse_hits == 0
@@ -7654,6 +7656,7 @@ async def search_symbol_list(q: str = Query("", min_length=0, max_length=30)):
 
         and len(q_clean) >= 3
 
+        and q_clean not in crypto_keys
         and not any(c in q_clean for c in ["BTC", "ETH", "SOL", "BNB", "USDT"])
 
     )
@@ -7955,6 +7958,18 @@ async def search_quote(symbol: str):
     # Strip any .NS suffix the caller may have included (normalize to display name format)
 
     clean_base = clean.upper().replace(".NS", "").strip()
+
+    # Auto-normalize bare crypto symbols or USDT pairs: e.g. "SOL" -> "SOL/USDT", "BTC" -> "BTC/USDT", "SOLUSDT" -> "SOL/USDT"
+    if "/" not in clean:
+        clean_compact = clean.upper().replace(" ", "")
+        from agents.market_intelligence.nse_fetcher import CRYPTO_SEARCH_SYMBOLS
+        crypto_base_names = {k.split("/")[0] for k in CRYPTO_SEARCH_SYMBOLS}
+        if clean_compact.endswith("USDT") and len(clean_compact) > 4:
+            clean = f"{clean_compact[:-4]}/USDT"
+            clean_base = clean
+        elif clean_compact in crypto_base_names:
+            clean = f"{clean_compact}/USDT"
+            clean_base = clean
 
     # Check if already in cache (try both the clean name and the original symbol)
 
