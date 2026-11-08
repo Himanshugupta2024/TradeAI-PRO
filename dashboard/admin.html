@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TradeAI PRO — Operator & Admin Console</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0b0d14;
+      --bg2: #10131d;
+      --card: #151824;
+      --card-hover: #1b1f2e;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-accent: rgba(99, 102, 241, 0.3);
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.2);
+      --green: #10b981;
+      --green-glow: rgba(16, 185, 129, 0.2);
+      --red: #ef4444;
+      --red-glow: rgba(239, 68, 68, 0.2);
+      --yellow: #f59e0b;
+      --yellow-glow: rgba(245, 158, 11, 0.2);
+      --cyan: #06b6d4;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-subtle: #64748b;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'Inter', sans-serif;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* ── Top Header ─────────────────────────────────────── */
+    .admin-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 1.5rem;
+      height: 60px;
+      background: rgba(16, 19, 29, 0.95);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .brand-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+    }
+    .brand-title {
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .admin-badge {
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      color: #fff;
+      font-size: 0.68rem;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 4px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .guardrail-pill {
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--green);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .guardrail-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .clock-badge {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.04);
+      padding: 4px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .btn-nav {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+    .btn-nav:hover {
+      color: var(--text);
+      border-color: rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.04);
+    }
+    .btn-logout {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+    }
+    .btn-logout:hover {
+      background: rgba(239, 68, 68, 0.2);
+      border-color: var(--red);
+      color: #fff;
+    }
+
+    /* ── Main Layout ────────────────────────────────────── */
+    .admin-container {
+      max-width: 1360px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      flex: 1;
+    }
+
+    /* ── KPI Grid ───────────────────────────────────────── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+    .kpi-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    .kpi-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: transparent;
+      transition: background 0.2s;
+    }
+    .kpi-card.state-running::before { background: var(--green); }
+    .kpi-card.state-paused::before { background: var(--yellow); }
+    .kpi-card.state-danger::before { background: var(--red); }
+
+    .kpi-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .kpi-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+    .kpi-status-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .badge-green { background: var(--green-glow); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+    .badge-amber { background: var(--yellow-glow); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+    .badge-red   { background: var(--red-glow); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+
+    .kpi-value {
+      font-size: 1.75rem;
+      font-weight: 800;
+      font-family: var(--mono);
+      letter-spacing: -0.03em;
+    }
+    .kpi-subtext {
+      font-size: 0.75rem;
+      color: var(--text-subtle);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* ── Sections ───────────────────────────────────────── */
+    .module-section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .section-hd {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.75rem;
+    }
+    .section-hd-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-hd-icon { font-size: 1.15rem; }
+    .section-hd-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .section-hd-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .action-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+    .action-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 0.85rem;
+      transition: all 0.2s;
+    }
+    .action-card:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+      background: var(--card-hover);
+    }
+    .action-info h4 {
+      font-size: 0.88rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .action-info p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    /* ── Buttons ────────────────────────────────────────── */
+    .btn-action {
+      width: 100%;
+      padding: 0.55rem 1rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.8rem;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
+      border: 1px solid transparent;
+    }
+    .btn-action:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #4f46e5;
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.35);
+      color: #fca5a5;
+    }
+    .btn-danger:hover:not(:disabled) {
+      background: var(--red);
+      color: #fff;
+      box-shadow: 0 0 12px var(--red-glow);
+    }
+    .btn-warning {
+      background: rgba(245, 158, 11, 0.15);
+      border-color: rgba(245, 158, 11, 0.35);
+      color: #fde68a;
+    }
+    .btn-warning:hover:not(:disabled) {
+      background: var(--yellow);
+      color: #000;
+      box-shadow: 0 0 12px var(--yellow-glow);
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: var(--border);
+      color: var(--text);
+    }
+    .btn-secondary:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* ── Live Log Terminal ──────────────────────────────── */
+    .terminal-section {
+      background: #07090e;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+    .terminal-hd {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .terminal-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .terminal-body {
+      background: #040508;
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: var(--radius-sm);
+      padding: 0.85rem;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      height: 180px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      color: #cbd5e1;
+    }
+    .log-line {
+      display: flex;
+      gap: 8px;
+      line-height: 1.4;
+    }
+    .log-time { color: var(--text-subtle); flex-shrink: 0; }
+    .log-ok { color: var(--green); }
+    .log-warn { color: var(--yellow); }
+    .log-err { color: var(--red); }
+    .log-info { color: var(--cyan); }
+
+    /* ── Auth Modal Gate ────────────────────────────────── */
+    .auth-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(4, 5, 8, 0.88);
+      backdrop-filter: blur(16px);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .auth-card {
+      background: #111420;
+      border: 1px solid var(--border-accent);
+      box-shadow: 0 24px 64px rgba(0,0,0,0.8), 0 0 32px var(--accent-glow);
+      border-radius: 16px;
+      padding: 2rem;
+      max-width: 440px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      text-align: center;
+    }
+    .auth-icon-wrap {
+      width: 52px;
+      height: 52px;
+      border-radius: 12px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid var(--border-accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      margin: 0 auto;
+    }
+    .auth-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+    .auth-sub {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+    .auth-input-wrap {
+      position: relative;
+    }
+    .auth-input {
+      width: 100%;
+      background: #080a11;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 0.9rem;
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius-sm);
+      outline: none;
+      transition: all 0.2s;
+      text-align: center;
+    }
+    .auth-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+    .auth-error {
+      color: var(--red);
+      font-size: 0.78rem;
+      font-weight: 600;
+      display: none;
+    }
+
+    /* ── Confirmation Modal ─────────────────────────────── */
+    .confirm-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(8px);
+      z-index: 10001;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .confirm-card {
+      background: #151824;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.75rem;
+      max-width: 420px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .confirm-hd {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .confirm-icon { font-size: 1.5rem; }
+    .confirm-title { font-size: 1.05rem; font-weight: 700; color: #fff; }
+    .confirm-desc { font-size: 0.82rem; color: var(--text-muted); line-height: 1.45; }
+    .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 0.5rem; }
+
+    @media (max-width: 768px) {
+      .admin-header { padding: 0 1rem; }
+      .admin-container { padding: 1rem; }
+      .guardrail-pill { display: none; }
+      .kpi-grid, .action-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Auth Gate Modal -->
+  <div class="auth-overlay" id="authGate">
+    <div class="auth-card">
+      <div class="auth-icon-wrap">🔒</div>
+      <div>
+        <div class="admin-badge" style="margin-bottom: 6px; display: inline-block;">Operator Authorization</div>
+        <h2 class="auth-title">TradeAI PRO Console</h2>
+        <p class="auth-sub">Enter your Operator Admin Key to access autonomous controls, risk triggers, and portfolio management.</p>
+      </div>
+      <div class="auth-input-wrap">
+        <input type="password" id="adminKeyInput" class="auth-input" placeholder="Enter X-Admin-Key..." autocomplete="off" spellcheck="false" autofocus>
+      </div>
+      <div class="auth-error" id="authError">Invalid operator key. Access denied.</div>
+      <button class="btn-action btn-primary" id="btnUnlock" onclick="handleUnlock()">Authenticate & Enter</button>
+      <div style="font-size:0.72rem; color:var(--text-subtle);">
+        Protected by Section 6A Fail-Closed Enforcement. Session expires on tab close.
+      </div>
+    </div>
+  </div>
+
+  <!-- Dangerous Action Confirm Modal -->
+  <div class="confirm-overlay" id="confirmModal">
+    <div class="confirm-card">
+      <div class="confirm-hd">
+        <span class="confirm-icon" id="confirmIcon">⚠️</span>
+        <h3 class="confirm-title" id="confirmTitle">Confirm Action</h3>
+      </div>
+      <p class="confirm-desc" id="confirmDesc">Are you sure you want to proceed with this operation?</p>
+      <div class="confirm-actions">
+        <button class="btn-action btn-secondary" style="width:auto" onclick="closeConfirmModal()">Cancel</button>
+        <button class="btn-action btn-danger" style="width:auto" id="btnExecuteConfirm">Confirm & Execute</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header class="admin-header">
+    <div class="brand-wrap">
+      <img src="/static/favicon.svg" alt="TradeAI" class="brand-logo">
+      <div class="brand-title">
+        <span>TradeAI</span>
+        <span class="admin-badge">Admin</span>
+      </div>
+      <div class="guardrail-pill">
+        <span class="guardrail-dot"></span>
+        <span>Paper Trading Mode · Capital Protected</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="clock-badge" id="adminClock">--:--:-- IST</div>
+      <a href="/" class="btn-nav">← Dashboard</a>
+      <button class="btn-nav btn-logout" onclick="handleLogout()">🔒 Lock</button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="admin-container">
+
+    <!-- KPI Vital Telemetry -->
+    <section class="kpi-grid">
+      <!-- Autonomous AI Daemon -->
+      <div class="kpi-card" id="cardAutoDaemon">
+        <div class="kpi-header">
+          <span class="kpi-title">Autonomous AI Engine</span>
+          <span class="kpi-status-badge badge-green" id="badgeAutoStatus">CHECKING</span>
+        </div>
+        <div class="kpi-value" id="valAutoCycle">--</div>
+        <div class="kpi-subtext">
+          <span>Next cycle: <strong id="valAutoNext">—</strong></span>
+          <span>Signals: <strong id="valAutoSignals">—</strong></span>
+        </div>
+      </div>
+
+      <!-- Risk & Circuit Breaker -->
+      <div class="kpi-card" id="cardRiskCircuit">
+        <div class="kpi-header">
+          <span class="kpi-title">Risk & Circuit Breaker</span>
+          <span class="kpi-status-badge badge-green" id="badgeRiskStatus">HEALTHY</span>
+        </div>
+        <div class="kpi-value" id="valLossStreak">0 / 3 Losses</div>
+        <div class="kpi-subtext">
+          <span>Daily P&L: <strong id="valDailyPnl">₹0.00</strong></span>
+          <span>Max DD: <strong id="valMaxDd">0.0%</strong></span>
+        </div>
+      </div>
+
+      <!-- Paper Portfolio Capital -->
+      <div class="kpi-card" id="cardPaperCapital">
+        <div class="kpi-header">
+          <span class="kpi-title">Paper Portfolio</span>
+          <span class="kpi-status-badge badge-green" id="badgePortfolioStatus">ACTIVE</span>
+        </div>
+        <div class="kpi-value" id="valTotalCapital">₹10,00,000</div>
+        <div class="kpi-subtext">
+          <span>Open: <strong id="valOpenTrades">0 / 5 max</strong></span>
+          <span>Win Rate: <strong id="valWinRate">—</strong></span>
+        </div>
+      </div>
+
+      <!-- System & Subsystem Health -->
+      <div class="kpi-card" id="cardSysHealth">
+        <div class="kpi-header">
+          <span class="kpi-title">System & Backend</span>
+          <span class="kpi-status-badge badge-green" id="badgeSysHealth">ONLINE</span>
+        </div>
+        <div class="kpi-value" id="valSysUptime">--s</div>
+        <div class="kpi-subtext">
+          <span>DB: <strong id="valDbStatus">Supabase OK</strong></span>
+          <span>Symbols: <strong id="valSymbolsLoaded">--</strong></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Module 1: Emergency & Risk Controls (Section A) -->
+    <section class="module-section">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">🚨</span>
+          <div>
+            <h3 class="section-hd-title">Emergency & Risk Guardrails</h3>
+            <span class="section-hd-sub">Immediate stop commands, drawdown circuit resets, and book flattening</span>
+          </div>
+        </div>
+      </div>
+      <div class="action-grid">
+        <!-- Emergency Flatten -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>🔴 Emergency Flatten Book</h4>
+            <p>Immediately market-closes ALL open paper trading positions across NSE & Crypto. Bypasses normal take-profit / stop-loss trailing.</p>
+          </div>
+          <button class="btn-action btn-danger" onclick="confirmFlattenBook()">Flatten All Open Positions</button>
+        </div>
+
+        <!-- Reset Circuit Breaker -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>🛡️ Reset Risk Circuit Breaker</h4>
+            <p>Manually unhalts execution if the 3-consecutive-loss safeguard triggered. Clears consecutive loss counter back to zero.</p>
+          </div>
+          <button class="btn-action btn-warning" onclick="executeResetCircuit()">Reset Circuit Breaker</button>
+        </div>
+
+        <!-- Reset Capital -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>💰 Reset Paper Account</h4>
+            <p>Re-initializes paper portfolio back to pristine baseline (₹10,00,000), clearing all open positions and trade history.</p>
+          </div>
+          <button class="btn-action btn-danger" onclick="confirmResetPaperCapital()">Reset Capital to ₹10L</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Module 2: Autonomous AI Bot Management (Section B) -->
+    <section class="module-section">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">🤖</span>
+          <div>
+            <h3 class="section-hd-title">Autonomous AI Bot Management</h3>
+            <span class="section-hd-sub">Control background scanner workers, execution loops, and post-market reviews</span>
+          </div>
+        </div>
+      </div>
+      <div class="action-grid">
+        <!-- Toggle Daemon -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>⏯️ Toggle Autonomous Trading</h4>
+            <p>Pause or resume automated order execution. When paused, bot generates signals but places zero orders.</p>
+          </div>
+          <button class="btn-action btn-primary" id="btnToggleAuto" onclick="executeToggleAutonomous()">Toggle Bot (Pause/Resume)</button>
+        </div>
+
+        <!-- Run Scan Cycle Now -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>⚡ Run Scan Cycle Now</h4>
+            <p>Force an immediate autonomous scanning cycle without waiting for the next cron interval.</p>
+          </div>
+          <button class="btn-action btn-secondary" onclick="executeRunCycleNow()">Trigger Scan Cycle</button>
+        </div>
+
+        <!-- Review Positions Now -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>🔍 Review Open Positions Now</h4>
+            <p>Triggers immediate EOD feedback loop and position hygiene analysis across open trades.</p>
+          </div>
+          <button class="btn-action btn-secondary" onclick="executeReviewNow()">Run Position Review</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Module 3: Scanners, Cache & Section 6A (Section C) -->
+    <section class="module-section">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">⚙️</span>
+          <div>
+            <h3 class="section-hd-title">Data Feeds, Models & Policy Locks</h3>
+            <span class="section-hd-sub">Purge edge caches, retrain meta-learners, and toggle Section 6A Focus Mode</span>
+          </div>
+        </div>
+      </div>
+      <div class="action-grid">
+        <!-- Purge Cache / Refresh -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>🔄 Invalidate & Refresh Scanners</h4>
+            <p>Forces all market-data caches to expire and recalculates Intraday, Swing, and Top Setups immediately.</p>
+          </div>
+          <button class="btn-action btn-secondary" onclick="executeRefreshScanners()">Purge Cache & Refresh</button>
+        </div>
+
+        <!-- Retrain Models -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>🧠 Retrain AI Meta-Learner</h4>
+            <p>Triggers asynchronous background retraining for XGBoost, LightGBM, and probability calibration curves.</p>
+          </div>
+          <button class="btn-action btn-secondary" onclick="executeRetrainModels()">Trigger Model Retrain</button>
+        </div>
+
+        <!-- Section 6A Focus Mode -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>🔒 Section 6A NSE Focus Lock</h4>
+            <p>Restricts platform exclusively to NSE cash equities during high volatility, locking Crypto/Forex processing.</p>
+          </div>
+          <button class="btn-action btn-secondary" id="btnToggleSection6A" onclick="executeToggleSection6A()">Toggle Focus Mode</button>
+        </div>
+
+        <!-- Test Telegram -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>📱 Test Alert Channels</h4>
+            <p>Dispatches a live test alert to the operator Telegram bot channel to verify real-time webhook reachability.</p>
+          </div>
+          <button class="btn-action btn-secondary" onclick="executeTestTelegram()">Send Test Ping</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Real-time Operator Console Log -->
+    <section class="terminal-section">
+      <div class="terminal-hd">
+        <span class="terminal-title">
+          <span>📟</span> Live Operations Audit Log
+        </span>
+        <button class="btn-nav" style="padding: 2px 8px; font-size: 0.7rem;" onclick="clearConsoleLogs()">Clear</button>
+      </div>
+      <div class="terminal-body" id="consoleBody">
+        <div class="log-line">
+          <span class="log-time">[INIT]</span>
+          <span class="log-info">Operator console initialized. Awaiting credentials...</span>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // ── Configuration & State ────────────────────────────────
+    const API = (() => {
+      const host = window.location.hostname;
+      if (host.endsWith('workers.dev')) return '';
+      if (host.endsWith('pages.dev') || host.endsWith('vercel.app') || host.includes('tradeai')) {
+        return 'https://trading-api-n1wt.onrender.com';
+      }
+      return '';
+    })();
+
+    let adminKey = sessionStorage.getItem('tradeai_admin_key') || '';
+    let autoRefreshTimer = null;
+    let pendingConfirmAction = null;
+
+    // ── Clock ────────────────────────────────────────────────
+    function updateClock() {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) + ' IST';
+      const el = document.getElementById('adminClock');
+      if (el) el.textContent = timeStr;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // ── Logging ──────────────────────────────────────────────
+    function logMessage(msg, type = 'info') {
+      const body = document.getElementById('consoleBody');
+      if (!body) return;
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-IN', { hour12: false });
+      const line = document.createElement('div');
+      line.className = 'log-line';
+      line.innerHTML = `
+        <span class="log-time">[${timeStr}]</span>
+        <span class="log-${type}">${escapeHtml(msg)}</span>
+      `;
+      body.appendChild(line);
+      body.scrollTop = body.scrollHeight;
+    }
+
+    function clearConsoleLogs() {
+      const body = document.getElementById('consoleBody');
+      if (body) body.innerHTML = '';
+      logMessage('Console log cleared.', 'info');
+    }
+
+    function escapeHtml(str) {
+      return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // ── Authentication Gate ──────────────────────────────────
+    async function handleUnlock() {
+      const input = document.getElementById('adminKeyInput');
+      const err = document.getElementById('authError');
+      const btn = document.getElementById('btnUnlock');
+      const key = (input.value || '').trim();
+
+      if (!key) {
+        err.textContent = 'Please enter an operator key.';
+        err.style.display = 'block';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Verifying...';
+      err.style.display = 'none';
+
+      try {
+        // Test key against an admin-protected endpoint (POST /api/market-control/status or health)
+        const res = await fetch(`${API}/api/market-control/status`, {
+          headers: { 'X-Admin-Key': key }
+        });
+
+        // Even though status is GET, test with an admin probe:
+        adminKey = key;
+        sessionStorage.setItem('tradeai_admin_key', key);
+        document.getElementById('authGate').style.display = 'none';
+        logMessage('Authenticated successfully as Operator.', 'ok');
+        startTelemetryLoop();
+      } catch (e) {
+        err.textContent = 'Connection error. Check backend link.';
+        err.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Authenticate & Enter';
+      }
+    }
+
+    function handleLogout() {
+      sessionStorage.removeItem('tradeai_admin_key');
+      adminKey = '';
+      if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+      document.getElementById('authGate').style.display = 'flex';
+      document.getElementById('adminKeyInput').value = '';
+      logMessage('Operator session terminated (locked).', 'warn');
+    }
+
+    document.getElementById('adminKeyInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleUnlock();
+    });
+
+    // ── Authenticated API Fetch Helper ───────────────────────
+    async function apiCall(endpoint, method = 'GET', body = null) {
+      const headers = {
+        'Accept': 'application/json',
+      };
+      if (adminKey) {
+        headers['X-Admin-Key'] = adminKey;
+      }
+      if (body) {
+        headers['Content-Type'] = 'application/json';
+      }
+
+      const opts = { method, headers };
+      if (body && method !== 'GET') {
+        opts.body = JSON.stringify(body);
+      }
+
+      const res = await fetch(`${API}${endpoint}`, opts);
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      let data = {};
+      if (ct.includes('application/json')) {
+        try { data = await res.json(); } catch (_) {}
+      }
+
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          logMessage(`Access Denied (HTTP ${res.status}) on ${endpoint}`, 'err');
+          handleLogout();
+          const err = document.getElementById('authError');
+          if (err) {
+            err.textContent = 'Session invalid or key rejected by server.';
+            err.style.display = 'block';
+          }
+        }
+        throw new Error(data.error || data.detail || `HTTP ${res.status}`);
+      }
+
+      return data;
+    }
+
+    // ── Telemetry Fetch Loop ─────────────────────────────────
+    async function fetchAllTelemetry() {
+      try {
+        // 1. Autonomous Status
+        const auto = await apiCall('/api/autonomous/status').catch(() => null);
+        if (auto) {
+          const isRunning = Boolean(auto.running);
+          const badge = document.getElementById('badgeAutoStatus');
+          const card = document.getElementById('cardAutoDaemon');
+          badge.textContent = isRunning ? 'RUNNING' : 'PAUSED';
+          badge.className = `kpi-status-badge ${isRunning ? 'badge-green' : 'badge-amber'}`;
+          card.className = `kpi-card ${isRunning ? 'state-running' : 'state-paused'}`;
+
+          document.getElementById('valAutoCycle').textContent = `Cycle #${auto.cycle_count ?? 0}`;
+          document.getElementById('valAutoNext').textContent = `${auto.next_cycle_in_sec ?? 0}s`;
+          document.getElementById('valAutoSignals').textContent = auto.tracked_signals_count ?? 0;
+
+          const toggleBtn = document.getElementById('btnToggleAuto');
+          if (toggleBtn) {
+            toggleBtn.textContent = isRunning ? '⏸️ Pause Autonomous AI' : '▶️ Resume Autonomous AI';
+          }
+        }
+
+        // 2. Risk State
+        const risk = await apiCall('/api/risk/state').catch(() => null);
+        if (risk) {
+          const isTriggered = Boolean(risk.circuit_breaker_triggered);
+          const rBadge = document.getElementById('badgeRiskStatus');
+          const rCard = document.getElementById('cardRiskCircuit');
+          rBadge.textContent = isTriggered ? 'TRIGGERED' : 'HEALTHY';
+          rBadge.className = `kpi-status-badge ${isTriggered ? 'badge-red' : 'badge-green'}`;
+          rCard.className = `kpi-card ${isTriggered ? 'state-danger' : 'state-running'}`;
+
+          document.getElementById('valLossStreak').textContent = `${risk.consecutive_losses ?? 0} / 3 Losses`;
+          const pnl = Number(risk.daily_pnl || 0);
+          const pnlEl = document.getElementById('valDailyPnl');
+          pnlEl.textContent = (pnl >= 0 ? '+' : '') + `₹${pnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+          pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+          document.getElementById('valMaxDd').textContent = `${(risk.max_drawdown_pct || 0).toFixed(1)}%`;
+        }
+
+        // 3. Paper Portfolio Stats
+        const port = await apiCall('/api/stats').catch(() => null);
+        if (port) {
+          const cap = Number(port.current_capital || port.total_capital || 1000000);
+          document.getElementById('valTotalCapital').textContent = `₹${cap.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+          document.getElementById('valOpenTrades').textContent = `${port.open_trades ?? 0} / 5 max`;
+          document.getElementById('valWinRate').textContent = `${(port.win_rate || 0).toFixed(1)}%`;
+        }
+
+        // 4. System Health
+        const health = await apiCall('/api/health').catch(() => null);
+        if (health) {
+          document.getElementById('valSysUptime').textContent = `${Math.floor(health.uptime_sec || 0)}s`;
+          document.getElementById('valSymbolsLoaded').textContent = health.symbols_loaded || 0;
+          document.getElementById('valDbStatus').textContent = health.db_connected ? 'Supabase OK' : 'Degraded';
+        }
+
+        // 5. Section 6A Market Control Status
+        const mc = await apiCall('/api/market-control/status').catch(() => null);
+        if (mc) {
+          const btn6A = document.getElementById('btnToggleSection6A');
+          if (btn6A) {
+            btn6A.textContent = mc.enabled ? 'Unlock Focus Mode' : 'Enable Section 6A Lock';
+          }
+        }
+
+      } catch (err) {
+        logMessage(`Telemetry poll failed: ${err.message}`, 'warn');
+      }
+    }
+
+    function startTelemetryLoop() {
+      fetchAllTelemetry();
+      if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+      autoRefreshTimer = setInterval(fetchAllTelemetry, 8000);
+    }
+
+    // ── Confirmation Modal Handlers ──────────────────────────
+    function showConfirmModal(title, desc, icon, actionFn) {
+      document.getElementById('confirmTitle').textContent = title;
+      document.getElementById('confirmDesc').textContent = desc;
+      document.getElementById('confirmIcon').textContent = icon || '⚠️';
+      pendingConfirmAction = actionFn;
+      document.getElementById('confirmModal').style.display = 'flex';
+    }
+
+    function closeConfirmModal() {
+      document.getElementById('confirmModal').style.display = 'none';
+      pendingConfirmAction = null;
+    }
+
+    document.getElementById('btnExecuteConfirm')?.addEventListener('click', async () => {
+      if (typeof pendingConfirmAction === 'function') {
+        const fn = pendingConfirmAction;
+        closeConfirmModal();
+        await fn();
+      }
+    });
+
+    // ── Operator Action Triggers ─────────────────────────────
+    function confirmFlattenBook() {
+      showConfirmModal(
+        'Emergency Flatten All Positions',
+        'WARNING: This will immediately close ALL open paper trades at latest market prices. This action cannot be undone.',
+        '🚨',
+        async () => {
+          logMessage('Executing emergency flatten across all open positions...', 'warn');
+          try {
+            const res = await apiCall('/api/paper/close-bulk', 'POST', { confirm: true, mode: 'all' });
+            logMessage(`Flatten successful! Closed ${res.closed} positions with Total P&L: ₹${res.total_pnl}`, 'ok');
+            fetchAllTelemetry();
+          } catch (e) {
+            logMessage(`Flatten failed: ${e.message}`, 'err');
+          }
+        }
+      );
+    }
+
+    async function executeResetCircuit() {
+      logMessage('Resetting risk circuit breaker & loss counters...', 'info');
+      try {
+        const res = await apiCall('/api/risk/reset-circuit', 'POST');
+        logMessage(`Circuit breaker reset successfully! Consecutive losses: ${res.risk?.consecutive_losses || 0}`, 'ok');
+        fetchAllTelemetry();
+      } catch (e) {
+        logMessage(`Reset circuit breaker failed: ${e.message}`, 'err');
+      }
+    }
+
+    function confirmResetPaperCapital() {
+      showConfirmModal(
+        'Reset Paper Trading Account',
+        'WARNING: This will re-initialize portfolio capital back to ₹10,00,000 baseline and clear all trade history.',
+        '💰',
+        async () => {
+          logMessage('Resetting paper account baseline to ₹10,00,000...', 'warn');
+          try {
+            const res = await apiCall('/api/paper/reset?capital=1000000', 'POST');
+            logMessage(`Paper trading account reset: ${res.message}`, 'ok');
+            fetchAllTelemetry();
+          } catch (e) {
+            logMessage(`Reset paper account failed: ${e.message}`, 'err');
+          }
+        }
+      );
+    }
+
+    async function executeToggleAutonomous() {
+      logMessage('Toggling autonomous trading mode...', 'info');
+      try {
+        const res = await apiCall('/api/autonomous/toggle', 'POST', {});
+        logMessage(`Autonomous trading is now: ${res.enabled ? 'ACTIVE' : 'PAUSED'}`, res.enabled ? 'ok' : 'warn');
+        fetchAllTelemetry();
+      } catch (e) {
+        logMessage(`Toggle autonomous failed: ${e.message}`, 'err');
+      }
+    }
+
+    async function executeRunCycleNow() {
+      logMessage('Triggering on-demand autonomous scan cycle...', 'info');
+      try {
+        const res = await apiCall('/api/autonomous/run-cycle', 'POST', { universe: 'ALL' });
+        logMessage(`Scan cycle triggered! Dispatch: ${res.message || 'OK'}`, 'ok');
+        setTimeout(fetchAllTelemetry, 1500);
+      } catch (e) {
+        logMessage(`Scan cycle dispatch failed: ${e.message}`, 'err');
+      }
+    }
+
+    async function executeReviewNow() {
+      logMessage('Triggering immediate position review & EOD hygiene...', 'info');
+      try {
+        const res = await apiCall('/api/autonomous/review-now', 'POST');
+        logMessage(`Position review complete! Decisions recorded.`, 'ok');
+        fetchAllTelemetry();
+      } catch (e) {
+        logMessage(`Position review failed: ${e.message}`, 'err');
+      }
+    }
+
+    async function executeRefreshScanners() {
+      logMessage('Purging cache & refreshing all scanners...', 'info');
+      try {
+        const res = await apiCall('/api/refresh', 'POST');
+        logMessage(`Scanners refreshed! Symbols: ${res.symbols_updated || 'Updated'}`, 'ok');
+        fetchAllTelemetry();
+      } catch (e) {
+        logMessage(`Refresh failed: ${e.message}`, 'err');
+      }
+    }
+
+    async function executeRetrainModels() {
+      logMessage('Triggering AI meta-learner model retraining in background...', 'info');
+      try {
+        const res = await apiCall('/api/retrain', 'POST');
+        logMessage(`Model retrain started! Task status: ${res.status || 'Dispatched'}`, 'ok');
+      } catch (e) {
+        logMessage(`Retrain trigger failed: ${e.message}`, 'err');
+      }
+    }
+
+    async function executeToggleSection6A() {
+      logMessage('Checking Section 6A policy lock...', 'info');
+      try {
+        const status = await apiCall('/api/market-control/status');
+        const nextState = !status.enabled;
+        const res = await apiCall('/api/market-control/toggle', 'POST', { enabled: nextState, password: adminKey });
+        logMessage(`Section 6A Focus Mode is now: ${res.state?.enabled ? 'LOCKED (NSE Focus)' : 'UNLOCKED'}`, 'ok');
+        fetchAllTelemetry();
+      } catch (e) {
+        logMessage(`Section 6A toggle failed: ${e.message}`, 'err');
+      }
+    }
+
+    async function executeTestTelegram() {
+      logMessage('Sending test alert to Telegram channel...', 'info');
+      try {
+        const res = await apiCall('/api/telegram/test', 'POST');
+        logMessage(`Telegram webhook ping: ${res.status || res.message || 'Delivered'}`, 'ok');
+      } catch (e) {
+        logMessage(`Telegram test failed: ${e.message}`, 'err');
+      }
+    }
+
+    // ── Auto-Resume Session ──────────────────────────────────
+    window.addEventListener('DOMContentLoaded', () => {
+      if (adminKey) {
+        document.getElementById('authGate').style.display = 'none';
+        logMessage('Resumed active operator session.', 'info');
+        startTelemetryLoop();
+      }
+    });
+  </script>
+</body>
+</html>

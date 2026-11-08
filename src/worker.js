@@ -495,6 +495,24 @@ export default {
       const isGetOrHead = request.method === "GET" || request.method === "HEAD";
       const wantsHtml = (request.headers.get("accept") || "").includes("text/html") || !url.pathname.includes(".");
       if (assetResponse.status === 404 && isGetOrHead && wantsHtml) {
+        if (url.pathname === "/admin" || url.pathname === "/admin/") {
+          const adminResponse = await env.ASSETS.fetch(
+            new Request(new URL("/admin.html", url), { method: "GET", headers: request.headers })
+          );
+          if (adminResponse.status === 200) {
+            const htmlHeaders = new Headers(adminResponse.headers);
+            htmlHeaders.set("Content-Type", "text/html; charset=utf-8");
+            htmlHeaders.set("Cache-Control", "private, no-cache, no-store, must-revalidate");
+            return harden(
+              new Response(request.method === "HEAD" ? null : adminResponse.body, {
+                status: 200,
+                statusText: "OK",
+                headers: htmlHeaders,
+              })
+            );
+          }
+        }
+
         const indexResponse = await env.ASSETS.fetch(
           new Request(new URL("/index.html", url), { method: "GET", headers: request.headers })
         );

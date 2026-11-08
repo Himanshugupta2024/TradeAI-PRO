@@ -1,1 +1,9 @@
-/static/*  /:splat  200
+/admin      /admin.html     200
+/admin/     /admin.html     200
+/crypto     /crypto.html    200
+/crypto/    /crypto.html    200
+/landing    /landing.html   200
+/landing/   /landing.html   200
+/legal      /legal.html     200
+/legal/     /legal.html     200
+/static/*   /:splat         200

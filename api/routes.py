@@ -9029,6 +9029,20 @@ async def serve_legal():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=_DASH_HTML_HEADERS)
 
 
+@router.api_route("/admin", methods=["GET", "HEAD"], include_in_schema=False)
+@router.api_route("/admin/", methods=["GET", "HEAD"], include_in_schema=False)
+async def serve_admin():
+    """Serve the operator / administrative console."""
+    admin_path = os.path.join(STATIC_DIR, "admin.html")
+    if os.path.exists(admin_path):
+        return FileResponse(admin_path, headers={
+            "Cache-Control": "private, no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "X-Frame-Options": "DENY",
+        })
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=_DASH_HTML_HEADERS)
+
+
 @router.get("/api/crypto/news")
 
 async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
