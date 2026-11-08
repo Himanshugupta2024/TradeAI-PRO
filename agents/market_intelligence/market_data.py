@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 _TRADEFLOW_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "tradeflow_history.json")
 _tradeflow_cache: dict = {}
 _tradeflow_fetched_at: float = 0.0
+_tradeflow_persisted_fetched_at: str | None = None
 _TRADEFLOW_CACHE_TTL = 300  # 5 minutes — NSE updates data once per day
 _usdinr_cache: dict[str, Any] = {"fetched_at": 0.0, "change_pct": None}
 
@@ -44,7 +45,7 @@ def restore_tradeflow_cache(snapshot: dict | None) -> bool:
     The original fetched_at timestamp is retained so an old snapshot is marked
     stale and refreshed on the next request rather than treated as newly fetched.
     """
-    global _tradeflow_cache, _tradeflow_fetched_at
+    global _tradeflow_cache, _tradeflow_fetched_at, _tradeflow_persisted_fetched_at
 
     if (
         not isinstance(snapshot, dict)
@@ -72,6 +73,7 @@ def restore_tradeflow_cache(snapshot: dict | None) -> bool:
 
     _tradeflow_cache = restored
     _tradeflow_fetched_at = fetched_at_ts
+    _tradeflow_persisted_fetched_at = restored.get("fetched_at")
     logger.info(
         "Restored persisted NSE tradeflow snapshot (age %.1f minutes, stale=%s)",
         restored["age_minutes"],
