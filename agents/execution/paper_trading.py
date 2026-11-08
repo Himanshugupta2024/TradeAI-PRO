@@ -912,8 +912,19 @@ class PaperTradingEngine:
         unrealized_pnl = 0.0
         deployed_margin = 0.0
 
+        snap_prices = None
         for trade in self.open_trades:
-            price_info = current_prices.get(trade.symbol) or {}
+            price_info = current_prices.get(trade.symbol)
+            if not price_info:
+                if snap_prices is None:
+                    try:
+                        from db.runtime_state import get_runtime_state
+                        snap = get_runtime_state("latest_market_snapshot", {}) or {}
+                        snap_prices = snap.get("prices", {}) if isinstance(snap, dict) else {}
+                    except Exception:
+                        snap_prices = {}
+                price_info = snap_prices.get(trade.symbol)
+            price_info = price_info or {}
             trade_cur = getattr(trade, "current_price", None) or trade.entry_price
             if isinstance(price_info, dict):
                 cur_price = float(price_info.get("close", trade_cur) or trade_cur)

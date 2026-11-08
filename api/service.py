@@ -4426,8 +4426,9 @@ class SnapshotBroadcaster:
             "prices": prices,
             "market_mood": mood,
             "stats": {
-                "capital": stats.get("capital", 100000),
+                "capital": stats.get("total_equity", stats.get("capital", 100000)),
                 "total_equity": stats.get("total_equity", stats.get("capital", 100000)),
+                "cash_capital": stats.get("capital", 100000),
                 "initial_capital": stats.get("initial_capital", 100000),
                 "unrealized_pnl": stats.get("unrealized_pnl", 0.0),
                 "total_pnl": stats.get("total_pnl", 0.0),

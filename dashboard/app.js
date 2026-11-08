@@ -8516,8 +8516,11 @@ function updateStatsStrip(stats) {
     }
 
     let cap = stats && (stats.total_equity != null ? Number(stats.total_equity) : (stats.capital != null ? Number(stats.capital) : Number(stats.initial_capital)));
-    if (u !== 0 && stats && stats.cash_capital != null && (!stats.total_equity || Number(stats.capital) === Number(stats.cash_capital))) {
-        cap = Number(stats.cash_capital) + u;
+    if (u !== 0) {
+        const cashCap = stats && (stats.cash_capital != null ? Number(stats.cash_capital) : (stats.capital != null ? Number(stats.capital) : null));
+        if (cashCap != null && Math.abs(cap - cashCap) < 1.0) {
+            cap = cashCap + u;
+        }
     }
 
     const capEl = document.getElementById('statCapital');
