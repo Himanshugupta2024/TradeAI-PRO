@@ -514,8 +514,11 @@ export default {
       // the dashboard shell instead of returning a blank 404.
       const isGetOrHead = request.method === "GET" || request.method === "HEAD";
       const wantsHtml = (request.headers.get("accept") || "").includes("text/html") || !url.pathname.includes(".");
-      if (assetResponse.status === 404 && isGetOrHead && wantsHtml) {
-        if (url.pathname === "/admin" || url.pathname === "/admin/") {
+      const isRedirectLoop = (assetResponse.status === 307 || assetResponse.status === 308) &&
+        (assetResponse.headers.get("location") === url.pathname || (assetResponse.headers.get("location") || "").startsWith("/admin"));
+
+      if ((assetResponse.status === 404 || isRedirectLoop) && isGetOrHead && wantsHtml) {
+        if (url.pathname === "/admin" || url.pathname === "/admin/" || url.pathname === "/admin.html") {
           const adminResponse = await env.ASSETS.fetch(
             new Request(new URL("/admin.html", url), { method: "GET", headers: request.headers })
           );

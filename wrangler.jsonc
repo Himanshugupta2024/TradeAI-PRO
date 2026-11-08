@@ -13,6 +13,7 @@
     // requests (including "/") never reach src/worker.js, so security headers
     // and the SPA deep-link fallback are skipped in production.
     "run_worker_first": true,
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    "html_handling": "none"
   }
 }
