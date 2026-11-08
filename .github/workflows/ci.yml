@@ -46,6 +46,9 @@ jobs:
       - name: Run Cloudflare Worker unit tests
         run: node --experimental-default-type=module tests/test_worker_scheduled.js
 
+      - name: Run trade statistics regression tests
+        run: node tests/test_stats_calculation.js
+
   tradvix:
     runs-on: ubuntu-latest
     timeout-minutes: 10
