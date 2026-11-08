@@ -19,6 +19,7 @@ import pytest
 
 from agents.execution.market_control import (
     _IST,
+    get_current_ist,
     is_nse_activity_window_active,
     get_market_control_state,
     is_crypto_forex_enabled,
@@ -36,6 +37,21 @@ from agents.market_intelligence.nse_holidays import is_holiday, get_holiday_name
 from scripts.autonomous_cycle import resolve_universe
 from agents.market_intelligence.forex_scanner import scan_all_forex
 from agents.execution.paper_trading import PaperTradingEngine, PaperTrade
+
+
+def test_get_current_ist_is_zoneinfo_aware():
+    now_ist = get_current_ist()
+    assert now_ist.tzinfo is _IST
+    assert now_ist.utcoffset().total_seconds() == 5.5 * 60 * 60
+
+
+def test_naive_market_control_datetime_is_interpreted_as_utc():
+    # Production callers must pass aware datetimes. Naive values retain the
+    # existing UTC compatibility contract; they are not treated as IST.
+    naive_utc_open = datetime(2026, 11, 4, 3, 45, 0)
+    active, reason = is_nse_activity_window_active(naive_utc_open)
+    assert active
+    assert reason == "SESSION_ACTIVE"
 
 
 # ── Test 1: Exact Window Boundaries ──────────────────────────────────────────
