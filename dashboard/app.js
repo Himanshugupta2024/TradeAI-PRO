@@ -3080,29 +3080,39 @@ async function loadOverviewFast() {
             }
             const pSummary = data.portfolio_summary || data;
             if (pSummary) {
-                const closedCount = Number(pSummary.total_trades ?? pSummary.closed_trades ?? 0);
+                const totalClosed = Number(pSummary.total_trades ?? pSummary.closed_trades ?? 0);
+                const eligibleCount = Number(pSummary.eligible_trades ?? totalClosed);
+                const excludedLegacy = Number(pSummary.excluded_legacy_trades ?? 0);
                 const openCount = Number(pSummary.open_positions_count ?? (Array.isArray(data.positions) ? data.positions.length : 0));
                 const wrEl = document.getElementById('statWinRate');
                 if (wrEl) {
-                    wrEl.textContent = (closedCount > 0 && pSummary.win_rate != null) ? `${Number(pSummary.win_rate).toFixed(1)}%` : '—';
+                    wrEl.textContent = (eligibleCount > 0 && pSummary.win_rate != null) ? `${Number(pSummary.win_rate).toFixed(1)}%` : '—';
                 }
                 const wrSub = document.getElementById('statWinRateSub');
                 if (wrSub) {
                     const wins = Number(pSummary.winning_trades ?? 0);
-                    const losses = Number(pSummary.losing_trades ?? Math.max(0, closedCount - wins));
-                    if (closedCount > 0 && closedCount < 30) {
-                        wrSub.textContent = `${wins}W / ${losses}L • ${closedCount} trades • Small Sample`;
-                        wrSub.title = 'Sample size too small (< 30 trades) for statistically reliable accuracy';
-                    } else if (closedCount >= 30) {
-                        wrSub.textContent = `${wins}W / ${losses}L • ${closedCount} trades`;
-                        wrSub.title = 'Validated sample size';
+                    const losses = Number(pSummary.losing_trades ?? Math.max(0, eligibleCount - wins));
+                    const be = Number(pSummary.breakeven_trades ?? 0);
+                    const bePart = be > 0 ? ` / ${be}BE` : '';
+                    const sampleTag = (eligibleCount > 0 && eligibleCount < 30) ? ' • Small Sample' : '';
+                    let titleText = `${wins}W / ${losses}L${bePart} on ${eligibleCount} eligible closed trades.`;
+                    if (excludedLegacy > 0) {
+                        titleText += ` (${excludedLegacy} legacy non-INR trade${excludedLegacy > 1 ? 's' : ''} excluded from win rate)`;
+                    }
+                    if (eligibleCount > 0 && eligibleCount < 30) {
+                        titleText += ' Sample size < 30.';
+                    }
+                    if (eligibleCount > 0) {
+                        wrSub.textContent = `${wins}W / ${losses}L${bePart} • ${eligibleCount} trades${sampleTag}`;
+                        wrSub.title = titleText;
                     } else {
                         wrSub.textContent = '0 closed trades';
+                        wrSub.title = '';
                     }
                 }
                 const subTradesEl = document.getElementById('statTradesSubDetail');
                 if (subTradesEl) {
-                    subTradesEl.textContent = `${closedCount} closed`;
+                    subTradesEl.textContent = `${totalClosed} closed${excludedLegacy > 0 ? ` (${eligibleCount} INR)` : ''}`;
                 }
                 const tradesEl = document.getElementById('statTrades');
                 if (tradesEl && openCount != null) {
@@ -7053,12 +7063,13 @@ function closeP5Shortcuts() {
 
 
 function exportDecisionPackJson() {
-    const activeList = (window._lastFilteredSignals && window._lastFilteredSignals.length > 0)
+    const hasFilter = Array.isArray(window._lastFilteredSignals);
+    const activeList = hasFilter
         ? window._lastFilteredSignals
         : ((_lastCockpitData && _lastCockpitData.top_setups) ? _lastCockpitData.top_setups : []);
 
     if (!activeList.length) {
-        showToast('No signals or cockpit data to export yet.', 'info');
+        showToast(hasFilter ? 'No signals match the active filter criteria to export.' : 'No signals or cockpit data to export yet.', 'info');
         return;
     }
     const payload = {
@@ -7095,12 +7106,13 @@ function sanitizeCsvCell(v) {
 }
 
 function exportDecisionPackCsv() {
-    const activeList = (window._lastFilteredSignals && window._lastFilteredSignals.length > 0)
+    const hasFilter = Array.isArray(window._lastFilteredSignals);
+    const activeList = hasFilter
         ? window._lastFilteredSignals
         : ((_lastCockpitData && _lastCockpitData.top_setups) ? _lastCockpitData.top_setups : []);
 
     if (!activeList.length) {
-        showToast('No signals or cockpit data to export yet.', 'info');
+        showToast(hasFilter ? 'No signals match the active filter criteria to export.' : 'No signals or cockpit data to export yet.', 'info');
         return;
     }
 
@@ -8115,15 +8127,25 @@ function renderOverviewActiveTrades(openTrades, summary) {
         }
 
         const currSym = _symCurr(t.symbol);
+        const isEodQuote = t.quote_status === 'LAST_SESSION_EOD';
+        const isStale = Boolean(t.is_stale_quote || t.zombie);
         const fallbackBadge = isFallback
             ? `<span class="pos-fallback-badge" style="font-size: 0.72rem;font-weight:700;color:#f59e0b;background:rgba(245,158,11,0.15);padding:1px 5px;border-radius:4px;border:1px solid rgba(245,158,11,0.3);margin-left:6px;" title="Real-time quote unavailable. Entry price used as reference.">⚠️ Unquoted Ref</span>`
-            : '';
+            : (isEodQuote
+                ? `<span class="pos-fallback-badge" style="font-size: 0.72rem;font-weight:700;color:#38bdf8;background:rgba(56,189,248,0.15);padding:1px 5px;border-radius:4px;border:1px solid rgba(56,189,248,0.3);margin-left:6px;" title="Previous session EOD settlement quote">🌙 EOD</span>`
+                : '');
         const zombieBadge = t.zombie
             ? `<span class="pos-fallback-badge" style="font-size: 0.72rem;font-weight:700;color:#f87171;background:rgba(239,68,68,0.12);padding:1px 5px;border-radius:4px;border:1px solid rgba(239,68,68,0.35);margin-left:6px;" title="Missed scheduled exit: ${(t.zombie_reason || '').replace(/_/g, ' ')}">STALE</span>`
-            : '';
+            : (t.is_stale_quote && !isFallback && !isEodQuote
+                ? `<span class="pos-fallback-badge" style="font-size: 0.72rem;font-weight:700;color:#f87171;background:rgba(239,68,68,0.12);padding:1px 5px;border-radius:4px;border:1px solid rgba(239,68,68,0.35);margin-left:6px;" title="Stale quote: feed delayed or unresponsive">STALE</span>`
+                : '');
         const statusPulse = isFallback
             ? `<span class="pos-status-pulse" style="color:#f59e0b;">⚠️ UNQUOTED REF</span>`
-            : `<span class="pos-status-pulse">● RUNNING</span>`;
+            : (isStale
+                ? `<span class="pos-status-pulse" style="color:#f87171;">⚠️ STALE</span>`
+                : (isEodQuote
+                    ? `<span class="pos-status-pulse" style="color:#38bdf8;">🌙 LAST SESSION EOD</span>`
+                    : `<span class="pos-status-pulse">● RUNNING</span>`));
 
         return `
             <div class="pos-ticket ${sideClass}" data-symbol="${t.symbol}" data-id="${t.id}" data-entry="${entry}" data-qty="${qty}" data-dir="${t.direction}" data-tp="${tp}" data-sl="${sl}" onclick="openPositionDetail(${t.id})" style="cursor:pointer;" title="Click to view full position details">
@@ -8157,7 +8179,7 @@ function renderOverviewActiveTrades(openTrades, summary) {
                 </div>
                 <div class="pos-live-bar">
                     <div class="pos-live-left">
-                        <span class="pos-live-lbl">LTP</span>
+                        <span class="pos-live-lbl">${isEodQuote ? 'EOD' : (isFallback ? 'REF' : 'LTP')}</span>
                         <span class="pos-live-price" id="posLtp-${t.id}">${currSym}${ltp.toFixed(2)}${isFallback ? ' <small style="color:#f59e0b;">(Ref)</small>' : ''}</span>
                     </div>
                     <div class="pos-pnl-pill ${pnlClass}" id="posPnlPill-${t.id}">
@@ -8569,15 +8591,26 @@ function updateStatsStrip(stats) {
     const openTrades = stats?.open_trades != null ? Number(stats.open_trades) : liveOpenCount;
     const effectiveOpen = Math.max(openTrades, liveOpenCount);
 
-    document.getElementById('statWinRate').textContent = (closedTrades > 0 && stats.win_rate != null) ? `${Number(stats.win_rate).toFixed(1)}%` : '—';
+    const eligibleTrades = Number(stats?.eligible_trades ?? closedTrades);
+    const excludedLegacyTrades = Number(stats?.excluded_legacy_trades ?? 0);
+    document.getElementById('statWinRate').textContent = (eligibleTrades > 0 && stats.win_rate != null) ? `${Number(stats.win_rate).toFixed(1)}%` : '—';
     const wrSub = document.getElementById('statWinRateSub');
     if (wrSub) {
         const wins = Number(stats?.winning_trades || 0);
-        const losses = Number(stats?.losing_trades || Math.max(0, closedTrades - wins));
-        if (closedTrades > 0) {
-            wrSub.textContent = `${wins}W / ${losses}L • ${closedTrades} trades`;
+        const losses = Number(stats?.losing_trades || Math.max(0, eligibleTrades - wins));
+        const be = Number(stats?.breakeven_trades || 0);
+        const bePart = be > 0 ? ` / ${be}BE` : '';
+        const sampleTag = (eligibleTrades > 0 && eligibleTrades < 30) ? ' • Small Sample' : '';
+        let titleText = `${wins}W / ${losses}L${bePart} on ${eligibleTrades} eligible closed trades.`;
+        if (excludedLegacyTrades > 0) {
+            titleText += ` (${excludedLegacyTrades} legacy non-INR trade${excludedLegacyTrades > 1 ? 's' : ''} excluded from win rate)`;
+        }
+        if (eligibleTrades > 0) {
+            wrSub.textContent = `${wins}W / ${losses}L${bePart} • ${eligibleTrades} trades${sampleTag}`;
+            wrSub.title = titleText;
         } else {
             wrSub.textContent = '0 closed trades';
+            wrSub.title = '';
         }
     }
 

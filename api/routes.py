@@ -970,6 +970,9 @@ async def get_dashboard_overview():
             "closed_trades": stats.get("total_trades", 0),
             "winning_trades": stats.get("winning_trades", 0),
             "losing_trades": stats.get("losing_trades", 0),
+            "breakeven_trades": stats.get("breakeven_trades", 0),
+            "eligible_trades": stats.get("eligible_trades", stats.get("total_trades", 0)),
+            "excluded_legacy_trades": stats.get("excluded_legacy_trades_count", len(stats.get("unconverted_legacy_trades", []))),
             "open_positions_count": len(positions),
         },
         "system_status": {
@@ -4638,6 +4641,8 @@ async def get_performance():
             "winning_trades": stats.get("winning_trades", 0),
             "losing_trades": stats.get("losing_trades", 0),
             "breakeven_trades": stats.get("breakeven_trades", len(breakevens)),
+            "eligible_trades": stats.get("eligible_trades", stats.get("total_trades", 0)),
+            "excluded_legacy_trades": stats.get("excluded_legacy_trades_count", len(stats.get("unconverted_legacy_trades", []))),
             "win_rate": stats.get("win_rate", 0),
             "total_pnl": stats.get("total_pnl", 0),
             "total_return_pct": total_return_pct,
@@ -4715,6 +4720,14 @@ async def get_stats():
         "total_trades": stats.get("total_trades", 0),
 
         "winning_trades": stats.get("winning_trades", 0),
+
+        "losing_trades": stats.get("losing_trades", 0),
+
+        "breakeven_trades": stats.get("breakeven_trades", 0),
+
+        "eligible_trades": stats.get("eligible_trades", stats.get("total_trades", 0)),
+
+        "excluded_legacy_trades": stats.get("excluded_legacy_trades_count", len(stats.get("unconverted_legacy_trades", []))),
 
         "win_rate": stats.get("win_rate", 0),
 

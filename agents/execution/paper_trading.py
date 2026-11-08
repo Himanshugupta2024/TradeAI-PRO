@@ -984,7 +984,11 @@ class PaperTradingEngine:
                 "sharpe_ratio": 0, "max_drawdown": 0, "max_drawdown_pct": 0,
                 "profit_factor": 0, "avg_win": 0, "avg_loss": 0,
                 "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
+                "winning_trades": 0,
+                "losing_trades": 0,
                 "breakeven_trades": 0,
+                "eligible_trades": 0,
+                "excluded_legacy_trades_count": 0,
                 "unconverted_legacy_trades": [],
             }
 
@@ -1050,6 +1054,8 @@ class PaperTradingEngine:
             "winning_trades": len(wins),
             "losing_trades": len(losses),
             "breakeven_trades": len(breakevens),
+            "eligible_trades": len(inr_closed),
+            "excluded_legacy_trades_count": len(unconverted_legacy),
             "win_rate": round(len(wins) / len(inr_closed) * 100, 1) if inr_closed else None,
             "capital": round(self.capital, 2),
             "total_equity": equity_info["total_equity"],
