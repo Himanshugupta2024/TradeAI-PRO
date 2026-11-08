@@ -34,8 +34,52 @@ logger = logging.getLogger(__name__)
 _TRADEFLOW_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "tradeflow_history.json")
 _tradeflow_cache: dict = {}
 _tradeflow_fetched_at: float = 0.0
+_tradeflow_persisted_fetched_at: str | None = None
 _TRADEFLOW_CACHE_TTL = 300  # 5 minutes — NSE updates data once per day
 _usdinr_cache: dict[str, Any] = {"fetched_at": 0.0, "change_pct": None}
+
+
+def restore_tradeflow_cache(snapshot: dict | None) -> bool:
+    """Restore a previously persisted official NSE flow snapshot after restart.
+
+    The original fetched_at timestamp is retained so an old snapshot is marked
+    stale and refreshed on the next request rather than treated as newly fetched.
+    """
+    global _tradeflow_cache, _tradeflow_fetched_at, _tradeflow_persisted_fetched_at
+
+    if (
+        not isinstance(snapshot, dict)
+        or snapshot.get("source") != "NSE"
+        or snapshot.get("real_data") is not True
+        or not isinstance(snapshot.get("flows"), list)
+        or not snapshot.get("flows")
+    ):
+        return False
+
+    try:
+        fetched_at_raw = snapshot.get("fetched_at")
+        fetched_at = datetime.fromisoformat(str(fetched_at_raw).replace("Z", "+00:00"))
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+        fetched_at_ts = fetched_at.timestamp()
+    except (TypeError, ValueError, OverflowError):
+        fetched_at_ts = time.time() - _TRADEFLOW_CACHE_TTL - 1
+
+    age_seconds = max(0.0, time.time() - fetched_at_ts)
+    restored = dict(snapshot)
+    restored["age_minutes"] = round(age_seconds / 60.0, 1)
+    restored["age_hours"] = round(age_seconds / 3600.0, 2)
+    restored["stale"] = bool(snapshot.get("stale")) or age_seconds >= _TRADEFLOW_CACHE_TTL
+
+    _tradeflow_cache = restored
+    _tradeflow_fetched_at = fetched_at_ts
+    _tradeflow_persisted_fetched_at = restored.get("fetched_at")
+    logger.info(
+        "Restored persisted NSE tradeflow snapshot (age %.1f minutes, stale=%s)",
+        restored["age_minutes"],
+        restored["stale"],
+    )
+    return True
 _USDINR_CACHE_TTL = 900
 
 
@@ -488,14 +532,15 @@ def fetch_fii_dii_flow() -> dict:
     except Exception as exc:
         logger.warning("FII/DII fetch failed: %s — using fallback", exc)
 
-    # Return stale cache if we have one
+    # Return and mark the last known cache stale if the live NSE fetch failed.
     if _tradeflow_cache:
+        age_minutes = max(0.0, (time.time() - _tradeflow_fetched_at) / 60.0)
         stale = dict(_tradeflow_cache)
         stale["stale"] = True
-        age_minutes = max(0.0, (time.time() - _tradeflow_fetched_at) / 60.0)
         stale["age_minutes"] = round(age_minutes, 1)
         stale["age_hours"] = round(age_minutes / 60.0, 2)
-        return stale
+        _tradeflow_cache = stale
+        return dict(stale)
 
     # Last-resort unavailable payload (no fabricated flows).
     return {

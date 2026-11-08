@@ -188,6 +188,15 @@ def _lifespan_context():
                 svc.logger.warning("Database schema initialization warning (non-fatal): %s", exc)
 
             try:
+                from db.runtime_state import get_runtime_state
+                from agents.market_intelligence.market_data import restore_tradeflow_cache
+                snapshot = await asyncio.to_thread(get_runtime_state, "tradeflow_snapshot:v1")
+                if restore_tradeflow_cache(snapshot):
+                    svc.logger.info("Restored persisted NSE institutional flow cache on startup.")
+            except Exception as exc:
+                svc.logger.debug("Tradeflow startup restoration skipped: %s", exc)
+
+            try:
                 await svc._hydrate_swing_cache_from_db()
             except Exception as exc:
                 svc.logger.warning("Swing cache hydration raised on startup: %s", exc)

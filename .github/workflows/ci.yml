@@ -49,6 +49,9 @@ jobs:
       - name: Run trade statistics regression tests
         run: node tests/test_stats_calculation.js
 
+      - name: Run institutional flow helper regression tests
+        run: node tests/test_tradeflow_helper.js
+
   tradvix:
     runs-on: ubuntu-latest
     timeout-minutes: 10

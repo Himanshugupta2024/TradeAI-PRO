@@ -602,13 +602,26 @@ async def get_system_data_health():
     # 5. Institutional Flow
     flow_status = {"status": "UNAVAILABLE", "date": None}
     try:
-        from agents.market_intelligence.market_data import _tradeflow_cache
-        if _tradeflow_cache:
+        from agents.market_intelligence import market_data as tradeflow_module
+        if not tradeflow_module._tradeflow_cache:
+            try:
+                from db.runtime_state import get_runtime_state
+                persisted_flow = await asyncio.to_thread(
+                    get_runtime_state, "tradeflow_snapshot:v1"
+                )
+                if persisted_flow:
+                    tradeflow_module.restore_tradeflow_cache(persisted_flow)
+            except Exception as restore_exc:
+                flow_status["error"] = str(restore_exc)
+
+        cached_flow = tradeflow_module._tradeflow_cache
+        if cached_flow:
             flow_status = {
-                "status": "HEALTHY" if not _tradeflow_cache.get("stale") else "STALE",
-                "date": _tradeflow_cache.get("display_date") or _tradeflow_cache.get("date"),
-                "source": _tradeflow_cache.get("source"),
-                "flows_count": len(_tradeflow_cache.get("flows", [])),
+                "status": "STALE" if cached_flow.get("stale") else "HEALTHY",
+                "date": cached_flow.get("display_date") or cached_flow.get("date"),
+                "source": cached_flow.get("source"),
+                "flows_count": len(cached_flow.get("flows", [])),
+                "age_minutes": cached_flow.get("age_minutes"),
             }
     except Exception as exc:
         flow_status["error"] = str(exc)
@@ -1010,13 +1023,13 @@ async def get_dashboard_overview():
         "dominant_regime": dominant_regime,
 
         "ai_engine": {
-
-            "mode": "Ensemble V2 (4/4 ML Fitted)",
-
-            "fitted_count": 4,
-
-            "ready": True
-
+            "mode": ai_status.get("mode", "Statistical Heuristic"),
+            "fitted_count": ai_status.get("fitted_count", 0),
+            "ready": bool(ai_status.get("ready", True)),
+            "badge_short": ai_status.get("badge_short", "🧠 AI: Heuristic"),
+            "badge_text": ai_status.get("badge_text", f"AI Engine: {ai_status.get('mode', 'Statistical Heuristic')}"),
+            "lightweight_mode": bool(ai_status.get("lightweight_mode", False)),
+            "active_inference_mode": ai_status.get("active_inference_mode"),
         },
 
         "risk_state": {
@@ -5348,6 +5361,18 @@ async def get_trade_flow():
         }
 
     data["updated_at"] = datetime.now().isoformat()
+
+    # Persist each newly fetched official NSE snapshot once, not on every poll.
+    if data.get("source") == "NSE" and data.get("real_data") is True and not data.get("stale"):
+        try:
+            from agents.market_intelligence import market_data as tradeflow_module
+            fetched_at = data.get("fetched_at")
+            if fetched_at and fetched_at != tradeflow_module._tradeflow_persisted_fetched_at:
+                from db.runtime_state import set_runtime_state
+                await asyncio.to_thread(set_runtime_state, "tradeflow_snapshot:v1", data)
+                tradeflow_module._tradeflow_persisted_fetched_at = fetched_at
+        except Exception as exc:
+            logger.warning("Tradeflow snapshot persistence skipped: %s", exc)
 
     return data
 
