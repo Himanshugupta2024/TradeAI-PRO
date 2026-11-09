@@ -244,6 +244,33 @@ _INTERVAL_SECONDS = {
 }
 
 
+def _looks_like_yahoo_auth_error(exc: BaseException) -> bool:
+    """True when Yahoo rejected the cached cookie/crumb rather than the request."""
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(
+        marker in text
+        for marker in ("invalid crumb", "401", "unauthorized", "forbidden", "too many requests")
+    )
+
+
+def _reset_yahoo_session() -> bool:
+    """Drop yfinance's cached cookie/crumb so the next call re-authenticates.
+
+    Yahoo rotates the crumb periodically while keeping the process alive. The
+    library caches it in a process-wide singleton, so once it goes stale every
+    request 401s ("Invalid Crumb") until the singleton is rebuilt. That is not
+    something an exception handler upstream can fix by retrying the same session.
+    """
+    try:
+        from yfinance.data import YfData
+
+        YfData._instances = {}
+        return True
+    except Exception as exc:  # pragma: no cover - depends on yfinance internals
+        logger.debug("Could not reset the yfinance session: %s", exc)
+        return False
+
+
 def _fetch_history_with_timeout(
     ticker: str,
     *,
@@ -285,6 +312,23 @@ def _fetch_history_with_timeout(
         except FutureTimeoutError:
             logger.warning("Timed out fetching %s interval=%s", ticker, interval)
             return pd.DataFrame()
+        except Exception as exc:
+            # One clean re-auth retry: without it a stale crumb silently starves
+            # the whole feed while the stale cache keeps serving old bars.
+            if _looks_like_yahoo_auth_error(exc) and _reset_yahoo_session():
+                logger.warning(
+                    "Yahoo auth error for %s (%s) — rebuilt session, retrying once", ticker, exc
+                )
+                retry = pool.submit(_fetch)
+                try:
+                    return retry.result(timeout=timeout_sec)
+                except FutureTimeoutError:
+                    logger.warning("Timed out re-fetching %s interval=%s", ticker, interval)
+                    return pd.DataFrame()
+                except Exception as retry_exc:
+                    logger.error("Re-fetch failed for %s after session reset: %s", ticker, retry_exc)
+                    raise
+            raise
 
 
 def _is_cache_valid(key: str) -> bool:
