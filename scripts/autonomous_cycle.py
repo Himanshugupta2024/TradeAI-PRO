@@ -118,10 +118,11 @@ def parse_args() -> argparse.Namespace:
 
 def resolve_universe(universe_arg: str, max_symbols: int = 20) -> list[str]:
     from agents.execution.market_control import is_crypto_forex_enabled
+    import agents.execution.session_guard as sg
     crypto_enabled = is_crypto_forex_enabled()
 
     u = universe_arg.strip().lower()
-    is_nse_open, _ = is_nse_market_open()
+    is_nse_open, _ = sg.is_nse_market_open()
 
     if not crypto_enabled:
         # Strict Section 6A policy: Crypto/Forex disabled, zero instruments included

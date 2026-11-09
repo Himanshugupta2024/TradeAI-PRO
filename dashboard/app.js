@@ -16393,14 +16393,21 @@ function renderModalInfo(data, symbol, interval, meta) {
             sessionBadgeEl.style.background = 'rgba(245,158,11,0.15)';
             sessionBadgeEl.style.border = '1px solid rgba(245,158,11,0.3)';
             sessionBadgeEl.title = `Data timestamp: ${asOfDate.toLocaleString('en-IN')} (Market ${state})`;
+        } else if (reason === 'TIMESTAMP_UNKNOWN_FAIL_CLOSED' && src !== 'DELAYED_YFINANCE' && src !== 'YFINANCE') {
+            sessionBadgeEl.innerHTML = `⚪ Unknown Timestamp`;
+            sessionBadgeEl.style.display = 'inline-flex';
+            sessionBadgeEl.style.color = '#94a3b8';
+            sessionBadgeEl.style.background = 'rgba(148,163,184,0.15)';
+            sessionBadgeEl.style.border = '1px solid rgba(148,163,184,0.3)';
+            sessionBadgeEl.title = 'Exchange timestamp unknown · Fail-closed mode (New trades halted)';
         } else if (src === 'DELAYED_YFINANCE' || src === 'YFINANCE') {
-            const timeStr = asOfDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+            const timeStr = hasExchangeTs ? asOfDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }) : 'Unverified TS';
             sessionBadgeEl.innerHTML = `🟡 15m Delayed · ${timeStr}`;
             sessionBadgeEl.style.display = 'inline-flex';
             sessionBadgeEl.style.color = '#f59e0b';
             sessionBadgeEl.style.background = 'rgba(245,158,11,0.15)';
             sessionBadgeEl.style.border = '1px solid rgba(245,158,11,0.3)';
-            sessionBadgeEl.title = 'Exchange quote delayed ~15m (yFinance fallback) · Intraday trading disabled';
+            sessionBadgeEl.title = hasExchangeTs ? 'Exchange quote delayed ~15m (yFinance fallback) · Intraday trading disabled' : 'Exchange quote delayed ~15m (Unverified exchange timestamp) · Intraday trading disabled';
         } else if (src === 'STALE_CACHE') {
             sessionBadgeEl.innerHTML = `🟠 Stale Cache`;
             sessionBadgeEl.style.display = 'inline-flex';
@@ -16408,7 +16415,7 @@ function renderModalInfo(data, symbol, interval, meta) {
             sessionBadgeEl.style.background = 'rgba(239,68,68,0.15)';
             sessionBadgeEl.style.border = '1px solid rgba(239,68,68,0.3)';
             sessionBadgeEl.title = 'Cache expired · Reconnecting to exchange';
-        } else if (!hasExchangeTs || reason === 'TIMESTAMP_UNKNOWN_FAIL_CLOSED' || (!isRt && !symbol.includes('/'))) {
+        } else if (!hasExchangeTs || (!isRt && !symbol.includes('/'))) {
             sessionBadgeEl.innerHTML = `⚪ Timestamp Unverified`;
             sessionBadgeEl.style.display = 'inline-flex';
             sessionBadgeEl.style.color = '#94a3b8';

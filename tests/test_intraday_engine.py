@@ -29,31 +29,33 @@ def _session_df(last_date: str = "2025-06-10") -> pd.DataFrame:
         rows.append(
             {
                 "timestamp": ts,
-                "open": price,
+                "open": price - 0.1,
                 "high": price + 0.5,
-                "low": price - 0.1,
-                "close": price + 0.45,
+                "low": price - 0.2,
+                "close": price,
                 "volume": 2e5,
             }
         )
-    df = pd.DataFrame(rows)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    return df
+    return pd.DataFrame(rows)
 
 
-def test_orb_long_breakout():
+def test_orb_detects_breakout():
     df = _session_df()
     sig = strat_orb("RELIANCE", df)
     assert sig is not None
     assert sig.direction == "LONG"
     assert sig.strategy == "ORB"
+    assert sig.entry > 0
+    assert sig.stop_loss < sig.entry
+    assert sig.target > sig.entry
 
 
 def test_momentum_detects_direction():
     df = _session_df()
-    sig = strat_momentum("TCS", df)
+    sig = strat_momentum("RELIANCE", df)
     assert sig is not None
     assert sig.strategy == "MOMENTUM"
+    assert sig.direction in ("LONG", "SHORT")
 
 
 def _df_with_last_bar_age_minutes(age_mins: int) -> pd.DataFrame:
@@ -65,17 +67,13 @@ def _df_with_last_bar_age_minutes(age_mins: int) -> pd.DataFrame:
     price = 100.0
     for i in range(30):
         ts = start + pd.Timedelta(minutes=5 * i)
-        rows.append(
-            {
-                "timestamp": ts,
-                "open": price,
-                "high": price + 0.4,
-                "low": price - 0.2,
-                "close": price + 0.1,
-                "volume": 100000.0,
-            }
-        )
-        price += 0.1
+        o = price
+        h = price + 0.3
+        l = price - 0.2
+        c = price + 0.1
+        vol = 1e5
+        rows.append({"timestamp": ts, "open": o, "high": h, "low": l, "close": c, "volume": vol})
+        price = c
     return pd.DataFrame(rows)
 
 
@@ -98,6 +96,8 @@ def test_scan_accepts_fresh_bars(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_MAX_BAR_AGE_MINUTES", 120, raising=False)
     monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_CONFLUENCE_ENABLED", False, raising=False)
     monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_INDEX_CONFLUENCE_GATE", False, raising=False)
+    monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_LIVE_FEED_ENABLED", False, raising=False)
+    monkeypatch.setattr(intraday_scanner.settings, "INTRADAY_REQUIRE_LIVE_FEED", False, raising=False)
     monkeypatch.setattr(intraday_scanner, "should_square_off_now", lambda: False, raising=True)
     monkeypatch.setattr(intraday_scanner, "fetch_5m", lambda _sym: _df_with_last_bar_age_minutes(10), raising=True)
 

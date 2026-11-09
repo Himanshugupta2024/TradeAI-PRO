@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 
 from config import settings
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 _IST = ZoneInfo("Asia/Kolkata")
@@ -971,8 +971,6 @@ def scan_swing_setups(
         if stages_out is not None:
             stages_out["blocked"] = "uncompleted_eod_bar"
         return []
-        if not pd.isna(last_ts):
-            stages_out["bar_age_days"] = round(_bar_age_days(last_ts), 2)
     max_age = float(getattr(settings, "SWING_MAX_BAR_AGE_DAYS", 0) or 0)
     if max_age > 0:
         if pd.isna(last_ts):
@@ -1078,9 +1076,7 @@ def scan_swing_setups(
         sector_tag = "SECTOR NEUTRAL ⚪"
         sector_str_bonus = 0
 
-    import datetime
-
-    today_str = datetime.date.today().isoformat()
+    today_str = date.today().isoformat()
 
     # ── Extract news score for this symbol ─────────────────────────────
     sym_news_score = 0.0

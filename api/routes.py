@@ -6538,7 +6538,10 @@ async def intraday_latest():
     sq_off = should_square_off_now()
 
     row = await asyncio.to_thread(intraday_store.load_latest_scan)
+    session_dict = session.to_dict()
     if not row:
+        session_dict["allows_new_entries"] = False
+        session_dict["data_freshness_mode"] = "DELAYED"
         return {
             "signals": [],
             "active_signals": [],
@@ -6552,9 +6555,11 @@ async def intraday_latest():
             "freshness_status": "UNAVAILABLE",
             "provider": "yfinance",
             "provider_freshness": "15m Delayed",
-            "session": session.to_dict(),
+            "session": session_dict,
             "nifty_market_context": nifty_ctx,
             "should_square_off": sq_off,
+            "allows_new_entries": False,
+            "data_freshness_mode": "DELAYED",
             "stats": {"total_signals": 0, "long_count": 0, "short_count": 0, "avg_score": 0.0, "symbols_scanned": 20, "qualified_setups": 0},
             "data_status": "DELAYED (15m)",
         }
@@ -6597,7 +6602,18 @@ async def intraday_latest():
     avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
     qualified_count = sum(1 for s in active_sigs if float(s.get("confluence_score") or s.get("score") or 0) >= 50.0)
 
-    row["session"] = session.to_dict()
+    feed_is_realtime = bool(
+        row.get("freshness_status") == "FRESH"
+        and "Delayed" not in str(row.get("provider_freshness") or "")
+        and row.get("data_status") == "LIVE"
+    )
+    if not feed_is_realtime:
+        session_dict["allows_new_entries"] = False
+        session_dict["data_freshness_mode"] = row.get("freshness_status") or "DELAYED"
+
+    row["session"] = session_dict
+    row["allows_new_entries"] = session_dict["allows_new_entries"]
+    row["data_freshness_mode"] = session_dict["data_freshness_mode"]
     row["nifty_market_context"] = nifty_ctx
     row["should_square_off"] = sq_off
     row["active_signals"] = active_sigs
@@ -6611,7 +6627,7 @@ async def intraday_latest():
         "symbols_scanned": row.get("symbols_scanned") or 20,
         "qualified_setups": qualified_count,
     }
-    row["data_status"] = "DELAYED (15m)" if is_today else "EOD / HISTORICAL"
+    row["data_status"] = "LIVE" if feed_is_realtime else ("DELAYED (15m)" if is_today else "EOD / HISTORICAL")
     return row
 
 
