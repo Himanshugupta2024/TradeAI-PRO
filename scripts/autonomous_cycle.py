@@ -117,7 +117,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_universe(universe_arg: str, max_symbols: int = 20) -> list[str]:
-    from agents.execution.market_control import is_crypto_forex_enabled
+    from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_schedule_active
     import agents.execution.session_guard as sg
     crypto_enabled = is_crypto_forex_enabled()
 
@@ -227,7 +227,7 @@ async def run_single_autonomous_cycle(
         raw_symbols = resolve_universe(universe_arg, max_symbols=max_symbols)
         active_symbols = []
 
-        from agents.execution.market_control import is_crypto_forex_enabled
+        from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_schedule_active
         crypto_enabled = is_crypto_forex_enabled()
 
         for sym in raw_symbols:

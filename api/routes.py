@@ -1269,8 +1269,8 @@ async def _refresh_meme_signals_bg():
 @router.get("/api/crypto/meme")
 
 async def get_meme_coin_signals():
-    from agents.execution.market_control import is_crypto_forex_enabled
-    if not is_crypto_forex_enabled():
+    from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
+    if not is_crypto_research_allowed():
         return JSONResponse(
             status_code=403,
             content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
@@ -3929,6 +3929,47 @@ async def trigger_eod_review_now():
         pnl_pct=review.get("today_total_pnl_pct", 0.0),
     )
     return {"ok": True, "review": review}
+
+
+@router.get("/api/models/status")
+async def get_model_bundle_status():
+    """Which model bundle is on disk and where it came from (no artifact content)."""
+    from api.model_sync import BUNDLE_KEY, current_status
+
+    try:
+        from db.runtime_state import get_runtime_state
+
+        published = get_runtime_state(BUNDLE_KEY)
+    except Exception:
+        published = None
+    status = current_status()
+    if isinstance(published, dict):
+        status["published"] = {
+            "version": published.get("version"),
+            "trained_at": published.get("trained_at"),
+            "source": published.get("source"),
+            "metrics": published.get("metrics") or {},
+            "files": sorted((published.get("files") or {}).keys()),
+        }
+    else:
+        status["published"] = None
+    return {"ok": True, **status}
+
+
+@router.post("/api/models/sync", dependencies=[Depends(require_admin)])
+async def sync_model_bundle(payload: dict | None = None):
+    """Apply the published model bundle to disk (admin only, explicit by design).
+
+    Loading pickles is equivalent to running code, so this never happens on
+    startup — an operator triggers it after a training run publishes a bundle.
+    """
+    from api.model_sync import sync_from_db
+
+    payload = payload or {}
+    force = bool(payload.get("force", False))
+    result = await asyncio.to_thread(sync_from_db, force=force)
+    status_code = 200 if result.get("ok") else 400
+    return JSONResponse(status_code=status_code, content={"ok": bool(result.get("ok")), **result})
 
 
 # ── Self-Learning Feedback Loop endpoints ─────────────────────────────────────
@@ -8811,7 +8852,7 @@ async def retrain_status():
 @router.get("/api/forex/rates")
 
 async def get_forex_rates():
-    from agents.execution.market_control import is_crypto_forex_enabled
+    from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
     if not is_crypto_forex_enabled():
         return JSONResponse(
             status_code=403,
@@ -8843,7 +8884,7 @@ async def get_forex_rates():
 @router.get("/api/forex/signals")
 
 async def get_forex_signals():
-    from agents.execution.market_control import is_crypto_forex_enabled
+    from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
     if not is_crypto_forex_enabled():
         return JSONResponse(
             status_code=403,
@@ -8907,7 +8948,7 @@ async def get_forex_signals():
 @router.get("/api/forex/intelligence")
 
 async def get_forex_intelligence():
-    from agents.execution.market_control import is_crypto_forex_enabled
+    from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
     if not is_crypto_forex_enabled():
         return JSONResponse(
             status_code=403,
@@ -9221,8 +9262,8 @@ async def serve_admin():
 @router.get("/api/crypto/news")
 
 async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
-    from agents.execution.market_control import is_crypto_forex_enabled
-    if not is_crypto_forex_enabled():
+    from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
+    if not is_crypto_research_allowed():
         return JSONResponse(
             status_code=403,
             content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
@@ -9464,8 +9505,8 @@ async def get_crypto_intelligence():
     Mirrors /api/overview/intelligence contract for frontend reuse.
     Includes: top_setups, avoid_list, market_guardrails, futures_context, theme_leadership.
     """
-    from agents.execution.market_control import is_crypto_forex_enabled
-    if not is_crypto_forex_enabled():
+    from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
+    if not is_crypto_research_allowed():
         return JSONResponse(
             status_code=403,
             content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
@@ -9676,7 +9717,7 @@ async def proxy_binance_klines(symbol: str = Query(...), interval: str = Query("
 @router.get("/api/crypto/prediction")
 
 async def get_crypto_prediction(timeframe: str = Query(default="1h")):
-    from agents.execution.market_control import is_crypto_forex_enabled
+    from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
     if not is_crypto_forex_enabled():
         return JSONResponse(
             status_code=403,
@@ -11543,7 +11584,7 @@ def _get_major_indices_sync() -> dict[str, tuple[float | None, float | None]]:
 def _crypto_forex_enabled_for_mood() -> bool:
     """Read the Section 6A switch without letting a failure break the mood payload."""
     try:
-        from agents.execution.market_control import is_crypto_forex_enabled
+        from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
 
         return bool(is_crypto_forex_enabled())
     except Exception:

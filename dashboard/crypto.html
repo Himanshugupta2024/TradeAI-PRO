@@ -3217,6 +3217,15 @@ function renderCryptoIntelligence(data) {
   const moodEl = document.getElementById('moodBadge');
   if (moodEl) moodEl.innerHTML = `<span class="mood-badge ${moodCls}">${moodLbl} (${Number(grd.mood_score || 50).toFixed(0)})</span>`;
 
+  if (grd.fear_greed != null) {
+    const el = document.getElementById('fearGreed');
+    if (el && (!fearGreedValue || el.textContent.includes('—'))) {
+      const v = Number(grd.fear_greed);
+      const cls = v < 25 ? 'Extreme Fear' : v < 45 ? 'Fear' : v < 55 ? 'Neutral' : v < 75 ? 'Greed' : 'Extreme Greed';
+      el.textContent = `${v} (${cls})`;
+      el.style.color = v < 25 ? 'var(--red)' : v > 75 ? 'var(--green)' : 'var(--yellow)';
+    }
+  }
   renderWhyStrip(grd.why_market_hint);
   const topSetups = data.top_setups || [];
   const avoidSetups = data.avoid_list || [];

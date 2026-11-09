@@ -214,6 +214,41 @@ def get_market_control_state() -> Dict[str, Any]:
     }
 
 
+def is_crypto_schedule_active(dt: Optional[datetime] = None) -> bool:
+    """
+    Return True if current time is in the off-hours crypto window:
+      - Weekdays: after 18:00 IST (6:00 PM) in evening through 08:45 AM IST next morning.
+      - Weekends: Saturday and Sunday all day.
+    """
+    now = dt or get_current_ist()
+    if now.tzinfo is not None:
+        now_ist = now.astimezone(_IST)
+    else:
+        now_ist = now.replace(tzinfo=timezone.utc).astimezone(_IST)
+
+    # Weekends (Saturday=5, Sunday=6)
+    if now_ist.weekday() >= 5:
+        return True
+
+    # Weekdays: >= 18:00 (6:00 PM) or < 08:45 AM
+    hour = now_ist.hour
+    minute = now_ist.minute
+    if hour >= 18:
+        return True
+    if hour < 8 or (hour == 8 and minute < 45):
+        return True
+
+    return False
+
+
+def is_crypto_research_allowed() -> bool:
+    """
+    Return True if Crypto research & dashboard telemetry should be served.
+    Allowed if explicitly enabled by operator, OR if in off-hours crypto schedule (after 6 PM IST / weekends).
+    """
+    return is_crypto_forex_enabled() or is_crypto_schedule_active()
+
+
 def is_crypto_forex_enabled() -> bool:
     """Return True if Crypto/Forex processing is explicitly enabled by operator override."""
     return get_market_control_state().get("crypto_forex_enabled", False)
