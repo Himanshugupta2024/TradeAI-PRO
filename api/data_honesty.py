@@ -22,6 +22,30 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
+
+def classify_quote_state(bar_age_seconds: float | None, market_open: bool) -> str:
+    """How trustworthy is a live quote right now, judged by bar age alone.
+
+    Deliberately a *separate* dimension from the feed's ``state``: ``state``
+    tracks how old the last autonomous-cycle snapshot is, while marks are fetched
+    per request. Conflating the two produced the false alarm "STALE feed — live
+    quotes may be unreliable" while every mark was minutes old and the only stale
+    thing was the worker snapshot.
+    """
+    if bar_age_seconds is None:
+        return "UNKNOWN"
+    try:
+        age = float(bar_age_seconds)
+    except (TypeError, ValueError):
+        return "UNKNOWN"
+    if not market_open:
+        return "EOD"
+    if age <= 300:
+        return "LIVE"
+    if age <= 1800:
+        return "DELAYED"
+    return "STALE"
+
 IST = timezone(timedelta(hours=5, minutes=30))
 
 NSE_STALE_MINUTES = 30.0

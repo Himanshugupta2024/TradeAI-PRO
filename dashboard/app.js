@@ -6343,6 +6343,13 @@ function _renderFeedStalenessBanner(grd) {
 
 
 
+    // Quote freshness is its own dimension: `state` tracks the last autonomous
+    // cycle snapshot, while marks are fetched per request. Using the snapshot
+    // age here produced a false "live quotes may be unreliable" alarm.
+    const quoteState = feed.quote_state || state;
+
+
+
     const age = feed.age_seconds != null ? Number(feed.age_seconds) : null;
 
 
@@ -6375,7 +6382,7 @@ function _renderFeedStalenessBanner(grd) {
 
 
 
-        if (state === 'EOD') { show = false; } else if (state !== 'LIVE' && state !== 'DELAYED') {
+        if (quoteState === 'EOD') { show = false; } else if (quoteState !== 'LIVE' && quoteState !== 'DELAYED') {
 
 
 
@@ -6387,7 +6394,7 @@ function _renderFeedStalenessBanner(grd) {
 
 
 
-            msg = `Feed status: ${state}. Live quotes may be unreliable during market hours.`;
+            msg = `Feed status: ${quoteState}. Live quotes may be unreliable during market hours.`;
 
 
 
@@ -6406,6 +6413,14 @@ function _renderFeedStalenessBanner(grd) {
             msg = 'Feed is delayed — numbers may lag the exchange.';
 
 
+
+        } else if (feed.worker_health === 'WORKER_STALE' || state === 'STALE') {
+
+            show = true;
+
+            level = 'warn';
+
+            msg = 'Live quotes are fresh, but the autonomous worker has not run — no new scans, entries or stop updates.';
 
         } else if (age != null && age > 120) {
 

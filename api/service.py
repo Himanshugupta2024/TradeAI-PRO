@@ -73,7 +73,7 @@ except Exception as _swing_store_exc:  # pragma: no cover — import-time safety
     )
 
 from agents.analytics.trade_journal import get_journal
-from api.data_honesty import price_decimals
+from api.data_honesty import price_decimals, classify_quote_state
 from agents.data_ingestion.context_fetcher import build_context_fetcher
 from agents.data_ingestion.validator import validate as validate_ohlcv
 from agents.market_intelligence.nse_fetcher import (
@@ -779,6 +779,7 @@ def _get_feed_status() -> dict[str, object]:
 
     return {
         "state": state,
+        "quote_state": classify_quote_state(bar_age_seconds, is_mkt_open),
         "market_snapshot_health": snapshot_health,
         "worker_health": worker_health,
         "last_update": snap_dt.isoformat(),
