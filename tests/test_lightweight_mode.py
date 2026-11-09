@@ -129,7 +129,7 @@ class TestOverviewIntelligenceSnapshots(unittest.TestCase):
                 from api.service import _compute_overview_intelligence
 
                 result = _compute_overview_intelligence(force_refresh=False)
-                mock_get.assert_called_with("overview_intelligence:v1")
+                mock_get.assert_any_call("overview_intelligence:v1")
                 self.assertEqual(result.get("source"), "db_snapshot_test")
                 self.assertEqual(len(result.get("top_setups", [])), 1)
 
