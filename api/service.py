@@ -3060,6 +3060,61 @@ _cached_overview_time: float = 0.0
 _OVERVIEW_CACHE_TTL_SEC: float = 15.0
 
 
+def _ensure_top_setups_fallback(payload: dict) -> dict:
+    """If top_setups is empty in an intelligence payload, populate with top candidates from swing cache."""
+    if not isinstance(payload, dict):
+        return payload
+    existing = payload.get("top_setups") or []
+    if existing:
+        return payload
+
+    swing_candidates = _swing_cache.get("setups") or []
+    if not swing_candidates:
+        try:
+            from db import swing_store
+            if _SWING_STORE_ENABLED and swing_store is not None:
+                latest = swing_store.load_latest_scan()
+                if latest:
+                    swing_candidates = latest.get("setups") or []
+        except Exception:
+            pass
+
+    setups = []
+    for s in swing_candidates[:5]:
+        entry_p = float(s.get("entry_zone") or s.get("entry_price") or s.get("entry") or s.get("close") or 0.0)
+        sl_p = float(s.get("stop_loss") or s.get("stop") or s.get("sl") or 0.0)
+        tp_p = float(s.get("target_1") or s.get("target") or s.get("t1") or 0.0)
+        qs = int(s.get("confluence_score") or s.get("strength") or s.get("score") or 75)
+        q_grade = "A" if qs >= 75 else ("B" if qs >= 60 else "C")
+        setups.append({
+            "symbol": str(s.get("symbol", "")),
+            "signal": str(s.get("direction") or s.get("signal") or "LONG"),
+            "quality_score": qs,
+            "quality_grade": q_grade,
+            "confidence": float(s.get("confidence") or 70.0),
+            "composite_rank": float(qs),
+            "entry": entry_p,
+            "stop_loss": sl_p,
+            "target": tp_p,
+            "trend": str(s.get("trend") or "TRENDING"),
+            "regime": str(s.get("regime") or "SWING_DAILY"),
+            "blockers": [],
+            "session_badge": "LAST SESSION SWING",
+            "is_off_hours_fallback": True,
+        })
+
+    from api.data_honesty import filter_valid_setups
+    valid_setups, _ = filter_valid_setups(setups)
+    if valid_setups:
+        payload["top_setups"] = valid_setups
+        meta = payload.get("ranking_meta") or {}
+        meta["actionable"] = len(valid_setups)
+        meta["total_tracked"] = max(meta.get("total_tracked", 0), len(valid_setups))
+        meta["fallback_applied"] = True
+        payload["ranking_meta"] = meta
+    return payload
+
+
 def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
     """
     Aggregated decision-cockpit payload for the Overview tab.
@@ -3092,6 +3147,8 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                         db_snap["market_guardrails"]["feed_status"] = current_feed
                 except Exception:
                     pass
+                if not db_snap.get("top_setups"):
+                    db_snap = _ensure_top_setups_fallback(db_snap)
                 _cached_overview_intelligence = db_snap
                 _cached_overview_time = now_m
                 return db_snap
@@ -3300,11 +3357,20 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
     if not top_setups:
         # Off-hours fallback to latest SwingSpectrum shortlist candidates
         swing_candidates = _swing_cache.get("setups") or []
+        if not swing_candidates:
+            try:
+                from db import swing_store
+                if _SWING_STORE_ENABLED and swing_store is not None:
+                    latest = swing_store.load_latest_scan()
+                    if latest:
+                        swing_candidates = latest.get("setups") or []
+            except Exception:
+                pass
         for s in swing_candidates[:5]:
-            entry_p = float(s.get("entry_price") or s.get("entry") or s.get("close") or 0.0)
-            sl_p = float(s.get("stop_loss") or s.get("sl") or 0.0)
-            tp_p = float(s.get("target") or s.get("target_1") or s.get("t1") or 0.0)
-            qs = int(s.get("confluence_score") or s.get("score") or 75)
+            entry_p = float(s.get("entry_zone") or s.get("entry_price") or s.get("entry") or s.get("close") or 0.0)
+            sl_p = float(s.get("stop_loss") or s.get("stop") or s.get("sl") or 0.0)
+            tp_p = float(s.get("target_1") or s.get("target") or s.get("t1") or 0.0)
+            qs = int(s.get("confluence_score") or s.get("strength") or s.get("score") or 75)
             q_grade = "A" if qs >= 75 else ("B" if qs >= 60 else "C")
             top_setups.append({
                 "symbol": str(s.get("symbol", "")),

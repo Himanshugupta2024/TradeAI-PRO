@@ -1,9 +1,28 @@
 """Pytest global configuration and cleanup fixtures."""
 
 import os
+import sys
+import threading
+
 import pytest
 from db.connection import SessionLocal
 from db.models import RuntimeState
+
+
+def _purge_runtime_state() -> None:
+    """Delete test-scoped runtime_state rows (best effort, never fatal)."""
+    try:
+        session = SessionLocal()
+        session.query(RuntimeState).filter(
+            (RuntimeState.state_key.like("%pytest%"))
+            | (RuntimeState.state_key.like("%Temp%"))
+            | (RuntimeState.state_key.like("%tmp%"))
+            | (RuntimeState.state_key == "paper_trading_state:default")
+        ).delete(synchronize_session=False)
+        session.commit()
+        session.close()
+    except Exception:
+        pass
 
 
 @pytest.fixture(autouse=True)
@@ -31,23 +50,23 @@ def clean_test_runtime_state():
             os.environ[k] = v
     if saved_admin_key is not None:
         settings.ADMIN_API_KEY = saved_admin_key
+    # Only touch the service singleton when the test already imported it.
+    # Importing api.service here pulled in the whole data stack (and its
+    # module-level side effects) for every single teardown.
+    svc = sys.modules.get("api.service")
     try:
-        from api import service as svc
-        if hasattr(svc, "_engine") and svc._engine is not None:
+        if svc is not None and getattr(svc, "_engine", None) is not None:
             svc._engine._daily_pnl.clear()
             svc._engine._consecutive_losses = 0
             svc._engine.last_rejection_reason = ""
     except Exception:
         pass
-    try:
-        session = SessionLocal()
-        session.query(RuntimeState).filter(
-            (RuntimeState.state_key.like("%pytest%"))
-            | (RuntimeState.state_key.like("%Temp%"))
-            | (RuntimeState.state_key.like("%tmp%"))
-            | (RuntimeState.state_key == "paper_trading_state:default")
-        ).delete(synchronize_session=False)
-        session.commit()
-        session.close()
-    except Exception:
-        pass
+
+    # Purge in a bounded background thread: a read-only or lock-contended
+    # database used to block every teardown until the driver's busy timeout
+    # expired, which made the whole suite look like it had hung.
+    if os.getenv("PYTEST_SKIP_DB_CLEANUP"):
+        return
+    purger = threading.Thread(target=_purge_runtime_state, name="pytest-state-purge", daemon=True)
+    purger.start()
+    purger.join(timeout=3.0)
