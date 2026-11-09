@@ -724,10 +724,13 @@ def _get_feed_status() -> dict[str, object]:
                     else:
                         worker_health = "WORKER_STALE"
                 else:
+                    # Off-hours: a worker that has not run for a day is expected,
+                    # not broken. Reporting WORKER_STALE here contradicted the
+                    # health tier, which correctly says STANDBY_OFF_HOURS.
                     if w_age <= 86400:
                         worker_health = "WORKER_OK"
                     else:
-                        worker_health = "WORKER_STALE"
+                        worker_health = "NO_RECENT_RUN"
             except Exception:
                 worker_health = "NO_RECENT_RUN"
 

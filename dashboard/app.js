@@ -3157,6 +3157,31 @@ async function loadOverviewFast() {
 
 
 
+/**
+ * Promise.allSettled with a concurrency cap, preserving input order.
+ * The Render free instance serialises work, so a burst of eight cockpit fetches
+ * starved even /api/health/live for seconds. Bounding the fan-out keeps the
+ * first paint fast while still resolving every section independently.
+ */
+async function _allSettledLimited(tasks, limit = 3) {
+    const results = new Array(tasks.length);
+    let nextIndex = 0;
+    const workerCount = Math.max(1, Math.min(limit, tasks.length));
+    const runners = Array.from({ length: workerCount }, async () => {
+        while (true) {
+            const index = nextIndex++;
+            if (index >= tasks.length) return;
+            try {
+                results[index] = { status: 'fulfilled', value: await tasks[index] };
+            } catch (reason) {
+                results[index] = { status: 'rejected', reason };
+            }
+        }
+    });
+    await Promise.all(runners);
+    return results;
+}
+
 async function loadAllData({ background = false } = {}) {
 
 
@@ -3227,7 +3252,10 @@ async function loadAllData({ background = false } = {}) {
 
 
 
-    const [signalsResult, statsResult, dashboardResult, oppsResult, cockpitResult, morningScanResult, cryptoIntelResult, openTradesResult] = await Promise.allSettled(promises);
+    // Bounded concurrency: firing all eight at once on a 0.1-CPU instance made
+    // trivial endpoints (even /api/health/live) queue behind heavy ones for 8s+.
+    // Three at a time keeps the cockpit responsive without serialising it.
+    const [signalsResult, statsResult, dashboardResult, oppsResult, cockpitResult, morningScanResult, cryptoIntelResult, openTradesResult] = await _allSettledLimited(promises, 3);
 
 
 
@@ -23652,7 +23680,19 @@ function updateMoodStripUI(data) {
 
     _setTickerSlot('moodNifty', 'moodNiftyChg', data.nifty_close, data.nifty_24hr_change);
     _setTickerSlot('moodSensex', 'moodSensexChg', data.sensex_close, data.sensex_24hr_change);
-    _setTickerSlot('moodBtc', 'moodBtcChg', data.btc_price, data.btc_24hr_change);
+    // A missing BTC price under NSE Focus Mode is policy, not an outage: say OFF
+    // instead of leaving a bare dash that reads like a broken feed.
+    if (!data.btc_price && data.btc_price_status === 'DISABLED_BY_POLICY') {
+        const btcEl = document.getElementById('moodBtc');
+        const btcChg = document.getElementById('moodBtcChg');
+        if (btcEl) btcEl.textContent = 'OFF';
+        if (btcChg) {
+            btcChg.textContent = 'NSE focus';
+            btcChg.className = 'mood-ticker-chg';
+        }
+    } else {
+        _setTickerSlot('moodBtc', 'moodBtcChg', data.btc_price, data.btc_24hr_change);
+    }
     _setTickerSlot('moodBanknifty', 'moodBankniftyChg', data.banknifty_close, data.banknifty_24hr_change);
 
 

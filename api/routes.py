@@ -942,6 +942,33 @@ async def get_dashboard_overview():
 
     top_signals.sort(key=lambda s: s.get("quality_score", 0), reverse=True)
 
+    # The signal cache only holds intraday LONG/SHORT entries and can legitimately
+    # be empty (after hours, or while crypto is disabled under NSE Focus Mode).
+    # Fall back to the swing shortlist so the cockpit is not blank when the swing
+    # engine has candidates, and mark them so the UI can label the source.
+    if not top_signals:
+        try:
+            fallback_payload = svc._ensure_top_setups_fallback({"top_setups": []}) or {}
+            for s in (fallback_payload.get("top_setups") or [])[:5]:
+                top_signals.append(
+                    {
+                        "symbol": s.get("symbol"),
+                        "signal": s.get("signal"),
+                        "quality_score": s.get("quality_score"),
+                        "quality_grade": s.get("quality_grade"),
+                        "confidence": s.get("confidence"),
+                        "entry": s.get("entry"),
+                        "stop_loss": s.get("stop_loss"),
+                        "target": s.get("target"),
+                        "trend": s.get("trend"),
+                        "regime": s.get("regime"),
+                        "session_badge": s.get("session_badge"),
+                        "fallback": True,
+                    }
+                )
+        except Exception:
+            pass
+
     dominant_regime = "RANGING"
 
     if svc._regime_cache:
@@ -967,6 +994,16 @@ async def get_dashboard_overview():
     return {
 
         "status": "ok",
+
+        # Valuation integrity: when quotes cannot be fetched the equity drops to
+        # cash-only, which used to happen silently. Surface it instead.
+        "valuation": {
+            "status": val_summary.get("valuation_status", "UNKNOWN"),
+            "unpriced_quotes_count": int(val_summary.get("unpriced_quotes_count", 0) or 0),
+            "stale_quotes_count": int(val_summary.get("stale_quotes_count", 0) or 0),
+            "valued_at": val_summary.get("valued_at"),
+        },
+        "last_refresh": val_summary.get("valued_at"),
 
         "market": {
             "open": svc.is_market_open(),
@@ -4531,6 +4568,15 @@ async def get_portfolio(account_id: str = Depends(get_authenticated_account)):
 
         "total_closed": closed_count,
 
+        # A missing quote silently zeroes unrealized P&L and drops total value to
+        # cash. Publish the verdict so the UI can say PARTIAL instead of showing a
+        # phantom loss.
+        "valuation_status": val_summary.get("valuation_status", "UNKNOWN"),
+
+        "unpriced_quotes_count": int(val_summary.get("unpriced_quotes_count", 0) or 0),
+
+        "stale_quotes_count": int(val_summary.get("stale_quotes_count", 0) or 0),
+
         "risk_metrics": {
 
             "sharpe_ratio": round(sharpe, 3),
@@ -4784,6 +4830,10 @@ async def get_stats():
         "free_cash": val_summary.get("free_cash", stats.get("free_cash", cash_capital)),
 
         "open_trades": stats.get("open_trades", len(engine.get_open_trades())),
+
+        "valuation_status": val_summary.get("valuation_status", "UNKNOWN"),
+
+        "unpriced_quotes_count": int(val_summary.get("unpriced_quotes_count", 0) or 0),
 
     }
 
@@ -11485,6 +11535,16 @@ def _get_major_indices_sync() -> dict[str, tuple[float | None, float | None]]:
         _INDICES_FALLBACK_TS = now
     return res
 
+def _crypto_forex_enabled_for_mood() -> bool:
+    """Read the Section 6A switch without letting a failure break the mood payload."""
+    try:
+        from agents.execution.market_control import is_crypto_forex_enabled
+
+        return bool(is_crypto_forex_enabled())
+    except Exception:
+        return True
+
+
 @router.get("/api/context/market-mood")
 
 async def get_market_mood_api():
@@ -11659,6 +11719,8 @@ async def get_market_mood_api():
 
         )
 
+        crypto_enabled = _crypto_forex_enabled_for_mood()
+
         payload = {
 
             "crypto_mood": crypto_mood,
@@ -11674,6 +11736,14 @@ async def get_market_mood_api():
             ),
 
             "btc_price": round(float(btc_snapshot.price), 2) if getattr(btc_snapshot, "price", None) else None,
+            # A null BTC price under NSE Focus Mode is a policy state, not a data
+            # outage. Say so, so the header can render "OFF" instead of "—".
+            "crypto_forex_enabled": crypto_enabled,
+            "btc_price_status": (
+                "OK"
+                if getattr(btc_snapshot, "price", None)
+                else ("DISABLED_BY_POLICY" if not crypto_enabled else "UNAVAILABLE")
+            ),
             "nifty_close": nifty_close,
             "nifty_24hr_change": nifty_change if nifty_change is not None else 0.0,
             "sensex_close": sensex_close,
