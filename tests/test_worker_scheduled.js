@@ -4,7 +4,7 @@
  * 2. Edge proxy request routing, SWR edge caching, and cache poisoning prevention (worker.fetch).
  */
 import assert from 'node:assert';
-import worker, { handleScheduled, getNormalizedCacheKey } from '../src/worker.js';
+import worker, { handleScheduled, getNormalizedCacheKey, shouldDispatchCycle, istClock } from '../src/worker.js';
 
 // In-memory mock Cache implementation adhering to Cloudflare Worker Cache API
 class MockCache {
@@ -357,6 +357,94 @@ async function runTests() {
     const body429 = await res429Html.json();
     assert.strictEqual(body429.error, 'Rate limit in effect. Retrying shortly...');
     console.log('✓ Test 6 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 7: cycle dispatch cadence (IST session window, 20-minute cadence)
+    // ------------------------------------------------------------------------
+    console.log('Test 7: cycle dispatch cadence follows the NSE session and 20-min cadence...');
+    const at = (utcHH, utcMM, day = 9) => new Date(Date.UTC(2026, 10, day, utcHH, utcMM));
+
+    // 2026-11-09 is a Monday. 04:50 UTC = 10:20 IST -> in session, on cadence.
+    assert.strictEqual(istClock(at(4, 50)).minutesOfDay, 10 * 60 + 20);
+    assert.deepStrictEqual(shouldDispatchCycle(at(4, 50)), { dispatch: true, reason: 'session_cadence' });
+
+    // 04:55 UTC = 10:25 IST -> in session but off the 20-min boundary.
+    assert.deepStrictEqual(shouldDispatchCycle(at(4, 55)), { dispatch: false, reason: 'off_cadence' });
+
+    // 03:40 UTC = 09:10 IST -> before the open.
+    assert.deepStrictEqual(shouldDispatchCycle(at(3, 40)), { dispatch: false, reason: 'outside_session' });
+
+    // 10:20 UTC = 15:50 IST -> after the close.
+    assert.deepStrictEqual(shouldDispatchCycle(at(10, 20)), { dispatch: false, reason: 'outside_session' });
+
+    // Saturday 10:20 IST -> weekend.
+    assert.deepStrictEqual(shouldDispatchCycle(at(4, 50, 7)), { dispatch: false, reason: 'weekend' });
+    console.log('✓ Test 7 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 8: cron dispatches the workflow when a token is configured
+    // ------------------------------------------------------------------------
+    console.log('Test 8: cron dispatches the autonomous cycle workflow on cadence...');
+    const dispatchCalls = [];
+    const dispatchFetch = async (url, options = {}) => {
+      dispatchCalls.push({ url, options });
+      if (String(url).includes('api.github.com')) {
+        return { ok: true, status: 204 };
+      }
+      return { ok: true, status: 200 };
+    };
+
+    const dispatchResult = await handleScheduled(
+      { cron: '*/5 * * * *' },
+      { GH_PAT: 'test-token' },
+      {},
+      dispatchFetch,
+      at(4, 50)
+    );
+
+    assert.strictEqual(dispatchCalls.length, 2, 'keep-warm ping + one workflow dispatch');
+    const ghCall = dispatchCalls.find((c) => String(c.url).includes('api.github.com'));
+    assert.ok(ghCall, 'must call the GitHub dispatches API');
+    assert.strictEqual(ghCall.options.method, 'POST');
+    assert.strictEqual(ghCall.options.headers.Authorization, 'Bearer test-token');
+    assert.deepStrictEqual(JSON.parse(ghCall.options.body), { ref: 'main' });
+    assert.strictEqual(dispatchResult.cycle.dispatched, true);
+    console.log('✓ Test 8 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 9: no dispatch outside the session, even with a token
+    // ------------------------------------------------------------------------
+    console.log('Test 9: no workflow dispatch outside the NSE session...');
+    const idleCalls = [];
+    const idleResult = await handleScheduled(
+      { cron: '*/5 * * * *' },
+      { GH_PAT: 'test-token' },
+      {},
+      async (url, options = {}) => {
+        idleCalls.push({ url, options });
+        return { ok: true, status: 200 };
+      },
+      at(12, 0) // 17:30 IST
+    );
+    assert.strictEqual(idleCalls.length, 1, 'only the keep-warm ping');
+    assert.strictEqual(idleResult.cycle.dispatched, false);
+    assert.strictEqual(idleResult.cycle.reason, 'outside_session');
+
+    // Without a token the cron stays a pure keep-alive.
+    const noTokenCalls = [];
+    const noTokenResult = await handleScheduled(
+      { cron: '*/5 * * * *' },
+      {},
+      {},
+      async (url) => {
+        noTokenCalls.push(url);
+        return { ok: true, status: 200 };
+      },
+      at(4, 50)
+    );
+    assert.strictEqual(noTokenCalls.length, 1);
+    assert.strictEqual(noTokenResult.cycle.reason, 'no_token');
+    console.log('✓ Test 9 passed.');
 
   } finally {
     // Restore global fetch and caches

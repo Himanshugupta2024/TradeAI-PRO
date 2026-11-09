@@ -568,13 +568,75 @@ export default {
    * Cloudflare Cron Trigger scheduled handler.
    * Runs every 5 minutes to ping the Render backend health endpoint,
    * keeping the Render free container warm even when GitHub Actions is disabled.
+   *
+   * It also dispatches the autonomous cycle workflow every 20 minutes during the
+   * NSE session. GitHub's own `schedule` cron silently drops runs on low-traffic
+   * repositories (on 2026-11-09 it delivered zero runs for a whole session), so
+   * the scheduler lives on Cloudflare's edge instead of relying on GitHub.
    */
   async scheduled(event, env, ctx) {
     return handleScheduled(event, env, ctx);
   },
 };
 
-export async function handleScheduled(event, env, ctx, fetchFn = fetch) {
+const CYCLE_REPO = "Himanshugupta2024/TradeAI-PRO";
+const CYCLE_WORKFLOW_FILE = "autonomous_cycle.yml";
+const CYCLE_DISPATCH_INTERVAL_MIN = 20;
+
+/** Wall-clock parts in IST (UTC+5:30) for a given instant. */
+export function istClock(date = new Date()) {
+  const ist = new Date(date.getTime() + 5.5 * 3600 * 1000);
+  return {
+    weekday: ist.getUTCDay(), // 0=Sun
+    minutesOfDay: ist.getUTCHours() * 60 + ist.getUTCMinutes(),
+    minuteOfHour: ist.getUTCMinutes(),
+  };
+}
+
+/**
+ * Decide whether this cron tick should dispatch a cycle.
+ * Cron fires every 5 minutes; cadence check keeps it to one dispatch per 20 minutes.
+ */
+export function shouldDispatchCycle(date = new Date()) {
+  const { weekday, minutesOfDay, minuteOfHour } = istClock(date);
+  if (weekday < 1 || weekday > 5) return { dispatch: false, reason: "weekend" };
+  if (minutesOfDay < 9 * 60 + 15 || minutesOfDay > 15 * 60 + 30) {
+    return { dispatch: false, reason: "outside_session" };
+  }
+  if (minuteOfHour % CYCLE_DISPATCH_INTERVAL_MIN !== 0) {
+    return { dispatch: false, reason: "off_cadence" };
+  }
+  return { dispatch: true, reason: "session_cadence" };
+}
+
+async function dispatchAutonomousCycle(env, fetchFn, now) {
+  if (!env || !env.GH_PAT) return { dispatched: false, reason: "no_token" };
+  const decision = shouldDispatchCycle(now);
+  if (!decision.dispatch) return { dispatched: false, reason: decision.reason };
+  try {
+    const res = await fetchFn(
+      `https://api.github.com/repos/${CYCLE_REPO}/actions/workflows/${CYCLE_WORKFLOW_FILE}/dispatches`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.GH_PAT}`,
+          Accept: "application/vnd.github+json",
+          "Content-Type": "application/json",
+          "User-Agent": "TradeAI-Cloudflare-Cron-Scheduler/1.0",
+        },
+        body: JSON.stringify({ ref: "main" }),
+      }
+    );
+    const ok = res.status === 201 || res.status === 204;
+    if (!ok) console.error(`[cron] cycle dispatch rejected: HTTP ${res.status}`);
+    return { dispatched: ok, status: res.status, reason: decision.reason };
+  } catch (err) {
+    console.error("[cron] cycle dispatch failed:", err);
+    return { dispatched: false, reason: "dispatch_error", error: String(err) };
+  }
+}
+
+export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = new Date()) {
   // Keep-warm ping. Probe the cheap liveness route, not /api/health: the rich
   // health endpoint walks the DB, model registry and feed state, so a 5-minute
   // cron hammering it burns the free instance's CPU budget for no benefit.
@@ -587,7 +649,8 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch) {
         "Accept": "application/json",
       },
     });
-    return { ok: res.ok, status: res.status, url: healthUrl };
+    const cycle = await dispatchAutonomousCycle(env, fetchFn, now);
+    return { ok: res.ok, status: res.status, url: healthUrl, cycle };
   } catch (err) {
     console.error(`[cron] Health ping to ${healthUrl} failed:`, err);
     throw err;
