@@ -3537,6 +3537,13 @@ def _fetch_autonomous_status_sync():
     engine = svc._get_engine()
     daemon_status = daemon.get_status(engine)
 
+    # The daemon keeps the review date in memory only, so a restart made the
+    # status look like learning had never run. Prefer the durable marker.
+    if not daemon_status.get("last_eod_review"):
+        review_marker = get_runtime_state("eod_review:last_run:v1", {}) or {}
+        if isinstance(review_marker, dict) and review_marker.get("last_review_date"):
+            daemon_status["last_eod_review"] = review_marker["last_review_date"]
+
     worker_status = get_runtime_state("autonomous_worker:latest_status", {}) or {}
 
     lock_mgr = DistributedLockManager()
