@@ -32,6 +32,42 @@ jobs:
       - name: Run tests (exclude integration)
         run: pytest -m "not integration" -q
 
+      # A missing module once shipped because no test imports the app itself:
+      # api/app.py referenced api.cycle_scheduler, the file was never committed,
+      # and two Render deploys failed their health check. This catches that class
+      # of breakage in ~20 seconds instead of after a failed production deploy.
+      - name: Import smoke — the API must boot
+        env:
+          LOG_DIR: ${{ runner.temp }}/logs
+          LIGHTWEIGHT_API_MODE: "true"
+          BACKGROUND_REFRESH_ENABLED: "false"
+        run: |
+          mkdir -p "$LOG_DIR"
+          python - <<'PY'
+          import importlib
+          import sys
+
+          modules = [
+              "server",
+              "api.app",
+              "api.routes",
+              "api.service",
+              "api.cycle_scheduler",
+              "api.learning_scheduler",
+              "api.valuation",
+          ]
+          failed = []
+          for name in modules:
+              try:
+                  importlib.import_module(name)
+                  print(f"ok   {name}")
+              except Exception as exc:  # noqa: BLE001 - report every failure
+                  failed.append((name, repr(exc)))
+                  print(f"FAIL {name}: {exc!r}")
+          if failed:
+              sys.exit(1)
+          PY
+
   worker-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 5

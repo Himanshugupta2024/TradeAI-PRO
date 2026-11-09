@@ -25,6 +25,17 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
         pass
 from datetime import datetime, timezone
 
+import warnings
+
+# Third-party deprecation noise was flooding the Render log stream: yfinance
+# emits a Pandas4Warning for every DataFrame inplace call, which is several lines
+# per quote fetch. Keep real errors, drop the deprecation chatter.
+warnings.filterwarnings("ignore", module=r"^yfinance(\..*)?$")
+warnings.filterwarnings("ignore", message=r"The inplace keyword .*", category=FutureWarning)
+
+for _noisy in ("yfinance", "peewee", "urllib3.connectionpool"):
+    logging.getLogger(_noisy).setLevel(logging.ERROR)
+
 
 # LOG_DIR is overridable so tests (and sandboxed runs) can keep the repo's logs/
 # directory untouched instead of failing on an unwritable path.
