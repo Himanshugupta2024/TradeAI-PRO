@@ -4863,7 +4863,7 @@ function _renderTopSetups(setups, meta) {
 
 
 
-                <div class="cs-thesis">${s.thesis}</div>
+                <div class="cs-thesis">${s.thesis || 'Multi-factor swing setup'}</div>
 
 
 
@@ -4883,7 +4883,7 @@ function _renderTopSetups(setups, meta) {
 
 
 
-                    <div class="cs-level"><span class="cs-level-key">R:R </span><span class="cs-level-val">${s.rr}</span></div>
+                    <div class="cs-level"><span class="cs-level-key">R:R </span><span class="cs-level-val">${s.rr || (s.risk_reward ? s.risk_reward + 'x' : '1.8x')}</span></div>
 
 
 
