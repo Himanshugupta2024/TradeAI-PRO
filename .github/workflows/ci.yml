@@ -55,6 +55,14 @@ jobs:
               "api.cycle_scheduler",
               "api.learning_scheduler",
               "api.valuation",
+              "api.routers.health",
+              "api.routers.admin",
+              "api.routers.research",
+              "api.routers.crypto",
+              "api.routers.forex",
+              "api.routers.swing",
+              "api.routers.portfolio",
+              "api.routers.market",
           ]
           failed = []
           for name in modules:

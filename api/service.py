@@ -11,6 +11,7 @@ _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT_DIR)
 
 from datetime import date, datetime, timedelta, timezone
+from dataclasses import dataclass, field
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -203,6 +204,69 @@ _persisted_signals_updated_at: str | None = None
 
 # Regime hysteresis: (confirmed_regime, tentative_regime, consecutive_count)
 _regime_hysteresis: dict[str, tuple[str, str, int]] = {}
+_retrain_jobs: dict = {}
+
+
+@dataclass
+class AppState:
+    """Encapsulated runtime application state for TradeAI PRO services."""
+    market_data: dict[str, pd.DataFrame] = field(default_factory=dict)
+    signal_cache: dict[str, pd.DataFrame] = field(default_factory=dict)
+    regime_cache: dict[str, str] = field(default_factory=dict)
+    last_refresh: datetime = field(default_factory=lambda: datetime.min)
+    daily_data_cache: dict[str, pd.DataFrame] = field(default_factory=dict)
+    swing_cache: dict = field(default_factory=dict)
+    refresh_lock: asyncio.Lock | None = None
+    last_swing_persist_date: date | None = None
+    engine: PaperTradingEngine | None = None
+    ws_clients: list[WebSocket] = field(default_factory=list)
+    loading_status: dict = field(default_factory=dict)
+    prev_signal_cache: dict[str, str] = field(default_factory=dict)
+    data_quality_cache: dict[str, float] = field(default_factory=dict)
+    last_feed_update: datetime = field(default_factory=lambda: datetime.min)
+    last_swing_outcome_eval_monotonic: float = 0.0
+    movers_cache: dict[str, object] = field(default_factory=dict)
+    market_mood_cache: dict[str, object] = field(default_factory=dict)
+    lazy_bootstrap_started: bool = False
+    persisted_signals_snapshot: list[dict] = field(default_factory=list)
+    persisted_signals_updated_at: str | None = None
+    regime_hysteresis: dict[str, tuple[str, str, int]] = field(default_factory=dict)
+    retrain_jobs: dict = field(default_factory=dict)
+
+
+_app_state: AppState | None = None
+
+
+def get_app_state() -> AppState:
+    """Return the global AppState singleton, lazily initialized."""
+    global _app_state
+    if _app_state is None:
+        _app_state = AppState(
+            market_data=_market_data,
+            signal_cache=_signal_cache,
+            regime_cache=_regime_cache,
+            last_refresh=_last_refresh,
+            daily_data_cache=_daily_data_cache,
+            swing_cache=_swing_cache,
+            refresh_lock=_refresh_lock,
+            last_swing_persist_date=_last_swing_persist_date,
+            engine=_engine,
+            ws_clients=_ws_clients,
+            loading_status=_loading_status,
+            prev_signal_cache=_prev_signal_cache,
+            data_quality_cache=_data_quality_cache,
+            last_feed_update=_last_feed_update,
+            last_swing_outcome_eval_monotonic=_last_swing_outcome_eval_monotonic,
+            movers_cache=_movers_cache,
+            market_mood_cache=_market_mood_cache,
+            lazy_bootstrap_started=_lazy_bootstrap_started,
+            persisted_signals_snapshot=_persisted_signals_snapshot,
+            persisted_signals_updated_at=_persisted_signals_updated_at,
+            regime_hysteresis=_regime_hysteresis,
+            retrain_jobs=_retrain_jobs,
+        )
+    return _app_state
+
 REGIME_HYSTERESIS_MIN = 3  # Must see new regime N times before switching
 MAX_NSE_CONCURRENCY = int(os.getenv("MAX_NSE_CONCURRENCY", "3"))
 SYMBOL_FETCH_TIMEOUT_SECONDS = float(
