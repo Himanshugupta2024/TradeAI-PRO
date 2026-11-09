@@ -47,6 +47,7 @@ ALLOWED_FILES = {
     "model_meta.json",
     "best_model.pt",
 }
+WHITELIST = ALLOWED_FILES
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_TOTAL_BYTES = 12 * 1024 * 1024
@@ -214,6 +215,60 @@ def read_bundle_from_db() -> Optional[dict[str, Any]]:
 
     bundle = get_runtime_state(BUNDLE_KEY)
     return bundle if isinstance(bundle, dict) else None
+
+
+def publish_bundle_to_db(bundle: dict[str, Any]) -> None:
+    """Store an encoded model bundle in Supabase / runtime_state table."""
+    from db.runtime_state import set_runtime_state
+
+    set_runtime_state(BUNDLE_KEY, bundle)
+
+
+def publish_models_dir(
+    source_dir: Optional[Path] = None,
+    *,
+    metrics: Optional[dict[str, Any]] = None,
+    source: str = "training_pipeline",
+    git_sha: str = "",
+) -> dict[str, Any]:
+    """
+    Read all whitelisted model files from disk, encode them into a bundle,
+    validate against size & accuracy gates, and persist to database.
+    """
+    in_dir = Path(source_dir or models_dir())
+    if not in_dir.exists():
+        raise FileNotFoundError(f"Models directory not found: {in_dir}")
+
+    files: dict[str, bytes] = {}
+    for name in WHITELIST:
+        file_path = in_dir / name
+        if file_path.is_file():
+            files[name] = file_path.read_bytes()
+
+    if not files:
+        raise ValueError(f"No whitelisted model files found in {in_dir}")
+
+    bundle = build_bundle(
+        files,
+        metrics=metrics,
+        source=source,
+        git_sha=git_sha,
+    )
+
+    ok, reason = validate_bundle(bundle)
+    if not ok:
+        raise ValueError(f"Model bundle failed validation: {reason}")
+
+    publish_bundle_to_db(bundle)
+    return {
+        "ok": True,
+        "version": bundle.get("version"),
+        "total_bytes": bundle.get("total_bytes"),
+        "files_count": len(files),
+        "files": sorted(files.keys()),
+        "source": source,
+        "metrics": metrics or {},
+    }
 
 
 def sync_from_db(*, target_dir: Optional[Path] = None, force: bool = False) -> dict[str, Any]:

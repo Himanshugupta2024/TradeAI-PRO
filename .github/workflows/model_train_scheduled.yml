@@ -1,0 +1,69 @@
+name: Scheduled AI Model Training & Publish
+
+on:
+  schedule:
+    # Every Sunday at 00:00 UTC (05:30 IST) — Off-market weekly calibration
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      asset_type:
+        description: 'Asset class to train'
+        required: true
+        default: 'nse'
+        type: choice
+        options:
+          - nse
+          - crypto
+      symbols:
+        description: 'Comma-separated symbols (empty for default leaders)'
+        required: false
+        default: ''
+        type: string
+      quick:
+        description: 'Fast CPU fit (skip Optuna hyperparameter search)'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  train-and-publish:
+    name: Train Models & Publish to Supabase
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Train Models & Publish Bundle
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          ASSET_TYPE="${{ github.event.inputs.asset_type || 'nse' }}"
+          SYMBOLS_ARG=""
+          if [ -n "${{ github.event.inputs.symbols }}" ]; then
+            SYMBOLS_ARG="--symbols ${{ github.event.inputs.symbols }}"
+          fi
+          QUICK_FLAG="--quick"
+          if [ "${{ github.event.inputs.quick }}" = "false" ]; then
+            QUICK_FLAG="--optuna --trials 15"
+          fi
+
+          echo "🚀 Launching model training pipeline..."
+          python scripts/train_and_publish.py \
+            --asset-type "$ASSET_TYPE" \
+            $SYMBOLS_ARG \
+            $QUICK_FLAG \
+            --publish \
+            --source github_actions
