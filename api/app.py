@@ -176,7 +176,7 @@ def _lifespan_context():
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         svc._SERVER_START_TIME = time.time()
-        is_lightweight = _env_flag("LIGHTWEIGHT_API_MODE", False) or not _env_flag("BACKGROUND_REFRESH_ENABLED", True)
+        is_lightweight = _env_flag("LIGHTWEIGHT_API_MODE", False)
 
         # Run DB hydration and model warmup in a non-blocking background task so
         # Uvicorn binds the port immediately (<0.1s). This prevents Render free-tier
@@ -226,7 +226,7 @@ def _lifespan_context():
             except Exception as bf_err:
                 svc.logger.debug("Paper trade outcomes startup backfill skipped: %s", bf_err)
 
-            is_lightweight = _env_flag("LIGHTWEIGHT_API_MODE", False) or not _env_flag("BACKGROUND_REFRESH_ENABLED", True)
+            is_lightweight = _env_flag("LIGHTWEIGHT_API_MODE", False)
             if not is_lightweight:
                 try:
                     from agents.ai_engine.model_registry import get_model_registry
