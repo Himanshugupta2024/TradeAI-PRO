@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from pydantic import BaseModel
-from fastapi import APIRouter, Query, HTTPException, Depends, Response
+from fastapi import APIRouter, Query, HTTPException, Depends, Response, Header
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.requests import Request as FastApiRequest
 
@@ -83,24 +83,60 @@ async def get_market_control_status_route():
     return await asyncio.to_thread(get_market_control_status)
 
 
-@router.post("/api/market-control/toggle", dependencies=[Depends(require_admin)])
-async def toggle_market_control_route(req: MarketControlToggleRequest, request: FastApiRequest):
+@router.post("/api/market-control/toggle")
+async def toggle_market_control_route(
+    req: MarketControlToggleRequest,
+    request: FastApiRequest,
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+):
     """
     Operator control for Crypto / Forex processing under Section 6A policy.
     - Turning ON requires server-side password verification.
-    - Turning OFF verifies open position safeguards; blocks if positions require management.
+    - Turning OFF verifies operator authorization and open position safeguards.
     """
-    from agents.execution.market_control import set_market_control_state
+    from agents.execution.market_control import set_market_control_state, verify_operator_password
     client_ip = request.client.host if request.client else "unknown"
+
+    header_key = x_admin_key or x_api_key
+    if not header_key and authorization and authorization.strip().lower().startswith("bearer "):
+        header_key = authorization.strip()[7:].strip()
+
+    candidate_key = (req.password or "").strip() or (header_key or "").strip()
+
+    if not req.enabled:
+        is_auth = False
+        if header_key:
+            try:
+                require_admin(x_admin_key=x_admin_key, x_api_key=x_api_key, authorization=authorization)
+                is_auth = True
+            except HTTPException:
+                pass
+        if not is_auth and candidate_key:
+            ok, _ = verify_operator_password(candidate_key, client_id=client_ip)
+            if ok:
+                is_auth = True
+
+        if not is_auth:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "success": False,
+                    "message": "Operator authorization required to disable Crypto / Forex processing.",
+                    "state": None,
+                }
+            )
+
     success, message, state = set_market_control_state(
         enabled=req.enabled,
-        password=req.password,
+        password=candidate_key,
         client_id=client_ip,
         operator="operator",
         reason=req.reason or "",
     )
     invalidate_autonomous_status_cache()
-    status_code = 200 if success else (403 if any(w in message for w in ["Invalid", "Password", "lockout", "unconfigured"]) else 400)
+    status_code = 200 if success else (403 if any(w in message for w in ["Invalid", "Password", "lockout", "unconfigured", "blocked"]) else 400)
     return JSONResponse(
         status_code=status_code,
         content={

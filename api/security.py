@@ -67,6 +67,14 @@ def require_admin(
             return True
         if secrets.compare_digest(provided_key, admin_key):
             return True
+        op_hash = (getattr(settings, "MARKET_CONTROL_PASSWORD_HASH", "") or os.environ.get("MARKET_CONTROL_PASSWORD_HASH", "")).strip()
+        if op_hash:
+            import hashlib
+            salt = "tradeai_salt_2026"
+            cand_hmac = hmac.new(salt.encode("utf-8"), provided_key.encode("utf-8"), hashlib.sha256).hexdigest()
+            cand_sha = hashlib.sha256(provided_key.encode("utf-8")).hexdigest()
+            if hmac.compare_digest(cand_hmac, op_hash) or hmac.compare_digest(cand_sha, op_hash):
+                return True
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid admin API key",
@@ -87,12 +95,22 @@ def require_admin(
             headers={"WWW-Authenticate": "ApiKey"},
         )
 
-    if not hmac.compare_digest(provided_key, admin_key):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid admin API key",
-        )
-    return True
+    if hmac.compare_digest(provided_key, admin_key):
+        return True
+
+    op_hash = (getattr(settings, "MARKET_CONTROL_PASSWORD_HASH", "") or os.environ.get("MARKET_CONTROL_PASSWORD_HASH", "")).strip()
+    if op_hash:
+        import hashlib
+        salt = "tradeai_salt_2026"
+        cand_hmac = hmac.new(salt.encode("utf-8"), provided_key.encode("utf-8"), hashlib.sha256).hexdigest()
+        cand_sha = hashlib.sha256(provided_key.encode("utf-8")).hexdigest()
+        if hmac.compare_digest(cand_hmac, op_hash) or hmac.compare_digest(cand_sha, op_hash):
+            return True
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Invalid admin API key",
+    )
 
 
 def get_authenticated_account(

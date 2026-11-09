@@ -3087,7 +3087,10 @@ async function runAutonomousCycleNow() {
 
 async function toggleAutonomousMode() {
     try {
-        const res = await fetchWithTimeout(`${API}/api/autonomous/toggle`, { method: 'POST' }, 5000);
+        const res = await fetchWithTimeout(`${API}/api/autonomous/toggle`, {
+            method: 'POST',
+            headers: _getAuthHeaders({ 'Content-Type': 'application/json' }),
+        }, 5000);
         const data = await parseJsonResponse(res);
         if (data && data.ok) {
             loadAutonomousFeed();
@@ -27184,9 +27187,13 @@ async function submitMarketControlPassword() {
     if (err) { err.style.display = "none"; }
 
     try {
+        const authHeaders = _getAuthHeaders();
+        authHeaders['X-Admin-Key'] = pwd;
+        authHeaders['X-API-Key'] = pwd;
+
         const res = await fetch(`${API}/api/market-control/toggle`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", ..._getAuthHeaders() },
+            headers: { "Content-Type": "application/json", ...authHeaders },
             body: JSON.stringify({ enabled: true, password: pwd, reason: "Operator activated Crypto/Forex override" }),
         });
 
@@ -27211,12 +27218,16 @@ async function submitMarketControlPassword() {
 
         if (res.ok && data.success) {
             closeMarketControlModal();
+            try {
+                localStorage.setItem('tradeai_admin_key', pwd);
+                localStorage.setItem('admin_api_key', pwd);
+            } catch (_) {}
             _marketControlState = data.state;
             renderMarketControlUI(data.state);
             if (typeof showToast === "function") showToast("Crypto & Forex processing successfully enabled.", "success");
         } else {
             if (err) {
-                err.textContent = data.message || "Authorization failed. Check password.";
+                err.textContent = data.message || data.detail || "Authorization failed. Check password.";
                 err.style.display = "block";
             }
         }
@@ -27234,10 +27245,16 @@ async function executeMarketControlToggle(enabled, password) {
     const btn = document.getElementById("cryptoForexToggleBtn");
     if (btn) { btn.textContent = "..."; btn.disabled = true; }
 
+    const authHeaders = _getAuthHeaders();
+    if (password) {
+        authHeaders['X-Admin-Key'] = password;
+        authHeaders['X-API-Key'] = password;
+    }
+
     try {
         const res = await fetch(`${API}/api/market-control/toggle`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", ..._getAuthHeaders() },
+            headers: { "Content-Type": "application/json", ...authHeaders },
             body: JSON.stringify({ enabled: enabled, password: password, reason: enabled ? "Operator ON" : "Operator OFF" }),
         });
 
