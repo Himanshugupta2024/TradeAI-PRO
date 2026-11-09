@@ -27,13 +27,7 @@ def require_admin(
     If key is missing: 401 Unauthorized.
     If key is invalid: 403 Forbidden.
     """
-    settings_key = getattr(settings, "ADMIN_API_KEY", None)
-    if settings_key is not None:
-        admin_key = str(settings_key).strip()
-    elif "ADMIN_API_KEY" in os.environ:
-        admin_key = os.environ.get("ADMIN_API_KEY", "").strip()
-    else:
-        admin_key = ""
+    admin_key = (getattr(settings, "ADMIN_API_KEY", "") or os.environ.get("ADMIN_API_KEY", "")).strip()
     is_prod = bool(
         getattr(settings, "IS_PRODUCTION", False)
         or os.getenv("RENDER")

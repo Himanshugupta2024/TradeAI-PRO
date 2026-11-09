@@ -90,6 +90,7 @@ def test_3_missing_admin_key_rejected_in_production(monkeypatch):
     monkeypatch.setattr(settings, "DATABASE_URL", "postgresql://user:pass@host:5432/trading")
     monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
     monkeypatch.setenv("ADMIN_API_KEY", "")
+    monkeypatch.setenv("ADMIN_API_KEY", "")
 
     with pytest.raises(ValueError, match="ADMIN_API_KEY must be configured"):
         settings.validate_runtime_config()
@@ -102,6 +103,7 @@ def test_4_unauthorized_post_returns_401_and_403(monkeypatch):
     client = TestClient(app)
 
     monkeypatch.setattr(settings, "ADMIN_API_KEY", "super-secret-admin-pass")
+    monkeypatch.setenv("ADMIN_API_KEY", "super-secret-admin-pass")
     monkeypatch.setattr(settings, "IS_PRODUCTION", False)
 
     # 1. Missing header -> 401 Unauthorized
@@ -168,6 +170,7 @@ def test_8_malformed_trade_request_geometry_and_capital(monkeypatch, tmp_path):
     client = TestClient(app)
 
     monkeypatch.setattr(settings, "ADMIN_API_KEY", "")
+    monkeypatch.setenv("ADMIN_API_KEY", "")
     test_file = str(tmp_path / "paper.json")
     engine = PaperTradingEngine(initial_capital=100000.0, log_file=test_file)
     monkeypatch.setattr(svc, "_engine", engine)

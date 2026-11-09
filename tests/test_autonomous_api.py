@@ -40,6 +40,7 @@ def test_toggle_autonomous_mode(client, monkeypatch):
     # Configure test admin key
     test_key = "test-secret-admin-key-456"
     monkeypatch.setenv("ADMIN_API_KEY", test_key)
+    monkeypatch.setattr(settings, "ADMIN_API_KEY", test_key)
     headers = {"X-Admin-Key": test_key}
 
     # Test toggling off and on
