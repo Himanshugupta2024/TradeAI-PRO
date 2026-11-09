@@ -388,6 +388,16 @@ def _lifespan_context():
         else:
             svc.logger.info("CYCLE_SCHEDULER_ENABLED=false -> skipping cycle dispatch supervisor")
 
+        # Self-learning must not depend on the scanner: the daily EOD review now
+        # runs from this process on a timer, so weights keep adapting even when
+        # the GitHub-driven cycle never fires.
+        if _env_flag("EOD_REVIEW_SCHEDULER_ENABLED", True):
+            from api.learning_scheduler import run_review_scheduler_loop
+
+            _spawn_task(run_review_scheduler_loop(), name="eod_review_scheduler")
+        else:
+            svc.logger.info("EOD_REVIEW_SCHEDULER_ENABLED=false -> skipping EOD review supervisor")
+
 
 
         svc.logger.info("Server ready — accepting connections. Data loading in background.")
