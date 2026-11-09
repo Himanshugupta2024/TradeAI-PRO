@@ -372,6 +372,22 @@ def _lifespan_context():
         if hasattr(svc, "warmup_priority_quotes"):
             _spawn_task(svc.warmup_priority_quotes(), name="warmup_priority_quotes")
 
+        # Reliable market-hours dispatch for the autonomous cycle. GitHub's own
+        # schedule cron drops runs, which is what leaves the feed stale for a
+        # whole session; this supervisor dispatches on a fixed cadence instead.
+        # It only POSTs to the Actions API — the heavy cycle never runs here.
+        if _env_flag("CYCLE_SCHEDULER_ENABLED", True):
+            from api.cycle_scheduler import run_scheduler_loop
+
+            _spawn_task(run_scheduler_loop(), name="cycle_scheduler")
+            if not (os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")):
+                svc.logger.warning(
+                    "CYCLE_SCHEDULER_ENABLED=true but GITHUB_TOKEN is unset — "
+                    "autonomous cycles will not be dispatched automatically."
+                )
+        else:
+            svc.logger.info("CYCLE_SCHEDULER_ENABLED=false -> skipping cycle dispatch supervisor")
+
 
 
         svc.logger.info("Server ready — accepting connections. Data loading in background.")

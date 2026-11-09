@@ -3086,6 +3086,12 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             if not (isinstance(db_snap, dict) and db_snap):
                 db_snap = get_runtime_state("latest_overview_intelligence:v1")
             if db_snap and isinstance(db_snap, dict):
+                try:
+                    current_feed = _get_feed_status()
+                    if "market_guardrails" in db_snap and isinstance(db_snap["market_guardrails"], dict):
+                        db_snap["market_guardrails"]["feed_status"] = current_feed
+                except Exception:
+                    pass
                 _cached_overview_intelligence = db_snap
                 _cached_overview_time = now_m
                 return db_snap

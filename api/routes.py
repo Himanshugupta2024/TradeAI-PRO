@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.requests import Request as FastApiRequest
 from starlette.responses import JSONResponse, Response
@@ -3800,6 +3801,30 @@ async def trigger_autonomous_cycle(payload: dict | None = None):
             log.warning("[Autonomous] GitHub workflow dispatch error: %s. Falling back to local.", gh_err)
 
     # Local async fallback
+    #
+    # Running the full cycle inside the API process is what the free Render
+    # instance cannot survive: the cycle imports the ML stack (xgboost /
+    # lightgbm / torch paths) and spikes well past the 512 MB limit, so the
+    # kernel OOM-kills the web service mid-cycle. Every caller then sees 502s
+    # and blank panels until the container restarts. Refuse that path in
+    # lightweight mode unless an operator explicitly opts in.
+    _lightweight = os.getenv("LIGHTWEIGHT_API_MODE", "false").strip().lower() in ("1", "true", "yes")
+    _allow_local = os.getenv("ALLOW_LOCAL_AUTONOMOUS_CYCLE", "false").strip().lower() in ("1", "true", "yes")
+    if _lightweight and not _allow_local:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "CYCLE_DISPATCH_UNAVAILABLE",
+                "message": (
+                    "Autonomous cycle cannot run inside the API process (it OOM-kills the "
+                    "512 MB web service). Set GITHUB_TOKEN so the cycle dispatches to GitHub "
+                    "Actions, or set ALLOW_LOCAL_AUTONOMOUS_CYCLE=true to force it."
+                ),
+                "dispatch": "disabled",
+            },
+        )
+
     _last_manual_cycle_dispatch_time = now
     from scripts.autonomous_cycle import run_single_autonomous_cycle
 

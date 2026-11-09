@@ -2985,12 +2985,50 @@ async function runAutonomousCycleNow() {
             btn.textContent = '⏳ Starting...';
         }
         const targetApi = (typeof API === 'string') ? API : (window.__TRADEAI_CONFIG__?.API_BASE_URL ?? '');
+        // /api/autonomous/run-cycle is admin-gated. Without the stored operator
+        // key the request always 403s, which used to surface as a generic
+        // "Error triggering autonomous cycle" toast.
+        const reqHeaders = { 'Content-Type': 'application/json' };
+        const adminKey = (typeof localStorage !== 'undefined')
+            ? (localStorage.getItem('tradeai_admin_key') || localStorage.getItem('admin_api_key'))
+            : null;
+        if (adminKey && adminKey.trim()) reqHeaders['X-API-Key'] = adminKey.trim();
         const res = await fetchWithTimeout(targetApi + '/api/autonomous/run-cycle', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: reqHeaders,
             body: JSON.stringify({ universe: 'tier1' }),
         }, 15000);
-        const data = await parseJsonResponse(res);
+        let data = null;
+        try {
+            data = await parseJsonResponse(res);
+        } catch (parseErr) {
+            data = null;
+        }
+        if (res && (res.status === 401 || res.status === 403)) {
+            const enteredKey = prompt('Admin API Key required to trigger autonomous worker cycle.\nPlease enter your ADMIN_API_KEY:');
+            if (enteredKey && enteredKey.trim()) {
+                localStorage.setItem('tradeai_admin_key', enteredKey.trim());
+                localStorage.setItem('admin_api_key', enteredKey.trim());
+                if (typeof showToast === 'function') showToast('Admin key saved! Triggering cycle...', 'info');
+                reqHeaders['X-API-Key'] = enteredKey.trim();
+                const retryRes = await fetchWithTimeout(targetApi + '/api/autonomous/run-cycle', {
+                    method: 'POST',
+                    headers: reqHeaders,
+                    body: JSON.stringify({ universe: 'tier1' }),
+                }, 15000);
+                let retryData = null;
+                try { retryData = await parseJsonResponse(retryRes); } catch (_) {}
+                if (retryData && retryData.ok) {
+                    const okMsg = 'Cycle triggered (' + (retryData.method || 'dispatched') + ')';
+                    if (typeof showToast === 'function') showToast(okMsg, 'success'); else alert(okMsg);
+                    setTimeout(() => { loadAutonomousFeed(); }, 3000);
+                    return;
+                }
+            }
+            const authMsg = 'Admin key required for manual cycle. Open Market Control / admin console and unlock first.';
+            if (typeof showToast === 'function') showToast(authMsg, 'warning'); else alert(authMsg);
+            return;
+        }
         if (data && data.ok) {
             const okMsg = 'Cycle triggered (' + (data.method || 'dispatched') + ')';
             if (typeof showToast === 'function') {
@@ -3000,7 +3038,7 @@ async function runAutonomousCycleNow() {
             }
             setTimeout(() => { loadAutonomousFeed(); }, 3000);
         } else {
-            const msg = data?.message || 'Cycle rate limited. Please wait a minute.';
+            const msg = data?.message || data?.detail || data?.error || 'Cycle rate limited. Please wait a minute.';
             if (typeof showToast === 'function') {
                 showToast(msg, 'warning');
             } else {

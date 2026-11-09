@@ -367,6 +367,51 @@ async def resolve_open_trades_valuation(engine, svc, *, refresh_stale: bool = Fa
     return {"open_trades": enriched_trades, "summary": summary}
 
 
+async def _fetch_nse_quote(symbol: str) -> Dict[str, Any]:
+    """Resolve an NSE equity quote from the newest intraday bar.
+
+    Daily bars are stamped with the session date at 00:00 IST, so marking an open
+    position from interval "1d" makes every quote look ~12h stale as soon as the
+    market opens and prices P&L off the previous close. The 5m series is the
+    correct mark during a session; the daily bar is only a fallback for when
+    intraday data is unavailable (weekend/holiday/provider gap).
+    """
+    from agents.market_intelligence.nse_fetcher import fetch_ohlcv
+
+    attempts = (("5d", "5m", "NSE_YFINANCE_5M"), ("5d", "1d", "NSE_YFINANCE_DAILY"))
+    for period, interval, source in attempts:
+        try:
+            df = await asyncio.to_thread(fetch_ohlcv, symbol, period, interval)
+        except Exception as exc:
+            log.debug("NSE quote fetch failed for %s interval=%s: %s", symbol, interval, exc)
+            continue
+        if df is None or getattr(df, "empty", True) or "close" not in getattr(df, "columns", []):
+            continue
+        row = df.iloc[-1]
+        close = row.get("close")
+        if close is None or float(close) <= 0:
+            continue
+        stamp = row.get("timestamp")
+        if interval == "5m":
+            parsed = _coerce_timestamp(stamp)
+            # A 5m bar older than a few days means the provider served a gap;
+            # an EOD mark with an honest timestamp beats a stale "intraday" one.
+            if parsed is None:
+                continue
+            age_sec = (datetime.now(timezone.utc) - parsed).total_seconds()
+            if age_sec > 3 * 24 * 3600:
+                continue
+        return {
+            "close": float(close),
+            "high": float(row.get("high", close)),
+            "low": float(row.get("low", close)),
+            "source": source,
+            "timestamp": _timestamp_iso(stamp),
+            "is_stale": False,
+        }
+    return {}
+
+
 async def _fetch_single_quote(symbol: str) -> Dict[str, Any]:
     """Helper to fetch a single quote with venue mapping, timeout, and fail-safe handling."""
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -393,19 +438,9 @@ async def _fetch_single_quote(symbol: str) -> Dict[str, Any]:
                         "is_stale": False,
                     }
         else:
-            # NSE Equity
-            from agents.market_intelligence.nse_fetcher import fetch_ohlcv
-            df = await asyncio.to_thread(fetch_ohlcv, symbol, "5d", "1d")
-            if df is not None and not df.empty:
-                lr = df.iloc[-1]
-                return {
-                    "close": float(lr["close"]),
-                    "high": float(lr.get("high", lr["close"])),
-                    "low": float(lr.get("low", lr["close"])),
-                    "source": "NSE_YFINANCE_FEED",
-                    "timestamp": str(lr.get("timestamp", now_iso)),
-                    "is_stale": False,
-                }
+            # NSE Equity — intraday first so an open position is marked to the
+            # current candle instead of the 00:00-stamped daily bar.
+            return await _fetch_nse_quote(symbol)
     except Exception as e:
         log.debug("Quote fetch helper failed for %s: %s", symbol, e)
     return {}
