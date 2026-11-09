@@ -1003,7 +1003,6 @@ async def get_dashboard_overview():
             "stale_quotes_count": int(val_summary.get("stale_quotes_count", 0) or 0),
             "valued_at": val_summary.get("valued_at"),
         },
-        "last_refresh": val_summary.get("valued_at"),
 
         "market": {
             "open": svc.is_market_open(),
@@ -1078,7 +1077,13 @@ async def get_dashboard_overview():
 
         },
 
-        "last_refresh": svc._last_refresh.isoformat() if svc._last_refresh != datetime.min else None,
+        # Fall back to the valuation timestamp: in lightweight mode the refresh
+        # loop never sets _last_refresh, but marks were still valued just now.
+        "last_refresh": (
+            svc._last_refresh.isoformat()
+            if svc._last_refresh != datetime.min
+            else val_summary.get("valued_at")
+        ),
 
         "updated_at": datetime.now().isoformat(),
 
