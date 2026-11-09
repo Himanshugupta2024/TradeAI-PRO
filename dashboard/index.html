@@ -3423,6 +3423,31 @@
             }
         }
 
+        /* ── Gold/Amber Night Theme for Forex (After 18:00 IST) ── */
+        #forexTab.night-theme-gold {
+            --accent: #f59e0b;
+            --accent-rgb: 245, 158, 11;
+        }
+        #forexTab.night-theme-gold .section-title {
+            color: #fbbf24 !important;
+        }
+        #forexTab.night-theme-gold .live-pill {
+            background: rgba(245, 158, 11, 0.12) !important;
+            color: #fbbf24 !important;
+            border-color: rgba(245, 158, 11, 0.35) !important;
+        }
+        #forexTab.night-theme-gold .forex-night-badge {
+            font-size: 0.68rem;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(245, 158, 11, 0.15);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
     </style>
 
 </head>
@@ -5947,6 +5972,7 @@
 
                 <div style="display:flex;align-items:center;gap:0.5rem;">
 
+                    <span id="forexNightBadge" class="forex-night-badge" style="display:none;">🌙 24/7 Gold Mode</span>
                     <div id="forexLiquidityBadge" class="live-pill" style="background:rgba(56,189,248,0.12);color:var(--cyan);border:1px solid rgba(56,189,248,0.3);font-size:0.75rem;padding:3px 10px;font-weight:700;">
                         <span class="status-dot live"></span> LIQUIDITY: EVALUATING...
                     </div>
@@ -8153,7 +8179,7 @@
 
     <script src="/static/tradeflow_helper.js"></script>
 
-    <script src="/static/app.js?v=mw_30"></script>
+    <script src="/static/app.js?v=mw_31"></script>
 
     <script src="/static/honesty.js" defer></script>
 

@@ -2182,6 +2182,22 @@ function initTabs() {
 
 
 
+function isOffHoursCryptoWindow() {
+    try {
+        const istStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour12: false });
+        const istDate = new Date(istStr);
+        const day = istDate.getDay();
+        const hour = istDate.getHours();
+        const minute = istDate.getMinutes();
+        if (day === 0 || day === 6) return true;
+        if (hour >= 18 || hour < 8 || (hour === 8 && minute < 45)) return true;
+        return false;
+    } catch (_) {
+        const h = new Date().getHours();
+        return h >= 18 || h < 9;
+    }
+}
+
 function switchTab(tab) {
 
 
@@ -2243,6 +2259,12 @@ function switchTab(tab) {
 
 
     panel.classList.add('active');
+    if (tab === 'forex') {
+        const isNight = isOffHoursCryptoWindow();
+        panel.classList.toggle('night-theme-gold', isNight);
+        const b = document.getElementById('forexNightBadge');
+        if (b) b.style.display = isNight ? 'inline-flex' : 'none';
+    }
 
 
 

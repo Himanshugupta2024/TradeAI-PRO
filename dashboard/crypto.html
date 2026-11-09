@@ -1396,6 +1396,56 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
   }
 }
 
+
+/* ── Gold/Amber Off-Hours Night Theme (After 18:00 IST) ── */
+body[data-offhours-theme="gold"] {
+  --bg:          #0a0c10;
+  --bg2:         #10131a;
+  --card:        #141820;
+  --border:      rgba(245, 158, 11, 0.16);
+  --accent:      #f59e0b;
+  --accent2:     #fbbf24;
+  --yellow:      #fbbf24;
+}
+
+body[data-offhours-theme="gold"] .header {
+  border-bottom: 1px solid rgba(245, 158, 11, 0.28);
+  background: rgba(10, 12, 16, 0.94);
+  box-shadow: 0 4px 20px rgba(245, 158, 11, 0.05);
+}
+
+body[data-offhours-theme="gold"] .logo-badge {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #0a0c10;
+  font-weight: 800;
+}
+
+body[data-offhours-theme="gold"] .cockpit-tile {
+  border-color: rgba(245, 158, 11, 0.22);
+}
+
+body[data-offhours-theme="gold"] .cockpit-panel-title {
+  color: #fbbf24;
+}
+
+body[data-offhours-theme="gold"] .coin-card.active-coin {
+  border-color: #f59e0b;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
+}
+
+.crypto-night-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 </style>
 <link rel="stylesheet" href="/static/glass-crypto.css">
 <script src="/static/skin.js"></script>
@@ -1414,6 +1464,7 @@ canvas.sparkline { width: 100%; height: 40px; display: block; }
     <img src="/static/favicon.svg" alt="TradeAI PRO" width="24" height="24" style="border-radius: 6px;">
     <span>TradeAI</span>
     <span class="logo-badge">PRO</span>
+    <span id="cryptoNightBadge" class="crypto-night-badge" style="display:none;">🌙 24/7 Gold Mode</span>
   </div>
 
   <!-- Crypto Search Bar -->
@@ -3724,7 +3775,29 @@ function initCryptoSearch() {
 }
 
 
+function applyCryptoNightTheme() {
+  try {
+    const istStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata', hour12: false });
+    const istDate = new Date(istStr);
+    const day = istDate.getDay();
+    const hour = istDate.getHours();
+    const minute = istDate.getMinutes();
+    const isNight = (day === 0 || day === 6) || (hour >= 18 || hour < 8 || (hour === 8 && minute < 45));
+    if (isNight) {
+      document.body.setAttribute('data-offhours-theme', 'gold');
+      const b = document.getElementById('cryptoNightBadge');
+      if (b) b.style.display = 'inline-flex';
+    } else {
+      document.body.removeAttribute('data-offhours-theme');
+      const b = document.getElementById('cryptoNightBadge');
+      if (b) b.style.display = 'none';
+    }
+  } catch (_) {}
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  applyCryptoNightTheme();
+  setInterval(applyCryptoNightTheme, 60000);
   const tabs = document.querySelectorAll('#signalTfTabs .tf-btn');
   tabs.forEach((btn) => {
     btn.addEventListener('click', () => {
