@@ -777,9 +777,17 @@ def _get_feed_status() -> dict[str, object]:
             bar_dt = None
             bar_age_seconds = None
 
+    quote_state = classify_quote_state(bar_age_seconds, is_mkt_open)
+
     return {
-        "state": state,
-        "quote_state": classify_quote_state(bar_age_seconds, is_mkt_open),
+        # `state` is what the dashboard renders ("are my marks trustworthy?").
+        # It must follow quote freshness, not the last cycle snapshot: the two
+        # diverge whenever the worker is down but quotes are still being fetched
+        # per request, which is exactly when a stale-looking banner lies.
+        "state": quote_state if is_mkt_open else state,
+        "quote_state": quote_state,
+        # Snapshot age, kept separate and explicit for diagnostics.
+        "snapshot_state": state,
         "market_snapshot_health": snapshot_health,
         "worker_health": worker_health,
         "last_update": snap_dt.isoformat(),
