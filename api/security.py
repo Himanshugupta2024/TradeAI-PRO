@@ -27,13 +27,7 @@ def require_admin(
     If key is missing: 401 Unauthorized.
     If key is invalid: 403 Forbidden.
     """
-    settings_key = (getattr(settings, "ADMIN_API_KEY", "") or "").strip()
-    if settings_key and settings_key != "tradeai-secure-pass-2026":
-        admin_key = settings_key
-    elif "ADMIN_API_KEY" in os.environ:
-        admin_key = os.environ.get("ADMIN_API_KEY", "").strip()
-    else:
-        admin_key = ""
+    admin_key = os.environ.get("ADMIN_API_KEY", "").strip()
     is_prod = bool(
         getattr(settings, "IS_PRODUCTION", False)
         or os.getenv("RENDER")
@@ -52,7 +46,6 @@ def require_admin(
 
     DEFAULT_DEV_PLACEHOLDERS = {
         "change_this_to_a_strong_random_secret_in_production",
-        "tradeai-secure-pass-2026",
     }
     if admin_key in DEFAULT_DEV_PLACEHOLDERS:
         if is_prod:

@@ -142,18 +142,13 @@ def verify_operator_password(password: str, client_id: str = "global") -> Tuple[
         _record_failed_attempt(client_id)
         return False, "Invalid operator credentials."
 
-    DEFAULT_OPERATOR_PASSWORD = "tradeai-secure-pass-2026"
     configured_hash = os.getenv("MARKET_CONTROL_PASSWORD_HASH", "").strip()
     admin_key = os.getenv("ADMIN_API_KEY", "").strip()
 
     if not configured_hash and not admin_key:
-        if hmac.compare_digest(password, DEFAULT_OPERATOR_PASSWORD):
-            _FAILED_ATTEMPTS.pop(client_id, None)
-            logger.info("Market Control verified using default operator password for %s", client_id)
-            return True, "Authorization successful."
-        else:
-            _record_failed_attempt(client_id)
-            return False, "Invalid operator password. (Default is 'tradeai-secure-pass-2026' when unconfigured)."
+        _record_failed_attempt(client_id)
+        logger.error("Market Control operator credentials not configured; refusing all operator logins")
+        return False, "Operator credentials are not configured on this server."
 
     pwd_bytes = password.encode("utf-8")
     verified = False
