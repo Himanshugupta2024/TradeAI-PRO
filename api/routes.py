@@ -3808,19 +3808,16 @@ async def trigger_autonomous_cycle(payload: dict | None = None):
     # kernel OOM-kills the web service mid-cycle. Every caller then sees 502s
     # and blank panels until the container restarts. Refuse that path in
     # lightweight mode unless an operator explicitly opts in.
-    _lightweight = os.getenv("LIGHTWEIGHT_API_MODE", "false").strip().lower() in ("1", "true", "yes")
-    _allow_local = os.getenv("ALLOW_LOCAL_AUTONOMOUS_CYCLE", "false").strip().lower() in ("1", "true", "yes")
-    if _lightweight and not _allow_local:
+    from api.cycle_scheduler import local_cycle_allowed
+
+    _allowed, _refusal = local_cycle_allowed()
+    if not _allowed:
         return JSONResponse(
             status_code=409,
             content={
                 "ok": False,
                 "error": "CYCLE_DISPATCH_UNAVAILABLE",
-                "message": (
-                    "Autonomous cycle cannot run inside the API process (it OOM-kills the "
-                    "512 MB web service). Set GITHUB_TOKEN so the cycle dispatches to GitHub "
-                    "Actions, or set ALLOW_LOCAL_AUTONOMOUS_CYCLE=true to force it."
-                ),
+                "message": _refusal,
                 "dispatch": "disabled",
             },
         )

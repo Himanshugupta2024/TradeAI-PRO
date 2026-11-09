@@ -7715,7 +7715,7 @@
 
                     <div style="display:flex;gap:8px;">
 
-                        <input type="number" id="inputLearningCapital" value="100000" aria-label="Learning capital seed amount" min="5000" step="5000" style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 12px;color:#f0f6fc;font-size:0.9rem;" />
+                        <input type="number" id="inputLearningCapital" value="100000" autocomplete="off" aria-label="Learning capital seed amount" min="5000" step="5000" style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 12px;color:#f0f6fc;font-size:0.9rem;" />
 
                         <button onclick="applyNewCapital()" style="background:#238636;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-weight:600;cursor:pointer;">Update</button>
 
@@ -8169,14 +8169,16 @@
             <p style="color:#94a3b8; font-size:0.82rem; line-height:1.45; margin:0 0 1rem 0;">
                 Enabling Crypto & Forex processing initiates 24/7 background market feeds, indicator calculation, and provider polling. Enter the operator password to confirm override:
             </p>
-            <div style="margin-bottom: 1rem;">
-                <input type="password" id="marketControlPasswordInput" aria-label="Enter operator password to toggle crypto forex mode" autocomplete="current-password" placeholder="Operator Password" style="width: 100%; box-sizing: border-box; padding: 0.6rem 0.8rem; background: #1e293b; border: 1px solid #475569; border-radius: 6px; color: #f8fafc; font-size: 0.88rem; outline: none;" onkeydown="if(event.key==='Enter') submitMarketControlPassword()" />
-                <div id="marketControlErrorMsg" style="color: #ef4444; font-size: 0.75rem; margin-top: 0.4rem; display: none;"></div>
-            </div>
-            <div style="display:flex; justify-content:flex-end; gap: 0.6rem;">
-                <button type="button" onclick="closeMarketControlModal()" style="padding: 0.5rem 0.9rem; background: #334155; color: #cbd5e1; border: none; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500;">Cancel</button>
-                <button id="marketControlSubmitBtn" type="button" onclick="submitMarketControlPassword()" style="padding: 0.5rem 1.1rem; background: #3b82f6; color: #ffffff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.82rem;">Authorize & Enable</button>
-            </div>
+            <form autocomplete="off" onsubmit="event.preventDefault(); submitMarketControlPassword();">
+                <div style="margin-bottom: 1rem;">
+                    <input type="password" id="marketControlPasswordInput" aria-label="Enter operator password to toggle crypto forex mode" autocomplete="off" placeholder="Operator Password" style="width: 100%; box-sizing: border-box; padding: 0.6rem 0.8rem; background: #1e293b; border: 1px solid #475569; border-radius: 6px; color: #f8fafc; font-size: 0.88rem; outline: none;" />
+                    <div id="marketControlErrorMsg" style="color: #ef4444; font-size: 0.75rem; margin-top: 0.4rem; display: none;"></div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap: 0.6rem;">
+                    <button type="button" onclick="closeMarketControlModal()" style="padding: 0.5rem 0.9rem; background: #334155; color: #cbd5e1; border: none; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500;">Cancel</button>
+                    <button id="marketControlSubmitBtn" type="submit" style="padding: 0.5rem 1.1rem; background: #3b82f6; color: #ffffff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.82rem;">Authorize & Enable</button>
+                </div>
+            </form>
         </div>
     </div>
 
