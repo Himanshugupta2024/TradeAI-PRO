@@ -531,6 +531,11 @@ async def toggle_autonomous(payload: dict | None = None):
         daemon.enabled = bool(payload["enabled"])
     else:
         daemon.enabled = not daemon.enabled
+    try:
+        from db.runtime_state import set_runtime_state
+        set_runtime_state("autonomous_trading_enabled", daemon.enabled)
+    except Exception as state_err:
+        log.warning("[Autonomous] Could not persist enabled state to DB: %s", state_err)
     engine = svc._get_engine()
     return {"ok": True, "enabled": daemon.enabled, "status": daemon.get_status(engine)}
 

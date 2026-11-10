@@ -3086,17 +3086,60 @@ async function runAutonomousCycleNow() {
 }
 
 async function toggleAutonomousMode() {
+    const btn = document.getElementById('toggleAutonomousBtn');
+    const origText = btn ? btn.textContent : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Updating...';
+    }
+
     try {
-        const res = await fetchWithTimeout(`${API}/api/autonomous/toggle`, {
+        let res = await fetchWithTimeout(`${API}/api/autonomous/toggle`, {
             method: 'POST',
             headers: _getAuthHeaders({ 'Content-Type': 'application/json' }),
-        }, 5000);
+        }, 8000);
+
+        if (res.status === 401 || res.status === 403) {
+            const authed = _handleAuthChallenge(res.status);
+            if (authed) {
+                // Retry immediately with the freshly saved credentials
+                res = await fetchWithTimeout(`${API}/api/autonomous/toggle`, {
+                    method: 'POST',
+                    headers: _getAuthHeaders({ 'Content-Type': 'application/json' }),
+                }, 8000);
+            } else {
+                if (typeof showToast === 'function') {
+                    showToast('Admin authorization required to toggle autonomous execution.', 'warning');
+                }
+                return;
+            }
+        }
+
         const data = await parseJsonResponse(res);
         if (data && data.ok) {
-            loadAutonomousFeed();
+            const modeMsg = data.enabled ? 'Autonomous trading resumed (Armed)' : 'Autonomous trading paused';
+            if (typeof showToast === 'function') {
+                showToast(modeMsg, data.enabled ? 'success' : 'info');
+            }
+            await loadAutonomousFeed({ isManual: true });
+        } else {
+            const errDetail = data?.detail || data?.message || 'Toggle request failed';
+            if (typeof showToast === 'function') {
+                showToast(errDetail, 'error');
+            }
         }
     } catch (e) {
         console.error('Failed to toggle autonomous mode:', e);
+        if (typeof showToast === 'function') {
+            showToast('Failed to toggle autonomous mode: ' + (e.message || e), 'error');
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            if (btn.textContent === 'Updating...') {
+                btn.textContent = origText;
+            }
+        }
     }
 }
 

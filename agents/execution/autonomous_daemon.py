@@ -50,17 +50,22 @@ class AutonomousExecutionDaemon:
         min_ai_confidence: float = 40.0,
         max_portfolio_heat: float = 0.15,
     ) -> None:
-        self.enabled: bool = os.getenv("AUTONOMOUS_TRADING_ENABLED", "true").lower() in ("1", "true", "yes")
         self.max_positions: int = int(os.getenv("AUTONOMOUS_MAX_POSITIONS", str(max_positions)))
         self.min_qs_score: float = float(os.getenv("AUTONOMOUS_MIN_QS_SCORE", str(min_qs_score)))
         self.min_ai_confidence: float = float(os.getenv("AUTONOMOUS_MIN_AI_CONFIDENCE", str(min_ai_confidence)))
         self.max_portfolio_heat: float = max_portfolio_heat
         self._max_log_entries: int = 100
+        persisted_enabled = None
         try:
             from db.runtime_state import get_runtime_state
+            persisted_enabled = get_runtime_state("autonomous_trading_enabled")
             self.decision_log: list[dict[str, Any]] = get_runtime_state("autonomous_feed:v1", []) or []
         except Exception:
             self.decision_log: list[dict[str, Any]] = []
+        if isinstance(persisted_enabled, bool):
+            self.enabled = persisted_enabled
+        else:
+            self.enabled = os.getenv("AUTONOMOUS_TRADING_ENABLED", "true").lower() in ("1", "true", "yes")
         self.last_eod_review_date: Optional[str] = None
         self._last_scan_time: Optional[str] = None
 
