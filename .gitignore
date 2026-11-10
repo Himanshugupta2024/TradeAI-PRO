@@ -89,3 +89,9 @@ scripts/set_render_database_url.py
 scripts/update_worker_spa.py
 scripts/verify_render_supabase.py
 scripts/clean_supabase_state.py
+
+# Test coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

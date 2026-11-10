@@ -121,9 +121,10 @@ def _record_failed_attempt(client_id: str) -> None:
     _FAILED_ATTEMPTS.setdefault(client_id, []).append(time.time())
 
 
-def _hash_password(pwd: str, salt: str = "tradeai_salt_2026") -> str:
+def _hash_password(pwd: str, salt: Optional[str] = None) -> str:
     """Compute SHA-256 HMAC for password verification."""
-    return hmac.new(salt.encode("utf-8"), pwd.encode("utf-8"), hashlib.sha256).hexdigest()
+    effective_salt = salt or os.getenv("MARKET_CONTROL_SALT", "tradeai_salt_2026")
+    return hmac.new(effective_salt.encode("utf-8"), pwd.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def verify_operator_password(password: str, client_id: str = "global") -> Tuple[bool, str]:

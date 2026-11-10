@@ -29,8 +29,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run tests (exclude integration)
-        run: pytest -m "not integration" -q
+      - name: Run tests (exclude integration) with coverage
+        run: pytest -m "not integration" --cov=api --cov-report=term-missing --cov-report=xml --cov-fail-under=60 -q
 
       # A missing module once shipped because no test imports the app itself:
       # api/app.py referenced api.cycle_scheduler, the file was never committed,

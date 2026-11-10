@@ -70,8 +70,8 @@ def require_admin(
         op_hash = (getattr(settings, "MARKET_CONTROL_PASSWORD_HASH", "") or os.environ.get("MARKET_CONTROL_PASSWORD_HASH", "")).strip()
         if op_hash:
             import hashlib
-            salt = "tradeai_salt_2026"
-            cand_hmac = hmac.new(salt.encode("utf-8"), provided_key.encode("utf-8"), hashlib.sha256).hexdigest()
+            from agents.execution.market_control import _hash_password
+            cand_hmac = _hash_password(provided_key)
             cand_sha = hashlib.sha256(provided_key.encode("utf-8")).hexdigest()
             if hmac.compare_digest(cand_hmac, op_hash) or hmac.compare_digest(cand_sha, op_hash):
                 return True
@@ -101,8 +101,8 @@ def require_admin(
     op_hash = (getattr(settings, "MARKET_CONTROL_PASSWORD_HASH", "") or os.environ.get("MARKET_CONTROL_PASSWORD_HASH", "")).strip()
     if op_hash:
         import hashlib
-        salt = "tradeai_salt_2026"
-        cand_hmac = hmac.new(salt.encode("utf-8"), provided_key.encode("utf-8"), hashlib.sha256).hexdigest()
+        from agents.execution.market_control import _hash_password
+        cand_hmac = _hash_password(provided_key)
         cand_sha = hashlib.sha256(provided_key.encode("utf-8")).hexdigest()
         if hmac.compare_digest(cand_hmac, op_hash) or hmac.compare_digest(cand_sha, op_hash):
             return True

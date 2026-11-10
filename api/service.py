@@ -204,7 +204,6 @@ _persisted_signals_updated_at: str | None = None
 
 # Regime hysteresis: (confirmed_regime, tentative_regime, consecutive_count)
 _regime_hysteresis: dict[str, tuple[str, str, int]] = {}
-_retrain_jobs: dict = {}
 
 
 @dataclass
