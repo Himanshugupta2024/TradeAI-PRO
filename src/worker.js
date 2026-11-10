@@ -238,6 +238,18 @@ export function getDegradedFallbackResponse(pathname) {
     return new Response(JSON.stringify(payload), { status: 200, headers });
   }
 
+  if (normPath === "/api/morning-scan") {
+    const payload = {
+      scan_time: null,
+      count: 0,
+      results: [],
+      status: "empty",
+      message: "No morning scan recorded yet. Edge degraded fallback active.",
+      degraded: true,
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
   return null;
 }
 
