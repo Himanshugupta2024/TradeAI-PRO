@@ -304,10 +304,38 @@ async def get_autonomous_status(response: Response):
             return cached_copy
 
         t0 = time.perf_counter()
-        raw = await asyncio.wait_for(
-            asyncio.to_thread(_fetch_autonomous_status_sync),
-            timeout=5.0,
-        )
+        try:
+            raw = await asyncio.wait_for(
+                asyncio.to_thread(_fetch_autonomous_status_sync),
+                timeout=8.0,
+            )
+        except Exception as fetch_err:
+            log.warning("[Autonomous] Status fetch timeout/failure: %s", fetch_err)
+            if _AUTONOMOUS_STATUS_CACHE is not None:
+                cached_copy = dict(_AUTONOMOUS_STATUS_CACHE)
+                cached_copy["cache_hit"] = True
+                cached_copy["degraded"] = True
+                return cached_copy
+            # Fallback in-memory status when database or background worker telemetry times out
+            from agents.execution.autonomous_daemon import get_autonomous_daemon
+            from agents.execution.session_guard import is_nse_market_open, get_current_ist_time
+            daemon = get_autonomous_daemon()
+            engine = svc._get_engine()
+            now_ist = get_current_ist_time()
+            is_nse_open, nse_reason = is_nse_market_open(now_ist)
+            raw = {
+                "daemon_status": daemon.get_status(engine),
+                "worker_status": {},
+                "lock_info": None,
+                "watchdog": {
+                    "status": "MARKET_CLOSED" if not is_nse_open else "HEALTHY",
+                    "message": f"NSE cash market closed ({nse_reason}). Worker in standby." if not is_nse_open else "Worker nominal (fallback)",
+                    "age_minutes": None,
+                    "is_nse_market_open": is_nse_open,
+                    "nse_reason": nse_reason,
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                },
+            }
         measured_ms = round((time.perf_counter() - t0) * 1000.0, 2)
 
         payload = {
