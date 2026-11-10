@@ -86,7 +86,7 @@ def get_runtime_states(keys: Sequence[str], session: Optional[Any] = None) -> di
         for row in rows:
             try:
                 result[row.state_key] = json.loads(row.state_json)
-            except json.JSONDecodeError as jde:
+            except (json.JSONDecodeError, TypeError) as jde:
                 logger.error("Corrupt JSON in runtime state for key '%s': %s", row.state_key, jde)
         return result
     except (SQLAlchemyError, Exception) as exc:

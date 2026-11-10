@@ -95,6 +95,17 @@ async function testWorkerDegradedFallback() {
     assert.strictEqual(resFeedErr.headers.get('CF-Cache-Status'), 'DEGRADED-FALLBACK');
     console.log('  ✓ /api/autonomous/feed gracefully degraded on origin network exception');
 
+    // 1.4: Origin 502 with null cache
+    delete globalThis.caches;
+    globalThis.fetch = async () => new Response(JSON.stringify({ error: 'Bad Gateway' }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const resFeed502 = await worker.fetch(reqFeed, {}, { waitUntil: () => {} });
+    assert.strictEqual(resFeed502.status, 200);
+    assert.strictEqual(resFeed502.headers.get('CF-Cache-Status'), 'DEGRADED-FALLBACK');
+    console.log('  ✓ /api/autonomous/feed safely degraded on 502 even when edge cache is null');
+
   } finally {
     globalThis.fetch = origFetch;
     delete globalThis.caches;
@@ -227,10 +238,124 @@ async function testFrontendHardening() {
   console.log('  ✓ 2-second cooldown strictly enforced');
 }
 
+async function testAutonomousSingleFetch() {
+  console.log('\n--- [FRONTEND] Test 4: Single Fetch Dispatch (No 429/Network Retries) ---');
+  const appSource = fs.readFileSync('dashboard/app.js', 'utf8');
+
+  // Verify fetchAutonomousStatus has no redundant catch retry
+  const statusMatch = appSource.match(/async function fetchAutonomousStatus[\s\S]*?\n\}/);
+  assert(statusMatch, 'fetchAutonomousStatus function not found');
+  assert(!statusMatch[0].includes('fallbackUrl'), 'fetchAutonomousStatus must not contain fallbackUrl');
+  assert(!statusMatch[0].includes('catch (netErr)'), 'fetchAutonomousStatus must not contain catch (netErr) retry block');
+  console.log('  ✓ Verified fetchAutonomousStatus contains zero inner fallbackUrl retries');
+
+  // Verify fetchAutonomousFeed has no redundant catch retry
+  const feedMatch = appSource.match(/async function fetchAutonomousFeed[\s\S]*?\n\}/);
+  assert(feedMatch, 'fetchAutonomousFeed function not found');
+  assert(!feedMatch[0].includes('fallbackUrl'), 'fetchAutonomousFeed must not contain fallbackUrl');
+  assert(!feedMatch[0].includes('catch (netErr)'), 'fetchAutonomousFeed must not contain catch (netErr) retry block');
+  console.log('  ✓ Verified fetchAutonomousFeed contains zero inner fallbackUrl retries');
+
+  // Test execution in VM to ensure exactly 1 fetch invocation occurs on 429 and on network error
+  let statusFetchCount = 0;
+  const statusSandbox = {
+    _autonomousStatusInFlight: false,
+    _autonomousStatusGen: 0,
+    _autonomousStatusController: null,
+    _lastAutonomousStatusData: null,
+    _autonomousConsecutiveErrors: 0,
+    API: '',
+    AbortController: globalThis.AbortController,
+    document: { getElementById: () => null },
+    localStorage: { getItem: () => null },
+    fetchWithTimeout: async () => {
+      statusFetchCount++;
+      return { ok: false, status: 429 };
+    },
+    parseJsonResponse: async () => null,
+    renderAutonomousStatusUI: () => {},
+    renderAutonomousStatusError: () => {},
+  };
+
+  const statusCode = `
+    let _autonomousStatusInFlight = false;
+    let _autonomousStatusGen = 0;
+    let _autonomousStatusController = null;
+    let _lastAutonomousStatusData = null;
+    let _autonomousConsecutiveErrors = 0;
+    ${statusMatch[0]}
+  `;
+  vm.createContext(statusSandbox);
+  vm.runInContext(statusCode, statusSandbox);
+
+  // Call on 429 response
+  await statusSandbox.fetchAutonomousStatus({ isManual: true });
+  assert.strictEqual(statusFetchCount, 1, 'fetchAutonomousStatus must invoke fetch exactly once on 429');
+  console.log('  ✓ fetchAutonomousStatus dispatched exactly 1 network request on 429');
+
+  // Call on network throw
+  statusFetchCount = 0;
+  statusSandbox.fetchWithTimeout = async () => {
+    statusFetchCount++;
+    throw new Error('Network timeout');
+  };
+  await statusSandbox.fetchAutonomousStatus({ isManual: true });
+  assert.strictEqual(statusFetchCount, 1, 'fetchAutonomousStatus must invoke fetch exactly once on network error');
+  console.log('  ✓ fetchAutonomousStatus dispatched exactly 1 network request on network error');
+
+  // Test fetchAutonomousFeed in VM
+  let feedFetchCount = 0;
+  const feedSandbox = {
+    _autonomousFeedInFlight: false,
+    _autonomousFeedGen: 0,
+    _autonomousFeedController: null,
+    _lastAutonomousFeedData: null,
+    AUTO_FEED_STORAGE_KEY: 'test_key',
+    API: '',
+    AbortController: globalThis.AbortController,
+    document: { getElementById: () => null },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    fetchWithTimeout: async () => {
+      feedFetchCount++;
+      return { ok: false, status: 429 };
+    },
+    parseJsonResponse: async () => null,
+    renderAutonomousFeedUI: () => {},
+    renderAutonomousFeedError: () => {},
+  };
+
+  const feedCode = `
+    let _autonomousFeedInFlight = false;
+    let _autonomousFeedGen = 0;
+    let _autonomousFeedController = null;
+    let _lastAutonomousFeedData = null;
+    const AUTO_FEED_STORAGE_KEY = 'test_key';
+    ${feedMatch[0]}
+  `;
+  vm.createContext(feedSandbox);
+  vm.runInContext(feedCode, feedSandbox);
+
+  // Call on 429 response
+  await feedSandbox.fetchAutonomousFeed({ isManual: true });
+  assert.strictEqual(feedFetchCount, 1, 'fetchAutonomousFeed must invoke fetch exactly once on 429');
+  console.log('  ✓ fetchAutonomousFeed dispatched exactly 1 network request on 429');
+
+  // Call on network throw
+  feedFetchCount = 0;
+  feedSandbox.fetchWithTimeout = async () => {
+    feedFetchCount++;
+    throw new Error('Network timeout');
+  };
+  await feedSandbox.fetchAutonomousFeed({ isManual: true });
+  assert.strictEqual(feedFetchCount, 1, 'fetchAutonomousFeed must invoke fetch exactly once on network error');
+  console.log('  ✓ fetchAutonomousFeed dispatched exactly 1 network request on network error');
+}
+
 async function runAll() {
   try {
     await testWorkerDegradedFallback();
     await testFrontendHardening();
+    await testAutonomousSingleFetch();
     console.log('\n================================================================');
     console.log('ALL TAB ERROR REMEDIATION VERIFICATION TESTS PASSED!');
     console.log('================================================================');

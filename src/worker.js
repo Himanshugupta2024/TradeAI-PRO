@@ -422,18 +422,20 @@ export default {
 
       // If origin returns 502, 503, 429, or 504, fallback to stale edge cache if available.
       // NOTE: 403 (Section 6A Focus Mode / admin lock) is strictly excluded so administrative locks are honored immediately.
-      if (isPublicCacheable && cache && (originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 429 || originResponse.status === 504)) {
-        try {
-          const stale = await cache.match(cacheKey);
-          if (stale) {
-            const res = new Response(stale.body, stale);
-            res.headers.set("CF-Cache-Status", "STALE-FALLBACK-503");
-            res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
-            res.headers.set("Access-Control-Allow-Origin", "*");
-            res.headers.set("Cache-Control", "public, max-age=0, must-revalidate, stale-while-revalidate=10");
-            return res;
-          }
-        } catch (_) {}
+      if (isPublicCacheable && (originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 429 || originResponse.status === 504)) {
+        if (cache) {
+          try {
+            const stale = await cache.match(cacheKey);
+            if (stale) {
+              const res = new Response(stale.body, stale);
+              res.headers.set("CF-Cache-Status", "STALE-FALLBACK-503");
+              res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+              res.headers.set("Access-Control-Allow-Origin", "*");
+              res.headers.set("Cache-Control", "public, max-age=0, must-revalidate, stale-while-revalidate=10");
+              return res;
+            }
+          } catch (_) {}
+        }
         const fallback = getDegradedFallbackResponse(url.pathname);
         if (fallback) return fallback;
       } else if (originResponse.status === 429 || originResponse.status === 503) {

@@ -2651,28 +2651,11 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
         const adminKey = (typeof localStorage !== 'undefined') ? (localStorage.getItem('tradeai_admin_key') || localStorage.getItem('admin_api_key')) : null;
         if (adminKey && adminKey.trim()) reqHeaders['X-API-Key'] = adminKey.trim();
 
-        let targetUrl = `${API}/api/autonomous/status`;
-        let res;
-        try {
-            res = await fetchWithTimeout(targetUrl, {
-                signal: _autonomousStatusController.signal,
-                headers: reqHeaders,
-            }, 10000, 0);
-        } catch (netErr) {
-            // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
-            // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
-            const fallbackUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
-                ? `/api/autonomous/status`
-                : `${API}/api/autonomous/status`;
-            try {
-                res = await fetchWithTimeout(fallbackUrl, {
-                    signal: _autonomousStatusController.signal,
-                    headers: reqHeaders,
-                }, 10000, 0);
-            } catch (_) {
-                throw netErr;
-            }
-        }
+        const targetUrl = `${API}/api/autonomous/status`;
+        const res = await fetchWithTimeout(targetUrl, {
+            signal: _autonomousStatusController.signal,
+            headers: reqHeaders,
+        }, 10000, 0);
 
 
         if (currentGen !== _autonomousStatusGen) return; // Stale response discarded
@@ -2783,28 +2766,11 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
         const adminKey = (typeof localStorage !== 'undefined') ? (localStorage.getItem('tradeai_admin_key') || localStorage.getItem('admin_api_key')) : null;
         if (adminKey && adminKey.trim()) reqHeaders['X-API-Key'] = adminKey.trim();
 
-        let targetUrl = `${API}/api/autonomous/feed?limit=25`;
-        let res;
-        try {
-            res = await fetchWithTimeout(targetUrl, {
-                signal: _autonomousFeedController.signal,
-                headers: reqHeaders,
-            }, 10000, 0);
-        } catch (netErr) {
-            // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
-            // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
-            const fallbackUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
-                ? `/api/autonomous/feed?limit=25`
-                : `${API}/api/autonomous/feed?limit=25`;
-            try {
-                res = await fetchWithTimeout(fallbackUrl, {
-                    signal: _autonomousFeedController.signal,
-                    headers: reqHeaders,
-                }, 10000, 0);
-            } catch (_) {
-                throw netErr;
-            }
-        }
+        const targetUrl = `${API}/api/autonomous/feed?limit=25`;
+        const res = await fetchWithTimeout(targetUrl, {
+            signal: _autonomousFeedController.signal,
+            headers: reqHeaders,
+        }, 10000, 0);
 
 
         if (currentGen !== _autonomousFeedGen) return;
@@ -6003,6 +5969,9 @@ function requestNotificationPermission() {
 
 
 function showToast(message, type = 'info') {
+    const cleanMsg = String(message || '').trim();
+    if (!cleanMsg) return;
+
     let container = document.getElementById('p4ToastContainer');
     if (!container) {
         container = document.createElement('div');
@@ -6014,7 +5983,7 @@ function showToast(message, type = 'info') {
     // Deduplicate: ignore if identical message is already active in toast container
     const existing = Array.from(container.children);
     for (const child of existing) {
-        if (child.textContent === message) {
+        if ((child.textContent || '').trim() === cleanMsg) {
             return;
         }
     }
@@ -6025,9 +5994,12 @@ function showToast(message, type = 'info') {
     }
 
     const toast = document.createElement('div');
-    const bg = (type === 'alert' || type === 'error') ? 'rgba(239,68,68,0.92)' : type === 'success' ? 'rgba(16,185,129,0.92)' : 'rgba(30,30,46,0.95)';
+    const isError = type === 'alert' || type === 'error';
+    const isWarning = type === 'warn' || type === 'warning';
+    const isSuccess = type === 'success';
+    const bg = isError ? 'rgba(239,68,68,0.92)' : isWarning ? 'rgba(245,158,11,0.95)' : isSuccess ? 'rgba(16,185,129,0.92)' : 'rgba(30,30,46,0.95)';
     toast.style.cssText = `background:${bg};color:#fff;padding:0.55rem 0.9rem;border-radius:8px;font-size:0.78rem;font-weight:600;max-width:280px;box-shadow:0 4px 16px rgba(0,0,0,0.35);pointer-events:auto;animation:fadeInUp 0.2s ease;`;
-    toast.textContent = message;
+    toast.textContent = cleanMsg;
     container.appendChild(toast);
 
     setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 350); }, 4000);
