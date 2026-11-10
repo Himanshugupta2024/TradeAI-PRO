@@ -137,6 +137,13 @@ class PaperTrade:
     estimated_costs: float = 0.0
     cost_profile: str = ""
     net_pnl: float = 0.0
+    # ── MFE / MAE Extreme Tracking ────────────────────────────────────────
+    mfe_price: float = 0.0
+    mae_price: float = 0.0
+    mfe_pct: float = 0.0
+    mae_pct: float = 0.0
+    mfe_r: float = 0.0
+    mae_r: float = 0.0
 
 
 class PaperTradingEngine:
@@ -526,6 +533,8 @@ class PaperTradingEngine:
             pnl_native=0.0,
             realized_pnl_native=0.0,
             fx_status="ACTIVE",
+            mfe_price=entry,
+            mae_price=entry,
         )
 
         self.trades.append(trade)
@@ -626,6 +635,14 @@ class PaperTradingEngine:
                     low,
                 )
                 continue
+
+            # Track running MFE / MAE extremes
+            if trade.direction in ("LONG", "BUY"):
+                trade.mfe_price = high if trade.mfe_price == 0.0 else max(trade.mfe_price, high)
+                trade.mae_price = low if trade.mae_price == 0.0 else min(trade.mae_price, low)
+            else:
+                trade.mfe_price = low if trade.mfe_price == 0.0 else min(trade.mfe_price, low)
+                trade.mae_price = high if trade.mae_price == 0.0 else max(trade.mae_price, high)
 
             # Update trailing SL if ATR is available
             atr = atr_values.get(trade.symbol, 0)
@@ -748,6 +765,13 @@ class PaperTradingEngine:
                     continue
 
                 bar_open = bar.get("open")
+                if is_long:
+                    trade.mfe_price = high if trade.mfe_price == 0.0 else max(trade.mfe_price, high)
+                    trade.mae_price = low if trade.mae_price == 0.0 else min(trade.mae_price, low)
+                elif is_short:
+                    trade.mfe_price = low if trade.mfe_price == 0.0 else min(trade.mfe_price, low)
+                    trade.mae_price = high if trade.mae_price == 0.0 else max(trade.mae_price, high)
+
                 hit_stop = (is_long and low <= trade.stop_loss) or (
                     is_short and high >= trade.stop_loss
                 )
@@ -1409,6 +1433,33 @@ class PaperTradingEngine:
             trade.cost_profile = "UNAVAILABLE"
             trade.net_pnl = float(trade.total_pnl)
 
+        # Compute MFE / MAE metrics using initial risk per unit (before breakeven/trailing stops)
+        init_sl = float(getattr(trade, "stop_raw", 0.0) or 0.0)
+        if init_sl > 0 and abs(float(trade.entry_price) - init_sl) > 1e-6:
+            risk_per_unit = abs(float(trade.entry_price) - init_sl)
+        elif abs(float(trade.entry_price) - float(trade.stop_loss)) > 1e-6:
+            risk_per_unit = abs(float(trade.entry_price) - float(trade.stop_loss))
+        else:
+            risk_per_unit = max(float(trade.entry_price) * 0.01, 1.0)
+
+        if trade.direction in ("LONG", "BUY"):
+            mfe_p = max(float(trade.mfe_price or trade.entry_price), float(exit_price))
+            mae_p = min(float(trade.mae_price or trade.entry_price), float(exit_price))
+            mfe_delta = max(0.0, mfe_p - float(trade.entry_price))
+            mae_delta = max(0.0, float(trade.entry_price) - mae_p)
+        else:
+            mfe_p = min(float(trade.mfe_price or trade.entry_price), float(exit_price))
+            mae_p = max(float(trade.mae_price or trade.entry_price), float(exit_price))
+            mfe_delta = max(0.0, float(trade.entry_price) - mfe_p)
+            mae_delta = max(0.0, mae_p - float(trade.entry_price))
+
+        trade.mfe_price = round(mfe_p, 4)
+        trade.mae_price = round(mae_p, 4)
+        trade.mfe_pct = round((mfe_delta / max(float(trade.entry_price), 1e-9)) * 100, 3)
+        trade.mae_pct = round((mae_delta / max(float(trade.entry_price), 1e-9)) * 100, 3)
+        trade.mfe_r = round(mfe_delta / risk_per_unit, 3)
+        trade.mae_r = round(mae_delta / risk_per_unit, 3)
+
         # Capital & Daily PnL updated in base currency INR
         self.capital += remaining_leg_pnl_base
         if trade in self.open_trades:
@@ -1472,6 +1523,8 @@ class PaperTradingEngine:
                 pnl=trade.total_pnl,
                 quantity=getattr(trade, "initial_quantity", trade.quantity),
                 environment="PAPER_FORWARD",
+                mfe_r=getattr(trade, "mfe_r", 0.0),
+                mae_r=getattr(trade, "mae_r", 0.0),
             )
         except Exception as _fb_err:
             log.debug("Feedback logger skipped: %s", _fb_err)

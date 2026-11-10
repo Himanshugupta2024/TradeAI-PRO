@@ -57,6 +57,9 @@ class SignalOutcome:
     data_quality:   float          # DataQualityReport.quality_pct (0-100)
     outcome:        int   = _PENDING   # 1/-1/0/-2
     false_reason:   str   = "UNKNOWN"
+    mfe_r:          float = 0.0
+    mae_r:          float = 0.0
+    realized_r:     float = 0.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -81,11 +84,13 @@ class TradeJournal:
     def _load(self) -> None:
         path = os.path.abspath(_JOURNAL_FILE)
         loaded = False
+        from dataclasses import fields as _dc_fields
+        _valid_so_fields = {f.name for f in _dc_fields(SignalOutcome)}
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     raw = json.load(f)
-                self._records = [SignalOutcome(**r) for r in raw]
+                self._records = [SignalOutcome(**{k: v for k, v in r.items() if k in _valid_so_fields}) for r in raw]
                 logger.info("Trade journal loaded: %d records from %s", len(self._records), path)
                 loaded = True
             except Exception as exc:
@@ -97,7 +102,7 @@ class TradeJournal:
                 from db.runtime_state import get_runtime_state
                 raw_snap = get_runtime_state("trade_journal:snapshot")
                 if raw_snap and isinstance(raw_snap, list):
-                    self._records = [SignalOutcome(**r) for r in raw_snap]
+                    self._records = [SignalOutcome(**{k: v for k, v in r.items() if k in _valid_so_fields}) for r in raw_snap]
                     logger.info("Trade journal loaded: %d records from runtime_state snapshot", len(self._records))
                     loaded = True
             except Exception as exc:
@@ -229,6 +234,9 @@ class TradeJournal:
         timestamp: str,
         outcome: int,
         false_reason: str = "UNKNOWN",
+        mfe_r: float = 0.0,
+        mae_r: float = 0.0,
+        realized_r: float = 0.0,
     ) -> bool:
         """
         Update the outcome of a previously recorded signal.
@@ -239,9 +247,55 @@ class TradeJournal:
             if rec.symbol == symbol and rec.timestamp == timestamp and rec.outcome == _PENDING:
                 rec.outcome      = outcome
                 rec.false_reason = false_reason if outcome != 1 else ""
+                rec.mfe_r        = float(mfe_r)
+                rec.mae_r        = float(mae_r)
+                rec.realized_r   = float(realized_r)
                 self._save()
                 return True
         return False
+
+    def get_mfe_mae_diagnostics(self) -> dict:
+        """
+        Compute empirical MFE/MAE distribution metrics for resolved trades:
+        - median_mfe_r: Median favorable excursion reached
+        - median_mae_r: Median adverse excursion experienced
+        - tp_tuning_ratio: median_mfe_r / realized_r
+        - sl_buffer_ratio: median_mae_r on winning trades
+        """
+        self._ensure_loaded()
+        resolved = [
+            r for r in self._records
+            if r.outcome in (1, -1, 0) and (r.mfe_r > 0 or r.mae_r > 0 or r.realized_r != 0.0)
+        ]
+        if not resolved:
+            return {
+                "sample_size": 0,
+                "median_mfe_r": 0.0,
+                "median_mae_r": 0.0,
+                "win_median_mae_r": 0.0,
+                "tp_tuning_advice": "INSUFFICIENT_DATA",
+                "sl_buffer_advice": "INSUFFICIENT_DATA",
+            }
+        import statistics
+        mfe_vals = [r.mfe_r for r in resolved]
+        mae_vals = [r.mae_r for r in resolved]
+        med_mfe = statistics.median(mfe_vals) if mfe_vals else 0.0
+        med_mae = statistics.median(mae_vals) if mae_vals else 0.0
+
+        wins = [r for r in resolved if r.outcome == 1]
+        win_mae = statistics.median([r.mae_r for r in wins]) if wins else med_mae
+
+        tp_advice = "EXPAND_TP" if med_mfe > 2.0 else ("TIGHTEN_TP" if med_mfe < 1.0 else "OPTIMAL")
+        sl_advice = "TIGHTEN_SL" if win_mae < 0.35 else "ADEQUATE"
+
+        return {
+            "sample_size": len(resolved),
+            "median_mfe_r": round(float(med_mfe), 2),
+            "median_mae_r": round(float(med_mae), 2),
+            "win_median_mae_r": round(float(win_mae), 2),
+            "tp_tuning_advice": tp_advice,
+            "sl_buffer_advice": sl_advice,
+        }
 
     def resolve_pending_outcomes(self, df: pd.DataFrame, symbol: str) -> int:
         """

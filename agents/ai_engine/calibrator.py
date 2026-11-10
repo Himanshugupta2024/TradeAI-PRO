@@ -145,3 +145,72 @@ def get_calibrator() -> ProbabilityCalibrator:
         _CALIBRATOR = ProbabilityCalibrator()
     return _CALIBRATOR
 
+
+def check_live_calibration_drift(
+    closed_trades: list[dict[str, Any]],
+    threshold_ece: float = 0.10,
+    min_sample_size: int = 20,
+) -> dict[str, Any]:
+    """
+    Check for live intra-week probability calibration drift on closed trades.
+    Compares predicted win probability against empirical binary outcomes.
+    """
+    valid = []
+    for t in closed_trades:
+        conf = float(t.get("confidence", 0.0) or 0.0)
+        prob = conf / 100.0 if conf > 1.0 else conf
+        pnl = float(t.get("pnl", t.get("total_pnl", 0.0)) or 0.0)
+        status = str(t.get("status", t.get("exit_reason", ""))).upper()
+        if "TP" in status or pnl > 0:
+            outcome = 1
+        elif "SL" in status or "TRAIL" in status or pnl < 0:
+            outcome = 0
+        else:
+            continue
+
+        if 0.0 < prob <= 1.0:
+            valid.append((prob, outcome))
+
+    if len(valid) < min_sample_size:
+        return {
+            "sample_size": len(valid),
+            "status": "INSUFFICIENT_SAMPLE",
+            "drift_detected": False,
+            "ece": 0.0,
+            "recommendation": f"Awaiting minimum {min_sample_size} closed trades (current: {len(valid)})",
+        }
+
+    probs = np.array([v[0] for v in valid], dtype=float)
+    trues = np.array([v[1] for v in valid], dtype=float)
+
+    mean_pred = float(np.mean(probs))
+    realized_wr = float(np.mean(trues))
+    brier = float(np.mean((probs - trues) ** 2))
+
+    bins = np.linspace(0.0, 1.0, 6)
+    bin_indices = np.digitize(probs, bins) - 1
+    ece = 0.0
+    n = len(probs)
+    for b in range(5):
+        mask = bin_indices == b
+        if np.any(mask):
+            bin_p = float(np.mean(probs[mask]))
+            bin_t = float(np.mean(trues[mask]))
+            ece += (np.sum(mask) / n) * abs(bin_p - bin_t)
+
+    drift_detected = bool(ece > threshold_ece or abs(mean_pred - realized_wr) > threshold_ece)
+    if drift_detected:
+        rec = "TRIGGER_RETRAIN: Intra-week probability drift detected (>10%). Platt calibrator needs re-fitting."
+    else:
+        rec = "CALIBRATION_HEALTHY: Probabilities track realized win rates within guardrail."
+
+    return {
+        "sample_size": len(valid),
+        "mean_predicted_prob": round(mean_pred, 3),
+        "realized_win_rate": round(realized_wr, 3),
+        "brier_score": round(brier, 4),
+        "ece": round(ece, 4),
+        "drift_detected": drift_detected,
+        "recommendation": rec,
+    }
+

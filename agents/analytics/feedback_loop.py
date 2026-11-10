@@ -129,6 +129,8 @@ class TradeOutcomeLogger:
         pnl: Optional[float] = None,
         quantity: Optional[float] = None,
         environment: str = "PAPER_FORWARD",
+        mfe_r: Optional[float] = None,
+        mae_r: Optional[float] = None,
     ) -> Optional[int]:
         """
         Log one closed trade outcome to PostgreSQL trade_outcomes_pg table.

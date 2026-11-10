@@ -106,6 +106,84 @@ class AutonomousExecutionDaemon:
             log.debug("Autonomous feed runtime state persist failed: %s", exc)
         return entry
 
+    def _get_regime_thresholds(self, regime: str) -> tuple[float, float]:
+        """
+        Dynamically scale quality score and AI confidence thresholds based on regime:
+        - HIGH_VOLATILITY / CHOPPY / RANGING: Require higher quality score (60.0) and confidence (50.0%)
+        - TRENDING / NORMAL: Base thresholds
+        """
+        reg = str(regime or "").upper()
+        if reg in ("HIGH_VOLATILITY", "CHOPPY", "RANGING", "VOLATILE"):
+            return max(self.min_qs_score, 60.0), max(self.min_ai_confidence, 50.0)
+        return self.min_qs_score, self.min_ai_confidence
+
+    def _is_feed_stale(
+        self,
+        symbol: str,
+        timestamp_val: Any,
+        max_nse_age_seconds: int = 600,     # 10 minutes
+        max_crypto_age_seconds: int = 300,  # 5 minutes
+    ) -> tuple[bool, str]:
+        """
+        Check whether the price feed timestamp is excessively stale for live autonomous execution.
+        """
+        if not timestamp_val:
+            return False, "NO_TIMESTAMP"
+        try:
+            ts_str = str(timestamp_val).strip()
+            if ts_str.isdigit():
+                bar_dt = datetime.fromtimestamp(float(ts_str), tz=timezone.utc)
+            else:
+                bar_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            if bar_dt.tzinfo is None:
+                bar_dt = bar_dt.replace(tzinfo=_IST if "/" not in symbol else timezone.utc)
+        except Exception:
+            return False, "UNPARSEABLE_TIMESTAMP"
+
+        now_utc = datetime.now(timezone.utc)
+        bar_utc = bar_dt.astimezone(timezone.utc)
+        age_seconds = max(0.0, (now_utc - bar_utc).total_seconds())
+
+        if "/" in symbol:
+            if age_seconds > max_crypto_age_seconds:
+                return True, f"Crypto feed stale ({int(age_seconds)}s > {max_crypto_age_seconds}s)"
+            return False, "FRESH"
+
+        # NSE Equities: only stale during active trading window
+        try:
+            from agents.execution.market_control import is_nse_activity_window_active
+            is_active, _ = is_nse_activity_window_active()
+        except Exception:
+            is_active = True
+
+        if is_active and age_seconds > max_nse_age_seconds:
+            return True, f"NSE feed stale ({int(age_seconds)}s > {max_nse_age_seconds}s)"
+        return False, "FRESH"
+
+    def _record_gate_block(
+        self,
+        symbol: str,
+        direction: str,
+        entry: float,
+        sl: float,
+        tp: float,
+        gate_reason: str,
+        regime: str = "UNKNOWN",
+    ) -> None:
+        try:
+            from agents.analytics.gate_ablation import get_ablation_tracker
+            get_ablation_tracker().record_blocked_candidate(
+                symbol=symbol,
+                direction=direction,
+                entry=entry,
+                sl=sl,
+                tp=tp,
+                gate_reason=gate_reason,
+                regime=regime,
+            )
+        except Exception as exc:
+            log.debug("Gate ablation recording skipped for %s: %s", symbol, exc)
+
     def evaluate_signals(
         self,
         signals: list[dict[str, Any]],
@@ -116,13 +194,22 @@ class AutonomousExecutionDaemon:
         Evaluate candidate signals and auto-execute top qualified setups.
         Enforces:
           - Max 8 concurrent positions across equity & crypto
-          - QS Score >= 50.0
-          - AI Model Confidence >= 40.0%
+          - QS Score >= 50.0 (dynamically scaled by regime)
+          - AI Model Confidence >= 40.0% (dynamically scaled by regime)
           - Cooldown & correlation checks
+          - Data staleness kill-switch
+          - Shadow gate ablation recording
         """
         self._last_scan_time = _now_ist().isoformat()
         if not self.enabled:
             return []
+
+        # Resolve any pending shadow trades from earlier blocked candidates
+        try:
+            from agents.analytics.gate_ablation import get_ablation_tracker
+            get_ablation_tracker().resolve_shadow_trades(current_prices)
+        except Exception as _ab_err:
+            log.debug("Shadow trade resolution skipped: %s", _ab_err)
 
         open_trades = engine.open_trades
         remaining_slots = self.max_positions - len(open_trades)
@@ -149,39 +236,59 @@ class AutonomousExecutionDaemon:
             if direction not in ("LONG", "SHORT", "BUY", "SELL"):
                 continue
 
-            # Standardize direction
             norm_dir = "LONG" if direction in ("LONG", "BUY") else "SHORT"
+
+            price_info = current_prices.get(symbol) or {}
+            entry = float(sig.get("entry", sig.get("entry_price", price_info.get("close", 0.0))))
+            sl = float(sig.get("stop_loss", sig.get("sl", 0.0)))
+            tp = float(sig.get("target", sig.get("tp", 0.0)))
+
+            cand_regime = str(sig.get("regime", "UNKNOWN"))
+
+            # Data staleness check
+            cand_ts = price_info.get("timestamp") or price_info.get("ts") or sig.get("timestamp")
+            if cand_ts:
+                is_stale, stale_msg = self._is_feed_stale(symbol, cand_ts)
+                if is_stale:
+                    self.record_decision(
+                        action="SKIP_STALE_DATA",
+                        symbol=symbol,
+                        direction=norm_dir,
+                        price=entry if math.isfinite(entry) else 0.0,
+                        reason=stale_msg,
+                    )
+                    continue
+
+            # Ensure valid geometry before gate checks
+            if not math.isfinite(entry) or entry <= 0:
+                continue
+            if norm_dir == "LONG" and not (sl < entry < tp):
+                continue
+            if norm_dir == "SHORT" and not (tp < entry < sl):
+                continue
 
             qs_score = float(sig.get("quant_score", sig.get("quality_score", sig.get("qs_score", sig.get("score", 0.0)))))
             ai_conf = float(sig.get("confidence", sig.get("ai_confidence", 0.0)))
 
+            # Regime-conditional thresholds
+            eff_min_qs, eff_min_conf = self._get_regime_thresholds(cand_regime)
+
             # Threshold validation
-            if qs_score > 0 and qs_score < self.min_qs_score:
+            if qs_score > 0 and qs_score < eff_min_qs:
+                self._record_gate_block(symbol, norm_dir, entry, sl, tp, "GATE_LOW_QS_SCORE", cand_regime)
                 continue
-            if ai_conf < self.min_ai_confidence:
+            if ai_conf < eff_min_conf:
+                self._record_gate_block(symbol, norm_dir, entry, sl, tp, "GATE_LOW_AI_CONF", cand_regime)
                 continue
 
             # Cooldown check
             if engine._cooldowns.get(norm_sym, 0) > 0:
+                self._record_gate_block(symbol, norm_dir, entry, sl, tp, "GATE_COOLDOWN", cand_regime)
                 continue
 
             # Correlation check
             if engine._has_correlated_open_position(symbol):
-                continue
-
-            # Check prices
-            price_info = current_prices.get(symbol) or {}
-            entry = float(sig.get("entry", sig.get("entry_price", price_info.get("close", 0.0))))
-            if not math.isfinite(entry) or entry <= 0:
-                continue
-
-            sl = float(sig.get("stop_loss", sig.get("sl", 0.0)))
-            tp = float(sig.get("target", sig.get("tp", 0.0)))
-
-            # Ensure valid geometry
-            if norm_dir == "LONG" and not (sl < entry < tp):
-                continue
-            if norm_dir == "SHORT" and not (tp < entry < sl):
+                self._record_gate_block(symbol, norm_dir, entry, sl, tp, "GATE_CORRELATION", cand_regime)
                 continue
 
             candidates.append({
@@ -194,7 +301,7 @@ class AutonomousExecutionDaemon:
                 "ai_confidence": ai_conf,
                 "atr": float(sig.get("atr", price_info.get("atr", 0.0))),
                 "strategy": sig.get("strategy", sig.get("signal_type", "AUTONOMOUS")),
-                "regime": sig.get("regime", "UNKNOWN"),
+                "regime": cand_regime,
                 "rsi": sig.get("rsi_at_entry", sig.get("rsi", 50.0)),
                 "volume_above_avg": bool(sig.get("volume_above_avg", False)),
             })
@@ -252,6 +359,17 @@ class AutonomousExecutionDaemon:
                         )
                     except Exception as tg_err:
                         log.debug("Telegram alert skipped for %s: %s", cand["symbol"], tg_err)
+                else:
+                    rej_reason = getattr(engine, "last_rejection_reason", "RISK_REJECTED") or "RISK_REJECTED"
+                    self._record_gate_block(
+                        cand["symbol"],
+                        cand["direction"],
+                        cand["entry"],
+                        cand["sl"],
+                        cand["tp"],
+                        f"ENGINE_{rej_reason}",
+                        cand["regime"],
+                    )
 
             except Exception as exc:
                 log.error("[Autonomous] Execution failed for %s: %s", cand["symbol"], exc)
