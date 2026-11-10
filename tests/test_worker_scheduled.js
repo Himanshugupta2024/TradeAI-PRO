@@ -134,7 +134,7 @@ async function runTests() {
     assert.strictEqual(mockCache.putCalls.length, 1);
     assert.strictEqual(mockCache.putCalls[0].key, req3.url);
     assert.strictEqual(mockCache.putCalls[0].status, 200);
-    assert.strictEqual(mockCache.putCalls[0].headers.get('Cache-Control'), 'public, max-age=45, s-maxage=45');
+    assert.strictEqual(mockCache.putCalls[0].headers.get('Cache-Control'), 'public, max-age=600, s-maxage=600');
     assert.ok(mockCache.putCalls[0].headers.get('X-SWR-Cached-At'), 'Must include X-SWR-Cached-At');
 
     // Subsequent request within fresh TTL hits edge cache
@@ -180,13 +180,13 @@ async function runTests() {
 
     // Verify Section 6A 403 does not return stale cache (admin locks honored immediately)
     mockCache.reset();
-    const expiredStaleAt = String(Date.now() - 50000); // 50s old (exceeds physical fresh/SWR window)
+    const expiredStaleAt = String(Date.now() - 700000); // 700s old (exceeds physical fresh/SWR window of 600s)
     const seededStaleForex = new Response(JSON.stringify({ rates: { 'USD/INR': 83.5 } }), {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
         'X-SWR-Cached-At': expiredStaleAt,
-        'Cache-Control': 'public, max-age=45, s-maxage=45',
+        'Cache-Control': 'public, max-age=600, s-maxage=600',
       },
     });
     await mockCache.put('https://tradeai-pro.tradingpro.workers.dev/api/forex/rates', seededStaleForex);

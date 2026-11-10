@@ -213,21 +213,37 @@ def _fetch_autonomous_status_sync():
     from agents.execution.autonomous_daemon import get_autonomous_daemon
     from agents.execution.distributed_lock import DistributedLockManager
     from agents.execution.session_guard import is_nse_market_open, get_current_ist_time
-    from db.runtime_state import get_runtime_state
 
     daemon = get_autonomous_daemon()
     engine = svc._get_engine()
     daemon_status = daemon.get_status(engine)
 
-    if not daemon_status.get("last_eod_review"):
-        review_marker = get_runtime_state("eod_review:last_run:v1", {}) or {}
-        if isinstance(review_marker, dict) and review_marker.get("last_review_date"):
-            daemon_status["last_eod_review"] = review_marker["last_review_date"]
+    worker_status = {}
+    lock_info = None
 
-    worker_status = get_runtime_state("autonomous_worker:latest_status", {}) or {}
+    try:
+        from db.connection import SessionLocal
+        from db.runtime_state import get_runtime_states
 
-    lock_mgr = DistributedLockManager()
-    lock_info = lock_mgr.get_lock_info("autonomous_paper_worker")
+        session = SessionLocal()
+        try:
+            states = get_runtime_states(
+                ["eod_review:last_run:v1", "autonomous_worker:latest_status"],
+                session=session,
+            )
+
+            review_marker = states.get("eod_review:last_run:v1", {})
+            if not daemon_status.get("last_eod_review") and isinstance(review_marker, dict):
+                daemon_status["last_eod_review"] = review_marker.get("last_review_date")
+
+            worker_status = states.get("autonomous_worker:latest_status", {}) or {}
+
+            lock_mgr = DistributedLockManager()
+            lock_info = lock_mgr.get_lock_info("autonomous_paper_worker", session=session)
+        finally:
+            session.close()
+    except Exception as exc:
+        log.warning("[Autonomous] Database error in _fetch_autonomous_status_sync: %s", exc)
 
     now_ist = get_current_ist_time()
     is_nse_open, nse_reason = is_nse_market_open(now_ist)

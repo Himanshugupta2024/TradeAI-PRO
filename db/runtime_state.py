@@ -8,8 +8,9 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional, Sequence
 
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm.exc import StaleDataError, ObjectDeletedError
 
@@ -64,6 +65,36 @@ def get_runtime_state(key: str, default: Any = None) -> Any:
         raise DatabaseStateError(f"Database error while reading runtime state for key '{key}': {exc}") from exc
     finally:
         session.close()
+
+
+def get_runtime_states(keys: Sequence[str], session: Optional[Any] = None) -> dict[str, Any]:
+    """
+    Read multiple JSON-decoded runtime state objects by key in a single round-trip query.
+    If session is provided, reuses it without closing.
+    """
+    if not keys:
+        return {}
+    _ensure_schema()
+    close_session = False
+    if session is None:
+        session = SessionLocal()
+        close_session = True
+    try:
+        stmt = select(RuntimeState).where(RuntimeState.state_key.in_(list(keys)))
+        rows = session.execute(stmt).scalars().all()
+        result = {}
+        for row in rows:
+            try:
+                result[row.state_key] = json.loads(row.state_json)
+            except json.JSONDecodeError as jde:
+                logger.error("Corrupt JSON in runtime state for key '%s': %s", row.state_key, jde)
+        return result
+    except (SQLAlchemyError, Exception) as exc:
+        logger.exception("Database error while reading runtime states for keys %s: %s", keys, exc)
+        raise DatabaseStateError(f"Database error while reading runtime states: {exc}") from exc
+    finally:
+        if close_session:
+            session.close()
 
 
 def set_runtime_state(key: str, value: Any) -> None:

@@ -2674,20 +2674,6 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
             }
         }
 
-        if (res && (!res.ok || res.status === 429 || res.status === 403 || res.status === 502 || res.status === 503)) {
-            // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
-            // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
-            const altUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
-                ? `/api/autonomous/status`
-                : `${API}/api/autonomous/status`;
-            try {
-                const altRes = await fetchWithTimeout(altUrl, {
-                    signal: _autonomousStatusController.signal,
-                    headers: reqHeaders,
-                }, 10000, 0);
-                if (altRes && altRes.ok) res = altRes;
-            } catch (_) {}
-        }
 
         if (currentGen !== _autonomousStatusGen) return; // Stale response discarded
 
@@ -2820,20 +2806,6 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
             }
         }
 
-        if (res && (!res.ok || res.status === 429 || res.status === 403 || res.status === 502 || res.status === 503)) {
-            // Same-origin/Worker deployments: retain relative URL to leverage Worker edge proxy and avoid direct 429 challenges.
-            // Failure mode covered by absolute fallback: static Pages/Vercel hosting where same-origin /api does not exist.
-            const altUrl = (targetUrl.startsWith('/') || !targetUrl.startsWith('http'))
-                ? `/api/autonomous/feed?limit=25`
-                : `${API}/api/autonomous/feed?limit=25`;
-            try {
-                const altRes = await fetchWithTimeout(altUrl, {
-                    signal: _autonomousFeedController.signal,
-                    headers: reqHeaders,
-                }, 10000, 0);
-                if (altRes && altRes.ok) res = altRes;
-            } catch (_) {}
-        }
 
         if (currentGen !== _autonomousFeedGen) return;
 
@@ -3085,7 +3057,16 @@ async function runAutonomousCycleNow() {
     }
 }
 
+let _toggleAutonomousInFlight = false;
+let _toggleAutonomousCooldownUntil = 0;
+
 async function toggleAutonomousMode() {
+    const now = Date.now();
+    if (_toggleAutonomousInFlight || now < _toggleAutonomousCooldownUntil) {
+        return;
+    }
+    _toggleAutonomousInFlight = true;
+
     const btn = document.getElementById('toggleAutonomousBtn');
     const origText = btn ? btn.textContent : '';
     if (btn) {
@@ -3097,7 +3078,7 @@ async function toggleAutonomousMode() {
         let res = await fetchWithTimeout(`${API}/api/autonomous/toggle`, {
             method: 'POST',
             headers: _getAuthHeaders({ 'Content-Type': 'application/json' }),
-        }, 8000);
+        }, 8000, 0);
 
         if (res.status === 401 || res.status === 403) {
             const authed = _handleAuthChallenge(res.status);
@@ -3106,7 +3087,7 @@ async function toggleAutonomousMode() {
                 res = await fetchWithTimeout(`${API}/api/autonomous/toggle`, {
                     method: 'POST',
                     headers: _getAuthHeaders({ 'Content-Type': 'application/json' }),
-                }, 8000);
+                }, 8000, 0);
             } else {
                 if (typeof showToast === 'function') {
                     showToast('Admin authorization required to toggle autonomous execution.', 'warning');
@@ -3134,11 +3115,18 @@ async function toggleAutonomousMode() {
             showToast('Failed to toggle autonomous mode: ' + (e.message || e), 'error');
         }
     } finally {
+        _toggleAutonomousInFlight = false;
+        _toggleAutonomousCooldownUntil = Date.now() + 2000;
         if (btn) {
-            btn.disabled = false;
             if (btn.textContent === 'Updating...') {
                 btn.textContent = origText;
             }
+            // Keep button disabled during cooldown to provide visual and physical protection
+            setTimeout(() => {
+                if (!_toggleAutonomousInFlight && Date.now() >= _toggleAutonomousCooldownUntil && btn) {
+                    btn.disabled = false;
+                }
+            }, 2000);
         }
     }
 }
@@ -6015,61 +6003,34 @@ function requestNotificationPermission() {
 
 
 function showToast(message, type = 'info') {
-
-
-
     let container = document.getElementById('p4ToastContainer');
-
-
-
     if (!container) {
-
-
-
         container = document.createElement('div');
-
-
-
         container.id = 'p4ToastContainer';
-
-
-
         container.style.cssText = 'position:fixed;bottom:80px;right:1rem;z-index:9999;display:flex;flex-direction:column;gap:0.4rem;pointer-events:none;';
-
-
-
         document.body.appendChild(container);
-
-
-
     }
 
+    // Deduplicate: ignore if identical message is already active in toast container
+    const existing = Array.from(container.children);
+    for (const child of existing) {
+        if (child.textContent === message) {
+            return;
+        }
+    }
 
+    // Cap active toasts to maximum 2 items simultaneously
+    while (container.children.length >= 2) {
+        container.firstElementChild.remove();
+    }
 
     const toast = document.createElement('div');
-
-
-
-    const bg = type === 'alert' ? 'rgba(239,68,68,0.92)' : type === 'success' ? 'rgba(16,185,129,0.92)' : 'rgba(30,30,46,0.95)';
-
-
-
+    const bg = (type === 'alert' || type === 'error') ? 'rgba(239,68,68,0.92)' : type === 'success' ? 'rgba(16,185,129,0.92)' : 'rgba(30,30,46,0.95)';
     toast.style.cssText = `background:${bg};color:#fff;padding:0.55rem 0.9rem;border-radius:8px;font-size:0.78rem;font-weight:600;max-width:280px;box-shadow:0 4px 16px rgba(0,0,0,0.35);pointer-events:auto;animation:fadeInUp 0.2s ease;`;
-
-
-
     toast.textContent = message;
-
-
-
     container.appendChild(toast);
 
-
-
     setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 350); }, 4000);
-
-
-
 }
 
 
@@ -23400,82 +23361,14 @@ async function refreshMoodStrip(force = false) {
 
 
 
-    // Retry on cold Render / LB 502–503 (service waking or briefly unavailable).
-
-
-
-    const delays = [0, 2500, 5000];
-
-
-
-    for (let i = 0; i < delays.length; i++) {
-
-
-
-        if (delays[i] > 0) {
-
-
-
-            await new Promise((r) => setTimeout(r, delays[i]));
-
-
-
+    try {
+        const res = await fetchWithTimeout(`${API}/api/context/market-mood`, {}, 15000, 0);
+        if (res && res.ok) {
+            const data = await parseJsonResponse(res);
+            updateMoodStripUI(data);
         }
-
-
-
-        try {
-
-
-
-            const res = await fetchWithTimeout(`${API}/api/context/market-mood`, {}, 20000);
-
-
-
-            if (res.ok) {
-
-
-
-                const data = await parseJsonResponse(res);
-
-
-
-                updateMoodStripUI(data);
-
-
-
-                break;
-
-
-
-            }
-
-
-
-            if (res.status !== 503 && res.status !== 502 && res.status !== 504) break;
-
-
-
-        } catch (e) {
-
-
-
-            if (i === delays.length - 1) {
-
-
-
-                /* mood strip is non-critical */
-
-
-
-            }
-
-
-
-        }
-
-
-
+    } catch (e) {
+        /* mood strip is non-critical */
     }
 
 

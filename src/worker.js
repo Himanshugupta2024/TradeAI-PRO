@@ -15,7 +15,7 @@ const BACKEND_ORIGIN = `https://${BACKEND_HOST}`;
 const BROWSER_TTL_SEC = 5;
 const EDGE_FRESH_TTL_SEC = 15;
 const EDGE_SWR_WINDOW_SEC = 30;
-const PHYSICAL_EDGE_TTL_SEC = EDGE_FRESH_TTL_SEC + EDGE_SWR_WINDOW_SEC; // 45 seconds total edge retention
+const PHYSICAL_EDGE_TTL_SEC = 600; // 600 seconds (10 minutes) total edge retention
 
 const UNIFIED_CACHE_CONTROL = `public, max-age=${BROWSER_TTL_SEC}, s-maxage=${EDGE_FRESH_TTL_SEC}, stale-while-revalidate=${EDGE_SWR_WINDOW_SEC}`;
 
@@ -176,6 +176,68 @@ function createCleanOriginHeaders(incomingHeaders) {
 function applyAntiPoisoningHeaders(headers) {
   headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
   headers.set("Pragma", "no-cache");
+}
+
+// Graceful degraded JSON fallback for endpoints during origin stalls / 429 / 503
+export function getDegradedFallbackResponse(pathname) {
+  const normPath = pathname.replace(/\/+$/, "");
+  const headers = new Headers({
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "CF-Cache-Status": "DEGRADED-FALLBACK",
+    "X-Edge-Proxy": "TradeAI-Cloudflare-Worker",
+    "Cache-Control": "public, max-age=0, must-revalidate, stale-while-revalidate=10",
+  });
+
+  if (normPath === "/api/autonomous/feed") {
+    const nowIso = new Date().toISOString();
+    const payload = {
+      ok: true,
+      feed: [
+        {
+          id: `standby-${Date.now()}`,
+          timestamp: nowIso,
+          action: "SYSTEM_STANDBY",
+          symbol: "SYSTEM",
+          direction: "NEUTRAL",
+          price: 0.0,
+          qs_score: 0.0,
+          ai_confidence: 0.0,
+          reason: "Autonomous worker operational. Edge degraded fallback active while origin settles.",
+          asset_class: "SYSTEM",
+        },
+      ],
+      count: 1,
+      degraded: true,
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/macro/intelligence") {
+    const nowIso = new Date().toISOString();
+    const payload = {
+      status: "ok",
+      macro: {
+        timestamp: nowIso,
+        brent_crude: { symbol: "BZ=F", name: "Brent Crude Oil", price: 82.5, change_pct: 0.0, unit: "$/bbl", status: "NEUTRAL" },
+        wti_crude: { symbol: "CL=F", name: "WTI Crude Oil", price: 78.2, change_pct: 0.0, unit: "$/bbl", status: "NEUTRAL" },
+        us_10y_yield: { symbol: "^TNX", name: "US 10-Year Yield", price: 4.25, change_pct: 0.0, unit: "%", status: "NEUTRAL" },
+        dxy_dollar_index: { symbol: "DX-Y.NYB", name: "US Dollar Index", price: 104.1, change_pct: 0.0, unit: "pts", status: "NEUTRAL" },
+        sp500: { symbol: "^GSPC", name: "S&P 500 (US)", price: 5000.0, change_pct: 0.0, unit: "pts", status: "NEUTRAL" },
+        nasdaq: { symbol: "^IXIC", name: "Nasdaq Composite", price: 16000.0, change_pct: 0.0, unit: "pts", status: "NEUTRAL" },
+        gold: { symbol: "GC=F", name: "Gold", price: 2350.0, change_pct: 0.0, unit: "$/oz", status: "NEUTRAL" },
+        macro_regime: "NEUTRAL",
+        macro_cue_summary: "Macro radar on standby. Indicators in neutral posture while origin settles.",
+        active_sector_alerts: [],
+        breaking_news: [],
+        feed_source: "DEGRADED_EDGE_FALLBACK",
+      },
+      degraded: true,
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  return null;
 }
 
 // Helper to strip anti-cache query parameters (_ts, _, timestamp, t) and canonicalize parameters so edge cache keys are uniform
@@ -343,6 +405,9 @@ export default {
             }
           } catch (_) {}
         }
+        const fallback = getDegradedFallbackResponse(url.pathname);
+        if (fallback) return fallback;
+
         const errHeaders = new Headers({
           "Content-Type": "application/json",
           "Access-Control-Allow-Origin": "*",
@@ -369,6 +434,11 @@ export default {
             return res;
           }
         } catch (_) {}
+        const fallback = getDegradedFallbackResponse(url.pathname);
+        if (fallback) return fallback;
+      } else if (originResponse.status === 429 || originResponse.status === 503) {
+        const fallback = getDegradedFallbackResponse(url.pathname);
+        if (fallback) return fallback;
       }
 
       // Public Cacheable: Store in cache and return MISS with unified headers

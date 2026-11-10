@@ -228,13 +228,13 @@ async function testEdgeWorker() {
     // -------------------------------------------------------------------------
     console.log('\n--- [EDGE PROXY] Test 1.4: Section 6A 403 Honor & Zero Masking ---');
     mockCache.reset();
-    // Pre-populate stale cache entry with 200 OK beyond the physical TTL window (> 45s)
+    // Pre-populate stale cache entry with 200 OK beyond the physical TTL window (> 600s)
     const staleRates = new Response(JSON.stringify({ rates: { 'USD/INR': 83.5 } }), {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'X-SWR-Cached-At': String(Date.now() - 50000), // 50s old (exceeds physical edge window)
-        'Cache-Control': 'public, max-age=45, s-maxage=45',
+        'X-SWR-Cached-At': String(Date.now() - 700000), // 700s old (exceeds physical edge window of 600s)
+        'Cache-Control': 'public, max-age=600, s-maxage=600',
       },
     });
     await mockCache.put('https://tradeai-pro.tradingpro.workers.dev/api/forex/rates', staleRates);

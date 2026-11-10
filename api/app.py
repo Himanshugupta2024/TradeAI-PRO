@@ -135,7 +135,7 @@ async def _keep_alive_task():
     """Periodically ping public URL or localhost fallback to prevent Render free-tier spin-down."""
 
     public_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://trading-api-n1wt.onrender.com"
-    url = f"{public_url.rstrip('/')}/api/health"
+    url = f"{public_url.rstrip('/')}/api/health/live"
 
 
 

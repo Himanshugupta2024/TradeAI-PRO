@@ -54,7 +54,7 @@ services:
       - key: BACKGROUND_REFRESH_ENABLED
         value: false
       - key: LIGHTWEIGHT_API_MODE
-        value: "false"
+        value: "true"
       - key: SCREENER_TASK_ENABLED
         value: false
       - key: MORNING_SCAN_TASK_ENABLED

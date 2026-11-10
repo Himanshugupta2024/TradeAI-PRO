@@ -194,9 +194,12 @@ class DistributedLockManager:
         finally:
             session.close()
 
-    def get_lock_info(self, job_name: str) -> Optional[dict[str, Any]]:
+    def get_lock_info(self, job_name: str, session: Optional[Any] = None) -> Optional[dict[str, Any]]:
         """Return raw inspection data for a job lock with active validity check."""
-        session = SessionLocal()
+        close_session = False
+        if session is None:
+            session = SessionLocal()
+            close_session = True
         try:
             lock = session.execute(
                 select(WorkerDistributedLock).where(WorkerDistributedLock.job_name == job_name)
@@ -225,7 +228,8 @@ class DistributedLockManager:
                 "heartbeat_at": lock.heartbeat_at.isoformat() if lock.heartbeat_at else None,
             }
         finally:
-            session.close()
+            if close_session:
+                session.close()
 
 
 class DistributedLock:
