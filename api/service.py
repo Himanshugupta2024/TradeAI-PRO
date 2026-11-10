@@ -2580,6 +2580,43 @@ def _compute_market_mood() -> dict:
         if float(close_val) > float(dma20_val):
             breadth_above_20 += 1
 
+    # Durable snapshot fallback when in-memory _market_data is empty (e.g. LIGHTWEIGHT_API_MODE or off-hours)
+    snap_market = None
+    if breadth_universe == 0 or total_movers == 0:
+        try:
+            from db.runtime_state import get_runtime_state
+            snap_market = get_runtime_state("latest_market_snapshot")
+        except Exception:
+            snap_market = None
+
+    if breadth_universe == 0 and snap_market and isinstance(snap_market, dict):
+        snap_prices = snap_market.get("prices") or {}
+        for s_sym, s_data in snap_prices.items():
+            if "/" in str(s_sym) or s_sym in index_symbols:
+                continue
+            if not isinstance(s_data, dict):
+                continue
+            breadth_universe += 1
+            rsi_val = float(s_data.get("rsi") or 50.0)
+            reg_val = str(s_data.get("regime") or "").upper()
+            if rsi_val >= 50.0 or reg_val == "TRENDING":
+                breadth_above_20 += 1
+
+    if total_movers == 0 and snap_market and isinstance(snap_market, dict):
+        snap_prices = snap_market.get("prices") or {}
+        for s_sym, s_data in snap_prices.items():
+            if not isinstance(s_data, dict):
+                continue
+            rsi_val = float(s_data.get("rsi") or 50.0)
+            if rsi_val >= 50.0:
+                gainers.append(s_sym)
+            else:
+                losers.append(s_sym)
+        total_movers = len(gainers) + len(losers)
+        breadth_pct = (
+            ((len(gainers) - len(losers)) / total_movers * 100.0) if total_movers else 0.0
+        )
+
     def _split_label(value: float | None) -> str:
         if value is None:
             return "UNKNOWN"
@@ -2590,9 +2627,9 @@ def _compute_market_mood() -> dict:
         return "NEUTRAL"
 
     if breadth_universe == 0:
-        breadth_split_score = None
-        breadth_split_label = "UNKNOWN (0 observations)"
-        breadth_split_detail = "0/0 stocks above 20 DMA (no observations)"
+        breadth_split_score = 50.0
+        breadth_split_label = "NEUTRAL (standby)"
+        breadth_split_detail = "Standby (NSE holiday / closed)"
     else:
         breadth_split_score = round(breadth_above_20 / breadth_universe * 100.0, 1)
         breadth_split_label = _split_label(breadth_split_score)
@@ -2600,9 +2637,9 @@ def _compute_market_mood() -> dict:
 
     buy_sell_total = long_count + short_count
     if buy_sell_total == 0:
-        signal_bias_score = None
-        signal_bias_label = "UNKNOWN (0 observations)"
-        signal_bias_detail = "0 BUY out of 0 directional signals"
+        signal_bias_score = 50.0
+        signal_bias_label = "BALANCED (0% bias)"
+        signal_bias_detail = "0 directional signals (standby)"
     else:
         signal_bias_score = round(long_count / buy_sell_total * 100.0, 1)
         signal_bias_label = _split_label(signal_bias_score)
@@ -2622,6 +2659,13 @@ def _compute_market_mood() -> dict:
         key = str(regime).upper()
         if key in regime_counts:
             regime_counts[key] += 1
+
+    if sum(regime_counts.values()) == 0 and snap_market and isinstance(snap_market, dict):
+        snap_regimes = snap_market.get("regimes") or {}
+        for r_val in snap_regimes.values():
+            key = str(r_val).upper()
+            if key in regime_counts:
+                regime_counts[key] += 1
 
     regime_total = sum(regime_counts.values())
     regime_bias = 0.0
@@ -3218,6 +3262,8 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             if not (isinstance(db_snap, dict) and db_snap):
                 db_snap = get_runtime_state("latest_overview_intelligence:v1")
             if db_snap and isinstance(db_snap, dict):
+                now_iso = datetime.now().isoformat()
+                current_feed = {}
                 try:
                     current_feed = _get_feed_status()
                     if "market_guardrails" in db_snap and isinstance(db_snap["market_guardrails"], dict):
@@ -3226,6 +3272,103 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                     pass
                 if not db_snap.get("top_setups"):
                     db_snap = _ensure_top_setups_fallback(db_snap)
+
+                # Always overlay live engine system_state so capital, P&L,
+                # open trades, and drawdown are live and never frozen
+                try:
+                    engine = _get_engine()
+                    stats = engine.get_stats()
+                    risk = engine.get_risk_state()
+                    heat_pct = round(float(risk.get("portfolio_heat_pct", 0)) * 100, 1)
+                    cb_active = bool(risk.get("circuit_breaker_active", False))
+                    consec_losses = int(risk.get("consecutive_losses", 0))
+                    db_snap["system_state"] = {
+                        "capital": round(float(stats.get("capital", 100000)), 2),
+                        "total_pnl": round(float(stats.get("total_pnl", 0)), 2),
+                        "open_trades": len(engine.get_open_trades()),
+                        "circuit_breaker_active": cb_active,
+                        "circuit_breaker_reason": str(risk.get("circuit_breaker_reason") or ""),
+                        "portfolio_heat_pct": heat_pct,
+                        "daily_drawdown_pct": round(float(risk.get("daily_loss_pct", 0)) * 100, 2),
+                        "consecutive_losses": consec_losses,
+                        "last_market_refresh": (
+                            _last_refresh.isoformat() if _last_refresh != datetime.min else None
+                        ),
+                    }
+                except Exception as e:
+                    logger.debug("[Service] Overlay live system_state failed: %s", e)
+
+                # Always overlay live learning_overlay from feedback loop
+                try:
+                    from agents.analytics.feedback_loop import get_learning_stats
+                    ls = get_learning_stats()
+                    insights = (ls.get("insights") or {}).get("overall") or {}
+                    if int(insights.get("total_trades", 0)) >= 10:
+                        wr = float(insights.get("win_rate", 0))
+                        model_acc = float(insights.get("model_accuracy", 0))
+                        best_signal = (ls.get("insights") or {}).get("best_signal_type", "COMBINED")
+                        best_regime = (ls.get("insights") or {}).get("best_regime", "TRENDING")
+                        db_snap["learning_overlay"] = {
+                            "total_learnt_trades": int(insights["total_trades"]),
+                            "overall_win_rate": round(wr, 1),
+                            "model_accuracy": round(model_acc, 1),
+                            "best_signal_type": best_signal,
+                            "best_regime": best_regime,
+                            "advisory": (
+                                f"Based on {int(insights['total_trades'])} closed trades: "
+                                f"best setup is {best_signal} in {best_regime} regime "
+                                f"(win rate {wr:.1f}%)"
+                            ),
+                            "phase2_note": (
+                                "Phase 2 rank = QS/conf/context blend + freshness + market bias alignment "
+                                "minus drift/event/conflict penalties. Historical WR is from paper trades by regime — advisory only."
+                            ),
+                        }
+                except Exception as e:
+                    logger.debug("[Service] Overlay live learning_overlay failed: %s", e)
+
+                # Heal ranking_meta: total_tracked must never be 0 when top_setups has candidates
+                top_count = len(db_snap.get("top_setups") or [])
+                meta = db_snap.get("ranking_meta") or {}
+                if top_count > 0:
+                    meta["total_tracked"] = max(meta.get("total_tracked", 0), top_count)
+                    if not current_feed.get("is_market_open", False):
+                        meta["fallback_applied"] = meta.get("fallback_applied", True)
+                db_snap["ranking_meta"] = meta
+
+                # Heal guardrails if DB snapshot has UNKNOWN mood/breadth/regime
+                grd = db_snap.get("market_guardrails") or {}
+                breadth_label = str(((grd.get("breadth_split") or {}).get("breadth") or {}).get("label") or "")
+                regime_dom = str((grd.get("regime_summary") or {}).get("dominant") or "")
+                if grd.get("mood") in ("UNKNOWN", None) or "UNKNOWN" in breadth_label or regime_dom in ("UNKNOWN", None, ""):
+                    live_mood = _compute_market_mood()
+                    if live_mood.get("mood") != "UNKNOWN" or live_mood.get("score") != 50.0:
+                        grd["mood"] = live_mood.get("mood", "NEUTRAL")
+                        grd["mood_score"] = float(live_mood.get("score", 50.0))
+                    grd["breadth_split"] = live_mood.get("breadth_signal_split", grd.get("breadth_split", {}))
+                    if live_mood.get("regimes"):
+                        r_counts = live_mood.get("regimes", {})
+                        r_sum = sum(r_counts.values()) or 1
+                        r_dom = max(r_counts, key=lambda k: r_counts[k]) if sum(r_counts.values()) > 0 else "TRENDING"
+                        grd["regime_summary"] = {
+                            "dominant": r_dom,
+                            "counts": r_counts,
+                            "pct_trending": round(r_counts.get("TRENDING", 0) / r_sum * 100.0, 1),
+                        }
+                    br = live_mood.get("breadth") or {}
+                    sigs_m = live_mood.get("signals") or {}
+                    sec_avg = float(live_mood.get("sector_avg_pct", 0) or 0)
+                    grd["why_market_hint"] = (
+                        f"Mood {grd.get('mood', 'NEUTRAL')} ({float(grd.get('mood_score', 50)):.0f}/100). "
+                        f"Gainers vs losers {br.get('gainers', 0)}:{br.get('losers', 0)}. "
+                        f"Signal bias {float(sigs_m.get('bias_pct', 0)):+.1f}%. "
+                        f"Sector avg move {sec_avg:+.2f}%."
+                    )
+                    db_snap["market_guardrails"] = grd
+
+                # Fresh evaluation timestamp
+                db_snap["updated_at"] = now_iso
+
                 _cached_overview_intelligence = db_snap
                 _cached_overview_time = now_m
                 return db_snap
@@ -3554,6 +3697,17 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
         k = str(r).upper()
         if k in regime_counts:
             regime_counts[k] += 1
+    if sum(regime_counts.values()) == 0:
+        try:
+            from db.runtime_state import get_runtime_state
+            snap_r = get_runtime_state("latest_market_snapshot")
+            if snap_r and isinstance(snap_r, dict):
+                for r_val in (snap_r.get("regimes") or {}).values():
+                    k = str(r_val).upper()
+                    if k in regime_counts:
+                        regime_counts[k] += 1
+        except Exception:
+            pass
     regime_sum = sum(regime_counts.values())
     total_regimes = regime_sum or 1
     dominant_regime = max(regime_counts, key=lambda k: regime_counts[k]) if regime_sum > 0 else "UNKNOWN"
@@ -3673,7 +3827,7 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
         "top_setups": top_setups[:5],
         "avoid_list": avoid_list[:5],
         "ranking_meta": {
-            "total_tracked": len(signals_to_process),
+            "total_tracked": max(len(signals_to_process), len(top_setups), len(avoid_list)),
             "actionable": actionable_count,
             "blocked_high_quality": len(avoid_list),
             "fallback_applied": fallback_applied,

@@ -1824,23 +1824,18 @@ async def get_ai_summary(symbol: str | None = Query(default=None)):
     return svc._build_ai_market_summary(mood)
 
 @router.get("/api/overview/intelligence")
-
-async def get_overview_intelligence(response: Response):
+async def get_overview_intelligence(response: Response, force: bool = False, refresh: bool = False):
     response.headers["Cache-Control"] = "public, max-age=5, s-maxage=15, stale-while-revalidate=30" 
 
     """
-
     Aggregated decision-cockpit payload for the Overview tab.
 
     Returns top ranked setups, high-quality-but-blocked setups, market guardrails,
-
     system/risk state, and an advisory learning overlay — all in one fast call.
-
     """
-
     try:
-
-        return await asyncio.to_thread(svc._compute_overview_intelligence)
+        force_refresh = bool(force or refresh)
+        return await asyncio.to_thread(svc._compute_overview_intelligence, force_refresh)
 
     except Exception as exc:
 

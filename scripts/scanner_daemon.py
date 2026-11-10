@@ -209,16 +209,18 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
         await asyncio.to_thread(set_runtime_state, "latest_signals_snapshot", signals_payload)
         await asyncio.to_thread(set_runtime_state, "latest_signals:v1", signals_payload)
 
-        try:
-            from api.service import _compute_overview_intelligence
-            overview_payload = await asyncio.to_thread(_compute_overview_intelligence, True)
-            if overview_payload and isinstance(overview_payload, dict):
-                await asyncio.to_thread(set_runtime_state, "overview_intelligence:v1", overview_payload)
-                await asyncio.to_thread(set_runtime_state, "latest_overview_intelligence", overview_payload)
-                await asyncio.to_thread(set_runtime_state, "latest_overview_intelligence:v1", overview_payload)
-                logger.info("💾 [Scanner] Persisted overview intelligence snapshot to overview_intelligence:v1")
-        except Exception as ov_err:
-            logger.warning("[Scanner] Could not persist overview snapshot: %s", ov_err)
+    try:
+        import api.service as svc
+        if regimes:
+            svc._regime_cache.update(regimes)
+        overview_payload = await asyncio.to_thread(svc._compute_overview_intelligence, True)
+        if overview_payload and isinstance(overview_payload, dict):
+            await asyncio.to_thread(set_runtime_state, "overview_intelligence:v1", overview_payload)
+            await asyncio.to_thread(set_runtime_state, "latest_overview_intelligence", overview_payload)
+            await asyncio.to_thread(set_runtime_state, "latest_overview_intelligence:v1", overview_payload)
+            logger.info("💾 [Scanner] Persisted overview intelligence snapshot to overview_intelligence:v1")
+    except Exception as ov_err:
+        logger.warning("[Scanner] Could not persist overview snapshot: %s", ov_err)
 
     # 3. Autonomous Execution & Trade Management
     if daemon.enabled:

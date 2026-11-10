@@ -133,6 +133,58 @@ class TestOverviewIntelligenceSnapshots(unittest.TestCase):
                 self.assertEqual(result.get("source"), "db_snapshot_test")
                 self.assertEqual(len(result.get("top_setups", [])), 1)
 
+    def test_overview_snapshot_heals_stale_and_unknown_fields(self):
+        """_compute_overview_intelligence heals stale timestamp, unknown breadth/regimes, and 0 tracked count."""
+        stale_snap = {
+            "top_setups": [{"symbol": "APOLLOHOSP", "signal": "LONG", "quality_score": 72}],
+            "avoid_list": [],
+            "ranking_meta": {"total_tracked": 0, "actionable": 0},
+            "market_guardrails": {
+                "mood": "UNKNOWN",
+                "mood_score": 50.0,
+                "breadth_split": {
+                    "breadth": {"label": "UNKNOWN (0 observations)", "score": None},
+                    "signal_bias": {"label": "UNKNOWN (0 observations)", "score": None},
+                },
+                "regime_summary": {"dominant": "UNKNOWN", "pct_trending": 0.0},
+            },
+            "system_state": {"capital": 50000},
+            "learning_overlay": {"total_learnt_trades": 5, "overall_win_rate": 20.0},
+            "updated_at": "2026-11-10T08:51:54.000000",
+            "source": "stale_db_snap",
+        }
+        mock_market_snap = {
+            "symbols": ["RELIANCE", "TCS"],
+            "prices": {
+                "RELIANCE": {"close": 1320.0, "rsi": 65.0, "regime": "TRENDING"},
+                "TCS": {"close": 2450.0, "rsi": 55.0, "regime": "TRENDING"},
+            },
+            "regimes": {"RELIANCE": "TRENDING", "TCS": "TRENDING"},
+        }
+        import api.service as svc
+        svc._cached_overview_intelligence = None
+        svc._cached_overview_time = 0.0
+
+        with patch.dict(os.environ, {"LIGHTWEIGHT_API_MODE": "true"}):
+            with patch("db.runtime_state.get_runtime_state") as mock_get:
+                mock_get.side_effect = lambda k: stale_snap if "overview_intelligence" in k else (mock_market_snap if k == "latest_market_snapshot" else None)
+                res = svc._compute_overview_intelligence(force_refresh=False)
+
+                # 1. Stale timestamp replaced with fresh ISO string
+                self.assertNotEqual(res.get("updated_at"), "2026-11-10T08:51:54.000000")
+
+                # 2. total_tracked healed from 0 to at least len(top_setups)
+                self.assertGreaterEqual(res["ranking_meta"]["total_tracked"], 1)
+
+                # 3. Guardrails healed from UNKNOWN (0 observations)
+                self.assertNotEqual(res["market_guardrails"]["mood"], "UNKNOWN")
+                breadth_label = res["market_guardrails"]["breadth_split"]["breadth"]["label"]
+                self.assertNotIn("UNKNOWN (0 observations)", breadth_label)
+                self.assertEqual(res["market_guardrails"]["regime_summary"]["dominant"], "TRENDING")
+
+                # 4. System state populated from live engine
+                self.assertIn("capital", res["system_state"])
+
     def test_hydrate_signals_cache_from_db_v1_and_snapshot(self):
         """_hydrate_signals_cache_from_db queries latest_signals:v1 and falls back to latest_signals_snapshot."""
         import api.service as svc
