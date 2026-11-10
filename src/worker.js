@@ -433,9 +433,9 @@ export default {
         });
       }
 
-      // If origin returns 502, 503, 429, or 504, fallback to stale edge cache if available.
+      // If origin returns 500, 502, 503, 429, or 504, fallback to stale edge cache if available.
       // NOTE: 403 (Section 6A Focus Mode / admin lock) is strictly excluded so administrative locks are honored immediately.
-      if (isPublicCacheable && (originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 429 || originResponse.status === 504)) {
+      if (isPublicCacheable && (originResponse.status === 500 || originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 429 || originResponse.status === 504)) {
         if (cache) {
           try {
             const stale = await cache.match(cacheKey);
@@ -451,7 +451,7 @@ export default {
         }
         const fallback = getDegradedFallbackResponse(url.pathname);
         if (fallback) return fallback;
-      } else if (originResponse.status === 429 || originResponse.status === 503) {
+      } else if (originResponse.status === 500 || originResponse.status === 429 || originResponse.status === 503) {
         const fallback = getDegradedFallbackResponse(url.pathname);
         if (fallback) return fallback;
       }
