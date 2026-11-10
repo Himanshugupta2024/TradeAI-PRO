@@ -2,11 +2,18 @@
 Position Sizing Module.
 
 Calculates optimal trade quantity based on risk management rules.
-Two methods:
+Three methods:
   1. Fixed-percent risk: Risk X% of capital per trade
   2. Kelly Criterion: Statistically optimal bet fraction
-  3. Regime-adjusted risk: Scale risk by current market regime
+  3. Regime/volatility-adjusted risk: Scale risk by market regime and ATR ratio
+
+``compute_risk_pct`` is the single entry point used by the paper-trading engine:
+it composes regime scaling, ATR vol-targeting, a fractional-Kelly cap and a hard
+per-trade ceiling, and reports which rule produced the final number.
 """
+
+import math
+from typing import Iterable
 
 from config import settings
 from config.logger import get_logger
@@ -32,7 +39,11 @@ def regime_adjusted_risk_pct(base_risk: float, regime=None) -> float:
     if regime is None:
         return base_risk
 
-    regime_name = regime.value if hasattr(regime, "value") else str(regime)
+    # MarketRegime enum values are uppercase ("HIGH_VOLATILITY"); callers may
+    # also pass the raw string. Normalize so neither form silently misses the
+    # scaling branch (this was dead code before the normalization).
+    raw = regime.value if hasattr(regime, "value") else str(regime)
+    regime_name = raw.strip().lower()
 
     if regime_name == "high_volatility":
         adjusted = base_risk * 0.5
@@ -63,6 +74,89 @@ def volatility_adjusted_risk_pct(base_risk: float, current_atr: float, historica
     log.debug("Volatility Adjustment: Ratio %.2f (%.2f / %.2f) -> Risk %.2f%% to %.2f%%", 
               atr_ratio, current_atr, historical_atr, base_risk, adjusted)
     return round(adjusted, 4)
+
+
+def compute_risk_pct(
+    base_risk_pct: float,
+    regime=None,
+    current_atr: float = 0.0,
+    historical_atr: float = 0.0,
+    kelly_fraction: float = None,
+    kelly_fractionality: float = 0.5,
+    kelly_floor_ratio: float = 0.25,
+    max_risk_pct: float = None,
+) -> dict:
+    """
+    Compose every risk-scaling rule into one auditable risk percentage.
+
+    Order of operations:
+      1. Regime scaling   — HIGH_VOLATILITY ×0.5, TRENDING ×1.25
+      2. ATR vol-target   — risk / clamp(current_atr / historical_atr, 0.5, 3.0)
+      3. Fractional Kelly — cap at ``100 × f* × fractionality`` (never raises risk)
+      4. Hard ceiling     — clamp to ``max_risk_pct`` if provided
+
+    The Kelly cap is a de-risking guard, not an accelerator: with a 1.25% base
+    risk it only binds when the realized edge is thin or negative, in which case
+    risk shrinks toward ``kelly_floor_ratio × base_risk_pct`` instead of dropping
+    to zero (a zero here would be misread downstream as a sizing failure).
+
+    Args:
+        base_risk_pct: Configured per-trade risk (e.g. 1.25 = 1.25% of capital).
+        regime: MarketRegime enum value or name string, or None.
+        current_atr: Current ATR, or 0.0 to skip vol-targeting.
+        historical_atr: Rolling average ATR, or 0.0 to skip vol-targeting.
+        kelly_fraction: Raw Kelly f* (fraction of capital), or None when the
+            closed-trade sample is too small to trust.
+        kelly_fractionality: Fraction of Kelly to apply (0.5 = half-Kelly).
+        kelly_floor_ratio: Floor for the Kelly cap as a ratio of base risk.
+        max_risk_pct: Absolute per-trade ceiling in percent.
+
+    Returns:
+        dict with keys: risk_pct, base_pct, regime_pct, vol_pct, kelly_cap_pct,
+        binding ("base" | "regime" | "volatility" | "kelly" | "max_cap").
+    """
+    base = float(base_risk_pct)
+    if not math.isfinite(base) or base <= 0:
+        return {
+            "risk_pct": 0.0,
+            "base_pct": base if math.isfinite(base) else 0.0,
+            "regime_pct": 0.0,
+            "vol_pct": 0.0,
+            "kelly_cap_pct": None,
+            "binding": "invalid_base",
+        }
+
+    regime_pct = regime_adjusted_risk_pct(base, regime)
+    binding = "regime" if abs(regime_pct - base) > 1e-9 else "base"
+
+    vol_pct = regime_pct
+    if current_atr > 0 and historical_atr > 0:
+        vol_pct = volatility_adjusted_risk_pct(regime_pct, current_atr, historical_atr)
+        if abs(vol_pct - regime_pct) > 1e-9:
+            binding = "volatility"
+
+    risk_pct = vol_pct
+    kelly_cap_pct = None
+    if kelly_fraction is not None and math.isfinite(float(kelly_fraction)):
+        raw_cap = 100.0 * float(kelly_fraction) * max(float(kelly_fractionality), 0.0)
+        floor_pct = base * max(float(kelly_floor_ratio), 0.0)
+        kelly_cap_pct = round(max(raw_cap, floor_pct), 4)
+        if kelly_cap_pct < risk_pct - 1e-9:
+            risk_pct = kelly_cap_pct
+            binding = "kelly"
+
+    if max_risk_pct is not None and max_risk_pct > 0 and risk_pct > max_risk_pct:
+        risk_pct = float(max_risk_pct)
+        binding = "max_cap"
+
+    return {
+        "risk_pct": round(max(risk_pct, 0.0), 4),
+        "base_pct": round(base, 4),
+        "regime_pct": round(regime_pct, 4),
+        "vol_pct": round(vol_pct, 4),
+        "kelly_cap_pct": kelly_cap_pct,
+        "binding": binding,
+    }
 
 
 def calculate_position_size(
@@ -113,6 +207,67 @@ def calculate_position_size(
         capital, risk_pct, risk_amount, qty, risk_per_unit,
     )
     return round(qty, 6)
+
+
+def edge_stats_from_pnls(
+    pnls: Iterable[float],
+    lookback: int = 60,
+    min_sample: int = 30,
+) -> dict | None:
+    """
+    Empirical edge statistics from realized closed-trade PnLs (base currency).
+
+    Uses the most recent ``lookback`` decided trades (breakeven trades excluded)
+    so a regime change is reflected instead of being diluted by ancient history.
+
+    Args:
+        pnls: Realized PnL per closed trade.
+        lookback: Max number of recent decided trades to aggregate.
+        min_sample: Minimum decided trades required to trust the estimate.
+
+    Returns:
+        dict with sample, win_rate, avg_win, avg_loss, payoff_ratio,
+        expectancy and profit_factor — or None when the sample is too small
+        (or when one side of the distribution is missing entirely).
+    """
+    values: list[float] = []
+    for pnl in pnls:
+        try:
+            value = float(pnl)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            values.append(value)
+
+    if lookback and lookback > 0:
+        values = values[-int(lookback):]
+
+    wins = [v for v in values if v > 1e-9]
+    losses = [v for v in values if v < -1e-9]
+    decided = len(wins) + len(losses)
+
+    if decided < max(int(min_sample), 1) or not wins or not losses:
+        return None
+
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    avg_win = gross_profit / len(wins)
+    avg_loss = gross_loss / len(losses)
+    if avg_win <= 0 or avg_loss <= 0:
+        return None
+
+    win_rate = len(wins) / decided
+    expectancy = win_rate * avg_win - (1.0 - win_rate) * avg_loss
+
+    return {
+        "sample": decided,
+        "win_rate": round(win_rate, 4),
+        "avg_win": round(avg_win, 4),
+        "avg_loss": round(avg_loss, 4),
+        "payoff_ratio": round(avg_win / avg_loss, 4),
+        "expectancy": round(expectancy, 4),
+        "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss > 0 else None,
+    }
 
 
 def kelly_criterion(

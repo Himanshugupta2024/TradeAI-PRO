@@ -300,6 +300,9 @@ class AutonomousExecutionDaemon:
                 "qs_score": qs_score,
                 "ai_confidence": ai_conf,
                 "atr": float(sig.get("atr", price_info.get("atr", 0.0))),
+                "historical_atr": float(
+                    sig.get("atr_avg", price_info.get("atr_avg", 0.0)) or 0.0
+                ),
                 "strategy": sig.get("strategy", sig.get("signal_type", "AUTONOMOUS")),
                 "regime": cand_regime,
                 "rsi": sig.get("rsi_at_entry", sig.get("rsi", 50.0)),
@@ -320,6 +323,7 @@ class AutonomousExecutionDaemon:
                     sl=cand["sl"],
                     tp=cand["tp"],
                     atr=cand["atr"],
+                    historical_atr=cand.get("historical_atr", 0.0),
                     signal_type=cand["strategy"],
                     regime=cand["regime"],
                     rsi_at_entry=cand["rsi"],

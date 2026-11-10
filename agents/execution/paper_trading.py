@@ -23,6 +23,7 @@ from dataclasses import dataclass, field, asdict
 
 from config import settings
 import math
+from collections import deque
 from db.runtime_state import get_runtime_state, set_runtime_state, DatabaseStateError
 
 _IST = timezone(timedelta(hours=5, minutes=30))
@@ -57,7 +58,12 @@ def _parse_ist_ts(value) -> Optional[datetime]:
     return parsed.astimezone(_IST)
 from config.logger import get_logger
 from agents.execution.trailing_sl import TrailingStopManager, TRAILING_STATE_FILE
-from agents.execution.position_sizing import calculate_position_size
+from agents.execution.position_sizing import (
+    calculate_position_size,
+    compute_risk_pct,
+    edge_stats_from_pnls,
+    kelly_criterion,
+)
 
 log = get_logger(__name__)
 
@@ -144,6 +150,8 @@ class PaperTrade:
     mae_pct: float = 0.0
     mfe_r: float = 0.0
     mae_r: float = 0.0
+    # ── Dynamic sizing audit (post regime/ATR/Kelly adjustment) ───────────
+    risk_pct_applied: float = 0.0
 
 
 class PaperTradingEngine:
@@ -204,6 +212,11 @@ class PaperTradingEngine:
         # Cooldown tracker: symbol → candles remaining
         self._cooldowns: dict[str, int] = {}
 
+        # Rolling ATR observations per symbol, used as a fallback historical ATR
+        # when a caller passes current ATR but no explicit historical average.
+        self._atr_history: dict[str, deque] = {}
+        self._atr_last_bar_ts: dict[str, str] = {}
+
         # Equity history for performance tracking
         self.equity_history: list[dict] = []
 
@@ -220,6 +233,7 @@ class PaperTradingEngine:
         sl: float,
         tp: float,
         atr: float = 0.0,
+        historical_atr: float = 0.0,
         # ── Self-learning context (optional but recommended) ────────────────
         signal_type: str = "COMBINED",
         regime: str = "UNKNOWN",
@@ -453,10 +467,21 @@ class PaperTradingEngine:
         # Convert base capital to quote currency for position sizing
         capital_in_quote = float(to_decimal(self.capital) / to_decimal(fx_rate))
 
-        # Calculate position size in native quote units
+        # Dynamic risk: regime scaling → ATR vol-targeting → fractional-Kelly cap
+        risk_plan = self._plan_risk_pct(symbol, regime=regime, atr=atr, historical_atr=historical_atr)
+        risk_pct = float(risk_plan["risk_pct"])
+        if risk_pct <= 0:
+            self.last_rejection_reason = (
+                f"SKIP_INVALID_RISK: effective risk {risk_pct:.4f}% (binding={risk_plan['binding']})"
+            )
+            log.warning("BLOCKED: %s", self.last_rejection_reason)
+            return None
+
+        # Calculate position size in native quote units. Volatility scaling is
+        # already folded into risk_pct, so ATR is not passed a second time.
         qty = calculate_position_size(
             capital=capital_in_quote,
-            risk_pct=settings.RISK_PER_TRADE_PCT,
+            risk_pct=risk_pct,
             entry=entry,
             stop_loss=sl,
             max_leverage=getattr(settings, "MAX_POSITION_LEVERAGE", 1.0),
@@ -535,10 +560,25 @@ class PaperTradingEngine:
             fx_status="ACTIVE",
             mfe_price=entry,
             mae_price=entry,
+            risk_pct_applied=risk_pct,
         )
 
         self.trades.append(trade)
         self.open_trades.append(trade)
+
+        # Keep the rolling ATR window warm for the next entry on this symbol
+        self._record_atr(symbol, atr)
+
+        log.debug(
+            "Sizing %s: base=%.2f%% regime=%.2f%% vol=%.2f%% kelly_cap=%s → %.2f%% (%s)",
+            symbol,
+            risk_plan["base_pct"],
+            risk_plan["regime_pct"],
+            risk_plan["vol_pct"],
+            f"{risk_plan['kelly_cap_pct']:.2f}%" if risk_plan["kelly_cap_pct"] is not None else "n/a",
+            risk_pct,
+            risk_plan["binding"],
+        )
 
         # Register with trailing SL manager
         if atr > 0:
@@ -603,6 +643,16 @@ class PaperTradingEngine:
         closed = []
         state_changed = False
         atr_values = atr_values or {}
+
+        # Keep the rolling ATR window warm even when no trade is open on the
+        # symbol — the next entry needs a historical baseline for vol-targeting.
+        for atr_symbol, atr_value in atr_values.items():
+            price_info = prices.get(atr_symbol) or {}
+            self._record_atr(
+                atr_symbol,
+                atr_value,
+                bar_ts=price_info.get("timestamp") or price_info.get("ts"),
+            )
 
         for trade in list(self.open_trades):
             price = prices.get(trade.symbol)
@@ -1266,6 +1316,131 @@ class PaperTradingEngine:
         if abs(total) > 1e-12:
             return total
         return float(getattr(trade, "pnl", 0.0) or 0.0) * float(getattr(trade, "quantity", 0.0) or 0.0)
+
+    # ── Dynamic sizing helpers ────────────────────────────────────────────
+
+    def kelly_edge_stats(self) -> dict | None:
+        """Empirical edge from this engine's own closed trades.
+
+        Uses INR-converted realized PnL and skips legacy trades whose PnL was
+        never currency-converted (mixing those would corrupt the payoff ratio).
+        Returns ``None`` when the sample is too thin or one side is empty.
+        """
+        pnls: list[float] = []
+        for trade in self.trades:
+            if trade.status == "OPEN":
+                continue
+            quote_ccy = getattr(trade, "quote_currency", None) or (
+                "USDT" if "/" in str(getattr(trade, "symbol", "")) else "INR"
+            )
+            if getattr(trade, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and quote_ccy != "INR":
+                continue
+            pnls.append(self._trade_total_pnl(trade))
+
+        return edge_stats_from_pnls(
+            pnls,
+            lookback=int(getattr(settings, "KELLY_LOOKBACK_TRADES", 60)),
+            min_sample=int(getattr(settings, "KELLY_MIN_SAMPLE", 30)),
+        )
+
+    def _plan_risk_pct(
+        self,
+        symbol: str,
+        *,
+        regime=None,
+        atr: float = 0.0,
+        historical_atr: float = 0.0,
+    ) -> dict:
+        """Resolve the effective per-trade risk percent with an audit breakdown.
+
+        ``historical_atr`` wins when the caller (scanner/daemon) supplies it;
+        otherwise the engine's own rolling window is used so vol-targeting still
+        works for callers that only know current ATR.
+        """
+        current_atr = float(atr or 0.0)
+        hist_atr = float(historical_atr or 0.0)
+        if hist_atr <= 0 and current_atr > 0:
+            hist_atr = self._rolling_atr_mean(symbol)
+
+        kelly_fraction = None
+        edge = self.kelly_edge_stats()
+        if edge:
+            kelly_fraction = kelly_criterion(
+                win_rate=float(edge["win_rate"]),
+                avg_win=float(edge["avg_win"]),
+                avg_loss=float(edge["avg_loss"]),
+                max_fraction=1.0,
+            )
+
+        return compute_risk_pct(
+            base_risk_pct=float(getattr(settings, "RISK_PER_TRADE_PCT", 1.25)),
+            regime=regime,
+            current_atr=current_atr,
+            historical_atr=hist_atr,
+            kelly_fraction=kelly_fraction,
+            kelly_fractionality=float(getattr(settings, "FRACTIONAL_KELLY", 0.5)),
+            kelly_floor_ratio=float(getattr(settings, "KELLY_RISK_FLOOR_RATIO", 0.25)),
+            max_risk_pct=float(getattr(settings, "MAX_RISK_PER_TRADE_PCT", 2.0)),
+        )
+
+    def _record_atr(self, symbol: str, atr: float, bar_ts: str | None = None) -> None:
+        """Append one ATR observation to the per-symbol rolling window.
+
+        The scanner re-emits the same bar on every cycle, so consecutive
+        duplicates are dropped (by bar timestamp when supplied, by value
+        otherwise) — without this the 60-slot window would fill with copies of
+        the latest bar and the "historical" baseline would track the present.
+        """
+        try:
+            value = float(atr)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(value) or value <= 0:
+            return
+
+        key = self._normalize_symbol(symbol)
+        ts = str(bar_ts or "")
+        if ts:
+            if self._atr_last_bar_ts.get(key) == ts:
+                return
+
+        window = max(int(getattr(settings, "ATR_HISTORY_WINDOW", 60)), 1)
+        bucket = self._atr_history.get(key)
+        if bucket is None or bucket.maxlen != window:
+            bucket = deque(maxlen=window)
+            self._atr_history[key] = bucket
+
+        if bucket and abs(bucket[-1] - value) <= 1e-9:
+            if ts:
+                self._atr_last_bar_ts[key] = ts
+            return
+
+        bucket.append(value)
+        if ts:
+            self._atr_last_bar_ts[key] = ts
+
+    def _rolling_atr_mean(self, symbol: str) -> float:
+        """Historical ATR baseline for vol-targeting, or 0.0 when too thin.
+
+        The freshest observation is excluded: it is usually the bar that just
+        printed (recorded by ``update_prices`` or a prior ``execute``), and
+        including it would drag the current/historical ratio toward 1.0 and
+        silently disable volatility targeting.
+        """
+        bucket = self._atr_history.get(self._normalize_symbol(symbol))
+        if not bucket:
+            return 0.0
+
+        min_samples = max(int(getattr(settings, "ATR_HISTORY_MIN_SAMPLES", 10)), 2)
+        values = list(bucket)
+        if len(values) < min_samples:
+            return 0.0
+
+        history = values[:-1]
+        if not history:
+            return 0.0
+        mean = sum(history) / len(history)
+        return float(mean) if math.isfinite(mean) and mean > 0 else 0.0
 
     def _maybe_take_partial_profit(self, trade: PaperTrade, *, high: float, low: float, atr: float) -> bool:
         """Take partial profit once and keep remainder running with tighter protection. Returns True if taken."""

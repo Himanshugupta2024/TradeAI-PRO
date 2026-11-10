@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
+import math
 import os
 import signal
 import sys
@@ -131,11 +132,27 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
             regimes[sym] = regime.value
 
             last = df.iloc[-1]
+
+            # Historical ATR baseline for vol-targeting: exclude the current bar
+            # so the current/historical ratio measures expansion, not itself.
+            atr_avg = 0.0
+            try:
+                atr_series = df["ATR_14"].dropna()
+                if len(atr_series) > 1:
+                    baseline = atr_series.iloc[:-1].tail(60)
+                    if len(baseline) >= 5:
+                        value = float(baseline.mean())
+                        if math.isfinite(value) and value > 0:
+                            atr_avg = value
+            except Exception:
+                atr_avg = 0.0
+
             market_prices[sym] = {
                 "close": round(float(last["close"]), 2),
                 "high": round(float(last["high"]), 2),
                 "low": round(float(last["low"]), 2),
                 "atr": round(float(last.get("ATR_14", 0.0)), 2),
+                "atr_avg": round(atr_avg, 4),
                 "rsi": round(float(last.get("RSI_14", 50.0)), 1),
                 "signal": str(last.get("signal", "HOLD")),
                 "regime": regime.value,
@@ -157,6 +174,7 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
                         "stop_loss": float(sig_last.get("stop_loss", 0.0)),
                         "target": float(sig_last.get("target", 0.0)),
                         "atr": float(last.get("ATR_14", 0.0)),
+                        "atr_avg": round(atr_avg, 4),
                         "timestamp": bar_ts_iso,
                     })
 

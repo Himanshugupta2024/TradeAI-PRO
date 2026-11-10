@@ -523,7 +523,19 @@ ENSEMBLE_WEIGHTS = {
 # Risk management and sizing
 MAX_PORTFOLIO_HEAT_PCT = float(os.getenv("MAX_PORTFOLIO_HEAT_PCT", "0.06"))
 CIRCUIT_BREAKER_THRESHOLD = float(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "0.12"))
+# Dynamic sizing: regime scaling + ATR vol-targeting + fractional-Kelly guard.
+# FRACTIONAL_KELLY is the fraction of full Kelly applied (0.5 = half-Kelly).
 FRACTIONAL_KELLY = float(os.getenv("FRACTIONAL_KELLY", "0.50"))
+KELLY_MIN_SAMPLE = int(os.getenv("KELLY_MIN_SAMPLE", "30"))
+KELLY_LOOKBACK_TRADES = int(os.getenv("KELLY_LOOKBACK_TRADES", "60"))
+# Kelly is a de-risking guard: it can shrink risk toward this ratio of base risk
+# but never raise it, and never drops sizing to zero.
+KELLY_RISK_FLOOR_RATIO = float(os.getenv("KELLY_RISK_FLOOR_RATIO", "0.25"))
+# Hard ceiling after all scaling (regime ×1.25 and ATR ×2 can otherwise overshoot).
+MAX_RISK_PER_TRADE_PCT = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))
+# Rolling ATR history kept in-process when a caller cannot supply historical ATR.
+ATR_HISTORY_WINDOW = int(os.getenv("ATR_HISTORY_WINDOW", "60"))
+ATR_HISTORY_MIN_SAMPLES = int(os.getenv("ATR_HISTORY_MIN_SAMPLES", "10"))
 CORRELATION_GROUPS = [
     ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"],
     ["RELIANCE.NS", "ONGC.NS"],
@@ -1201,6 +1213,24 @@ def validate_runtime_config() -> None:
 
     if MIN_RISK_REWARD <= 0:
         errors.append("MIN_RISK_REWARD must be > 0")
+
+    if not (0.0 < FRACTIONAL_KELLY <= 1.0):
+        errors.append("FRACTIONAL_KELLY must be in (0, 1]")
+
+    if KELLY_MIN_SAMPLE < 1:
+        errors.append("KELLY_MIN_SAMPLE must be >= 1")
+
+    if KELLY_LOOKBACK_TRADES < KELLY_MIN_SAMPLE:
+        errors.append("KELLY_LOOKBACK_TRADES must be >= KELLY_MIN_SAMPLE")
+
+    if not (0.0 <= KELLY_RISK_FLOOR_RATIO <= 1.0):
+        errors.append("KELLY_RISK_FLOOR_RATIO must be in [0, 1]")
+
+    if MAX_RISK_PER_TRADE_PCT <= 0:
+        errors.append("MAX_RISK_PER_TRADE_PCT must be > 0")
+
+    if ATR_HISTORY_MIN_SAMPLES < 1 or ATR_HISTORY_WINDOW < ATR_HISTORY_MIN_SAMPLES:
+        errors.append("ATR_HISTORY_WINDOW must be >= ATR_HISTORY_MIN_SAMPLES >= 1")
 
     if INTRADAY_MAX_BAR_AGE_MINUTES < 0:
         errors.append("INTRADAY_MAX_BAR_AGE_MINUTES must be >= 0")
