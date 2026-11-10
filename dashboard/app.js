@@ -703,6 +703,8 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => loadPortfolio(), 1400);
     }
     setTimeout(() => updateAiModelHealthBadge(), 1800);
+    setTimeout(() => loadNsePredictionTab(), 2000);
+    setInterval(() => { if (!document.hidden && currentTab === 'overview') loadNsePredictionTab(); }, 60000);
     setTimeout(() => connectPriceWebSocket(), 2400);
 
     startBackgroundRefresh();
@@ -3245,8 +3247,8 @@ async function loadAllData({ background = false } = {}) {
     const nowTs = Date.now();
     const isColdBoot = (_lastOppsFetchTs === 0 && _lastCryptoFetchTs === 0);
 
-    // Stagger non-essential deep intelligence queries during cold boot
-    const shouldFetchOpps = (currentTab === 'opportunities') || (!isColdBoot && (nowTs - (_lastOppsFetchTs || 0) > 180000));
+    // Fetch screener opportunities for Overview tab with a 2-minute cadence
+    const shouldFetchOpps = (currentTab === 'overview' || currentTab === 'opportunities') && (nowTs - (_lastOppsFetchTs || 0) > 120000);
     const shouldFetchCrypto = (currentTab === 'crypto') || (!isColdBoot && (nowTs - (_lastCryptoFetchTs || 0) > 180000));
     const shouldFetchMorning = (currentTab === 'morning-scan') || (!isColdBoot && (nowTs - (_lastMorningFetchTs || 0) > 300000));
 
@@ -3590,6 +3592,10 @@ async function loadAllData({ background = false } = {}) {
         updateOpportunitiesGrid(_lastOppsData.opportunities, { status: _lastOppsData.status, reason: _lastOppsData.reason });
 
 
+
+    } else {
+
+        updateOpportunitiesGrid([], { status: 'empty', reason: _isNseMarketOpen() ? 'no_candidates' : 'market_closed' });
 
     }
 
@@ -25784,245 +25790,121 @@ async function loadNsePredictionTab() {
 
 
         const dir = pred.direction || 'NEUTRAL';
-
-
-
         const conf = pred.confidence || 0;
-
-
-
         const acc = data.accuracy_tracker || {};
-
-
-
         const sigs = data.signals || {};
 
-
-
-        
-
-
-
-        const dirEl = document.getElementById('nseTabDirection');
-
-
-
-        if (dirEl) {
-
-
-
-            dirEl.textContent = dir;
-
-
-
-            dirEl.style.color = dir.includes('BULL') ? 'var(--green)' : dir.includes('BEAR') ? 'var(--red)' : 'var(--text-muted)';
-
-
-
-        }
-
-
-
-        const confEl = document.getElementById('nseTabConfidence');
-
-
-
-        if (confEl) confEl.textContent = `${conf}%`;
-
-
-
-        
-
-
-
-        const hitEl = document.getElementById('nseTabHitRate');
-
-
-
-        if (hitEl) hitEl.textContent = acc.hit_rate_pct != null ? `${acc.hit_rate_pct}%` : '—';
-
-
-
-        
-
-
-
-        const resEl = document.getElementById('nseTabResolved');
-
-
-
-        if (resEl) resEl.textContent = acc.resolved || '0';
-
-
-
-
-
-
-
-        const reasonsEl = document.getElementById('nseTabReasons');
-
-
-
-        if (reasonsEl && pred.reasons) {
-
-
-
-            reasonsEl.innerHTML = pred.reasons.map(r => `<li>${_escHtml(r)}</li>`).join('');
-
-
-
-        }
-
-
-
-
-
-
-
-        const topBuyEl = document.getElementById('nseTabTopBuy');
-
-
-
-        if (topBuyEl) {
-
-
-
-            const buys = sigs.top_buy || [];
-
-
-
-            topBuyEl.innerHTML = buys.length ? buys.map(b => `<div style="padding:0.25rem 0;font-size:0.75rem;"><strong>${_escHtml(b.symbol)}</strong>: ₹${b.price} (conf ${b.confidence}%)</div>`).join('') : '<span style="font-size:0.75rem;color:var(--text-muted);">None in current scan</span>';
-
-
-
-        }
-
-
-
-
-
-
-
-        const topSellEl = document.getElementById('nseTabTopSell');
-
-
-
-        if (topSellEl) {
-
-
-
-            const sells = sigs.top_sell || [];
-
-
-
-            topSellEl.innerHTML = sells.length ? sells.map(s => `<div style="padding:0.25rem 0;font-size:0.75rem;"><strong>${_escHtml(s.symbol)}</strong>: ₹${s.price} (conf ${s.confidence}%)</div>`).join('') : '<span style="font-size:0.75rem;color:var(--text-muted);">None in current scan</span>';
-
-
-
-        }
-
-
-
-
-
-
-
-        // ── Render Latest Indian Market Headlines in NSE Tab ───
-
-
-
-        const newsGrid = document.getElementById('nseTabNews');
-
-
-
-        if (newsGrid) {
-
-
-
-            const newsItems = (data.news && data.news.items) ? data.news.items : [];
-
-
-
-            if (newsItems.length) {
-
-
-
-                newsGrid.innerHTML = newsItems.slice(0, 6).map(item => {
-
-
-
-                    const titleSafe = _escHtml(item.title || '');
-
-
-
-                    const srcSafe = _escHtml(item.source || 'NSE Feed');
-
-
-
-                    const timeSafe = _escHtml(item.published || 'Today');
-
-
-
-                    return `
-
-
-
-                        <div class="nse-news-card" style="background:var(--bg-card);border:1px solid var(--border-color);border-radius:8px;padding:0.75rem 0.9rem;display:flex;flex-direction:column;justify-content:space-between;gap:0.4rem;">
-
-
-
-                            <a href="${item.url || '#'}" target="_blank" rel="noopener noreferrer" style="color:var(--text-primary);text-decoration:none;font-size:0.78rem;font-weight:600;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${titleSafe}">
-
-
-
-                                ${titleSafe}
-
-
-
-                            </a>
-
-
-
-                            <div style="display:flex;justify-content:space-between;align-items:center;font-size: 0.72rem;color:var(--text-muted);margin-top:2px;">
-
-
-
-                                <span style="color:var(--cyan);font-weight:600;">📰 ${srcSafe}</span>
-
-
-
-                                <span>${timeSafe}</span>
-
-
-
-                            </div>
-
-
-
-                        </div>
-
-
-
-                    `;
-
-
-
-                }).join('');
-
-
-
-            } else {
-
-
-
-                newsGrid.innerHTML = '<div style="color:var(--text-muted);font-size:0.75rem;padding:0.5rem;">No breaking headlines at this moment.</div>';
-
-
-
+        ['nseTabDirection', 'nsePredDirection'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.textContent = dir;
+                el.style.color = dir.includes('BULL') ? 'var(--green)' : dir.includes('BEAR') ? 'var(--red)' : 'var(--cyan)';
             }
+        });
 
+        ['nseTabConfidence', 'nsePredConfidence'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = `${conf}%`;
+        });
 
+        const horizEl = document.getElementById('nsePredHorizon');
+        if (horizEl) horizEl.textContent = pred.horizon || '1-3 trading days';
 
+        const hitVal = acc.hit_rate_pct != null ? `${acc.hit_rate_pct}%` : '—';
+        ['nseTabHitRate', 'nseAccHitRate'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = hitVal;
+        });
+
+        const resVal = String(acc.resolved ?? 0);
+        ['nseTabResolved', 'nseAccResolved'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = resVal;
+        });
+
+        if (pred.reasons && pred.reasons.length) {
+            const reasonsHtml = pred.reasons.map(r => `<li>${_escHtml(r)}</li>`).join('');
+            ['nseTabReasons', 'nsePredReasons'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = reasonsHtml;
+            });
+        }
+
+        const buys = sigs.top_buy || [];
+        const buyHtml = buys.length
+            ? buys.map(b => `<div style="padding:0.25rem 0;font-size:0.75rem;"><strong>${_escHtml(b.symbol)}</strong>: ₹${b.price} (conf ${b.confidence}%)</div>`).join('')
+            : '<span style="font-size:0.75rem;color:var(--text-muted);">None in current scan</span>';
+        ['nseTabTopBuy', 'nseTopBuyList'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = buyHtml;
+        });
+        const buyCountEl = document.getElementById('nsePredBuyCount');
+        if (buyCountEl) buyCountEl.textContent = String(sigs.buy ?? buys.length);
+
+        const sells = sigs.top_sell || [];
+        const sellHtml = sells.length
+            ? sells.map(s => `<div style="padding:0.25rem 0;font-size:0.75rem;"><strong>${_escHtml(s.symbol)}</strong>: ₹${s.price} (conf ${s.confidence}%)</div>`).join('')
+            : '<span style="font-size:0.75rem;color:var(--text-muted);">None in current scan</span>';
+        ['nseTabTopSell', 'nseTopSellList'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = sellHtml;
+        });
+        const sellCountEl = document.getElementById('nsePredSellCount');
+        if (sellCountEl) sellCountEl.textContent = String(sigs.sell ?? sells.length);
+
+        // ── Render Latest Indian Market Headlines (Tab + Overview) ───
+        const newsItems = (data.news && data.news.items) ? data.news.items : (Array.isArray(data.news) ? data.news : []);
+        
+        // 1. Overview Tab News List (#nseNewsList)
+        const overviewNews = document.getElementById('nseNewsList');
+        if (overviewNews) {
+            if (newsItems.length) {
+                overviewNews.innerHTML = newsItems.slice(0, 8).map(item => {
+                    const titleSafe = _escHtml(item.title || '');
+                    const srcSafe = _escHtml(item.source || 'NSE Feed');
+                    const timeSafe = _escHtml(item.published || 'Today');
+                    const urlSafe = item.url ? _escHtml(item.url) : '#';
+                    return `
+                        <div style="margin-bottom:0.45rem;padding-bottom:0.45rem;border-bottom:1px solid rgba(255,255,255,0.06);">
+                            <a href="${urlSafe}" target="_blank" rel="noopener noreferrer" style="color:var(--text-primary);text-decoration:none;font-size:0.75rem;font-weight:600;line-height:1.35;display:block;" title="${titleSafe}">
+                                ${titleSafe}
+                            </a>
+                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.68rem;color:var(--text-muted);margin-top:2px;">
+                                <span style="color:var(--cyan);font-weight:600;">📰 ${srcSafe}</span>
+                                <span>${timeSafe}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                overviewNews.innerHTML = '<div style="color:var(--text-muted);font-size:0.75rem;padding:0.5rem;">No breaking headlines at this moment.</div>';
+            }
+        }
+
+        // 2. Dedicated NSE Tab News Grid (#nseTabNews)
+        const newsGrid = document.getElementById('nseTabNews');
+        if (newsGrid) {
+            if (newsItems.length) {
+                newsGrid.innerHTML = newsItems.slice(0, 6).map(item => {
+                    const titleSafe = _escHtml(item.title || '');
+                    const srcSafe = _escHtml(item.source || 'NSE Feed');
+                    const timeSafe = _escHtml(item.published || 'Today');
+                    const urlSafe = item.url ? _escHtml(item.url) : '#';
+                    return `
+                        <div class="nse-news-card" style="background:var(--bg-card);border:1px solid var(--border-color);border-radius:8px;padding:0.75rem 0.9rem;display:flex;flex-direction:column;justify-content:space-between;gap:0.4rem;">
+                            <a href="${urlSafe}" target="_blank" rel="noopener noreferrer" style="color:var(--text-primary);text-decoration:none;font-size:0.78rem;font-weight:600;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${titleSafe}">
+                                ${titleSafe}
+                            </a>
+                            <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.72rem;color:var(--text-muted);margin-top:2px;">
+                                <span style="color:var(--cyan);font-weight:600;">📰 ${srcSafe}</span>
+                                <span>${timeSafe}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                newsGrid.innerHTML = '<div style="color:var(--text-muted);font-size:0.75rem;padding:0.5rem;">No breaking headlines at this moment.</div>';
+            }
         }
 
 

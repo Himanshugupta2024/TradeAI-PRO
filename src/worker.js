@@ -99,6 +99,7 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/edge/risk-gauge",
   "/api/research/next-day-picks",
   "/api/research/next-day-picks/history",
+  "/api/nse/prediction",
 ]);
 
 // Health and readiness routes must NEVER be cached by Cloudflare edge.
