@@ -107,6 +107,7 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
             if df is None or df.empty or len(df) < 15:
                 continue
 
+            bar_ts_iso: str | None = None
             try:
                 c_idx = df.index[-1]
                 c_bar_dt = None
@@ -121,6 +122,7 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
                         c_bar_dt = c_bar_dt.replace(tzinfo=_IST)
                     if max_bar_dt is None or c_bar_dt > max_bar_dt:
                         max_bar_dt = c_bar_dt
+                    bar_ts_iso = c_bar_dt.isoformat()
             except Exception:
                 pass
 
@@ -138,6 +140,7 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
                 "signal": str(last.get("signal", "HOLD")),
                 "regime": regime.value,
                 "data_status": "LIVE" if "/" in sym else "DELAYED",
+                "timestamp": bar_ts_iso,
             }
 
             sig_df = generate_signals(df, symbol=sym)
@@ -154,6 +157,7 @@ async def execute_scanner_cycle(daemon, engine_inst: PaperTradingEngine) -> None
                         "stop_loss": float(sig_last.get("stop_loss", 0.0)),
                         "target": float(sig_last.get("target", 0.0)),
                         "atr": float(last.get("ATR_14", 0.0)),
+                        "timestamp": bar_ts_iso,
                     })
 
         except Exception as sym_err:
