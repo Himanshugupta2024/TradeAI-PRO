@@ -68,7 +68,41 @@ If the repo or torch is missing the script exits with code `2` and a clear messa
 2. **Same labels, same costs.** Use the triple-barrier labels and the delivery cost profile from `agents/backtester`. A forecast is only useful if it survives ~39 bps round trip.
 3. **Baselines first.** Compare against 12-1 momentum, 20/50 EMA trend and RSI(2). If Kronos features do not beat them out-of-sample, do not ship them.
 4. **Portfolio, not symbol.** Feed signals into `PortfolioBacktester`; a per-symbol IC of 0.03 can disappear after position limits.
-5. **Shadow mode.** Publish `kronos_*` alongside the current signal for 30 sessions before using them in sizing.
+5. **Shadow mode.** Publish `kronos_*` alongside the current signal for 30 sessions before using them in sizing. Run those sessions through the promotion gate below.
+
+## Champion/challenger promotion gate
+
+`agents/ai_engine/champion_challenger.py` is the bookkeeping layer that decides whether Kronos may influence sizing. It never places orders, never imports torch, and is safe to import under `LIGHTWEIGHT_API_MODE`.
+
+**Unit of evidence: a paired observation.** One symbol, one session, one horizon, one champion score and one challenger score. A score is a signed conviction in `[-1, 1]`; exactly `0` is an abstention and is excluded from hit rate and expectancy instead of being scored as a loss. Realised `forward_return_pct` is attached when the horizon closes.
+
+**Promotion requires all of the following (defaults, env-overridable):**
+
+| Gate | Default | Env knob |
+|---|---|---|
+| Paired resolved samples | 40 | `CHALLENGER_MIN_PAIRED_SAMPLES` |
+| Distinct shadow sessions | 30 | `CHALLENGER_MIN_SHADOW_SESSIONS` |
+| Challenger expectancy − champion expectancy | > 0.05 pct | `CHALLENGER_MIN_EXPECTANCY_MARGIN_PCT` |
+| Brier regression vs champion | ≤ 0.02 | `CHALLENGER_MAX_BRIER_REGRESSION` |
+| Rolling windows won (non-overlapping) | ≥ 60% | `CHALLENGER_MIN_WINDOWS_WON` |
+| Window size | 10 | `CHALLENGER_ROLLING_WINDOW` |
+| Calibration evidence present | required | `CHALLENGER_REQUIRE_CALIBRATION` |
+
+Anything the gate cannot prove — thin sample, missing calibration, an edge that only appears in one window — resolves to **keep the champion**. Recording an observation never flips the active model; only an explicit `evaluate()` does, and every transition appends to an audit trail.
+
+**State.** Persisted under `kronos_champion_challenger:v1` via `db/runtime_state.py`, bounded at `CHALLENGER_MAX_OBSERVATIONS` (2000) observations and 50 audit entries. If the database is unreachable the ledger degrades to in-memory operation and logs a warning rather than breaking the API.
+
+**Promotion is not a live-trading switch.** It marks the challenger as the model to *evaluate as primary*; sizing still flows through `agents/execution/position_sizing.py` with its own hard risk ceiling. Demotion re-runs on the trailing `max(2 × window, min samples)` observations, so a stale promotion cannot coast on an old edge.
+
+**Offline evaluation:**
+
+```bash
+python scripts/kronos_promotion.py \
+  --forecasts data/kronos_forecasts.json \
+  --panel data/panel.csv
+```
+
+The script pairs each forecast with a 12-1 momentum baseline (same symbol, same session, same forward horizon), derives walk-forward hit-rate probabilities from prior resolved pairs only, prints the gate decision as JSON, and exits `1` when the gate stays closed. Add `--persist` to write the ledger to runtime state. Until a real calibrated probability exists for both sides, `calibration_missing` correctly blocks promotion — do not fabricate one to clear the gate.
 
 ## Risks and limits
 

@@ -536,6 +536,23 @@ MAX_RISK_PER_TRADE_PCT = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "2.0"))
 # Rolling ATR history kept in-process when a caller cannot supply historical ATR.
 ATR_HISTORY_WINDOW = int(os.getenv("ATR_HISTORY_WINDOW", "60"))
 ATR_HISTORY_MIN_SAMPLES = int(os.getenv("ATR_HISTORY_MIN_SAMPLES", "10"))
+
+# Kronos champion/challenger promotion gate. All thresholds must pass; the gate
+# fails closed so a thin or unstable sample can never promote the challenger.
+CHALLENGER_MIN_PAIRED_SAMPLES = int(os.getenv("CHALLENGER_MIN_PAIRED_SAMPLES", "40"))
+CHALLENGER_MIN_SHADOW_SESSIONS = int(os.getenv("CHALLENGER_MIN_SHADOW_SESSIONS", "30"))
+CHALLENGER_MIN_EXPECTANCY_MARGIN_PCT = float(
+    os.getenv("CHALLENGER_MIN_EXPECTANCY_MARGIN_PCT", "0.05")
+)
+CHALLENGER_MAX_BRIER_REGRESSION = float(
+    os.getenv("CHALLENGER_MAX_BRIER_REGRESSION", "0.02")
+)
+CHALLENGER_ROLLING_WINDOW = int(os.getenv("CHALLENGER_ROLLING_WINDOW", "10"))
+CHALLENGER_MIN_WINDOWS_WON = float(os.getenv("CHALLENGER_MIN_WINDOWS_WON", "0.60"))
+CHALLENGER_REQUIRE_CALIBRATION = os.getenv(
+    "CHALLENGER_REQUIRE_CALIBRATION", "true"
+).strip().lower() in ("1", "true", "yes", "on")
+CHALLENGER_MAX_OBSERVATIONS = int(os.getenv("CHALLENGER_MAX_OBSERVATIONS", "2000"))
 CORRELATION_GROUPS = [
     ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"],
     ["RELIANCE.NS", "ONGC.NS"],
@@ -1231,6 +1248,24 @@ def validate_runtime_config() -> None:
 
     if ATR_HISTORY_MIN_SAMPLES < 1 or ATR_HISTORY_WINDOW < ATR_HISTORY_MIN_SAMPLES:
         errors.append("ATR_HISTORY_WINDOW must be >= ATR_HISTORY_MIN_SAMPLES >= 1")
+
+    if CHALLENGER_MIN_PAIRED_SAMPLES < 1:
+        errors.append("CHALLENGER_MIN_PAIRED_SAMPLES must be >= 1")
+
+    if CHALLENGER_MIN_SHADOW_SESSIONS < 1:
+        errors.append("CHALLENGER_MIN_SHADOW_SESSIONS must be >= 1")
+
+    if CHALLENGER_ROLLING_WINDOW < 2:
+        errors.append("CHALLENGER_ROLLING_WINDOW must be >= 2")
+
+    if not (0.0 < CHALLENGER_MIN_WINDOWS_WON <= 1.0):
+        errors.append("CHALLENGER_MIN_WINDOWS_WON must be in (0, 1]")
+
+    if CHALLENGER_MAX_BRIER_REGRESSION < 0:
+        errors.append("CHALLENGER_MAX_BRIER_REGRESSION must be >= 0")
+
+    if CHALLENGER_MAX_OBSERVATIONS < CHALLENGER_MIN_PAIRED_SAMPLES:
+        errors.append("CHALLENGER_MAX_OBSERVATIONS must be >= CHALLENGER_MIN_PAIRED_SAMPLES")
 
     if INTRADAY_MAX_BAR_AGE_MINUTES < 0:
         errors.append("INTRADAY_MAX_BAR_AGE_MINUTES must be >= 0")
