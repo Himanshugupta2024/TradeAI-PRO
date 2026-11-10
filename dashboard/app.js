@@ -27458,7 +27458,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ force: true, max_picks: 5 })
-                });
+                }, 60000, 1);
                 const res = await resp.json();
                 alert(`Research pipeline complete. Generated ${res.picks ? res.picks.length : 0} qualified setups for target session.`);
                 await loadNextDayPicks();

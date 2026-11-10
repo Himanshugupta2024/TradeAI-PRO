@@ -22,6 +22,7 @@ Core Architectural Rules:
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import math
 from datetime import date, datetime, time as dtime, timedelta, timezone
@@ -678,7 +679,7 @@ def generate_next_day_picks(
     symbols_to_screen = universe if universe is not None else TIER1_RESEARCH_UNIVERSE
     candidates = []
 
-    for sym in symbols_to_screen:
+    def _screen_symbol(sym: str) -> Optional[Dict[str, Any]]:
         try:
             df = _get_daily_candles_for_symbol(sym, source_date)
             if df is not None and len(df) >= 15:
@@ -686,9 +687,17 @@ def generate_next_day_picks(
                 if cand:
                     cand["data_source"] = "NSE_EXCHANGE_EOD"
                     cand["is_synthetic"] = False
-                    candidates.append(cand)
+                    return cand
         except Exception as exc:
             logger.debug("Screening skipped symbol %s: %s", sym, exc)
+        return None
+
+    # Bounded parallel screening adhering to MAX_NSE_CONCURRENCY = 5
+    max_workers = max(1, min(5, len(symbols_to_screen)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for cand in executor.map(_screen_symbol, symbols_to_screen):
+            if cand:
+                candidates.append(cand)
 
     # Stage 2: Rank & Sector Diversification Filter
     candidates.sort(key=lambda x: x["rank_score"], reverse=True)
