@@ -82,6 +82,12 @@ def get_process_rss_mb(collect_gc: bool = True) -> float:
 
     # 2. Linux / Render implementation
     if system == "Linux":
+        if collect_gc:
+            try:
+                import ctypes
+                ctypes.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:
+                pass
         # First try /proc/self/status (most precise live VmRSS)
         try:
             with open("/proc/self/status", "r") as f:

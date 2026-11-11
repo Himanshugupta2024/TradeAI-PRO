@@ -32,6 +32,7 @@ from api.routers.forex import router as forex_router
 from api.routers.swing import router as swing_router
 from api.routers.portfolio import router as portfolio_router
 from api.routers.market import router as market_router
+from api.routers.prediction import router as prediction_router
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ router.include_router(forex_router)
 router.include_router(swing_router)
 router.include_router(portfolio_router)
 router.include_router(market_router)
+router.include_router(prediction_router)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RE-EXPORTS FOR BACKWARDS COMPATIBILITY & TEST SUITE INTEGRITY
