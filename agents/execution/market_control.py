@@ -289,17 +289,17 @@ def set_market_control_state(
     current_state = get_market_control_state()
     current_enabled = current_state.get("crypto_forex_enabled", False)
 
-    if current_enabled == enabled:
-        status_text = "ON" if enabled else "OFF"
-        return True, f"Crypto/Forex is already {status_text}.", current_state
-
-    # 1. Verification for OFF -> ON
+    # 1. Verification for enabling Crypto/Forex (always requires valid password)
     if enabled:
         if not password:
             return False, "Password required to enable Crypto / Forex processing.", current_state
         ok, msg = verify_operator_password(password, client_id=client_id)
         if not ok:
             return False, msg, current_state
+
+    if current_enabled == enabled:
+        status_text = "ON" if enabled else "OFF"
+        return True, f"Crypto/Forex is already {status_text}.", current_state
 
     # 2. Transition Guard for ON -> OFF
     if not enabled:
