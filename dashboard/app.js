@@ -8210,6 +8210,17 @@ function _getTradeHorizonMeta(sym, signalType, timeframe) {
     const st = String(signalType || '').toUpperCase();
     const tf = String(timeframe || '').toLowerCase();
 
+    if (st === 'HOLD' || st === 'MONITOR' || st === 'NO_SIGNAL') {
+        return {
+            short: 'Monitoring',
+            full: 'Market Monitoring (No Active Setup)',
+            barrierShort: 'Awaiting Confluence',
+            barrierFull: 'Awaiting Breakout / Swing Confluence',
+            subtext: 'Asset is actively monitored for entry criteria',
+            rule: 'No order triggers until setup confluence reaches threshold'
+        };
+    }
+
     const isCrypto = s.includes('USDT') || s.includes('BTC') || s.includes('ETH') || s.includes('SOL');
     const isForex = s.includes('/') || s.includes('EUR_') || s.includes('GBP_') || s.includes('USD_') || s.includes('JPY_');
     const isIntraday = st.includes('INTRADAY') || st.includes('SCALP') || tf === '5m' || tf === '15m';
@@ -27739,14 +27750,16 @@ function _renderWatchlistCard(sym, q, compName) {
     const ltp = q.ltp;
     const changePct = q.changePct || 0;
     const signalLabel = q.signalLabel || 'MONITOR';
-    const conf = q.conf || 65;
+    const conf = q.conf;
     const entry = q.entry || ltp;
-    const sl = q.sl || (ltp * 0.98);
-    const tp = q.tp || (ltp * 1.035);
     const wlHorizonMeta = _getTradeHorizonMeta(sym, signalLabel, q.timeframe);
 
     const isLong = ['LONG', 'BUY'].includes(signalLabel.toUpperCase());
     const isShort = ['SHORT', 'SELL'].includes(signalLabel.toUpperCase());
+    const isActionable = isLong || isShort;
+    const sl = (isActionable && q.sl && Number(q.sl) > 0) ? Number(q.sl) : null;
+    const tp = (isActionable && q.tp && Number(q.tp) > 0) ? Number(q.tp) : null;
+    const confDisplay = (conf !== undefined && conf !== null && Number(conf) > 0) ? `${conf}/100` : '—';
     const sigColor = isLong ? 'var(--green, #10b981)' : (isShort ? 'var(--red, #ef4444)' : '#94a3b8');
     const sigBg = isLong ? 'rgba(16,185,129,0.12)' : (isShort ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)');
     const sigBorder = isLong ? 'rgba(16,185,129,0.3)' : (isShort ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.1)');
@@ -27766,7 +27779,7 @@ function _renderWatchlistCard(sym, q, compName) {
                         ${signalLabel}
                     </span>
                     <span style="font-size: 0.70rem;font-family:var(--font-mono);color:var(--text-muted);background:rgba(255,255,255,0.03);padding:2px 5px;border-radius:4px;">
-                        ${conf}/100
+                        ${confDisplay}
                     </span>
                 </div>
             </div>
@@ -27789,11 +27802,11 @@ function _renderWatchlistCard(sym, q, compName) {
                 </div>
                 <div>
                     <div class="watchlist-lvl-label" style="color:var(--red,#ef4444);">Stop Loss</div>
-                    <div class="watchlist-lvl-val" style="color:var(--red,#ef4444);">₹${Number(sl).toFixed(1)}</div>
+                    <div class="watchlist-lvl-val" style="color:${sl ? 'var(--red,#ef4444)' : 'var(--text-muted)'};">${sl ? '₹' + Number(sl).toFixed(1) : '—'}</div>
                 </div>
                 <div>
                     <div class="watchlist-lvl-label" style="color:var(--green,#10b981);">Target (TP)</div>
-                    <div class="watchlist-lvl-val" style="color:var(--green,#10b981);">₹${Number(tp).toFixed(1)}</div>
+                    <div class="watchlist-lvl-val" style="color:${tp ? 'var(--green,#10b981)' : 'var(--text-muted)'};">${tp ? '₹' + Number(tp).toFixed(1) : '—'}</div>
                 </div>
             </div>
 
@@ -27835,10 +27848,10 @@ async function _fetchWatchlistQuote(sym) {
                 ltp,
                 changePct: Number(md.change_pct || 0),
                 signalLabel: 'MONITOR',
-                conf: 65,
+                conf: md.rsi ? Math.round(Number(md.rsi)) : 0,
                 entry: ltp,
-                sl: Number((ltp * 0.98).toFixed(1)),
-                tp: Number((ltp * 1.035).toFixed(1)),
+                sl: null,
+                tp: null,
                 isError: false,
                 isSyncing: false,
                 ts: Date.now()
@@ -27861,18 +27874,18 @@ async function _fetchWatchlistQuote(sym) {
                 const prevClose = Number(prev.close || ltp);
                 const changePct = prevClose > 0 ? Number((((ltp - prevClose) / prevClose) * 100).toFixed(2)) : 0;
                 const sig = (last.signal || 'HOLD').toUpperCase();
-                const signalLabel = ['LONG', 'SHORT', 'BUY', 'SELL', 'HOLD'].includes(sig) ? sig : 'MONITOR';
-                const ema50 = Number(last.ema_50 || (ltp * 0.98));
-                const sl = Number((last.bb_lower && last.bb_lower < ltp) ? last.bb_lower : (ema50 < ltp ? ema50 : ltp * 0.98));
-                const tp = Number((last.bb_upper && last.bb_upper > ltp) ? last.bb_upper : (ltp * 1.035));
+                const isAct = ['LONG', 'SHORT', 'BUY', 'SELL'].includes(sig);
+                const signalLabel = isAct ? sig : (sig === 'HOLD' ? 'HOLD' : 'MONITOR');
+                const sl = (isAct && last.stop_loss) ? Number(last.stop_loss) : null;
+                const tp = (isAct && last.target) ? Number(last.target) : null;
                 const quoteObj = {
                     ltp,
                     changePct,
                     signalLabel,
-                    conf: Number(last.rsi ? Math.min(85, Math.max(50, Math.round(last.rsi))) : 65),
+                    conf: Number(last.rsi ? Math.min(85, Math.max(20, Math.round(last.rsi))) : 0),
                     entry: ltp,
-                    sl: Number(sl.toFixed(1)),
-                    tp: Number(tp.toFixed(1)),
+                    sl,
+                    tp,
                     isError: false,
                     isSyncing: false,
                     ts: Date.now()
@@ -27893,15 +27906,16 @@ async function _fetchWatchlistQuote(sym) {
             const changePct = Number(sig.change_pct ?? d.change_pct ?? 0);
             const rawSig = sig.signal || (ltp > 0 ? 'MONITOR' : 'UNAVAILABLE');
             const signalLabel = rawSig.toUpperCase();
-            const conf = sig.confidence || 65;
+            const isAct = ['LONG', 'SHORT', 'BUY', 'SELL'].includes(signalLabel);
+            const conf = sig.confidence || (sig.rsi ? Math.round(sig.rsi) : 0);
             const entry = Number(sig.entry || ltp);
-            const sl = Number(sig.stop_loss || (ltp > 0 ? ltp * 0.98 : 0));
-            const tp = Number(sig.target || (ltp > 0 ? ltp * 1.035 : 0));
+            const sl = (isAct && sig.stop_loss) ? Number(sig.stop_loss) : null;
+            const tp = (isAct && sig.target) ? Number(sig.target) : null;
             const quoteObj = {
                 ltp,
                 changePct,
-                signalLabel,
-                conf,
+                signalLabel: isAct ? signalLabel : (signalLabel === 'HOLD' ? 'HOLD' : 'MONITOR'),
+                conf: Number(conf || 0),
                 entry,
                 sl,
                 tp,
@@ -28075,14 +28089,15 @@ async function loadDedicatedWatchlist(options = {}) {
         const bQuote = bulkQuotes[sym];
         if (bQuote && Number(bQuote.ltp || 0) > 0) {
             const ltp = Number(bQuote.ltp);
+            const isAct = ['LONG', 'SHORT', 'BUY', 'SELL'].includes(String(bQuote.signal || '').toUpperCase());
             const qObj = {
                 ltp,
                 changePct: Number(bQuote.change_pct || 0),
                 signalLabel: bQuote.signal || 'MONITOR',
-                conf: Number(bQuote.confidence || 65),
+                conf: Number(bQuote.confidence || 0),
                 entry: Number(bQuote.entry || ltp),
-                sl: Number(bQuote.stop_loss || (ltp * 0.98)),
-                tp: Number(bQuote.target || (ltp * 1.035)),
+                sl: (isAct && bQuote.stop_loss) ? Number(bQuote.stop_loss) : null,
+                tp: (isAct && bQuote.target) ? Number(bQuote.target) : null,
                 isError: false,
                 isLoading: false,
                 isSyncing: false,
@@ -28096,14 +28111,15 @@ async function loadDedicatedWatchlist(options = {}) {
         const sig = signalsMap[sym];
         if (sig && (sig.close || sig.entry)) {
             const ltp = Number(sig.close || sig.entry || 0);
+            const isAct = ['LONG', 'SHORT', 'BUY', 'SELL'].includes(String(sig.signal || '').toUpperCase());
             const qObj = {
                 ltp,
                 changePct: Number(sig.change_pct || 0),
                 signalLabel: sig.signal || 'MONITOR',
-                conf: sig.confidence || 65,
+                conf: Number(sig.confidence || (sig.rsi ? Math.round(sig.rsi) : 0)),
                 entry: Number(sig.entry || ltp),
-                sl: Number(sig.stop_loss || (ltp > 0 ? ltp * 0.98 : 0)),
-                tp: Number(sig.target || (ltp > 0 ? ltp * 1.035 : 0)),
+                sl: (isAct && sig.stop_loss) ? Number(sig.stop_loss) : null,
+                tp: (isAct && sig.target) ? Number(sig.target) : null,
                 isError: false,
                 isLoading: false,
                 isSyncing: false,
@@ -28121,10 +28137,10 @@ async function loadDedicatedWatchlist(options = {}) {
                     ltp,
                     changePct: Number(marketDataCache[sym].change_pct || 0),
                     signalLabel: 'MONITOR',
-                    conf: 60,
+                    conf: marketDataCache[sym].rsi ? Math.round(Number(marketDataCache[sym].rsi)) : 0,
                     entry: ltp,
-                    sl: Number((ltp * 0.98).toFixed(1)),
-                    tp: Number((ltp * 1.035).toFixed(1)),
+                    sl: null,
+                    tp: null,
                     isError: false,
                     isLoading: false,
                     isSyncing: false,

@@ -2235,7 +2235,11 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         "rsi": current_rsi,  # always current RSI
         "trend": current_trend,  # always current trend
         "regime": current_regime,
-        "timestamp": last_signal["timestamp"].isoformat(),
+        "timestamp": (
+            last_signal["timestamp"].isoformat()
+            if hasattr(last_signal.get("timestamp"), "isoformat")
+            else str(last_signal.get("timestamp") or datetime.now(timezone.utc).isoformat())
+        ),
         "sparkline": [round(float(c), precision) for c in df["close"].tail(20)],
         "stale": stale,
         "stale_minutes": round(signal_age_min, 1),

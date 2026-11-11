@@ -1000,6 +1000,8 @@ async def get_watchlist_quotes(symbols: str = Query(..., description="Comma-sepa
     Bulk quote endpoint for user watchlists.
     Returns real-time or cached snapshot quotes in a single round-trip,
     avoiding multiple concurrent requests and client timeouts.
+    Enforces strict Data Honesty: genuine calculated trade levels for active setups,
+    and null/None levels (no fake 2% SL / 3.5% TP) for symbols on HOLD or MONITOR.
     """
     raw_list = [s.strip().upper().replace(".NS", "") for s in symbols.split(",") if s.strip()]
     if not raw_list:
@@ -1008,80 +1010,108 @@ async def get_watchlist_quotes(symbols: str = Query(..., description="Comma-sepa
     target_symbols = raw_list[:20]
     results = {}
 
+    # Build snapshot map from persisted memory snapshot or durable state
+    snapshot_map: dict[str, dict] = {}
+    if getattr(svc, "_persisted_signals_snapshot", None):
+        for s in svc._persisted_signals_snapshot:
+            if isinstance(s, dict) and s.get("symbol"):
+                snapshot_map[s["symbol"].upper().replace(".NS", "")] = s
+
+    if len(snapshot_map) < 5:
+        try:
+            from db.runtime_state import get_runtime_state
+            snap_v1 = get_runtime_state("latest_signals:v1")
+            snap_raw = get_runtime_state("latest_signals_snapshot")
+            sigs_v1 = snap_v1.get("signals", []) if isinstance(snap_v1, dict) else []
+            sigs_raw = snap_raw.get("signals", []) if isinstance(snap_raw, dict) else []
+            for s in sigs_raw + sigs_v1:
+                if isinstance(s, dict) and s.get("symbol"):
+                    k = s["symbol"].upper().replace(".NS", "")
+                    if k not in snapshot_map:
+                        snapshot_map[k] = s
+        except Exception:
+            pass
+
     for sym in target_symbols:
-        quote = None
-        # 1. In-memory market data cache (0ms)
-        if sym in svc._market_data:
+        sig = None
+        # 1. Authoritative signal lookup from live cache
+        if sym in svc._signal_cache:
+            try:
+                sig = svc._get_signal_for_symbol(sym)
+            except Exception:
+                sig = None
+
+        # 2. Check snapshot map
+        if not sig and sym in snapshot_map:
+            sig = snapshot_map[sym]
+
+        # 3. Check market data cache and generate signals if missing
+        if not sig and sym in svc._market_data:
             df = svc._market_data[sym]
             if isinstance(df, pd.DataFrame) and not df.empty:
-                last = df.iloc[-1]
-                prev = df.iloc[-2] if len(df) > 1 else last
-                ltp = float(last.get("close", 0.0))
-                prev_close = float(prev.get("close", ltp))
-                chg_pct = round(((ltp - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
-                sig = str(last.get("signal", "HOLD")).upper()
-                quote = {
-                    "symbol": sym,
-                    "ltp": round(ltp, 2),
-                    "change_pct": chg_pct,
-                    "signal": sig if sig in ("LONG", "SHORT", "BUY", "SELL", "HOLD") else "MONITOR",
-                    "confidence": int(last.get("rsi", 65)) if pd.notna(last.get("rsi")) else 65,
-                    "entry": round(ltp, 2),
-                    "stop_loss": round(float(last.get("bb_lower", ltp * 0.98)), 2),
-                    "target": round(float(last.get("bb_upper", ltp * 1.035)), 2),
-                    "source": "memory_cache",
-                    "is_stale": False,
-                }
+                try:
+                    if "signal" not in df.columns:
+                        from agents.trading_pipeline.signal_generator import generate_signals
+                        df = generate_signals(df)
+                        svc._signal_cache[sym] = df
+                    sig = svc._get_signal_for_symbol(sym)
+                except Exception:
+                    sig = None
 
-        # 2. Check signal cache
-        if not quote and sym in svc._signal_cache:
-            df = svc._signal_cache[sym]
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                last = df.iloc[-1]
-                ltp = float(last.get("close", 0.0))
-                quote = {
-                    "symbol": sym,
-                    "ltp": round(ltp, 2),
-                    "change_pct": round(float(last.get("change_pct", 0.0)), 2),
-                    "signal": str(last.get("signal", "MONITOR")).upper(),
-                    "confidence": 65,
-                    "entry": round(ltp, 2),
-                    "stop_loss": round(ltp * 0.98, 2),
-                    "target": round(ltp * 1.035, 2),
-                    "source": "signal_cache",
-                    "is_stale": False,
-                }
-
-        # 3. If still missing, on-demand quick fetch
-        if not quote:
+        # 4. On-demand quick fetch if still missing
+        if not sig:
             try:
                 from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
                 df = await asyncio.to_thread(fetch_arbitrary_symbol, sym, "5d", "5m")
                 if df is not None and not df.empty:
+                    from agents.trading_pipeline.technical_indicators import calculate_indicators
+                    from agents.trading_pipeline.signal_generator import generate_signals
                     df = calculate_indicators(df)
+                    df = generate_signals(df)
                     svc._market_data[sym] = df
-                    last = df.iloc[-1]
-                    prev = df.iloc[-2] if len(df) > 1 else last
-                    ltp = float(last.get("close", 0.0))
-                    prev_close = float(prev.get("close", ltp))
-                    chg_pct = round(((ltp - prev_close) / prev_close) * 100, 2) if prev_close > 0 else 0.0
-                    quote = {
-                        "symbol": sym,
-                        "ltp": round(ltp, 2),
-                        "change_pct": chg_pct,
-                        "signal": "MONITOR",
-                        "confidence": 65,
-                        "entry": round(ltp, 2),
-                        "stop_loss": round(float(last.get("bb_lower", ltp * 0.98)), 2),
-                        "target": round(float(last.get("bb_upper", ltp * 1.035)), 2),
-                        "source": "on_demand",
-                        "is_stale": False,
-                    }
+                    svc._signal_cache[sym] = df
+                    sig = svc._get_signal_for_symbol(sym)
             except Exception:
-                pass
+                sig = None
 
-        if quote:
-            results[sym] = quote
+        if sig and isinstance(sig, dict):
+            signal_val = str(sig.get("signal", "HOLD")).upper()
+            is_actionable = signal_val in ("LONG", "SHORT", "BUY", "SELL")
+            ltp = float(sig.get("close") or sig.get("entry") or 0.0)
+            chg_pct = float(sig.get("change_pct", 0.0))
+            raw_conf = sig.get("confidence")
+            if raw_conf is not None and pd.notna(raw_conf) and float(raw_conf) > 0:
+                conf = int(round(float(raw_conf)))
+            elif pd.notna(sig.get("rsi")):
+                conf = int(round(float(sig.get("rsi"))))
+            else:
+                conf = 0
+            entry = float(sig.get("entry", ltp))
+
+            if is_actionable:
+                raw_sl = sig.get("stop_loss")
+                raw_tp = sig.get("target")
+                sl = round(float(raw_sl), 2) if raw_sl is not None else None
+                tp = round(float(raw_tp), 2) if raw_tp is not None else None
+                levels_source = sig.get("levels_source", "ENGINE")
+            else:
+                sl = None
+                tp = None
+                levels_source = "UNAVAILABLE"
+
+            results[sym] = {
+                "symbol": sym,
+                "ltp": round(ltp, 2),
+                "change_pct": round(chg_pct, 2),
+                "signal": signal_val if is_actionable or signal_val == "HOLD" else "MONITOR",
+                "confidence": conf,
+                "entry": round(entry, 2),
+                "stop_loss": sl,
+                "target": tp,
+                "levels_source": levels_source,
+                "source": sig.get("source", "authoritative_engine"),
+                "is_stale": bool(sig.get("stale", False)),
+            }
         else:
             results[sym] = {
                 "symbol": sym,
@@ -1090,8 +1120,9 @@ async def get_watchlist_quotes(symbols: str = Query(..., description="Comma-sepa
                 "signal": "SYNCING",
                 "confidence": 0,
                 "entry": 0.0,
-                "stop_loss": 0.0,
-                "target": 0.0,
+                "stop_loss": None,
+                "target": None,
+                "levels_source": "UNAVAILABLE",
                 "source": "pending",
                 "is_stale": True,
             }
