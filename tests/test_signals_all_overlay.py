@@ -100,3 +100,28 @@ def test_get_major_indices_sync_ignores_stale_in_memory_bar(monkeypatch):
 
     res = _get_major_indices_sync()
     assert res["sensex"][0] == 80999.40
+
+
+@pytest.mark.asyncio
+async def test_get_all_signals_filters_by_nse_market_focus(monkeypatch):
+    """When market focus is set to 'nse', crypto pairs must be excluded from signals/all."""
+    signals_mix = [
+        {"symbol": "RELIANCE", "close": 1330.0, "signal": "BUY"},
+        {"symbol": "TCS", "close": 4100.0, "signal": "HOLD"},
+        {"symbol": "BTC/USDT", "close": 90000.0, "signal": "BUY"},
+        {"symbol": "ETH/USDT", "close": 3200.0, "signal": "HOLD"},
+    ]
+    monkeypatch.setattr(svc, "_persisted_signals_snapshot", signals_mix)
+    monkeypatch.setattr(svc, "_signal_cache", {})
+    monkeypatch.setattr(
+        "agents.execution.market_control.get_market_focus_state",
+        lambda: {"active_focus": "nse", "nse_enabled": True, "crypto_enabled": False, "forex_enabled": False}
+    )
+
+    res = Response()
+    payload = await get_all_signals(res)
+    symbols = [s["symbol"] for s in payload["signals"]]
+    assert "RELIANCE" in symbols
+    assert "TCS" in symbols
+    assert "BTC/USDT" not in symbols
+    assert "ETH/USDT" not in symbols

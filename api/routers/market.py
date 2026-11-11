@@ -731,6 +731,20 @@ async def get_all_signals(response: Response):
         results = list(live_signals.values())
         source = "live_partial"
 
+    # 4. Filter by active market focus (NSE, Crypto, Forex, All)
+    try:
+        from agents.execution.market_control import get_market_focus_state
+        focus_state = get_market_focus_state()
+        active_focus = str(focus_state.get("active_focus") or "all").lower()
+        if active_focus == "nse":
+            results = [s for s in results if "/" not in str(s.get("symbol", ""))]
+        elif active_focus == "crypto":
+            results = [s for s in results if "/" in str(s.get("symbol", "")) and any(k in str(s.get("symbol", "")) for k in ("USDT", "USD", "BTC", "ETH", "SOL"))]
+        elif active_focus == "forex":
+            results = [s for s in results if "/" in str(s.get("symbol", "")) and "USDT" not in str(s.get("symbol", ""))]
+    except Exception as exc:
+        logger.debug("Market focus filtering in get_all_signals skipped: %s", exc)
+
     tracker.set_meta("count", len(results))
     tracker.set_meta("cache_hit", source)
     tracker.finish()

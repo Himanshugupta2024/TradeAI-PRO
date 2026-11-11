@@ -1944,6 +1944,27 @@
         btn.style.color = isSelected ? '#fff' : 'var(--text-muted)';
       });
 
+      const chkNse = document.getElementById('chkEnableNse');
+      const chkCrypto = document.getElementById('chkEnableCrypto');
+      const chkForex = document.getElementById('chkEnableForex');
+      if (mode === 'nse') {
+        if (chkNse) chkNse.checked = true;
+        if (chkCrypto) chkCrypto.checked = false;
+        if (chkForex) chkForex.checked = false;
+      } else if (mode === 'crypto') {
+        if (chkNse) chkNse.checked = false;
+        if (chkCrypto) chkCrypto.checked = true;
+        if (chkForex) chkForex.checked = false;
+      } else if (mode === 'forex') {
+        if (chkNse) chkNse.checked = false;
+        if (chkCrypto) chkCrypto.checked = false;
+        if (chkForex) chkForex.checked = true;
+      } else if (mode === 'all') {
+        if (chkNse) chkNse.checked = true;
+        if (chkCrypto) chkCrypto.checked = true;
+        if (chkForex) chkForex.checked = true;
+      }
+
       const summary = document.getElementById('marketFocusSummary');
       if (summary) {
         if (mode === 'crypto') summary.textContent = 'Focus: Crypto 24/7 (Only crypto tickers and signals will display on dashboard)';
@@ -2007,11 +2028,15 @@
       const chkCrypto = document.getElementById('chkEnableCrypto');
       const chkForex = document.getElementById('chkEnableForex');
 
+      const isNseFocus = _currentMarketFocus === 'nse';
+      const isCryptoFocus = _currentMarketFocus === 'crypto';
+      const isForexFocus = _currentMarketFocus === 'forex';
+
       const payload = {
         active_focus: _currentMarketFocus,
-        nse_enabled: chkNse ? chkNse.checked : true,
-        crypto_enabled: chkCrypto ? chkCrypto.checked : true,
-        forex_enabled: chkForex ? chkForex.checked : true,
+        nse_enabled: isNseFocus ? true : (chkNse ? chkNse.checked : !isCryptoFocus && !isForexFocus),
+        crypto_enabled: (isNseFocus || isForexFocus) ? false : (chkCrypto ? chkCrypto.checked : isCryptoFocus),
+        forex_enabled: (isNseFocus || isCryptoFocus) ? false : (chkForex ? chkForex.checked : isForexFocus),
         password: adminKey,
         reason: `Operator broadcasted ${_currentMarketFocus.toUpperCase()} market focus`
       };

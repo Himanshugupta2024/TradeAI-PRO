@@ -704,6 +704,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => updateAiModelHealthBadge(), 1800);
     setTimeout(() => loadNsePredictionTab(), 2000);
     setInterval(() => { if (!document.hidden && currentTab === 'overview') loadNsePredictionTab(); }, 60000);
+    setInterval(() => { if (!document.hidden) { fetchMarketFocusConfig(); } }, 20000);
     setTimeout(() => connectPriceWebSocket(), 2400);
 
     startBackgroundRefresh();
@@ -9669,15 +9670,19 @@ function renderSignals(signals) {
 
 
 
+    const activeFocus = String(_marketFocusConfig && _marketFocusConfig.active_focus || 'all').toLowerCase();
+    let scopedSignals = signals;
+    if (activeFocus === 'nse') {
+        scopedSignals = signals.filter(sig => !String(sig.symbol || '').includes('/'));
+    } else if (activeFocus === 'crypto') {
+        scopedSignals = signals.filter(sig => String(sig.symbol || '').includes('/'));
+    } else if (activeFocus === 'forex') {
+        scopedSignals = signals.filter(sig => String(sig.symbol || '').includes('/') && !String(sig.symbol || '').includes('USDT'));
+    }
+
     let visibleSignals = _showSkipSignals
-
-
-
-        ? signals
-
-
-
-        : signals.filter(sig => String(sig.signal || '').toUpperCase() !== 'SKIP');
+        ? scopedSignals
+        : scopedSignals.filter(sig => String(sig.signal || '').toUpperCase() !== 'SKIP');
 
 
 
@@ -27013,8 +27018,8 @@ async function fetchMarketFocusConfig() {
 function applyMarketFocusToDashboard(config) {
     if (!config || typeof config !== 'object') return;
     const focus = String(config.active_focus || 'all').toLowerCase();
-    const cryptoOn = config.crypto_enabled !== false;
-    const forexOn = config.forex_enabled !== false;
+    const cryptoOn = config.crypto_enabled !== false && focus !== 'nse' && focus !== 'forex';
+    const forexOn = config.forex_enabled !== false && focus !== 'nse' && focus !== 'crypto';
 
     // 1. Sidebar Nav Visibility & Badges
     const cryptoTab = document.getElementById("tabCryptoMain");
@@ -27051,7 +27056,14 @@ function applyMarketFocusToDashboard(config) {
         }
     }
 
-    // 3. Section 6A Badge text update
+    // 3. Header BTC ticker slot
+    const btcEl = document.getElementById('moodBtc');
+    const btcSlot = btcEl ? btcEl.closest('.mood-ticker-slot') : null;
+    if (btcSlot) {
+        btcSlot.style.display = cryptoOn ? "" : "none";
+    }
+
+    // 4. Section 6A Badge text update
     const badge = document.getElementById("marketControlModeBadge");
     if (badge) {
         if (focus === 'crypto') {
@@ -27074,11 +27086,16 @@ function applyMarketFocusToDashboard(config) {
         }
     }
 
-    // 4. Initial tab routing if first page visit without user override
-    if (!sessionStorage.getItem('user_tab_override')) {
-        if (focus === 'forex' && typeof currentTab !== 'undefined' && currentTab === 'overview') {
-            if (typeof switchTab === 'function') switchTab('forex');
-        }
+    // 5. Initial tab routing if first page visit without user override
+    if (focus === 'forex' && typeof currentTab !== 'undefined' && currentTab === 'overview' && !sessionStorage.getItem('user_tab_override')) {
+        if (typeof switchTab === 'function') switchTab('forex');
+    } else if (focus === 'nse' && typeof currentTab !== 'undefined' && (currentTab === 'forex' || currentTab === 'crypto')) {
+        if (typeof switchTab === 'function') switchTab('overview');
+    }
+
+    // 6. Re-render signals if cached signals are present
+    if (typeof allSignals !== 'undefined' && allSignals && allSignals.length) {
+        if (typeof renderSignals === 'function') renderSignals(allSignals);
     }
 }
 

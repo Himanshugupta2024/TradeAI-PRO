@@ -443,6 +443,20 @@ def set_market_focus_state(
     if active_focus not in ("nse", "crypto", "forex", "all"):
         return False, f"Invalid active_focus: '{active_focus}'. Must be 'nse', 'crypto', 'forex', or 'all'.", get_market_focus_state()
 
+    # Enforce asset class alignment when a single-market focus is selected
+    if active_focus == "nse":
+        crypto_enabled = False
+        forex_enabled = False
+        nse_enabled = True
+    elif active_focus == "crypto":
+        nse_enabled = False
+        forex_enabled = False
+        crypto_enabled = True
+    elif active_focus == "forex":
+        nse_enabled = False
+        crypto_enabled = False
+        forex_enabled = True
+
     current_state = get_market_focus_state()
     new_version = current_state.get("version", 1) + 1
     now_iso = datetime.now(timezone.utc).isoformat()
