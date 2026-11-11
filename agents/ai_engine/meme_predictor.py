@@ -43,7 +43,7 @@ class MemePredictor:
         
         Returns:
             (signal, confidence, metadata)
-            signal: "BUY" | "SELL" | "HOLD" | "SKIP"
+            signal: "LONG" | "SHORT" | "HOLD" | "SKIP"
             confidence: 0.0 - 1.0
             metadata: dict with reasoning factors
         """
@@ -76,7 +76,7 @@ class MemePredictor:
         
         # Apply risk filters
         if dex_risk and not dex_risk.get("passed_filters", True):
-            if signal == "BUY":
+            if signal in ("LONG", "BUY"):
                 signal = "SKIP"
                 base_conf = 0.0
                 
@@ -351,12 +351,14 @@ class MemePredictor:
         # Weighted average
         total_score = sum(scores[k] * weights[k] for k in scores)
         
-        # Convert to signal
+        # Convert to signal. Emit the shared LONG/SHORT vocabulary (same as the
+        # NSE path) instead of BUY/SELL; callers that still speak BUY/SELL
+        # tolerate both spellings.
         if total_score > 0.25:
-            signal = "BUY"
+            signal = "LONG"
             confidence = 0.50 + (total_score * 0.40)  # 0.50 - 0.90
         elif total_score < -0.25:
-            signal = "SELL"
+            signal = "SHORT"
             confidence = 0.50 + (abs(total_score) * 0.40)
         else:
             signal = "HOLD"
@@ -372,12 +374,12 @@ class MemePredictor:
         pump_pct = features.get("pump_from_recent_low", 0.0)
         drawdown_pct = features.get("drawdown_from_recent_high", 0.0)
 
-        if signal == "BUY" and pump_pct > 25 and volatility > 8:
+        if signal in ("LONG", "BUY") and pump_pct > 25 and volatility > 8:
             confidence *= 0.82
-        if signal == "SELL" and drawdown_pct > 25 and volatility > 8:
+        if signal in ("SHORT", "SELL") and drawdown_pct > 25 and volatility > 8:
             confidence *= 0.82
 
-        if signal in ("BUY", "SELL") and confidence < 0.50:
+        if signal in ("LONG", "SHORT", "BUY", "SELL") and confidence < 0.50:
             signal = "HOLD"
             confidence = max(0.35, confidence)
             

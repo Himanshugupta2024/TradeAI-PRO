@@ -679,12 +679,14 @@ async def trigger_eod_review_now():
     analyser = FeedbackAnalyser()
     review = await asyncio.to_thread(analyser.run_daily_eod_review)
     daemon = get_autonomous_daemon()
+    _wr = review.get("today_win_rate")
+    _wr_text = f"{_wr:.1f}%" if isinstance(_wr, (int, float)) else "n/a (no closed trades)"
     daemon.record_decision(
         action="MANUAL_EOD_REVIEW",
         symbol="ALL",
         direction="NEUTRAL",
         price=0.0,
-        reason=f"Manual EOD review triggered: {review.get('today_trade_count', 0)} trades today, win rate {review.get('today_win_rate', 0)}%",
+        reason=f"Manual EOD review triggered: {review.get('today_trade_count', 0)} trades today, win rate {_wr_text}",
         pnl_pct=review.get("today_total_pnl_pct", 0.0),
     )
     return {"ok": True, "review": review}

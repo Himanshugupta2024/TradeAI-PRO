@@ -355,6 +355,60 @@
       border-color: rgba(255, 255, 255, 0.2);
     }
 
+    /* ── Filter Pills ───────────────────────────────────── */
+    .btn-filter {
+      padding: 0.28rem 0.65rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      transition: all 0.15s;
+    }
+    .btn-filter:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text);
+    }
+    .btn-filter.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      box-shadow: 0 0 8px var(--accent-glow);
+    }
+
+    /* ── Market Context & Confluence Strip ──────────────── */
+    .market-context-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      margin-bottom: 1.5rem;
+      padding: 0.85rem 1.25rem;
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      backdrop-filter: blur(12px);
+    }
+    .context-item {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .context-lbl {
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-subtle);
+    }
+    .context-val {
+      font-size: 0.88rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--text);
+    }
+
     /* ── Live Log Terminal ──────────────────────────────── */
     .terminal-section {
       background: #07090e;
@@ -896,6 +950,30 @@
       </div>
     </section>
 
+    <!-- Market Context & Confluence Strip -->
+    <section class="market-context-strip" id="marketContextStrip">
+      <div class="context-item">
+        <span class="context-lbl">Dominant Regime</span>
+        <span class="context-val" id="ctxRegime">--</span>
+      </div>
+      <div class="context-item">
+        <span class="context-lbl">Market Mood</span>
+        <span class="context-val" id="ctxMood">--</span>
+      </div>
+      <div class="context-item">
+        <span class="context-lbl">Market Breadth</span>
+        <span class="context-val" id="ctxBreadth">--</span>
+      </div>
+      <div class="context-item">
+        <span class="context-lbl">Active Focus</span>
+        <span class="context-val" id="ctxFocus">--</span>
+      </div>
+      <div class="context-item">
+        <span class="context-lbl">Sector Momentum</span>
+        <span class="context-val" id="ctxSector">--</span>
+      </div>
+    </section>
+
     <!-- Module 0: Operator Kill Switch (Runtime Layer) -->
     <section class="module-section">
       <div class="section-hd">
@@ -1295,8 +1373,15 @@
             <span class="section-hd-sub">Every accept, skip, and management action the daemon recorded — including kill-switch skips.</span>
           </div>
         </div>
-        <div class="field-row">
-          <span class="field-label">Limit</span>
+        <div class="field-row" style="flex-wrap: wrap; gap: 8px;">
+          <div class="feed-filters" style="display:flex; gap:5px; flex-wrap:wrap;">
+            <button class="btn-filter active" data-filter="ALL" onclick="setFeedFilter('ALL')">All</button>
+            <button class="btn-filter" data-filter="TRADES" onclick="setFeedFilter('TRADES')">Trades</button>
+            <button class="btn-filter" data-filter="EXITS" onclick="setFeedFilter('EXITS')">Exits & Stops</button>
+            <button class="btn-filter" data-filter="REVIEWS" onclick="setFeedFilter('REVIEWS')">EOD Reviews</button>
+            <button class="btn-filter" data-filter="NO_TRADE" onclick="setFeedFilter('NO_TRADE')">No-Trade</button>
+          </div>
+          <span class="field-label" style="margin-left:auto;">Limit</span>
           <select class="input-sm" id="feedLimit" onchange="loadAutonomousFeed()">
             <option value="25">25</option>
             <option value="50">50</option>
@@ -1455,12 +1540,19 @@
       err.style.display = 'none';
 
       try {
-        // Test key against an admin-protected endpoint (POST /api/market-control/status or health)
-        const res = await fetch(`${API}/api/market-control/status`, {
-          headers: { 'X-Admin-Key': key }
+        // Fail-closed test probe against authenticated endpoint
+        const res = await fetch(`${API}/api/admin/runtime-controls`, {
+          headers: { 'X-Admin-Key': key, 'Accept': 'application/json' }
         });
 
-        // Even though status is GET, test with an admin probe:
+        if (!res.ok) {
+          err.textContent = (res.status === 401 || res.status === 403)
+            ? 'Invalid operator key. Access denied.'
+            : `Authentication probe failed (HTTP ${res.status}).`;
+          err.style.display = 'block';
+          return;
+        }
+
         adminKey = key;
         sessionStorage.setItem('tradeai_admin_key', key);
         document.getElementById('authGate').style.display = 'none';
@@ -1535,56 +1627,105 @@
         // 1. Autonomous Status
         const auto = await apiCall('/api/autonomous/status').catch(() => null);
         if (auto) {
-          const isRunning = Boolean(auto.running);
+          const isEnabled = Boolean(auto.status?.enabled ?? auto.running);
+          const isMarketOpen = Boolean(auto.watchdog?.is_nse_market_open);
+
+          let stateLabel = 'PAUSED';
+          let badgeClass = 'badge-amber';
+          let cardClass = 'state-paused';
+
+          if (!isEnabled) {
+            stateLabel = 'PAUSED';
+            badgeClass = 'badge-amber';
+            cardClass = 'state-paused';
+          } else if (isMarketOpen) {
+            stateLabel = 'ACTIVE ⚡';
+            badgeClass = 'badge-green';
+            cardClass = 'state-running';
+          } else {
+            stateLabel = 'STANDBY (CLOSED)';
+            badgeClass = 'badge-blue';
+            cardClass = 'state-running';
+          }
+
           const badge = document.getElementById('badgeAutoStatus');
           const card = document.getElementById('cardAutoDaemon');
-          badge.textContent = isRunning ? 'RUNNING' : 'PAUSED';
-          badge.className = `kpi-status-badge ${isRunning ? 'badge-green' : 'badge-amber'}`;
-          card.className = `kpi-card ${isRunning ? 'state-running' : 'state-paused'}`;
+          if (badge) {
+            badge.textContent = stateLabel;
+            badge.className = `kpi-status-badge ${badgeClass}`;
+          }
+          if (card) {
+            card.className = `kpi-card ${cardClass}`;
+          }
 
-          document.getElementById('valAutoCycle').textContent = `Cycle #${auto.cycle_count ?? 0}`;
-          document.getElementById('valAutoNext').textContent = `${auto.next_cycle_in_sec ?? 0}s`;
-          document.getElementById('valAutoSignals').textContent = auto.tracked_signals_count ?? 0;
+          const cycleVal = auto.status?.recent_decisions_count ?? auto.worker?.symbols_scanned ?? auto.cycle_count ?? 0;
+          document.getElementById('valAutoCycle').textContent = `Decisions: ${cycleVal}`;
+          const nextSec = auto.next_cycle_in_sec ?? (isMarketOpen ? '15m' : 'Standby');
+          document.getElementById('valAutoNext').textContent = typeof nextSec === 'number' ? `${nextSec}s` : nextSec;
+          document.getElementById('valAutoSignals').textContent = auto.worker?.signals_generated ?? auto.tracked_signals_count ?? 0;
 
           const toggleBtn = document.getElementById('btnToggleAuto');
           if (toggleBtn) {
-            toggleBtn.textContent = isRunning ? '⏸️ Pause Autonomous AI' : '▶️ Resume Autonomous AI';
+            toggleBtn.textContent = isEnabled ? '⏸️ Pause Autonomous AI' : '▶️ Resume Autonomous AI';
           }
         }
 
         // 2. Risk State
         const risk = await apiCall('/api/risk/state').catch(() => null);
         if (risk) {
-          const isTriggered = Boolean(risk.circuit_breaker_triggered);
+          const isTriggered = Boolean(risk.circuit_breaker_active ?? risk.circuit_breaker_triggered);
           const rBadge = document.getElementById('badgeRiskStatus');
           const rCard = document.getElementById('cardRiskCircuit');
-          rBadge.textContent = isTriggered ? 'TRIGGERED' : 'HEALTHY';
-          rBadge.className = `kpi-status-badge ${isTriggered ? 'badge-red' : 'badge-green'}`;
-          rCard.className = `kpi-card ${isTriggered ? 'state-danger' : 'state-running'}`;
+          if (rBadge) {
+            rBadge.textContent = isTriggered ? 'TRIGGERED' : 'HEALTHY';
+            rBadge.className = `kpi-status-badge ${isTriggered ? 'badge-red' : 'badge-green'}`;
+          }
+          if (rCard) {
+            rCard.className = `kpi-card ${isTriggered ? 'state-danger' : 'state-running'}`;
+          }
 
-          document.getElementById('valLossStreak').textContent = `${risk.consecutive_losses ?? 0} / 3 Losses`;
-          const pnl = Number(risk.daily_pnl || 0);
-          const pnlEl = document.getElementById('valDailyPnl');
-          pnlEl.textContent = (pnl >= 0 ? '+' : '') + `₹${pnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
-          pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-          document.getElementById('valMaxDd').textContent = `${(risk.max_drawdown_pct || 0).toFixed(1)}%`;
+          const streak = risk.consecutive_losses ?? 0;
+          const maxStreak = risk.max_consecutive_losses ?? 3;
+          document.getElementById('valLossStreak').textContent = `${streak} / ${maxStreak} Losses`;
+
+          const ddVal = risk.drawdown_pct != null ? (risk.drawdown_pct * 100).toFixed(2) : (risk.max_drawdown_pct || 0).toFixed(1);
+          document.getElementById('valMaxDd').textContent = `${ddVal}%`;
         }
 
         // 3. Paper Portfolio Stats
         const port = await apiCall('/api/stats').catch(() => null);
         if (port) {
-          const cap = Number(port.current_capital || port.total_capital || 1000000);
+          const cap = Number(port.capital ?? port.total_equity ?? port.current_capital ?? port.total_capital ?? 100000);
           document.getElementById('valTotalCapital').textContent = `₹${cap.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
-          document.getElementById('valOpenTrades').textContent = `${port.open_trades ?? 0} / 5 max`;
+          const maxOpen = port.max_open_positions ?? 8;
+          document.getElementById('valOpenTrades').textContent = `${port.open_trades ?? 0} / ${maxOpen} max`;
           document.getElementById('valWinRate').textContent = `${(port.win_rate || 0).toFixed(1)}%`;
+
+          const pnlEl = document.getElementById('valDailyPnl');
+          if (pnlEl && port.total_pnl != null) {
+            const pnl = Number(port.total_pnl);
+            pnlEl.textContent = (pnl >= 0 ? '+' : '') + `₹${pnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+            pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+          }
         }
 
         // 4. System Health
         const health = await apiCall('/api/health').catch(() => null);
         if (health) {
-          document.getElementById('valSysUptime').textContent = `${Math.floor(health.uptime_sec || 0)}s`;
+          const uptimeSec = health.uptime_seconds ?? health.uptime_sec ?? 0;
+          const uptimeStr = uptimeSec > 3600
+            ? `${(uptimeSec / 3600).toFixed(1)}h`
+            : uptimeSec > 60
+              ? `${Math.floor(uptimeSec / 60)}m`
+              : `${Math.floor(uptimeSec)}s`;
+          document.getElementById('valSysUptime').textContent = uptimeStr;
           document.getElementById('valSymbolsLoaded').textContent = health.symbols_loaded || 0;
-          document.getElementById('valDbStatus').textContent = health.db_connected ? 'Supabase OK' : 'Degraded';
+          const isDbOk = Boolean(health.database?.connected ?? health.db_connected);
+          const dbEl = document.getElementById('valDbStatus');
+          if (dbEl) {
+            dbEl.textContent = isDbOk ? 'Supabase OK' : 'Degraded';
+            dbEl.style.color = isDbOk ? 'var(--green)' : 'var(--red)';
+          }
         }
 
         // 5. Section 6A Market Control Status
@@ -1594,9 +1735,43 @@
           if (btn6A) {
             btn6A.textContent = mc.enabled ? 'Unlock Focus Mode' : 'Enable Section 6A Lock';
           }
+          const ctxFocusEl = document.getElementById('ctxFocus');
+          if (ctxFocusEl) {
+            ctxFocusEl.textContent = (mc.focus || 'ALL').toUpperCase();
+          }
         }
 
-        // 6. Market Ecosystem & Active Focus Controls
+        // 6. Market Mood & Confluence Strip
+        const moodData = await apiCall('/api/market/mood').catch(() => null);
+        if (moodData) {
+          const mood = moodData.mood || 'NEUTRAL';
+          const score = Number(moodData.score ?? 50).toFixed(1);
+          const moodEl = document.getElementById('ctxMood');
+          if (moodEl) {
+            moodEl.textContent = `${mood} (${score}/100)`;
+            moodEl.style.color = mood === 'BULLISH' ? 'var(--green)' : (mood === 'BEARISH' ? 'var(--red)' : 'var(--yellow)');
+          }
+
+          const breadth = moodData.breadth;
+          const breadthEl = document.getElementById('ctxBreadth');
+          if (breadthEl && breadth) {
+            breadthEl.textContent = `${breadth.gainers ?? 0} Adv / ${breadth.losers ?? 0} Dec`;
+          }
+
+          const sectorPct = Number(moodData.sector_avg_pct || 0);
+          const sectorEl = document.getElementById('ctxSector');
+          if (sectorEl) {
+            sectorEl.textContent = (sectorPct >= 0 ? '+' : '') + `${sectorPct.toFixed(2)}%`;
+            sectorEl.style.color = sectorPct >= 0 ? 'var(--green)' : 'var(--red)';
+          }
+
+          const regimeEl = document.getElementById('ctxRegime');
+          if (regimeEl) {
+            regimeEl.textContent = mood === 'BULLISH' ? 'TRENDING (BULL)' : (mood === 'BEARISH' ? 'TRENDING (BEAR)' : 'RANGING / MIXED');
+          }
+        }
+
+        // 7. Market Ecosystem & Active Focus Controls
         await loadMarketFocusControls();
 
       } catch (err) {
@@ -2381,17 +2556,56 @@
     }
 
     // ── Module 8: Autonomous Feed ────────────────────────────
+    let _currentFeedFilter = 'ALL';
+
+    function setFeedFilter(filter) {
+      _currentFeedFilter = filter;
+      document.querySelectorAll('.btn-filter').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+      });
+      loadAutonomousFeed();
+    }
+
     async function loadAutonomousFeed() {
       const host = document.getElementById('feedList');
       const limit = document.getElementById('feedLimit')?.value || '25';
       try {
         const res = await apiCall(`/api/autonomous/feed?limit=${encodeURIComponent(limit)}`);
-        const feed = res?.feed || [];
+        const rawFeed = res?.feed || [];
         if (!host) return;
-        if (!feed.length) {
+        if (!rawFeed.length) {
           host.innerHTML = '<div class="empty-note">No decisions recorded yet.</div>';
           return;
         }
+
+        let feed = rawFeed;
+        if (_currentFeedFilter === 'TRADES') {
+          feed = rawFeed.filter(item => {
+            const a = String(item.action || '').toUpperCase();
+            return a.includes('ENTER') || ['BUY', 'LONG', 'SHORT', 'EXECUTED', 'OPEN'].includes(a);
+          });
+        } else if (_currentFeedFilter === 'EXITS') {
+          feed = rawFeed.filter(item => {
+            const a = String(item.action || '').toUpperCase();
+            return ['TRAILING_STOP', 'CLOSED_TRAIL', 'STOP_HIT', 'TARGET_HIT', 'CLOSED', 'SELL'].some(k => a.includes(k));
+          });
+        } else if (_currentFeedFilter === 'REVIEWS') {
+          feed = rawFeed.filter(item => {
+            const a = String(item.action || '').toUpperCase();
+            return a.includes('REVIEW') || a.includes('EOD');
+          });
+        } else if (_currentFeedFilter === 'NO_TRADE') {
+          feed = rawFeed.filter(item => {
+            const a = String(item.action || '').toUpperCase();
+            return ['NO_TRADE', 'SKIP', 'HOLD', 'CYCLE'].some(k => a.includes(k));
+          });
+        }
+
+        if (!feed.length) {
+          host.innerHTML = `<div class="empty-note">No decisions match filter <strong>${escapeHtml(_currentFeedFilter)}</strong>.</div>`;
+          return;
+        }
+
         host.innerHTML = feed.map((item) => {
           const action = String(item.action || 'UNKNOWN').toUpperCase();
           const cls = ['BUY', 'LONG', 'EXECUTED', 'ACCEPTED', 'OPEN', 'TARGET_HIT'].includes(action)

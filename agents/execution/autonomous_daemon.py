@@ -524,12 +524,15 @@ class AutonomousExecutionDaemon:
             review = analyser.run_daily_eod_review(today)
             self.last_eod_review_date = today
 
+            _wr = review.get("today_win_rate")
+            _wr_text = f"{_wr:.1f}%" if isinstance(_wr, (int, float)) else "n/a (no closed trades)"
+
             self.record_decision(
                 action="EOD_LEARNING_REVIEW",
                 symbol="ALL",
                 direction="NEUTRAL",
                 price=0.0,
-                reason=f"EOD Review completed: {review.get('today_trade_count', 0)} trades today, WinRate {review.get('today_win_rate', 0)}%, Weights Adapted",
+                reason=f"EOD Review completed: {review.get('today_trade_count', 0)} trades today, WinRate {_wr_text}, Weights Adapted",
                 pnl_pct=review.get("today_total_pnl_pct", 0.0),
             )
 
@@ -538,9 +541,10 @@ class AutonomousExecutionDaemon:
                 from agents.alerts.telegram_bot import send_daily_summary
                 summary_stats = {
                     "total_trades": review.get("today_trade_count", 0),
-                    "win_rate": review.get("today_win_rate", 0.0),
+                    # Keep None on purpose: a zero-trade day is not a 0% win rate.
+                    "win_rate": _wr if isinstance(_wr, (int, float)) else None,
                     "total_pnl": review.get("today_total_pnl_pct", 0.0),
-                    "best_strategy": review.get("best_signal_type", "NONE"),
+                    "best_strategy": review.get("best_signal_type", "UNKNOWN"),
                 }
                 send_daily_summary(summary_stats)
             except Exception as tg_err:

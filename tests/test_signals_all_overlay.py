@@ -12,11 +12,10 @@ async def test_get_all_signals_merges_partial_live_with_persisted_snapshot(monke
 
     get_all_signals must not hide the full persisted equity universe.
     """
-    # 1. Setup persisted snapshot with equities
+    # 1. Setup persisted snapshot with full equity universe (10 symbols)
     persisted_equities = [
-        {"symbol": "RELIANCE", "close": 1330.0, "signal": "BUY", "timestamp": "2026-11-11T12:00:00"},
-        {"symbol": "TCS", "close": 4100.0, "signal": "HOLD", "timestamp": "2026-11-11T12:00:00"},
-        {"symbol": "INFY", "close": 1850.0, "signal": "BUY", "timestamp": "2026-11-11T12:00:00"},
+        {"symbol": s, "close": 1000.0, "signal": "HOLD", "timestamp": "2026-11-11T12:00:00"}
+        for s in ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "BHARTIARTL", "KOTAKBANK", "LT", "ITC"]
     ]
     monkeypatch.setattr(svc, "_persisted_signals_snapshot", persisted_equities)
 
@@ -39,13 +38,36 @@ async def test_get_all_signals_merges_partial_live_with_persisted_snapshot(monke
     assert "signals" in payload
     returned_symbols = [s["symbol"] for s in payload["signals"]]
 
-    # Both SENSEX and the 3 equities must be present!
+    # Both SENSEX and the equities must be present!
     assert "SENSEX" in returned_symbols
     assert "RELIANCE" in returned_symbols
     assert "TCS" in returned_symbols
     assert "INFY" in returned_symbols
-    assert len(payload["signals"]) == 4
+    assert len(payload["signals"]) == 11
     assert payload["source"] == "merged_snapshot_live"
+
+
+@pytest.mark.asyncio
+async def test_get_all_signals_recovers_when_persisted_snapshot_is_partial(monkeypatch):
+    """When _persisted_signals_snapshot only has 1 symbol in memory,
+
+    get_all_signals must fetch durable state so the full universe is returned.
+    """
+    monkeypatch.setattr(svc, "_persisted_signals_snapshot", [{"symbol": "SENSEX", "close": 81100.0, "signal": "HOLD"}])
+    monkeypatch.setattr(svc, "_signal_cache", {})
+
+    mock_db_signals = [
+        {"symbol": s, "close": 1200.0, "signal": "HOLD"}
+        for s in ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "BHARTIARTL", "KOTAKBANK", "LT", "ITC", "AXISBANK"]
+    ]
+    monkeypatch.setattr("db.runtime_state.get_runtime_state", lambda key: {"signals": mock_db_signals} if "signals" in key else None)
+
+    res = Response()
+    payload = await get_all_signals(res)
+    symbols = [s["symbol"] for s in payload["signals"]]
+    assert len(symbols) >= 11
+    assert "RELIANCE" in symbols
+    assert "SENSEX" in symbols
 
 
 def test_get_major_indices_sync_ignores_stale_in_memory_bar(monkeypatch):

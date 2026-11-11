@@ -662,7 +662,7 @@ async def get_all_signals(response: Response):
             if isinstance(s, dict) and s.get("symbol"):
                 fallback_signals[s["symbol"].upper().replace(".NS", "")] = s
 
-    if not fallback_signals:
+    if len(fallback_signals) < 10:
         try:
             from db.runtime_state import get_runtime_state
             snap_v1 = get_runtime_state("latest_signals:v1")
@@ -671,18 +671,49 @@ async def get_all_signals(response: Response):
             sigs_raw = snap_raw.get("signals", []) if isinstance(snap_raw, dict) else []
             for s in sigs_raw + sigs_v1:
                 if isinstance(s, dict) and s.get("symbol"):
-                    fallback_signals[s["symbol"].upper().replace(".NS", "")] = s
+                    k = s["symbol"].upper().replace(".NS", "")
+                    if k not in fallback_signals:
+                        fallback_signals[k] = s
         except Exception:
             pass
 
-    if not fallback_signals:
+    if len(fallback_signals) < 10:
         try:
             import db.intraday_store as ids
             latest_scan = ids.load_latest_scan()
             if latest_scan and latest_scan.get("results"):
                 for s in latest_scan["results"]:
                     if isinstance(s, dict) and s.get("symbol"):
-                        fallback_signals[s["symbol"].upper().replace(".NS", "")] = s
+                        k = s["symbol"].upper().replace(".NS", "")
+                        if k not in fallback_signals:
+                            fallback_signals[k] = s
+        except Exception:
+            pass
+
+    if len(fallback_signals) < 10:
+        try:
+            from db.runtime_state import get_runtime_state
+            snap_mkt = get_runtime_state("latest_market_snapshot")
+            if snap_mkt and isinstance(snap_mkt, dict) and "prices" in snap_mkt:
+                for sym, p_info in snap_mkt["prices"].items():
+                    clean_s = sym.upper().replace(".NS", "")
+                    if clean_s not in fallback_signals and isinstance(p_info, dict) and p_info.get("close") is not None:
+                        fallback_signals[clean_s] = {
+                            "symbol": clean_s,
+                            "signal": "HOLD",
+                            "direction": "HOLD",
+                            "signal_status": "NO_SIGNAL",
+                            "actionable": False,
+                            "close": float(p_info["close"]),
+                            "entry": float(p_info["close"]),
+                            "change_pct": float(p_info.get("change_pct", 0.0)),
+                            "rsi": float(p_info.get("rsi", 50.0)),
+                            "regime": p_info.get("regime", "TRENDING"),
+                            "trend": "NEUTRAL",
+                            "confidence": 45.0,
+                            "timestamp": snap_mkt.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                            "source": "market_snapshot_fallback",
+                        }
         except Exception:
             pass
 

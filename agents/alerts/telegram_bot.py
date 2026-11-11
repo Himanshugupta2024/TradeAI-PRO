@@ -184,11 +184,14 @@ def send_daily_summary(stats: dict) -> bool:
     """Send end-of-day performance summary."""
     now = datetime.now().strftime("%d %b %Y")
 
+    _wr = stats.get("win_rate")
+    _wr_text = f"{_wr:.1f}%" if isinstance(_wr, (int, float)) else "n/a"
+
     text = (
         f"📊 <b>Daily Summary — {now}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🔢 Trades: <b>{stats.get('total_trades', 0)}</b>\n"
-        f"✅ Win Rate: <b>{stats.get('win_rate', 0):.1f}%</b>\n"
+        f"✅ Win Rate: <b>{_wr_text}</b>\n"
         f"💰 Day PnL: <code>₹{stats.get('daily_pnl', 0):+,.2f}</code>\n"
         f"🏦 Capital: <code>₹{stats.get('capital', 0):,.2f}</code>\n"
         f"📉 Max DD: <b>{stats.get('max_drawdown_pct', 0):.1f}%</b>\n"

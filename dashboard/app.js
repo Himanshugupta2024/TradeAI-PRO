@@ -4032,7 +4032,32 @@ function _renderSystemState(sys, intelligenceUpdatedAt) {
 
 
 
-            refreshLine = `
+            // A bare clock time hides stale data: 3:42 PM could be today or the
+            // previous session. Show the date and how old the snapshot is, and
+            // tint the age when the data has gone stale.
+            if (!isNaN(t.getTime())) {
+
+
+
+                const dateStr = t.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+
+                const timeStr = t.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+
+                const ageMin = Math.max(0, Math.floor((Date.now() - t.getTime()) / 60000));
+
+                const ageStr = ageMin < 1
+                    ? 'just now'
+                    : ageMin < 60
+                        ? `${ageMin}m old`
+                        : ageMin < 1440
+                            ? `${Math.floor(ageMin / 60)}h ${ageMin % 60}m old`
+                            : `${Math.floor(ageMin / 1440)}d ${Math.floor((ageMin % 1440) / 60)}h old`;
+
+                const ageColor = ageMin >= 30 ? '#f59e0b' : 'var(--text-secondary)';
+
+
+
+                refreshLine = `
 
 
 
@@ -4044,11 +4069,13 @@ function _renderSystemState(sys, intelligenceUpdatedAt) {
 
 
 
-            <span class="cockpit-sys-val" style="font-size:0.72rem;">${t.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}</span>
+            <span class="cockpit-sys-val" style="font-size:0.72rem;">${dateStr}, ${timeStr} <span style="color:${ageColor};">(${ageStr})</span></span>
 
 
 
         </div>`;
+
+            }
 
 
 
@@ -4236,7 +4263,12 @@ function _renderGuardrails(grd) {
 
 
 
-    const score = Number(grd.mood_score || 50).toFixed(1);
+    // mood_score is null when the backend has no live score (feed down or no
+    // usable data). Don't fabricate a neutral 50/100 — render an explicit dash.
+    const scoreFinite = grd.mood_score != null && Number.isFinite(Number(grd.mood_score));
+
+
+    const score = scoreFinite ? Number(grd.mood_score).toFixed(1) : null;
 
 
 
@@ -4307,7 +4339,7 @@ function _renderGuardrails(grd) {
 
 
 
-            <span class="guardrail-val" style="color:${moodColor}">${mood} ${score}/100</span>
+            <span class="guardrail-val" style="color:${moodColor}">${mood} ${score != null ? `${score}/100` : '— (no live score)'}</span>
 
 
 
@@ -4435,7 +4467,7 @@ function _renderLearningOverlay(overlay) {
 
 
 
-        el.innerHTML = '<span class="cockpit-skeleton">Not enough trades yet (need 10+)</span>';
+        el.innerHTML = '<span class="cockpit-skeleton">No closed paper trades yet — learning stats start after the first close.</span>';
 
 
 
@@ -4452,6 +4484,19 @@ function _renderLearningOverlay(overlay) {
 
 
     const wrColor = overlay.overall_win_rate >= 55 ? 'var(--green)' : overlay.overall_win_rate >= 45 ? '#f59e0b' : 'var(--red)';
+
+
+    // model_accuracy is the win rate of the high-confidence subset, not overall
+    // accuracy. Ship the caveat in the UI instead of leaving a bare percentage.
+    const accVal = overlay.model_accuracy;
+    const accLabel = overlay.model_accuracy_label || 'high-confidence subset win rate';
+    const accBasis = overlay.model_accuracy_basis_trades;
+    const accNote = `* ${accLabel}${accBasis != null ? ` (${accBasis} trades)` : ''} — not overall accuracy.`;
+
+
+    const smallSampleNote = overlay.small_sample
+        ? `<div class="phase2-calib-note" style="color:#f59e0b;">Small sample: ${overlay.sample_size} closed trade${Number(overlay.sample_size) === 1 ? '' : 's'} — under ${overlay.min_sample || 10}. Stats are provisional.</div>`
+        : '';
 
 
 
@@ -4483,6 +4528,9 @@ function _renderLearningOverlay(overlay) {
 
 
 
+        ${smallSampleNote}
+
+
         ${p2}
 
 
@@ -4511,7 +4559,7 @@ function _renderLearningOverlay(overlay) {
 
 
 
-            <span class="learning-stat-val" style="color:${wrColor}">${overlay.overall_win_rate.toFixed(1)}%</span>
+            <span class="learning-stat-val" style="color:${wrColor}">${overlay.overall_win_rate != null ? `${Number(overlay.overall_win_rate).toFixed(1)}%` : '—'}</span>
 
 
 
@@ -4523,11 +4571,11 @@ function _renderLearningOverlay(overlay) {
 
 
 
-            <span class="learning-stat-key">Model Accuracy</span>
+            <span class="learning-stat-key">Model Accuracy*</span>
 
 
 
-            <span class="learning-stat-val">${overlay.model_accuracy.toFixed(1)}%</span>
+            <span class="learning-stat-val" title="${accNote}">${accVal != null ? `${Number(accVal).toFixed(1)}%` : '—'}</span>
 
 
 
@@ -4543,11 +4591,15 @@ function _renderLearningOverlay(overlay) {
 
 
 
-            <span class="learning-stat-val">${overlay.best_regime}</span>
+            <span class="learning-stat-val">${overlay.best_regime || 'UNKNOWN'}</span>
 
 
 
         </div>
+
+
+
+        <div class="phase2-calib-note">${accNote}</div>
 
 
 
@@ -4608,7 +4660,25 @@ function _renderTopSetups(setups, meta) {
 
 
         const sessionTag = meta.session_state === 'EOD' ? ' · Last Session' : '';
-        const fallbackNote = meta.fallback_applied ? ' · high-QS candidates' : '';
+        // Fall back rows are only useful if the UI says where they came from.
+        // "high-QS candidates" was a guess that fit exactly one of four paths.
+        const fallbackLabels = {
+            blocked_high_quality: 'fallback: blocked high-QS names',
+            swing_shortlist: 'fallback: swing shortlist',
+            persisted_signals: 'fallback: last persisted signals',
+            off_hours_rows: 'fallback: last session rows'
+        };
+        const fallbackSource = meta.fallback_source || '';
+        let fallbackNote = '';
+        if (meta.fallback_applied || fallbackSource) {
+            const label = fallbackLabels[fallbackSource]
+                || (fallbackSource ? `fallback: ${fallbackSource}` : 'fallback active');
+            fallbackNote = ` · ${label}`;
+        }
+        const carriedOver = Number(meta.carried_over || 0);
+        if (carriedOver > 0) {
+            fallbackNote += ` · ${carriedOver} carried over (not actionable)`;
+        }
         metaLabel.textContent = `${actionable} actionable / ${total} tracked (${blocked} blocked)${sessionTag}${fallbackNote}${ver ? ` · ${ver}` : ''}`;
 
 
@@ -6581,10 +6651,6 @@ function _renderCryptoMiniPanel(data) {
 
 
     const mood = String(grd.mood || 'NEUTRAL');
-
-
-
-    const moodScore = Number(grd.mood_score || 50);
 
 
 
@@ -10112,7 +10178,10 @@ function renderSignals(signals) {
 
 
 
-        const signalLabel = sig.signal;
+        // Always render the shared vocabulary, whatever spelling the signal
+        // carries (rows persisted as BUY/SELL still read LONG/SHORT).
+        const rawSignal = String(sig.signal || 'HOLD').toUpperCase();
+        const signalLabel = rawSignal === 'BUY' ? 'LONG' : rawSignal === 'SELL' ? 'SHORT' : rawSignal;
 
 
 
@@ -23110,7 +23179,12 @@ async function loadIntradayLatest() {
                 const lastScanStr = row.last_scan_at ? new Date(row.last_scan_at).toLocaleTimeString() : (row.scan_time || "—");
                 const sourceCandleStr = row.source_candle_at ? new Date(row.source_candle_at).toLocaleTimeString() : "15m delayed EOD/intraday";
                 const delayStr = row.provider_freshness || "15m Delayed";
-                const coverageStr = `${row.symbols_scanned || 20} symbols`;
+                // 20 was a fabricated default; show a dash when the backend
+                // doesn't report a scan universe.
+                const symbolsScanned = Number(row.symbols_scanned);
+                const coverageStr = Number.isFinite(symbolsScanned) && symbolsScanned > 0
+                    ? `${symbolsScanned} symbols`
+                    : "—";
                 const qualifiedCount = row.qualified_setups != null ? row.qualified_setups : (row.active_signals ? row.active_signals.length : _intradayAllSigs.length);
                 const statusBadgeColor = row.freshness_status === "FRESH" ? "#10b981" : (row.freshness_status === "EOD" ? "#94a3b8" : "#38bdf8");
 

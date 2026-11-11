@@ -459,13 +459,13 @@ async def _hydrate_signals_cache_from_db() -> bool:
                 if k not in merged_signals or len(s.keys()) > len(merged_signals[k].keys()):
                     merged_signals[k] = s
 
-        if not merged_signals:
+        if len(merged_signals) < 10:
             snap_mkt = await asyncio.to_thread(get_runtime_state, "latest_market_snapshot")
             if snap_mkt and isinstance(snap_mkt, dict) and "prices" in snap_mkt:
                 mkt_prices = snap_mkt["prices"]
                 for sym, p_info in mkt_prices.items():
-                    if isinstance(p_info, dict) and p_info.get("close") is not None:
-                        clean_s = sym.upper().replace(".NS", "")
+                    clean_s = sym.upper().replace(".NS", "")
+                    if clean_s not in merged_signals and isinstance(p_info, dict) and p_info.get("close") is not None:
                         merged_signals[clean_s] = {
                             "symbol": clean_s,
                             "signal": "HOLD",
@@ -1812,18 +1812,39 @@ async def _refresh_market_data_inner():
                 if sig:
                     current_signals.append(sig)
             if current_signals:
-                _persisted_signals_snapshot = current_signals
+                if len(current_signals) >= 10:
+                    _persisted_signals_snapshot = current_signals
+                elif _persisted_signals_snapshot:
+                    existing_map = {s["symbol"].upper().replace(".NS", ""): s for s in _persisted_signals_snapshot if isinstance(s, dict) and s.get("symbol")}
+                    for s in current_signals:
+                        if isinstance(s, dict) and s.get("symbol"):
+                            existing_map[s["symbol"].upper().replace(".NS", "")] = s
+                    _persisted_signals_snapshot = list(existing_map.values())
+                else:
+                    _persisted_signals_snapshot = current_signals
+
                 _persisted_signals_updated_at = datetime.now().isoformat()
-                from db.runtime_state import set_runtime_state
-                await asyncio.to_thread(
-                    set_runtime_state,
-                    "latest_signals_snapshot",
-                    {
-                        "signals": current_signals,
-                        "updated_at": _persisted_signals_updated_at,
-                    },
-                )
-                logger.debug("Persisted %d signals to DB runtime snapshot", len(current_signals))
+                if len(_persisted_signals_snapshot) >= 10:
+                    from db.runtime_state import set_runtime_state
+                    await asyncio.to_thread(
+                        set_runtime_state,
+                        "latest_signals_snapshot",
+                        {
+                            "signals": _persisted_signals_snapshot,
+                            "updated_at": _persisted_signals_updated_at,
+                        },
+                    )
+                    await asyncio.to_thread(
+                        set_runtime_state,
+                        "latest_signals:v1",
+                        {
+                            "version": int(datetime.now().timestamp() * 1000),
+                            "timestamp": _persisted_signals_updated_at,
+                            "count": len(_persisted_signals_snapshot),
+                            "signals": _persisted_signals_snapshot,
+                        },
+                    )
+                    logger.debug("Persisted %d signals to DB runtime snapshot", len(_persisted_signals_snapshot))
         except Exception as e:
             logger.debug("Persisting signals snapshot failed: %s", e)
 
@@ -1973,7 +1994,7 @@ def _get_signal_for_symbol(symbol: str) -> dict:
 
     # Look for non-HOLD signal within the LAST 100 bars (recent window)
     recent = df.tail(100)
-    signals = recent[recent["signal"] != "HOLD"]
+    signals = recent[recent["signal"] != "HOLD"] if "signal" in recent.columns else pd.DataFrame()
 
     if signals.empty:
         local_trend = "NEUTRAL"

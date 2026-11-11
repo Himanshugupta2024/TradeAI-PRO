@@ -179,6 +179,10 @@ async def _compute_meme_signals_raw():
 
     BUY/SELL/HOLD signals with confidence calibration.
 
+    Legacy note: ``_meme_signal`` and the ML predictor now emit the shared
+    LONG/SHORT vocabulary; these helpers still accept BUY/SELL so old callers
+    and cached payloads keep working.
+
     """
 
     import math
@@ -339,7 +343,7 @@ async def _compute_meme_signals_raw():
 
         Multi-factor meme signal — combines RSI + EMA + momentum + volume + news sentiment.
 
-        BUY conditions (any one enough):
+        LONG conditions (any one enough):
 
           A. RSI < 40 (oversold dip)
 
@@ -347,7 +351,7 @@ async def _compute_meme_signals_raw():
 
           C. Volume spike >2x + RSI < 60 + positive momentum
 
-        SELL conditions (any one enough):
+        SHORT conditions (any one enough):
 
           A. RSI > 65 (overbought)
 
@@ -359,13 +363,13 @@ async def _compute_meme_signals_raw():
 
         News sentiment adjustment:
 
-          - BUY + bullish news = confidence boost +10%
+          - LONG + bullish news = confidence boost +10%
 
-          - BUY + bearish news = downgrade to HOLD (20% penalty)
+          - LONG + bearish news = downgrade to HOLD (20% penalty)
 
-          - SELL + bearish news = confidence boost +10%
+          - SHORT + bearish news = confidence boost +10%
 
-          - SELL + bullish news = downgrade to HOLD (20% penalty)
+          - SHORT + bullish news = downgrade to HOLD (20% penalty)
 
         """
 
@@ -379,7 +383,7 @@ async def _compute_meme_signals_raw():
 
         above_ema = price_vs_ema > 0
 
-        # ── BUY Logic ───────────────────────────────────────────
+        # ── LONG Logic ───────────────────────────────────────────
 
         # A: Oversold RSI
 
@@ -391,11 +395,11 @@ async def _compute_meme_signals_raw():
 
                 conf *= 0.80
 
-            base_signal = "BUY"
+            base_signal = "LONG"
 
             base_conf = round(min(conf, 0.90), 2)
 
-        # B: Momentum BUY — positive trend in healthy RSI range
+        # B: Momentum long — positive trend in healthy RSI range
 
         elif 45 <= rsi <= 60 and change_24h >= 5.0 and above_ema:
 
@@ -405,7 +409,7 @@ async def _compute_meme_signals_raw():
 
                 conf = min(conf + 0.08, 0.85)  # volume boost
 
-            base_signal = "BUY"
+            base_signal = "LONG"
 
             base_conf = round(conf, 2)
 
@@ -415,11 +419,11 @@ async def _compute_meme_signals_raw():
 
             conf = 0.50 + (vol_spike - 3.0) / 10  # 0.50–0.65+
 
-            base_signal = "BUY"
+            base_signal = "LONG"
 
             base_conf = round(min(conf, 0.75), 2)
 
-        # ── SELL Logic ───────────────────────────────────────────
+        # ── SHORT Logic ───────────────────────────────────────────
 
         # A: Classic overbought
 
@@ -431,7 +435,7 @@ async def _compute_meme_signals_raw():
 
                 conf = min(conf + 0.07, 0.95)
 
-            base_signal = "SELL"
+            base_signal = "SHORT"
 
             base_conf = round(conf, 2)
 
@@ -441,7 +445,7 @@ async def _compute_meme_signals_raw():
 
             conf = 0.52 + min(abs(change_24h), 20) / 100
 
-            base_signal = "SELL"
+            base_signal = "SHORT"
 
             base_conf = round(conf, 2)
 
@@ -449,7 +453,7 @@ async def _compute_meme_signals_raw():
 
         elif price_vs_ema > 30 and rsi > 65:
 
-            base_signal = "SELL"
+            base_signal = "SHORT"
 
             base_conf = 0.60
 
@@ -469,25 +473,25 @@ async def _compute_meme_signals_raw():
 
         if news_sentiment == "bullish":
 
-            if base_signal == "BUY":
+            if base_signal == "LONG":
 
                 final_conf = min(base_conf + 0.10, 0.95)
 
-                return "BUY", round(final_conf, 2)
+                return "LONG", round(final_conf, 2)
 
-            elif base_signal == "SELL":
+            elif base_signal == "SHORT":
 
                 return "HOLD", round(base_conf * 0.8, 2)
 
         elif news_sentiment == "bearish":
 
-            if base_signal == "SELL":
+            if base_signal == "SHORT":
 
                 final_conf = min(base_conf + 0.10, 0.95)
 
-                return "SELL", round(final_conf, 2)
+                return "SHORT", round(final_conf, 2)
 
-            elif base_signal == "BUY":
+            elif base_signal == "LONG":
 
                 return "HOLD", round(base_conf * 0.8, 2)
 
@@ -579,7 +583,7 @@ async def _compute_meme_signals_raw():
 
             sig, _ = _meme_signal(c_window, rsi, ema20, change, vol_spike, "neutral")
 
-            if sig == "BUY":
+            if sig in ("LONG", "BUY"):
 
                 # Look ahead 3 hours (very short term)
 
@@ -913,17 +917,17 @@ async def _compute_meme_signals_raw():
 
         calibrated = (confidence * 0.70) + (backtest_win_rate * 0.30)
 
-        # BUYs are unreliable when this coin's short-term hit-rate is weak.
+        # Longs are unreliable when this coin's short-term hit-rate is weak.
 
-        if signal == "BUY" and backtest_win_rate < 0.35:
+        if signal in ("LONG", "BUY") and backtest_win_rate < 0.35:
 
             signal = "HOLD"
 
             calibrated *= 0.82
 
-        # SELLs are less reliable when recent tape strongly favors rebounds.
+        # Shorts are less reliable when recent tape strongly favors rebounds.
 
-        if signal == "SELL" and backtest_win_rate > 0.65:
+        if signal in ("SHORT", "SELL") and backtest_win_rate > 0.65:
 
             signal = "HOLD"
 
@@ -1255,7 +1259,7 @@ async def _compute_meme_signals_raw():
 
             if not dex_risk.get("passed_filters", True):
 
-                if signal == "BUY":
+                if signal in ("LONG", "BUY"):
 
                     signal = "SKIP"
 
@@ -1333,9 +1337,9 @@ async def _compute_meme_signals_raw():
 
         )
 
-    # Sort: BUY first → highest confidence → alphabetical
+    # Sort: LONG first → highest confidence → alphabetical
 
-    signal_order = {"BUY": 0, "HOLD": 1, "SELL": 2, "SKIP": 3}
+    signal_order = {"LONG": 0, "BUY": 0, "HOLD": 1, "SHORT": 2, "SELL": 2, "SKIP": 3}
 
     results.sort(key=lambda x: (signal_order.get(x["signal"], 1), -x["confidence"]))
 
@@ -1351,9 +1355,11 @@ async def _compute_meme_signals_raw():
 
         "dynamic_discovery_enabled": settings.MEME_DYNAMIC_DISCOVERY_ENABLED,
 
-        "buy_count": sum(1 for r in results if r["signal"] == "BUY"),
+        # Keys kept as buy_count/sell_count so existing clients do not break;
+        # both spellings of the vocabulary are counted.
+        "buy_count": sum(1 for r in results if r["signal"] in ("LONG", "BUY")),
 
-        "sell_count": sum(1 for r in results if r["signal"] == "SELL"),
+        "sell_count": sum(1 for r in results if r["signal"] in ("SHORT", "SELL")),
 
         "hold_count": sum(1 for r in results if r["signal"] == "HOLD"),
 

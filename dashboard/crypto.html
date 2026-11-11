@@ -3881,7 +3881,13 @@ function renderMemeGrid() {
   }
 
   grid.innerHTML = coins.map(c => {
-    const sigLc   = (c.signal || 'HOLD').toLowerCase();
+    const sigUp   = (c.signal || 'HOLD').toUpperCase();
+    // Backend now speaks LONG/SHORT; keep the CSS class names (.buy/.sell)
+    // and tolerate the legacy BUY/SELL spelling.
+    const sigLc   = sigUp === 'LONG' ? 'buy' : sigUp === 'SHORT' ? 'sell'
+                  : sigUp === 'BUY' ? 'buy' : sigUp === 'SELL' ? 'sell' : 'hold';
+    const sigTxt  = sigUp === 'LONG' ? 'LONG' : sigUp === 'SHORT' ? 'SHORT'
+                  : sigUp === 'BUY' ? 'LONG' : sigUp === 'SELL' ? 'SHORT' : sigUp;
     const isUp    = (c.change_24h || 0) >= 0;
     const changeTxt = `${isUp ? '+' : ''}${Number(c.change_24h || 0).toFixed(2)}%`;
     const rsi     = c.rsi != null ? Number(c.rsi).toFixed(1) : null;
@@ -3901,7 +3907,7 @@ function renderMemeGrid() {
             <span class="meme-emoji">${escapeHtml(c.emoji || '🪙')}</span>
             <span class="meme-sym">${escapeHtml(c.base)}</span>
           </div>
-          <span class="meme-signal-badge ${sigLc}">${escapeHtml(c.signal)}</span>
+          <span class="meme-signal-badge ${sigLc}">${escapeHtml(sigTxt)}</span>
         </div>
 
         <div class="meme-price">${fmtMemePrice(c.price)}</div>
@@ -3967,8 +3973,14 @@ function renderMemeGridFallback() {
       const vols = klineCache?.[b + 'USDT']?.['1h']?.volumes || [];
       return volSpike(vols);
     })() : 1;
-    const sig = rsi ? computeSignal(closes, rsi) : 'HOLD';
-    const sigLc = sig.toLowerCase();
+    const sig    = rsi ? computeSignal(closes, rsi) : 'HOLD';
+    // Client-side fallback heuristic still returns BUY/SELL; display the
+    // shared vocabulary and keep the .buy/.sell CSS classes.
+    const sigKey = sig.toUpperCase();
+    const sigLc  = sigKey === 'BUY' || sigKey === 'LONG' ? 'buy'
+                 : sigKey === 'SELL' || sigKey === 'SHORT' ? 'sell' : 'hold';
+    const sigTxt = sigKey === 'BUY' || sigKey === 'LONG' ? 'LONG'
+                 : sigKey === 'SELL' || sigKey === 'SHORT' ? 'SHORT' : sigKey;
 
     return `
       <div class="meme-card ${sigLc}-card ${vspike >= 2 ? 'hot-glow' : ''}" onclick="selectCoinFromUI('${escapeHtml(b)}')">
@@ -3977,7 +3989,7 @@ function renderMemeGridFallback() {
             <span class="meme-emoji">${escapeHtml(EMOJIS[b] || '🪙')}</span>
             <span class="meme-sym">${escapeHtml(b)}</span>
           </div>
-          <span class="meme-signal-badge ${sigLc}">${sig}</span>
+          <span class="meme-signal-badge ${sigLc}">${escapeHtml(sigTxt)}</span>
         </div>
         <div class="meme-price">${fmtMemePrice(price)}</div>
         <div class="meme-change ${isUp ? 'up' : 'down'}">${isUp ? '+' : ''}${chg.toFixed(2)}% (24h)</div>

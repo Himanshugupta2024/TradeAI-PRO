@@ -322,7 +322,10 @@ class FeedbackAnalyser:
             avg_pnl = round(_safe_div(weighted_pnl_sum, total_weight), 2)
             avg_pnl_unweighted = round(sum(float(t.get("pnl_pct", 0.0)) for t in trades) / total, 2) if total else 0
 
-            # Model accuracy: % trades where confidence > 50 that WON
+            # Model accuracy: win rate of the high-confidence subset only.
+            # It is NOT overall model accuracy, so we ship the label and the
+            # subset size alongside the number instead of letting the UI imply
+            # the model is right that often on every trade.
             high_conf = [t for t in trades if (t.get("confidence") or 0) >= 50]
             high_conf_weight = sum(float(t.get("_w", 1.0)) for t in high_conf)
             hc_wins_weight = sum(float(t.get("_w", 1.0)) for t in high_conf if t["result"] == "WIN")
@@ -330,22 +333,22 @@ class FeedbackAnalyser:
             reliability_score = round(min(1.0, _safe_div(total_weight, 120.0)) * 100, 1)
 
             # ── 6. Pick best / worst ──────────────────────────────────────────
-            def _best(stats: dict) -> str:
-                eligible = {k: v for k, v in stats.items() if v["trades"] >= 5}
-                if not eligible:
-                    eligible = stats
-                return max(eligible, key=lambda k: eligible[k]["win_rate"], default="UNKNOWN")
+            # A group with 1-4 trades can win by luck. Reporting it as "best
+            # signal type" is a fabricated edge, so below MIN_GROUP_SAMPLE we
+            # return UNKNOWN plus the reason and let the UI label the gap.
+            MIN_GROUP_SAMPLE = 5
 
-            def _worst(stats: dict) -> str:
-                eligible = {k: v for k, v in stats.items() if v["trades"] >= 5}
+            def _pick(stats: dict, *, best: bool) -> tuple[str, str]:
+                eligible = {k: v for k, v in stats.items() if v["trades"] >= MIN_GROUP_SAMPLE}
                 if not eligible:
-                    eligible = stats
-                return min(eligible, key=lambda k: eligible[k]["win_rate"], default="UNKNOWN")
+                    return "UNKNOWN", "insufficient_sample"
+                key_fn = max if best else min
+                return key_fn(eligible, key=lambda k: eligible[k]["win_rate"]), "ok"
 
-            best_signal  = _best(signal_stats)
-            worst_signal = _worst(signal_stats)
-            best_regime  = _best(regime_stats)
-            optimal_rsi  = _best(rsi_zone_stats)
+            best_signal, best_signal_conf = _pick(signal_stats, best=True)
+            worst_signal, worst_signal_conf = _pick(signal_stats, best=False)
+            best_regime, best_regime_conf = _pick(regime_stats, best=True)
+            optimal_rsi, optimal_rsi_conf = _pick(rsi_zone_stats, best=True)
 
             insights = {
                 "signal_type_stats":  signal_stats,
@@ -362,12 +365,19 @@ class FeedbackAnalyser:
                     "avg_pnl_pct":     avg_pnl,
                     "avg_pnl_pct_unweighted": avg_pnl_unweighted,
                     "model_accuracy":  model_accuracy,
+                    "model_accuracy_label": "high-confidence subset win rate (confidence >= 50)",
+                    "model_accuracy_basis_trades": len(high_conf),
                     "reliability_score": reliability_score,
                 },
                 "best_signal_type":  best_signal,
                 "worst_signal_type": worst_signal,
                 "best_regime":       best_regime,
                 "optimal_rsi_zone":  optimal_rsi,
+                "best_worst_min_sample": MIN_GROUP_SAMPLE,
+                "best_signal_type_confidence": best_signal_conf,
+                "worst_signal_type_confidence": worst_signal_conf,
+                "best_regime_confidence": best_regime_conf,
+                "optimal_rsi_zone_confidence": optimal_rsi_conf,
                 "insights_at":       datetime.now(tz=_IST).isoformat(),
             }
 
@@ -424,7 +434,9 @@ class FeedbackAnalyser:
 
         today_count = len(today_trades)
         today_wins = len([t for t in today_trades if t.get("result") == "WIN"])
-        today_wr = round(today_wins / today_count * 100, 1) if today_count > 0 else 0.0
+        # No closed trades today = no win rate. Reporting 0.0% reads like a
+        # total loss instead of "nothing happened yet".
+        today_wr = round(today_wins / today_count * 100, 1) if today_count > 0 else None
         today_pnl = round(sum(float(t.get("pnl_pct", 0.0)) for t in today_trades), 2)
 
         review = {
@@ -432,15 +444,22 @@ class FeedbackAnalyser:
             "today_trade_count": today_count,
             "today_wins": today_wins,
             "today_win_rate": today_wr,
+            "today_win_rate_label": "no closed trades" if today_wr is None else None,
             "today_total_pnl_pct": today_pnl,
-            "best_signal_type": insights.get("best_signal_type", "NONE"),
-            "worst_signal_type": insights.get("worst_signal_type", "NONE"),
+            "best_signal_type": insights.get("best_signal_type", "UNKNOWN"),
+            "worst_signal_type": insights.get("worst_signal_type", "UNKNOWN"),
+            "best_signal_type_confidence": insights.get("best_signal_type_confidence", "insufficient_sample"),
+            "worst_signal_type_confidence": insights.get("worst_signal_type_confidence", "insufficient_sample"),
             "updated_weights": new_weights,
             "insights": insights,
         }
         log.info(
-            "📊 EOD Review [%s]: %d trades | WinRate: %.1f%% | PnL: %+.2f%% | Best: %s",
-            target_date_ist, today_count, today_wr, today_pnl, review["best_signal_type"]
+            "📊 EOD Review [%s]: %d trades | WinRate: %s | PnL: %+.2f%% | Best: %s",
+            target_date_ist,
+            today_count,
+            f"{today_wr:.1f}%" if today_wr is not None else "n/a",
+            today_pnl,
+            review["best_signal_type"],
         )
         return review
 
