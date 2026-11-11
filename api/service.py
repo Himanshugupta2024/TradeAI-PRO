@@ -459,6 +459,30 @@ async def _hydrate_signals_cache_from_db() -> bool:
                 if k not in merged_signals or len(s.keys()) > len(merged_signals[k].keys()):
                     merged_signals[k] = s
 
+        if not merged_signals:
+            snap_mkt = await asyncio.to_thread(get_runtime_state, "latest_market_snapshot")
+            if snap_mkt and isinstance(snap_mkt, dict) and "prices" in snap_mkt:
+                mkt_prices = snap_mkt["prices"]
+                for sym, p_info in mkt_prices.items():
+                    if isinstance(p_info, dict) and p_info.get("close") is not None:
+                        clean_s = sym.upper().replace(".NS", "")
+                        merged_signals[clean_s] = {
+                            "symbol": clean_s,
+                            "signal": "HOLD",
+                            "direction": "HOLD",
+                            "signal_status": "NO_SIGNAL",
+                            "actionable": False,
+                            "close": float(p_info["close"]),
+                            "entry": float(p_info["close"]),
+                            "change_pct": float(p_info.get("change_pct", 0.0)),
+                            "rsi": float(p_info.get("rsi", 50.0)),
+                            "regime": p_info.get("regime", "TRENDING"),
+                            "trend": "NEUTRAL",
+                            "confidence": 45.0,
+                            "timestamp": snap_mkt.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                            "source": "market_snapshot_fallback",
+                        }
+
         if merged_signals:
             _persisted_signals_snapshot = list(merged_signals.values())
             _persisted_signals_updated_at = (
@@ -2714,9 +2738,11 @@ def _compute_market_mood() -> dict:
 
     payload = {
         "mood": mood,
-        "score": round(score, 1) if score is not None else 50.0,
+        # None means "no inputs at all", which is different from a real 50/100.
+        # Callers must render '—' rather than inventing a neutral reading.
+        "score": round(score, 1) if score is not None else None,
         "mood_label": mood,
-        "mood_score": round(score, 1) if score is not None else 50.0,
+        "mood_score": round(score, 1) if score is not None else None,
         "breadth": {
             "gainers": len(gainers),
             "losers": len(losers),
@@ -2764,10 +2790,12 @@ def _build_ai_market_summary(mood_payload: dict | None = None) -> dict:
     top_loser = losers[0]["symbol"] if losers else "NA"
     top_loser_pct = losers[0].get("pct_change", 0.0) if losers else 0.0
 
+    mood_score_val = mood.get("score")
+    score_text = f"{float(mood_score_val):.1f}" if mood_score_val is not None else "—"
     lines = [
         (
             f"Market mood is {mood.get('mood', 'NEUTRAL')} "
-            f"with score {mood.get('score', 50):.1f}/100."
+            f"with score {score_text}/100."
         ),
         (
             f"Breadth: {mood.get('breadth', {}).get('gainers', 0)} gainers vs "
@@ -2785,6 +2813,64 @@ def _build_ai_market_summary(mood_payload: dict | None = None) -> dict:
         "summary": " ".join(lines),
         "generated_at": datetime.now().isoformat(),
     }
+
+
+_LEARNING_MIN_SAMPLE = 10
+
+
+def _build_learning_overlay(ls: dict, insights_for_cal: dict | None = None) -> dict | None:
+    """Advisory learning stats, flagged when the sample is too small to trust.
+
+    The old code returned nothing below 10 closed trades, which made the panel
+    look identical to "learning is broken". We now always report the numbers we
+    actually have and attach ``small_sample`` so the UI can label them instead
+    of hiding them or implying they are statistically meaningful.
+    """
+    try:
+        overall = ((insights_for_cal or {}).get("overall") or {}) if insights_for_cal else {}
+        if not overall:
+            overall = ((ls.get("insights") or {}).get("overall") or {})
+        total = int(overall.get("total_trades", 0) or 0)
+        if total <= 0:
+            return None
+        best_signal = (ls.get("insights") or {}).get("best_signal_type") or "UNKNOWN"
+        best_regime = (ls.get("insights") or {}).get("best_regime") or "UNKNOWN"
+        wr = float(overall.get("win_rate", 0) or 0)
+        model_acc = overall.get("model_accuracy")
+        small_sample = total < _LEARNING_MIN_SAMPLE
+        sample_note = (
+            f"Only {total} closed trade{'s' if total != 1 else ''} so far "
+            f"(needs {_LEARNING_MIN_SAMPLE}+ to be meaningful)."
+            if small_sample
+            else ""
+        )
+        advisory = (
+            f"Based on {total} closed trades: best setup is {best_signal} "
+            f"in {best_regime} regime (win rate {wr:.1f}%)."
+        )
+        if small_sample:
+            advisory = f"{sample_note} {advisory}"
+        return {
+            "total_learnt_trades": total,
+            "overall_win_rate": round(wr, 1),
+            "model_accuracy": (
+                round(float(model_acc), 1) if model_acc is not None else None
+            ),
+            "model_accuracy_label": "high-confidence subset win rate",
+            "best_signal_type": best_signal,
+            "best_regime": best_regime,
+            "sample_size": total,
+            "min_sample": _LEARNING_MIN_SAMPLE,
+            "small_sample": small_sample,
+            "snapshot_at": ls.get("generated_at") or ls.get("updated_at"),
+            "advisory": advisory,
+            "phase2_note": (
+                "Phase 2 rank = QS/conf/context blend + freshness + market bias alignment "
+                "minus drift/event/conflict penalties. Historical WR is from paper trades by regime — advisory only."
+            ),
+        }
+    except Exception:
+        return None
 
 
 def _top_quality_factors_from_breakdown(sig: dict, limit: int = 3) -> list[dict]:
@@ -3025,7 +3111,7 @@ def _confluence_for_setup(sig: dict, mood: dict, for_display: bool = False) -> t
 
 
 def _compute_delta_since_last_refresh(
-    current_signals: dict, current_mood_score: float
+    current_signals: dict, current_mood_score: float | None
 ) -> dict:
     """
     Phase 3: compare current signal state against last snapshot.
@@ -3083,7 +3169,8 @@ def _compute_delta_since_last_refresh(
     degraded.sort(key=lambda x: x["qs_delta"])
 
     mood_shift: str | None = None
-    if prev_mood is not None:
+    # A mood delta only exists when both refreshes produced a real score.
+    if prev_mood is not None and current_mood_score is not None:
         diff = current_mood_score - prev_mood
         if abs(diff) >= 5:
             mood_shift = f"{'+' if diff > 0 else ''}{diff:.1f} pts vs last refresh"
@@ -3180,6 +3267,58 @@ _cached_overview_time: float = 0.0
 _OVERVIEW_CACHE_TTL_SEC: float = 15.0
 
 
+def _swing_quality_score(setup: dict) -> tuple[int, str]:
+    """Resolve a swing setup's quality score and report which field it came from.
+
+    The scanner emits ``strength`` (0-100). Ranked payloads can also carry
+    ``confluence_score``. When none of the candidate fields is present we
+    return (0, "missing") rather than inventing a 75 that silently grades as
+    "A" — a fabricated quality score is worse than an honest zero.
+    """
+    for field_name in ("confluence_score", "strength", "score", "quant_score"):
+        raw = setup.get(field_name)
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return int(min(100.0, max(0.0, value))), field_name
+    return 0, "missing"
+
+
+def _assign_setup_percentiles(setups: list[dict]) -> None:
+    """Stamp ``setup_percentile`` from composite score, not list position.
+
+    Percentile = share of returned setups whose score is at or below this one,
+    so the same set of rows yields the same badges regardless of ordering or
+    how many rows survived filtering. Tied scores share the average rank, which
+    stops two identical scores from displaying different percentiles.
+    """
+    if not setups:
+        return
+    scores = [float(s.get("composite_rank") or 0.0) for s in setups]
+    count = len(scores)
+    if count == 1:
+        setups[0]["setup_percentile"] = 100.0
+        return
+    order = sorted(range(count), key=lambda i: scores[i])
+    pct = [0.0] * count
+    i = 0
+    while i < count:
+        j = i
+        while j + 1 < count and scores[order[j + 1]] == scores[order[i]]:
+            j += 1
+        avg_rank = (i + j) / 2.0
+        value = round(100.0 * avg_rank / (count - 1), 1)
+        for k in range(i, j + 1):
+            pct[order[k]] = value
+        i = j + 1
+    for idx, setup in enumerate(setups):
+        setup["setup_percentile"] = pct[idx]
+
+
 def _ensure_top_setups_fallback(payload: dict) -> dict:
     """If top_setups is empty in an intelligence payload, populate with top candidates from swing cache."""
     if not isinstance(payload, dict):
@@ -3204,13 +3343,14 @@ def _ensure_top_setups_fallback(payload: dict) -> dict:
         entry_p = float(s.get("entry_zone") or s.get("entry_price") or s.get("entry") or s.get("close") or 0.0)
         sl_p = float(s.get("stop_loss") or s.get("stop") or s.get("sl") or 0.0)
         tp_p = float(s.get("target_1") or s.get("target") or s.get("t1") or 0.0)
-        qs = int(s.get("confluence_score") or s.get("strength") or s.get("score") or 75)
+        qs, q_source = _swing_quality_score(s)
         q_grade = "A" if qs >= 75 else ("B" if qs >= 60 else "C")
         setups.append({
             "symbol": str(s.get("symbol", "")),
             "signal": str(s.get("direction") or s.get("signal") or "LONG"),
             "quality_score": qs,
             "quality_grade": q_grade,
+            "quality_source": q_source,
             "confidence": float(s.get("confidence") or 70.0),
             "composite_rank": float(qs),
             "entry": entry_p,
@@ -3224,15 +3364,23 @@ def _ensure_top_setups_fallback(payload: dict) -> dict:
             "session_badge": "LAST SESSION SWING",
             "is_off_hours_fallback": True,
         })
+    _assign_setup_percentiles(setups)
 
     from api.data_honesty import filter_valid_setups
     valid_setups, _ = filter_valid_setups(setups)
     if valid_setups:
         payload["top_setups"] = valid_setups
         meta = payload.get("ranking_meta") or {}
-        meta["actionable"] = len(valid_setups)
+        # Carried-over swing rows are context, not live tradeable setups: the
+        # main path excludes is_off_hours_fallback from its actionable count,
+        # so this path must not inflate it either.
+        meta["actionable"] = sum(
+            1 for t in valid_setups if not t.get("is_off_hours_fallback")
+        )
+        meta["carried_over"] = len(valid_setups) - meta["actionable"]
         meta["total_tracked"] = max(meta.get("total_tracked", 0), len(valid_setups))
         meta["fallback_applied"] = True
+        meta["fallback_source"] = "swing_shortlist"
         payload["ranking_meta"] = meta
     return payload
 
@@ -3303,28 +3451,9 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                 try:
                     from agents.analytics.feedback_loop import get_learning_stats
                     ls = get_learning_stats()
-                    insights = (ls.get("insights") or {}).get("overall") or {}
-                    if int(insights.get("total_trades", 0)) >= 10:
-                        wr = float(insights.get("win_rate", 0))
-                        model_acc = float(insights.get("model_accuracy", 0))
-                        best_signal = (ls.get("insights") or {}).get("best_signal_type", "COMBINED")
-                        best_regime = (ls.get("insights") or {}).get("best_regime", "TRENDING")
-                        db_snap["learning_overlay"] = {
-                            "total_learnt_trades": int(insights["total_trades"]),
-                            "overall_win_rate": round(wr, 1),
-                            "model_accuracy": round(model_acc, 1),
-                            "best_signal_type": best_signal,
-                            "best_regime": best_regime,
-                            "advisory": (
-                                f"Based on {int(insights['total_trades'])} closed trades: "
-                                f"best setup is {best_signal} in {best_regime} regime "
-                                f"(win rate {wr:.1f}%)"
-                            ),
-                            "phase2_note": (
-                                "Phase 2 rank = QS/conf/context blend + freshness + market bias alignment "
-                                "minus drift/event/conflict penalties. Historical WR is from paper trades by regime — advisory only."
-                            ),
-                        }
+                    overlay = _build_learning_overlay(ls)
+                    if overlay:
+                        db_snap["learning_overlay"] = overlay
                 except Exception as e:
                     logger.debug("[Service] Overlay live learning_overlay failed: %s", e)
 
@@ -3333,8 +3462,16 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                 meta = db_snap.get("ranking_meta") or {}
                 if top_count > 0:
                     meta["total_tracked"] = max(meta.get("total_tracked", 0), top_count)
-                    if not current_feed.get("is_market_open", False):
-                        meta["fallback_applied"] = meta.get("fallback_applied", True)
+                    # Only claim a fallback when the rows themselves say they came
+                    # from one. The old default of True labelled live setups as
+                    # "carried over" every time the market happened to be closed.
+                    if "fallback_applied" not in meta:
+                        meta["fallback_applied"] = any(
+                            bool(t.get("is_off_hours_fallback"))
+                            for t in (db_snap.get("top_setups") or [])
+                        )
+                    if meta.get("fallback_applied") and not meta.get("fallback_source"):
+                        meta["fallback_source"] = "off_hours_rows"
                 db_snap["ranking_meta"] = meta
 
                 # Heal guardrails if DB snapshot has UNKNOWN mood/breadth/regime
@@ -3343,9 +3480,15 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                 regime_dom = str((grd.get("regime_summary") or {}).get("dominant") or "")
                 if grd.get("mood") in ("UNKNOWN", None) or "UNKNOWN" in breadth_label or regime_dom in ("UNKNOWN", None, ""):
                     live_mood = _compute_market_mood()
-                    if live_mood.get("mood") != "UNKNOWN" or live_mood.get("score") != 50.0:
+                    live_score = live_mood.get("score")
+                    if live_mood.get("mood") != "UNKNOWN" and live_score is not None:
                         grd["mood"] = live_mood.get("mood", "NEUTRAL")
-                        grd["mood_score"] = float(live_mood.get("score", 50.0))
+                        grd["mood_score"] = float(live_score)
+                    else:
+                        # No live inputs either — keep the gap visible instead of
+                        # presenting a fabricated neutral 50.
+                        grd["mood"] = live_mood.get("mood", "UNKNOWN")
+                        grd["mood_score"] = None
                     grd["breadth_split"] = live_mood.get("breadth_signal_split", grd.get("breadth_split", {}))
                     if live_mood.get("regimes"):
                         r_counts = live_mood.get("regimes", {})
@@ -3359,8 +3502,12 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                     br = live_mood.get("breadth") or {}
                     sigs_m = live_mood.get("signals") or {}
                     sec_avg = float(live_mood.get("sector_avg_pct", 0) or 0)
+                    grd_score = grd.get("mood_score")
+                    grd_score_text = (
+                        f"{float(grd_score):.0f}/100" if grd_score is not None else "—"
+                    )
                     grd["why_market_hint"] = (
-                        f"Mood {grd.get('mood', 'NEUTRAL')} ({float(grd.get('mood_score', 50)):.0f}/100). "
+                        f"Mood {grd.get('mood', 'NEUTRAL')} ({grd_score_text}). "
                         f"Gainers vs losers {br.get('gainers', 0)}:{br.get('losers', 0)}. "
                         f"Signal bias {float(sigs_m.get('bias_pct', 0)):+.1f}%. "
                         f"Sector avg move {sec_avg:+.2f}%."
@@ -3566,6 +3713,7 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
     avoid_list.sort(key=lambda x: x["composite_rank"], reverse=True)
 
     fallback_applied = False
+    fallback_source: str | None = None
     if not top_setups and avoid_list:
         fallback_candidates = [
             s for s in avoid_list
@@ -3574,6 +3722,7 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
         if fallback_candidates:
             top_setups = fallback_candidates[:5]
             fallback_applied = True
+            fallback_source = "blocked_high_quality"
 
     if not top_setups:
         # Off-hours fallback to latest SwingSpectrum shortlist candidates
@@ -3591,13 +3740,14 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             entry_p = float(s.get("entry_zone") or s.get("entry_price") or s.get("entry") or s.get("close") or 0.0)
             sl_p = float(s.get("stop_loss") or s.get("stop") or s.get("sl") or 0.0)
             tp_p = float(s.get("target_1") or s.get("target") or s.get("t1") or 0.0)
-            qs = int(s.get("confluence_score") or s.get("strength") or s.get("score") or 75)
+            qs, q_source = _swing_quality_score(s)
             q_grade = "A" if qs >= 75 else ("B" if qs >= 60 else "C")
             top_setups.append({
                 "symbol": str(s.get("symbol", "")),
                 "signal": str(s.get("direction") or s.get("signal") or "LONG"),
                 "quality_score": qs,
                 "quality_grade": q_grade,
+                "quality_source": q_source,
                 "confidence": float(s.get("confidence") or 70.0),
                 "composite_rank": float(qs),
                 "entry": entry_p,
@@ -3613,6 +3763,7 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             })
         if top_setups:
             fallback_applied = True
+            fallback_source = "swing_shortlist"
 
     if not top_setups and _persisted_signals_snapshot:
         for s in _persisted_signals_snapshot[:5]:
@@ -3639,6 +3790,7 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                 })
         if top_setups:
             fallback_applied = True
+            fallback_source = "persisted_signals"
 
     # ── Honesty gate: a setup with unusable risk geometry is not a setup ─────
     from api.data_honesty import filter_valid_setups
@@ -3652,12 +3804,7 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
     if rejected_setups:
         avoid_list.sort(key=lambda item: item.get("composite_rank") or 0.0, reverse=True)
 
-    n_top = len(top_setups)
-    for idx, t in enumerate(top_setups):
-        if n_top <= 1:
-            t["setup_percentile"] = 100.0
-        else:
-            t["setup_percentile"] = round(100.0 * (1.0 - idx / (n_top - 1)), 1)
+    _assign_setup_percentiles(top_setups)
 
     # ── Phase 4: opportunity timeline — record first-seen per actionable setup ─
     now_iso = datetime.now().isoformat()
@@ -3728,43 +3875,26 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
     # ── Learning overlay (advisory) ──────────────────────────────────────────
     learning_hint: dict | None = None
     try:
-        overall = insights_for_cal.get("overall", {})
-        if int(overall.get("total_trades", 0)) >= 10:
-            best_signal = insights_for_cal.get("best_signal_type", "—")
-            best_regime = insights_for_cal.get("best_regime", "—")
-            wr = float(overall.get("win_rate", 0))
-            model_acc = float(overall.get("model_accuracy", 0))
-            learning_hint = {
-                "total_learnt_trades": int(overall["total_trades"]),
-                "overall_win_rate": round(wr, 1),
-                "model_accuracy": round(model_acc, 1),
-                "best_signal_type": best_signal,
-                "best_regime": best_regime,
-                "advisory": (
-                    f"Based on {int(overall['total_trades'])} closed trades: "
-                    f"best setup is {best_signal} in {best_regime} regime "
-                    f"(win rate {wr:.1f}%)"
-                ),
-                "phase2_note": (
-                    "Phase 2 rank = QS/conf/context blend + freshness + market bias alignment "
-                    "minus drift/event/conflict penalties. Historical WR is from paper trades by regime — advisory only."
-                ),
-            }
+        learning_hint = _build_learning_overlay(
+            {"insights": insights_for_cal}, insights_for_cal
+        )
     except Exception:
         pass
 
     br = mood.get("breadth") or {}
     sigs_m = mood.get("signals") or {}
     sec_avg = float(mood.get("sector_avg_pct", 0) or 0)
+    mood_raw = mood.get("score")
     why_hint = (
-        f"Mood {mood.get('mood', 'NEUTRAL')} ({float(mood.get('score', 50)):.0f}/100). "
+        f"Mood {mood.get('mood', 'NEUTRAL')} "
+        f"({f'{float(mood_raw):.0f}/100' if mood_raw is not None else '—'}). "
         f"Gainers vs losers {br.get('gainers', 0)}:{br.get('losers', 0)}. "
         f"Signal bias {float(sigs_m.get('bias_pct', 0)):+.1f}%. "
         f"Sector avg move {sec_avg:+.2f}%."
     )
 
     # ── Phase 3: delta, sector rotation, index leadership ───────────────────
-    current_mood_score = float(mood.get("score", 50))
+    current_mood_score = float(mood_raw) if mood_raw is not None else None
     current_signals_snapshot: dict = {}
     for symbol in list(_signal_cache.keys()):
         sig = _get_signal_for_symbol(symbol)
@@ -3832,6 +3962,7 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             "actionable": actionable_count,
             "blocked_high_quality": len(avoid_list),
             "fallback_applied": fallback_applied,
+            "fallback_source": fallback_source,
             "session_state": "LIVE" if is_market_live else "EOD",
             "scoring_version": "phase5_v1",
             "scoring_summary": (
@@ -3842,7 +3973,9 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
         },
         "market_guardrails": {
             "mood": mood.get("mood", "NEUTRAL"),
-            "mood_score": round(current_mood_score, 1),
+            "mood_score": (
+                round(current_mood_score, 1) if current_mood_score is not None else None
+            ),
             "breadth_split": mood.get("breadth_signal_split", {}),
             "regime_summary": {
                 "dominant": dominant_regime,
@@ -4042,8 +4175,10 @@ def _compute_crypto_intelligence() -> dict:
     exploratory_pool: list[dict] = []
     avoid_list: list[dict] = []
 
-    mood_score = 50.0
-    mood_label = "NEUTRAL"
+    # None = ticker fetch failed, so we have no reading to report. The frontend
+    # renders '—' instead of a fabricated neutral 50.
+    mood_score: float | None = None
+    mood_label = "UNKNOWN"
     btc_pct = 0.0
     eth_pct = 0.0
     gainers_n = 0
@@ -4149,9 +4284,11 @@ def _compute_crypto_intelligence() -> dict:
         has_conflict = bool(cp.get("has_conflict")) if isinstance(cp, dict) else False
 
         # Composite: reuse Phase 5 framework
+        # Composite scoring needs a number, so an unknown mood contributes a
+        # neutral 50/100 bias here. The reported payload still says None.
         mood_dict: dict = {
             "mood": mood_label,
-            "score": mood_score,
+            "score": mood_score if mood_score is not None else 50.0,
             "signals": {"bias_pct": (btc_pct if signal_label == "LONG" else -btc_pct)},
         }
         composite, rank_explain = _phase2_composite_score(sig, mood_dict)
@@ -4416,11 +4553,7 @@ def _compute_crypto_intelligence() -> dict:
             seen_syms.add(sym)
             sparse_fill_applied = True
 
-    n_top = len(top_setups)
-    for idx, t in enumerate(top_setups):
-        t["setup_percentile"] = (
-            round(100.0 * (1.0 - idx / max(n_top - 1, 1)), 1) if n_top > 1 else 100.0
-        )
+    _assign_setup_percentiles(top_setups)
 
     # ── Theme leadership ─────────────────────────────────────────────────────
     themes: dict[str, list[float]] = {}
@@ -4453,7 +4586,8 @@ def _compute_crypto_intelligence() -> dict:
         f"BTC {btc_pct:+.2f}%, ETH {eth_pct:+.2f}%. "
         f"Breadth: {gainers_n} gainers vs {losers_n} losers. "
         f"Fear & Greed: {fg_value if fg_value is not None else '—'}. "
-        f"Mood: {mood_label} ({mood_score:.0f}/100)."
+        f"Mood: {mood_label} "
+        f"({f'{mood_score:.0f}/100' if mood_score is not None else '—'})."
     )
 
     return {
@@ -4461,7 +4595,7 @@ def _compute_crypto_intelligence() -> dict:
         "avoid_list": avoid_list[:5],
         "market_guardrails": {
             "mood": mood_label,
-            "mood_score": round(mood_score, 1),
+            "mood_score": round(mood_score, 1) if mood_score is not None else None,
             "btc_24h_pct": round(btc_pct, 2),
             "eth_24h_pct": round(eth_pct, 2),
             "breadth_gainers": gainers_n,
@@ -4477,7 +4611,14 @@ def _compute_crypto_intelligence() -> dict:
         "theme_leadership": theme_leadership[:6],
         "ranking_meta": {
             "total_tracked": sum(1 for s in _signal_cache if "/" in s),
-            "actionable": len(top_setups),
+            # Same definition as the NSE cockpit: stale or blocked rows are
+            # tracked but not actionable, so the count can't be inflated by a
+            # sparse-fill row that only exists to avoid an empty card.
+            "actionable": sum(
+                1
+                for t in top_setups
+                if not t.get("stale") and not t.get("blockers")
+            ),
             "blocked_high_quality": len(avoid_list),
             "scoring_version": "crypto_phase6_v2",
             "sparse_fill_enabled": sparse_enabled,

@@ -272,6 +272,7 @@ async def run_single_autonomous_cycle(
         regimes: dict[str, str] = {}
         atr_lookup: dict[str, float] = {}
         candidate_signals: list[dict[str, Any]] = []
+        all_scanned_signals: list[dict[str, Any]] = []
         max_bar_dt: datetime | None = None
 
         # 5. Data Ingestion, Freshness Verification & Feature Computation
@@ -385,24 +386,53 @@ async def run_single_autonomous_cycle(
                         # Candle time
                         c_time = last.get("timestamp", now_iso)
 
-                        candidate_signals.append({
+                        sig_dict = {
                             "symbol": sym,
                             "signal": norm_dir,
                             "direction": norm_dir,
                             "quant_score": quant_score,
                             "confidence": ai_conf,
                             "entry": entry_pr,
+                            "close": close_price,
                             "stop_loss": sl_pr,
                             "target": tp_pr,
                             "risk_reward": rr,
                             "atr": atr_val,
                             "rsi": rsi_val,
                             "regime": regime.value,
+                            "trend": str(sig_last.get("htf_trend", "NEUTRAL")),
                             "strategy": strategy_name,
                             "candle_time": c_time,
+                            "timestamp": c_time,
+                            "data_status": freshness,
+                        }
+                        candidate_signals.append(sig_dict)
+                        all_scanned_signals.append(sig_dict)
+                        summary["signals_generated"] += 1
+                    else:
+                        c_time = last.get("timestamp", now_iso)
+                        all_scanned_signals.append({
+                            "symbol": sym,
+                            "signal": "HOLD",
+                            "direction": "HOLD",
+                            "signal_status": "NO_SIGNAL",
+                            "actionable": False,
+                            "quant_score": 0.0,
+                            "confidence": 40.0,
+                            "entry": close_price,
+                            "close": close_price,
+                            "stop_loss": None,
+                            "target": None,
+                            "risk_reward": 1.0,
+                            "atr": atr_val,
+                            "rsi": rsi_val,
+                            "regime": regime.value,
+                            "trend": str(sig_last.get("htf_trend", "NEUTRAL")),
+                            "strategy": "HOLD",
+                            "candle_time": c_time,
+                            "timestamp": c_time,
                             "data_status": freshness,
                         })
-                        summary["signals_generated"] += 1
 
             except Exception as sym_err:
                 logger.debug("[Scan] Error scanning %s: %s", sym, sym_err)
@@ -576,14 +606,16 @@ async def run_single_autonomous_cycle(
 
         # 10c. Persist latest_signals:v1 for API consumption in lightweight mode
         try:
+            persisted_sigs = all_scanned_signals if all_scanned_signals else candidate_signals
             signals_payload = {
                 "version": version,
                 "timestamp": now_iso,
-                "count": len(candidate_signals),
-                "signals": candidate_signals,
+                "count": len(persisted_sigs),
+                "signals": persisted_sigs,
             }
             await asyncio.to_thread(set_runtime_state, "latest_signals:v1", signals_payload)
-            logger.info("💾 [AutonomousWorker] Persisted %d signals to latest_signals:v1", len(candidate_signals))
+            await asyncio.to_thread(set_runtime_state, "latest_signals_snapshot", signals_payload)
+            logger.info("💾 [AutonomousWorker] Persisted %d signals to latest_signals:v1", len(persisted_sigs))
 
             try:
                 from api.service import _compute_overview_intelligence
