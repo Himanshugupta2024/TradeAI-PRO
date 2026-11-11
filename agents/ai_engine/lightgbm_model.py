@@ -363,17 +363,17 @@ class LightGBMPredictor:
         try:
             features = extract_features(df.tail(1))
             if getattr(self, "feature_cols", None):
-                cols = [c for c in self.feature_cols if c in features.columns]
-                if len(cols) == len(self.feature_cols):
-                    features = features[cols]
+                features = features.reindex(columns=self.feature_cols, fill_value=0.0)
             elif hasattr(self.model, "n_features_in_") and features.shape[1] > self.model.n_features_in_:
                 features = features.iloc[:, :self.model.n_features_in_]
             X = features.values.astype(np.float64)
 
             col_medians = np.nanmedian(X, axis=0)
+            col_medians = np.nan_to_num(col_medians, nan=0.0)
             nan_mask = np.isnan(X)
             if nan_mask.any():
                 X[nan_mask] = np.take(col_medians, np.where(nan_mask)[1])
+            X = np.nan_to_num(X, nan=0.0)
 
             probs = self.model.predict_proba(X)[0]
             prob_up   = float(probs[1]) * 100
@@ -417,12 +417,18 @@ class LightGBMPredictor:
 
         try:
             features = extract_features(df)
+            if getattr(self, "feature_cols", None):
+                features = features.reindex(columns=self.feature_cols, fill_value=0.0)
+            elif hasattr(self.model, "n_features_in_") and features.shape[1] > self.model.n_features_in_:
+                features = features.iloc[:, :self.model.n_features_in_]
             X = features.values.astype(np.float64)
 
             col_medians = np.nanmedian(X, axis=0)
+            col_medians = np.nan_to_num(col_medians, nan=0.0)
             nan_mask = np.isnan(X)
             if nan_mask.any():
                 X[nan_mask] = np.take(col_medians, np.where(nan_mask)[1])
+            X = np.nan_to_num(X, nan=0.0)
 
             probs = self.model.predict_proba(X)
             prob_up = probs[:, 1] * 100

@@ -109,6 +109,29 @@ class TestEnsembleV2Pipeline:
         assert not conf.isna().any()
         assert ((conf >= 5.0) & (conf <= 95.0)).all()
 
+    def test_predict_batch_feature_slicing_parity(self):
+        """Verify XGBoost and LightGBM batch prediction slices features without shape mismatch error."""
+        from agents.ai_engine.xgboost_model import get_xgb_predictor
+        from agents.ai_engine.lightgbm_model import get_lgbm_predictor
+
+        df = _make_df(60)
+        xgb = get_xgb_predictor()
+        lgbm = get_lgbm_predictor()
+
+        if xgb.is_fitted:
+            xgb_series = xgb.predict_batch(df)
+            assert len(xgb_series) == len(df)
+            assert not xgb_series.isna().any()
+            # Guard against silent fallback to flat 50.0
+            assert not (xgb_series == 50.0).all()
+
+        if lgbm.is_fitted:
+            lgbm_series = lgbm.predict_batch(df)
+            assert len(lgbm_series) == len(df)
+            assert not lgbm_series.isna().any()
+            # Guard against silent fallback to flat 50.0
+            assert not (lgbm_series == 50.0).all()
+
     def test_get_model_status_badge(self):
         status = get_model_status()
         assert "fitted_count" in status
