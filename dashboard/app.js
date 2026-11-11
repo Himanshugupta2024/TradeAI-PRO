@@ -677,8 +677,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateMarketSessionBanner();
     fetchMarketControlStatus();
-
-
+    fetchMarketFocusConfig();
 
     initModal();
 
@@ -26907,6 +26906,7 @@ function renderMacroIntelligence(macro) {
 
 // ── Section 6A: Market Control & Protected Crypto / Forex Switch ─────────────
 let _marketControlState = { crypto_forex_enabled: false };
+let _marketFocusConfig = { active_focus: "all", nse_enabled: true, crypto_enabled: true, forex_enabled: true };
 
 async function fetchMarketControlStatus() {
     try {
@@ -26918,6 +26918,93 @@ async function fetchMarketControlStatus() {
         }
     } catch (e) {
         console.debug("Market control status check skipped:", e);
+    }
+}
+
+async function fetchMarketFocusConfig() {
+    try {
+        const res = await fetchWithTimeout(`${API}/api/market-control/focus`, {}, 8000);
+        if (res.ok) {
+            const data = await res.json();
+            if (data && typeof data === 'object') {
+                _marketFocusConfig = data;
+                applyMarketFocusToDashboard(data);
+            }
+        }
+    } catch (e) {
+        console.debug("Market focus config check skipped:", e);
+    }
+}
+
+function applyMarketFocusToDashboard(config) {
+    if (!config || typeof config !== 'object') return;
+    const focus = String(config.active_focus || 'all').toLowerCase();
+    const cryptoOn = config.crypto_enabled !== false;
+    const forexOn = config.forex_enabled !== false;
+
+    // 1. Sidebar Nav Visibility & Badges
+    const cryptoTab = document.getElementById("tabCryptoMain");
+    if (cryptoTab) {
+        cryptoTab.style.display = cryptoOn ? "" : "none";
+        if (focus === 'crypto') {
+            cryptoTab.style.borderColor = "var(--yellow, #f59e0b)";
+            cryptoTab.style.boxShadow = "0 0 10px rgba(245,158,11,0.25)";
+        } else {
+            cryptoTab.style.borderColor = "";
+            cryptoTab.style.boxShadow = "";
+        }
+    }
+
+    const forexTab = document.getElementById("tabForex");
+    if (forexTab) {
+        forexTab.style.display = forexOn ? "" : "none";
+        if (focus === 'forex') {
+            forexTab.style.borderColor = "var(--purple, #a855f7)";
+            forexTab.style.boxShadow = "0 0 10px rgba(168,85,247,0.25)";
+        } else {
+            forexTab.style.borderColor = "";
+            forexTab.style.boxShadow = "";
+        }
+    }
+
+    // 2. Cockpit Crypto Tile
+    const cockpitCrypto = document.getElementById("cockpitCryptoMini");
+    if (cockpitCrypto) {
+        if (!cryptoOn || focus === 'nse') {
+            cockpitCrypto.style.display = "none";
+        } else if (focus === 'crypto') {
+            cockpitCrypto.style.display = "block";
+        }
+    }
+
+    // 3. Section 6A Badge text update
+    const badge = document.getElementById("marketControlModeBadge");
+    if (badge) {
+        if (focus === 'crypto') {
+            badge.textContent = "Focus: Crypto 24/7";
+            badge.style.background = "rgba(245, 158, 11, 0.2)";
+            badge.style.color = "#f59e0b";
+        } else if (focus === 'forex') {
+            badge.textContent = "Focus: Forex";
+            badge.style.background = "rgba(168, 85, 247, 0.2)";
+            badge.style.color = "#c084fc";
+        } else if (focus === 'nse') {
+            badge.textContent = "Focus: NSE Equities";
+            badge.style.background = "rgba(59, 130, 246, 0.2)";
+            badge.style.color = "#60a5fa";
+        } else {
+            const isEnabled = Boolean(_marketControlState && _marketControlState.crypto_forex_enabled);
+            badge.textContent = isEnabled ? "Multi-Asset" : "NSE Focus";
+            badge.style.background = isEnabled ? "rgba(16, 185, 129, 0.2)" : "rgba(59, 130, 246, 0.2)";
+            badge.style.color = isEnabled ? "#34d399" : "#60a5fa";
+        }
+    }
+
+    // 4. Initial tab routing if first page visit without user override
+    if (!sessionStorage.getItem('user_tab_override')) {
+        if (focus === 'forex' && typeof currentTab !== 'undefined' && currentTab === 'overview') {
+            if (typeof switchTab === 'function') switchTab('forex');
+        }
     }
 }
 
@@ -26943,6 +27030,10 @@ function renderMarketControlUI(data) {
         badge.textContent = "NSE Focus";
         badge.style.background = "rgba(59, 130, 246, 0.2)";
         badge.style.color = "#60a5fa";
+    }
+
+    if (_marketFocusConfig && _marketFocusConfig.active_focus && _marketFocusConfig.active_focus !== 'all') {
+        applyMarketFocusToDashboard(_marketFocusConfig);
     }
 }
 

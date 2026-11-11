@@ -512,6 +512,267 @@
     .confirm-desc { font-size: 0.82rem; color: var(--text-muted); line-height: 1.45; }
     .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 0.5rem; }
 
+    /* ── Operator Control Surfaces ─────────────────────── */
+    .killswitch-card {
+      background: linear-gradient(135deg, rgba(239,68,68,0.07), rgba(21,24,36,1) 45%);
+      border: 1px solid rgba(239,68,68,0.25);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 1.25rem;
+      align-items: center;
+    }
+    .killswitch-card.is-released {
+      background: linear-gradient(135deg, rgba(16,185,129,0.07), rgba(21,24,36,1) 45%);
+      border-color: rgba(16,185,129,0.25);
+    }
+    .killswitch-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+    .killswitch-desc {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-top: 6px;
+      max-width: 62ch;
+    }
+    .killswitch-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 190px;
+    }
+
+    .field-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .field-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-subtle);
+      white-space: nowrap;
+    }
+    .input-sm {
+      background: #080a11;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      padding: 0.45rem 0.6rem;
+      border-radius: var(--radius-sm);
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      min-width: 0;
+    }
+    .input-sm:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+    .input-sm.is-overridden {
+      border-color: rgba(99,102,241,0.55);
+      box-shadow: inset 0 0 0 1px rgba(99,102,241,0.25);
+    }
+
+    /* ── Runtime knob table ────────────────────────────── */
+    .knob-group-hd {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0.9rem 0 0.35rem;
+      font-size: 0.7rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-subtle);
+    }
+    .knob-group-hd:first-child { margin-top: 0; }
+    .knob-row {
+      display: grid;
+      grid-template-columns: minmax(180px, 1.6fr) 110px 96px minmax(120px, 1.2fr);
+      gap: 0.75rem;
+      align-items: center;
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 0.8rem;
+    }
+    .knob-row:last-child { border-bottom: none; }
+    .knob-row:hover { background: rgba(255,255,255,0.02); }
+    .knob-name { font-weight: 600; }
+    .knob-help {
+      font-size: 0.7rem;
+      color: var(--text-subtle);
+      line-height: 1.4;
+      margin-top: 2px;
+    }
+    .knob-bounds {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--text-subtle);
+      text-align: right;
+    }
+    .badge-live, .badge-restart {
+      font-size: 0.65rem;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+    .badge-live { background: var(--green-glow); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+    .badge-restart { background: var(--yellow-glow); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+    .knob-flag {
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-left: 6px;
+    }
+
+    /* ── Data tables ───────────────────────────────────── */
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+    .data-table thead th {
+      text-align: left;
+      padding: 0.55rem 0.7rem;
+      font-size: 0.68rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-subtle);
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+    }
+    .data-table tbody td {
+      padding: 0.5rem 0.7rem;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-family: var(--mono);
+    }
+    .data-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+    .data-table tbody tr:last-child td { border-bottom: none; }
+    .num-pos { color: var(--green); }
+    .num-neg { color: var(--red); }
+    .empty-note {
+      padding: 1.1rem;
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--text-subtle);
+    }
+    .btn-mini {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-mini:hover { background: rgba(255,255,255,0.1); color: var(--text); }
+    .btn-mini.is-danger { border-color: rgba(239,68,68,0.35); color: var(--red); }
+    .btn-mini.is-danger:hover { background: var(--red-glow); }
+
+    /* ── Feed list ─────────────────────────────────────── */
+    .feed-list {
+      display: flex;
+      flex-direction: column;
+      max-height: 340px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: rgba(4,5,8,0.5);
+    }
+    .feed-item {
+      display: grid;
+      grid-template-columns: 84px 96px 1fr auto;
+      gap: 0.7rem;
+      align-items: baseline;
+      padding: 0.5rem 0.7rem;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 0.75rem;
+    }
+    .feed-item:last-child { border-bottom: none; }
+    .feed-ts { color: var(--text-subtle); font-family: var(--mono); font-size: 0.68rem; }
+    .feed-action { font-weight: 800; font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; }
+    .feed-reason { color: var(--text-muted); line-height: 1.4; }
+    .feed-meta { font-family: var(--mono); font-size: 0.68rem; color: var(--text-subtle); white-space: nowrap; }
+
+    /* ── Compact stat grid ─────────────────────────────── */
+    .mini-stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.6rem;
+    }
+    .mini-stat {
+      background: rgba(255,255,255,0.025);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.65rem 0.8rem;
+    }
+    .mini-stat-label {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-subtle);
+    }
+    .mini-stat-value {
+      font-size: 1.1rem;
+      font-weight: 800;
+      font-family: var(--mono);
+      margin-top: 2px;
+    }
+
+    /* ── Manual trade form ─────────────────────────────── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 0.75rem;
+    }
+    .form-field { display: flex; flex-direction: column; gap: 4px; }
+    .form-field label {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-subtle);
+    }
+    .form-field .input-sm { width: 100%; }
+    .form-note {
+      font-size: 0.72rem;
+      color: var(--yellow);
+      line-height: 1.45;
+    }
+
+    @media (max-width: 900px) {
+      .knob-row { grid-template-columns: 1fr 96px; }
+      .knob-row .knob-bounds, .knob-row .knob-flag-cell { display: none; }
+      .killswitch-card { grid-template-columns: 1fr; }
+      .feed-item { grid-template-columns: 1fr; gap: 2px; }
+    }
+
     @media (max-width: 768px) {
       .admin-header { padding: 0 1rem; }
       .admin-container { padding: 1rem; }
@@ -631,6 +892,39 @@
         <div class="kpi-subtext">
           <span>DB: <strong id="valDbStatus">Supabase OK</strong></span>
           <span>Symbols: <strong id="valSymbolsLoaded">--</strong></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Module 0: Operator Kill Switch (Runtime Layer) -->
+    <section class="module-section">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">⛔</span>
+          <div>
+            <h3 class="section-hd-title">Operator Kill Switch</h3>
+            <span class="section-hd-sub">Blocks <strong>new entries</strong> only — open positions stay under the normal exit path so you can still flatten them</span>
+          </div>
+        </div>
+        <span class="kpi-status-badge badge-green" id="badgeKillSwitch">LOADING</span>
+      </div>
+      <div class="killswitch-card is-released" id="killSwitchCard">
+        <div>
+          <div class="killswitch-title">
+            <span>🛑</span>
+            <span id="killSwitchHeadline">Trading is armed</span>
+          </div>
+          <div class="killswitch-desc" id="killSwitchDetail">
+            Persisted in <code>trading_kill_switch:v1</code> and read on every decision. Release is not automatic — a restart does not clear it.
+          </div>
+          <div class="field-row" style="margin-top: 10px;">
+            <span class="field-label">Reason</span>
+            <input type="text" class="input-sm" id="killSwitchReason" placeholder="e.g. manual halt — broker feed mismatch" style="flex: 1; min-width: 220px;">
+          </div>
+        </div>
+        <div class="killswitch-actions">
+          <button class="btn-action btn-danger" id="btnEngageKill" onclick="engageKillSwitch()">Engage Kill Switch</button>
+          <button class="btn-action btn-secondary" id="btnReleaseKill" onclick="releaseKillSwitch()">Release Kill Switch</button>
         </div>
       </div>
     </section>
@@ -767,6 +1061,312 @@
       </div>
     </section>
 
+    <!-- Module: Market Ecosystem & Dynamic Focus Control -->
+    <section class="module-section" id="sectionMarketFocus">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">🌐</span>
+          <div>
+            <h3 class="section-hd-title">Market Ecosystem &amp; Active Focus Mode</h3>
+            <span class="section-hd-sub">Granular asset enablement (NSE, Crypto, Forex) &amp; dynamic platform broadcast focus</span>
+          </div>
+        </div>
+        <div id="marketFocusActiveBadge" style="font-size:0.75rem; font-weight:700; padding:3px 10px; border-radius:20px; background:rgba(99,102,241,0.15); color:#818cf8; border:1px solid rgba(99,102,241,0.3);">
+          Focus: Loading...
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1rem;">
+        
+        <!-- Sub-panel 1: Market Enablement Toggles -->
+        <div style="background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:1.2rem; display:flex; flex-direction:column; gap:0.9rem;">
+          <div>
+            <h4 style="font-size:0.9rem; font-weight:700; color:#fff; display:flex; align-items:center; gap:8px;">
+              <span>⚡</span> Allowed Asset Classes
+            </h4>
+            <p style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Turn specific asset feeds on/off platform-wide.</p>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <label style="display:flex; align-items:center; justify-content:space-between; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px; padding:8px 12px; cursor:pointer;">
+              <span style="font-size:0.82rem; font-weight:600; display:flex; align-items:center; gap:6px;">
+                🇮🇳 <span>NSE Indian Equities</span>
+              </span>
+              <input type="checkbox" id="chkEnableNse" checked style="width:16px; height:16px; cursor:pointer; accent-color:var(--accent);">
+            </label>
+
+            <label style="display:flex; align-items:center; justify-content:space-between; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px; padding:8px 12px; cursor:pointer;">
+              <span style="font-size:0.82rem; font-weight:600; display:flex; align-items:center; gap:6px;">
+                ₿ <span>Crypto 24/7 Futures &amp; Spot</span>
+              </span>
+              <input type="checkbox" id="chkEnableCrypto" checked style="width:16px; height:16px; cursor:pointer; accent-color:var(--accent);">
+            </label>
+
+            <label style="display:flex; align-items:center; justify-content:space-between; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px; padding:8px 12px; cursor:pointer;">
+              <span style="font-size:0.82rem; font-weight:600; display:flex; align-items:center; gap:6px;">
+                💱 <span>Forex Currency Majors</span>
+              </span>
+              <input type="checkbox" id="chkEnableForex" checked style="width:16px; height:16px; cursor:pointer; accent-color:var(--accent);">
+            </label>
+          </div>
+        </div>
+
+        <!-- Sub-panel 2: Active Dashboard Focus Selector -->
+        <div style="background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:1.2rem; display:flex; flex-direction:column; justify-content:space-between; gap:0.9rem;">
+          <div>
+            <h4 style="font-size:0.9rem; font-weight:700; color:#fff; display:flex; align-items:center; gap:8px;">
+              <span>🎯</span> Active Dashboard Focus
+            </h4>
+            <p style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">Select which market the public dashboard prioritizes and filters for.</p>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;" id="focusBtnGroup">
+            <button type="button" class="btn-focus-opt" data-focus="nse" onclick="selectFocusMode('nse')" style="padding:10px; border-radius:8px; border:1px solid var(--border); background:rgba(255,255,255,0.03); color:var(--text); font-weight:700; font-size:0.8rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px; transition:all 0.2s;">
+              <span style="font-size:1.2rem;">🇮🇳</span>
+              <span>NSE Market</span>
+            </button>
+            <button type="button" class="btn-focus-opt" data-focus="crypto" onclick="selectFocusMode('crypto')" style="padding:10px; border-radius:8px; border:1px solid var(--border); background:rgba(255,255,255,0.03); color:var(--text); font-weight:700; font-size:0.8rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px; transition:all 0.2s;">
+              <span style="font-size:1.2rem;">₿</span>
+              <span>Crypto 24/7</span>
+            </button>
+            <button type="button" class="btn-focus-opt" data-focus="forex" onclick="selectFocusMode('forex')" style="padding:10px; border-radius:8px; border:1px solid var(--border); background:rgba(255,255,255,0.03); color:var(--text); font-weight:700; font-size:0.8rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px; transition:all 0.2s;">
+              <span style="font-size:1.2rem;">💱</span>
+              <span>Forex Majors</span>
+            </button>
+            <button type="button" class="btn-focus-opt" data-focus="all" onclick="selectFocusMode('all')" style="padding:10px; border-radius:8px; border:1px solid var(--border); background:rgba(255,255,255,0.03); color:var(--text); font-weight:700; font-size:0.8rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px; transition:all 0.2s;">
+              <span style="font-size:1.2rem;">🌐</span>
+              <span>Multi-Asset</span>
+            </button>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; pt:6px;">
+            <span id="marketFocusSummary" style="font-size:0.72rem; color:var(--text-subtle);">Select focus and broadcast.</span>
+            <button type="button" class="btn-action btn-primary" id="btnApplyMarketFocus" onclick="saveMarketFocusControls()" style="width:auto; padding:6px 16px; font-size:0.78rem;">
+              Save &amp; Broadcast Focus
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Module 4: Live Runtime Knobs -->
+    <section class="module-section">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">🎛️</span>
+          <div>
+            <h3 class="section-hd-title">Live Runtime Knobs</h3>
+            <span class="section-hd-sub">Validated, audited, persisted in <code>runtime_knob_overrides:v1</code>. <span class="badge-live">LIVE</span> knobs apply on the next decision; <span class="badge-restart">RESTART</span> knobs only after a process restart.</span>
+          </div>
+        </div>
+        <span class="kpi-status-badge badge-green" id="badgeKnobState">—</span>
+      </div>
+      <div class="field-row" style="margin-bottom: 0.85rem;">
+        <span class="field-label">Reason</span>
+        <input type="text" class="input-sm" id="knobReason" placeholder="why are you changing these?" style="flex: 1; min-width: 200px;">
+        <button class="btn-action btn-primary" style="width: auto; padding: 0.5rem 1rem;" onclick="saveRuntimeKnobs()">Save Overrides</button>
+        <button class="btn-action btn-secondary" style="width: auto; padding: 0.5rem 1rem;" onclick="resetRuntimeKnobs()">Reset to Defaults</button>
+      </div>
+      <div id="knobContainer">
+        <div class="empty-note">Loading knob registry…</div>
+      </div>
+      <div class="feed-meta" id="knobMeta" style="margin-top: 0.6rem;"></div>
+    </section>
+
+    <!-- Module 5: Open Positions -->
+    <section class="module-section">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">📂</span>
+          <div>
+            <h3 class="section-hd-title">Open Paper Positions</h3>
+            <span class="section-hd-sub">Live valuation from the paper engine. Manual close uses the last known price unless you pass an exit price.</span>
+          </div>
+        </div>
+        <button class="btn-nav" onclick="loadOpenPositions()">↻ Refresh</button>
+      </div>
+      <div class="mini-stat-grid" style="margin-bottom: 0.85rem;" id="positionSummary"></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Symbol</th>
+              <th>Dir</th>
+              <th>Entry</th>
+              <th>Stop</th>
+              <th>Target</th>
+              <th>LTP</th>
+              <th>Unreal. P&L</th>
+              <th>Qty</th>
+              <th>Age</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="positionsBody">
+            <tr><td colspan="11" class="empty-note">Loading positions…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Module 6: Model Bundle & Retrain -->
+    <section class="module-section">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">🧠</span>
+          <div>
+            <h3 class="section-hd-title">Model Bundle &amp; Retraining</h3>
+            <span class="section-hd-sub">Models are trained externally and published to <code>runtime_state</code>. Sync is explicit — the API never silently overwrites local artefacts.</span>
+          </div>
+        </div>
+        <button class="btn-nav" onclick="loadModelBundle()">↻ Refresh</button>
+      </div>
+      <div class="mini-stat-grid" id="modelBundleStats" style="margin-bottom: 0.85rem;"></div>
+      <div class="feed-meta" id="modelBundleNote" style="margin-bottom: 0.85rem;">Loading bundle status…</div>
+      <div class="field-row">
+        <button class="btn-action btn-secondary" style="width: auto; padding: 0.5rem 1rem;" onclick="executeModelSync(false)">Sync Published Bundle</button>
+        <button class="btn-action btn-warning" style="width: auto; padding: 0.5rem 1rem;" onclick="executeModelSync(true)">Force Re-Sync</button>
+        <button class="btn-action btn-secondary" style="width: auto; padding: 0.5rem 1rem;" onclick="executeRetrainModels()">Trigger Retrain</button>
+      </div>
+      <div class="feed-meta" id="retrainJobs" style="margin-top: 0.7rem;">No retrain jobs polled yet.</div>
+    </section>
+
+    <!-- Module 7: Learning Loop & Ensemble -->
+    <section class="module-section">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">📈</span>
+          <div>
+            <h3 class="section-hd-title">Learning Loop &amp; Ensemble</h3>
+            <span class="section-hd-sub">Heuristic feedback stats from closed paper trades, plus which ensemble members are actually loaded.</span>
+          </div>
+        </div>
+        <button class="btn-nav" onclick="loadLearningPanels()">↻ Refresh</button>
+      </div>
+      <div class="mini-stat-grid" id="learningStats" style="margin-bottom: 0.85rem;"></div>
+      <div class="feed-meta" id="learningExtremes" style="margin-bottom: 0.85rem;">—</div>
+      <div class="table-wrap" style="margin-bottom: 0.85rem; max-height: 260px; overflow-y: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Type</th>
+              <th>Regime</th>
+              <th>Dir</th>
+              <th>P&L %</th>
+              <th>Outcome</th>
+              <th>Closed</th>
+            </tr>
+          </thead>
+          <tbody id="learningOutcomesBody">
+            <tr><td colspan="7" class="empty-note">Loading outcomes…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Ensemble Member</th>
+              <th>Active</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody id="ensembleBody">
+            <tr><td colspan="3" class="empty-note">Loading ensemble status…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="field-row" style="margin-top: 0.85rem;">
+        <button class="btn-action btn-secondary" style="width: auto; padding: 0.5rem 1rem;" onclick="triggerEnsembleValidation()">Run Walk-Forward Validation</button>
+        <span class="feed-meta" id="ensembleJobState">No validation job polled yet.</span>
+      </div>
+    </section>
+
+    <!-- Module 8: Autonomous Event Feed -->
+    <section class="module-section">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">🛰️</span>
+          <div>
+            <h3 class="section-hd-title">Autonomous Decision Feed</h3>
+            <span class="section-hd-sub">Every accept, skip, and management action the daemon recorded — including kill-switch skips.</span>
+          </div>
+        </div>
+        <div class="field-row">
+          <span class="field-label">Limit</span>
+          <select class="input-sm" id="feedLimit" onchange="loadAutonomousFeed()">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          <button class="btn-nav" onclick="loadAutonomousFeed()">↻ Refresh</button>
+        </div>
+      </div>
+      <div class="feed-list" id="feedList">
+        <div class="empty-note">Loading feed…</div>
+      </div>
+    </section>
+
+    <!-- Module 9: Manual Paper Trade -->
+    <section class="module-section">
+      <div class="section-hd">
+        <div class="section-hd-left">
+          <span class="section-hd-icon">✍️</span>
+          <div>
+            <h3 class="section-hd-title">Manual Paper Trade</h3>
+            <span class="section-hd-sub">Same risk gates as the autonomous path: position sizing, portfolio heat, cooldown, circuit breaker, and the kill switch all still apply.</span>
+          </div>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Symbol</label>
+          <input type="text" class="input-sm" id="mtSymbol" placeholder="RELIANCE or BTC/USDT">
+        </div>
+        <div class="form-field">
+          <label>Direction</label>
+          <select class="input-sm" id="mtDirection">
+            <option value="LONG">LONG</option>
+            <option value="SHORT">SHORT</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Entry</label>
+          <input type="number" step="any" class="input-sm" id="mtEntry" placeholder="0.00">
+        </div>
+        <div class="form-field">
+          <label>Stop Loss</label>
+          <input type="number" step="any" class="input-sm" id="mtStop" placeholder="0.00">
+        </div>
+        <div class="form-field">
+          <label>Target</label>
+          <input type="number" step="any" class="input-sm" id="mtTarget" placeholder="0.00">
+        </div>
+        <div class="form-field">
+          <label>ATR (optional)</label>
+          <input type="number" step="any" class="input-sm" id="mtAtr" placeholder="0.00">
+        </div>
+        <div class="form-field">
+          <label>Confidence %</label>
+          <input type="number" step="any" class="input-sm" id="mtConfidence" placeholder="60">
+        </div>
+        <div class="form-field">
+          <label>Strategy Tag</label>
+          <input type="text" class="input-sm" id="mtStrategy" placeholder="MANUAL">
+        </div>
+      </div>
+      <div class="form-note" style="margin-top: 0.8rem;">
+        Paper mode only. No broker order is placed, and nothing here is a recommendation — it is a position-sizing exercise inside the simulated book.
+      </div>
+      <div class="field-row" style="margin-top: 0.8rem;">
+        <button class="btn-action btn-primary" style="width: auto; padding: 0.55rem 1.2rem;" onclick="submitManualTrade()">Open Paper Position</button>
+        <span class="feed-meta" id="manualTradeResult"></span>
+      </div>
+    </section>
+
     <!-- Real-time Operator Console Log -->
     <section class="terminal-section">
       <div class="terminal-hd">
@@ -798,6 +1398,7 @@
 
     let adminKey = sessionStorage.getItem('tradeai_admin_key') || '';
     let autoRefreshTimer = null;
+    let operatorRefreshTimer = null;
     let pendingConfirmAction = null;
 
     // ── Clock ────────────────────────────────────────────────
@@ -878,6 +1479,7 @@
       sessionStorage.removeItem('tradeai_admin_key');
       adminKey = '';
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+      if (operatorRefreshTimer) clearInterval(operatorRefreshTimer);
       document.getElementById('authGate').style.display = 'flex';
       document.getElementById('adminKeyInput').value = '';
       logMessage('Operator session terminated (locked).', 'warn');
@@ -994,6 +1596,9 @@
           }
         }
 
+        // 6. Market Ecosystem & Active Focus Controls
+        await loadMarketFocusControls();
+
       } catch (err) {
         logMessage(`Telemetry poll failed: ${err.message}`, 'warn');
       }
@@ -1001,8 +1606,13 @@
 
     function startTelemetryLoop() {
       fetchAllTelemetry();
+      loadOperatorPanels();
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
       autoRefreshTimer = setInterval(fetchAllTelemetry, 8000);
+      // Operator panels hit heavier endpoints (valuation refresh, model/DB reads),
+      // so they poll on a slower cadence than the KPI strip.
+      if (operatorRefreshTimer) clearInterval(operatorRefreshTimer);
+      operatorRefreshTimer = setInterval(loadOperatorPanels, 20000);
     }
 
     // ── Confirmation Modal Handlers ──────────────────────────
@@ -1150,6 +1760,743 @@
       } catch (e) {
         logMessage(`Telegram test failed: ${e.message}`, 'err');
       }
+    }
+
+    // ── Market Focus & Asset Class Ecosystem Control ─────────
+    let _currentMarketFocus = 'all';
+
+    function selectFocusMode(mode) {
+      _currentMarketFocus = mode;
+      document.querySelectorAll('#focusBtnGroup .btn-focus-opt').forEach(btn => {
+        const isSelected = btn.getAttribute('data-focus') === mode;
+        btn.style.background = isSelected ? 'rgba(99, 102, 241, 0.25)' : 'rgba(255, 255, 255, 0.03)';
+        btn.style.borderColor = isSelected ? 'var(--accent)' : 'var(--border)';
+        btn.style.boxShadow = isSelected ? '0 0 14px var(--accent-glow)' : 'none';
+        btn.style.color = isSelected ? '#fff' : 'var(--text-muted)';
+      });
+
+      const summary = document.getElementById('marketFocusSummary');
+      if (summary) {
+        if (mode === 'crypto') summary.textContent = 'Focus: Crypto 24/7 (Only crypto tickers and signals will display on dashboard)';
+        else if (mode === 'nse') summary.textContent = 'Focus: NSE Equities (Only Indian cash equities will display on dashboard)';
+        else if (mode === 'forex') summary.textContent = 'Focus: Forex Majors (Only currency pairs will display on dashboard)';
+        else summary.textContent = 'Focus: Multi-Asset (All enabled markets will display)';
+      }
+    }
+
+    async function loadMarketFocusControls() {
+      try {
+        const res = await apiCall('/api/market-control/focus');
+        if (res && typeof res === 'object') {
+          const focus = res.active_focus || 'all';
+          const nseOn = res.nse_enabled !== false;
+          const cryptoOn = res.crypto_enabled !== false;
+          const forexOn = res.forex_enabled !== false;
+
+          const chkNse = document.getElementById('chkEnableNse');
+          const chkCrypto = document.getElementById('chkEnableCrypto');
+          const chkForex = document.getElementById('chkEnableForex');
+          if (chkNse) chkNse.checked = nseOn;
+          if (chkCrypto) chkCrypto.checked = cryptoOn;
+          if (chkForex) chkForex.checked = forexOn;
+
+          selectFocusMode(focus);
+
+          const badge = document.getElementById('marketFocusActiveBadge');
+          if (badge) {
+            badge.textContent = `Active: ${focus.toUpperCase()}`;
+            if (focus === 'crypto') {
+              badge.style.background = 'rgba(245, 158, 11, 0.15)';
+              badge.style.color = '#f59e0b';
+              badge.style.borderColor = 'rgba(245, 158, 11, 0.3)';
+            } else if (focus === 'nse') {
+              badge.style.background = 'rgba(59, 130, 246, 0.15)';
+              badge.style.color = '#60a5fa';
+              badge.style.borderColor = 'rgba(59, 130, 246, 0.3)';
+            } else if (focus === 'forex') {
+              badge.style.background = 'rgba(168, 85, 247, 0.15)';
+              badge.style.color = '#c084fc';
+              badge.style.borderColor = 'rgba(168, 85, 247, 0.3)';
+            } else {
+              badge.style.background = 'rgba(16, 185, 129, 0.15)';
+              badge.style.color = '#10b981';
+              badge.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load market focus controls:', err);
+      }
+    }
+
+    async function saveMarketFocusControls() {
+      const btn = document.getElementById('btnApplyMarketFocus');
+      if (btn) { btn.disabled = true; btn.textContent = 'Broadcasting...'; }
+      logMessage(`Applying market focus: ${_currentMarketFocus.toUpperCase()}...`, 'info');
+
+      const chkNse = document.getElementById('chkEnableNse');
+      const chkCrypto = document.getElementById('chkEnableCrypto');
+      const chkForex = document.getElementById('chkEnableForex');
+
+      const payload = {
+        active_focus: _currentMarketFocus,
+        nse_enabled: chkNse ? chkNse.checked : true,
+        crypto_enabled: chkCrypto ? chkCrypto.checked : true,
+        forex_enabled: chkForex ? chkForex.checked : true,
+        password: adminKey,
+        reason: `Operator broadcasted ${_currentMarketFocus.toUpperCase()} market focus`
+      };
+
+      try {
+        const res = await apiCall('/api/market-control/focus', 'POST', payload);
+        if (res && res.success) {
+          logMessage(`Market focus successfully updated to ${_currentMarketFocus.toUpperCase()} (Broadcast live)`, 'ok');
+          loadMarketFocusControls();
+        } else {
+          logMessage(`Failed to update market focus: ${res?.message || 'Unauthorized'}`, 'err');
+        }
+      } catch (err) {
+        logMessage(`Market focus update error: ${err.message}`, 'err');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save & Broadcast Focus'; }
+      }
+    }
+
+    // ── Shared formatting helpers ────────────────────────────
+    function fmtMoney(v) {
+      const n = Number(v || 0);
+      return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+    }
+
+    function fmtNum(v, dp = 2) {
+      if (v === null || v === undefined || v === '') return '—';
+      const n = Number(v);
+      if (!Number.isFinite(n)) return '—';
+      return n.toLocaleString('en-IN', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+    }
+
+    function pnlClass(v) {
+      const n = Number(v || 0);
+      if (n > 0) return 'num-pos';
+      if (n < 0) return 'num-neg';
+      return '';
+    }
+
+    function miniStat(label, value, tone) {
+      const cls = tone ? ` style="color: var(--${tone});"` : '';
+      return `<div class="mini-stat">
+        <div class="mini-stat-label">${escapeHtml(label)}</div>
+        <div class="mini-stat-value"${cls}>${escapeHtml(String(value))}</div>
+      </div>`;
+    }
+
+    // ── Module 0: Kill Switch ────────────────────────────────
+    function renderKillSwitch(ks) {
+      if (!ks) return;
+      const halted = Boolean(ks.halted);
+      const readable = ks.state_readable !== false;
+
+      const badge = document.getElementById('badgeKillSwitch');
+      if (badge) {
+        badge.textContent = halted ? 'HALTED' : (readable ? 'ARMED' : 'STATE UNREADABLE');
+        badge.className = `kpi-status-badge ${halted ? 'badge-red' : (readable ? 'badge-green' : 'badge-amber')}`;
+      }
+
+      const card = document.getElementById('killSwitchCard');
+      if (card) card.className = `killswitch-card ${halted ? '' : 'is-released'}`;
+
+      const head = document.getElementById('killSwitchHeadline');
+      if (head) {
+        head.textContent = halted
+          ? `Halted — ${ks.reason || 'no reason recorded'}`
+          : 'Trading is armed (new entries allowed)';
+      }
+
+      const detail = document.getElementById('killSwitchDetail');
+      if (detail) {
+        const audit = ks.updated_at
+          ? `Last change: ${ks.updated_at} by ${ks.updated_by || 'unknown'}.`
+          : 'No operator change recorded yet.';
+        const warn = readable
+          ? ''
+          : ' WARNING: the persisted state could not be read — the switch is failing OPEN, so trading is NOT halted.';
+        detail.textContent = `${audit} Persisted in trading_kill_switch:v1 and read on every decision; a restart does not clear it.${warn}`;
+      }
+
+      const engage = document.getElementById('btnEngageKill');
+      const release = document.getElementById('btnReleaseKill');
+      if (engage) engage.disabled = halted;
+      if (release) release.disabled = !halted;
+    }
+
+    async function loadKillSwitch() {
+      const res = await apiCall('/api/admin/runtime-controls').catch(() => null);
+      if (res && res.kill_switch) renderKillSwitch(res.kill_switch);
+    }
+
+    function engageKillSwitch() {
+      const reason = (document.getElementById('killSwitchReason')?.value || '').trim();
+      showConfirmModal(
+        'Engage Operator Kill Switch',
+        'Blocks ALL new entries in the paper engine and the autonomous daemon. Open positions are untouched and can still be closed manually.',
+        '⛔',
+        async () => {
+          try {
+            const res = await apiCall('/api/admin/kill-switch', 'POST', { halted: true, reason });
+            renderKillSwitch(res.kill_switch);
+            logMessage(`Kill switch ENGAGED — ${res.message}`, 'err');
+          } catch (e) {
+            logMessage(`Kill switch engage failed: ${e.message}`, 'err');
+          }
+        }
+      );
+    }
+
+    function releaseKillSwitch() {
+      const reason = (document.getElementById('killSwitchReason')?.value || '').trim();
+      showConfirmModal(
+        'Release Operator Kill Switch',
+        'Re-allows new entries. Circuit breaker, daily loss limit and consecutive-loss pause still apply independently.',
+        '✅',
+        async () => {
+          try {
+            const res = await apiCall('/api/admin/kill-switch', 'POST', { halted: false, reason });
+            renderKillSwitch(res.kill_switch);
+            logMessage(`Kill switch RELEASED — ${res.message}`, 'ok');
+          } catch (e) {
+            logMessage(`Kill switch release failed: ${e.message}`, 'err');
+          }
+        }
+      );
+    }
+
+    // ── Module 4: Runtime Knobs ──────────────────────────────
+    const KNOB_GROUP_LABELS = {
+      positions: 'Position Sizing & Exposure',
+      risk: 'Risk Limits',
+      signal: 'Signal Quality Gates',
+    };
+
+    function renderKnobs(knobs) {
+      const host = document.getElementById('knobContainer');
+      if (!host) return;
+      if (!Array.isArray(knobs) || !knobs.length) {
+        host.innerHTML = '<div class="empty-note">No knobs reported by the backend.</div>';
+        return;
+      }
+
+      const groups = {};
+      knobs.forEach((k) => {
+        const g = k.group || 'other';
+        (groups[g] = groups[g] || []).push(k);
+      });
+
+      // Fractional knobs (e.g. 0.001–0.5 daily loss) must not render as "0 – 1".
+      const dpFor = (k) => {
+        const span = Math.abs(Number(k.max) - Number(k.min));
+        if (k.type === 'int') return 0;
+        if (span <= 1) return 3;
+        if (span <= 10) return 2;
+        return 1;
+      };
+      const stepFor = (k) => {
+        if (k.type === 'int') return '1';
+        const dp = dpFor(k);
+        return dp >= 3 ? '0.001' : (dp === 2 ? '0.01' : '0.1');
+      };
+
+      const order = ['positions', 'risk', 'signal'];
+      const html = [];
+      order.concat(Object.keys(groups).filter((g) => !order.includes(g))).forEach((g) => {
+        const rows = groups[g];
+        if (!rows) return;
+        html.push(`<div class="knob-group-hd">${escapeHtml(KNOB_GROUP_LABELS[g] || g)}</div>`);
+        rows.forEach((k) => {
+          const badge = k.live
+            ? '<span class="badge-live">LIVE</span>'
+            : '<span class="badge-restart">RESTART</span>';
+          const flag = k.overridden ? '<span class="knob-flag">OVERRIDDEN</span>' : '';
+          const dp = dpFor(k);
+          html.push(`
+            <div class="knob-row">
+              <div>
+                <div class="knob-name">${escapeHtml(k.label)}${flag}</div>
+                <div class="knob-help">${escapeHtml(k.help || '')} <code>${escapeHtml(k.name)}</code></div>
+              </div>
+              <input type="number" class="input-sm ${k.overridden ? 'is-overridden' : ''}"
+                     id="knob_${escapeHtml(k.name)}"
+                     data-knob="${escapeHtml(k.name)}"
+                     data-current="${k.current === null ? '' : k.current}"
+                     data-type="${escapeHtml(k.type)}"
+                     step="${stepFor(k)}" min="${k.min}" max="${k.max}"
+                     value="${k.current === null ? '' : k.current}">
+              <div class="knob-bounds">${fmtNum(k.min, dp)} – ${fmtNum(k.max, dp)}</div>
+              <div class="knob-flag-cell">${badge}</div>
+            </div>
+          `);
+        });
+      });
+
+      host.innerHTML = html.join('');
+    }
+
+    async function loadRuntimeControls() {
+      try {
+        const res = await apiCall('/api/admin/runtime-controls');
+        if (!res) return;
+        renderKillSwitch(res.kill_switch);
+        renderKnobs(res.knobs);
+
+        const meta = res.override_meta || {};
+        const badge = document.getElementById('badgeKnobState');
+        if (badge) {
+          const n = Number(meta.count || 0);
+          badge.textContent = n ? `${n} OVERRIDE${n === 1 ? '' : 'S'}` : 'DEFAULTS';
+          badge.className = `kpi-status-badge ${n ? 'badge-amber' : 'badge-green'}`;
+        }
+        const metaEl = document.getElementById('knobMeta');
+        if (metaEl) {
+          metaEl.textContent = meta.count
+            ? `Overrides active since ${meta.updated_at || 'unknown'} (by ${meta.updated_by || 'unknown'}).`
+            : 'No overrides active — every knob is at its configured default.';
+        }
+      } catch (e) {
+        logMessage(`Runtime controls load failed: ${e.message}`, 'err');
+      }
+    }
+
+    function collectKnobChanges() {
+      const changes = {};
+      document.querySelectorAll('input[data-knob]').forEach((el) => {
+        const raw = el.value;
+        const prev = el.getAttribute('data-current') || '';
+        if (raw === prev) return;
+        if (raw === '') return;
+        const type = el.getAttribute('data-type');
+        changes[el.getAttribute('data-knob')] = type === 'int' ? parseInt(raw, 10) : parseFloat(raw);
+      });
+      return changes;
+    }
+
+    async function saveRuntimeKnobs() {
+      const changes = collectKnobChanges();
+      const names = Object.keys(changes);
+      if (!names.length) {
+        logMessage('No knob values changed — nothing to save.', 'warn');
+        return;
+      }
+      const reason = (document.getElementById('knobReason')?.value || '').trim();
+      logMessage(`Saving ${names.length} knob override(s): ${names.join(', ')}`, 'info');
+      try {
+        const res = await apiCall('/api/admin/runtime-controls', 'POST', { values: changes, reason });
+        const live = res.applied_live || [];
+        const deferred = res.requires_restart || [];
+        logMessage(`Overrides saved. Live now: ${live.length ? live.join(', ') : 'none'}.`, 'ok');
+        if (deferred.length) {
+          logMessage(`Restart required for: ${deferred.join(', ')}`, 'warn');
+        }
+        renderKnobs(res.knobs);
+        await loadRuntimeControls();
+      } catch (e) {
+        logMessage(`Knob save rejected: ${e.message}`, 'err');
+      }
+    }
+
+    function resetRuntimeKnobs() {
+      showConfirmModal(
+        'Reset All Runtime Knobs',
+        'Clears every operator override and restores the configured defaults. Live knobs revert immediately; restart-only knobs revert after the next restart.',
+        '↩️',
+        async () => {
+          const reason = (document.getElementById('knobReason')?.value || '').trim();
+          try {
+            const res = await apiCall('/api/admin/runtime-controls/reset', 'POST', { reason });
+            logMessage(`Knob overrides cleared — ${res.message}`, 'ok');
+            await loadRuntimeControls();
+          } catch (e) {
+            logMessage(`Knob reset failed: ${e.message}`, 'err');
+          }
+        }
+      );
+    }
+
+    // ── Module 5: Open Positions ─────────────────────────────
+    function positionAge(entryTime) {
+      if (!entryTime) return '—';
+      const t = new Date(entryTime);
+      if (Number.isNaN(t.getTime())) return '—';
+      const mins = Math.max(0, Math.round((Date.now() - t.getTime()) / 60000));
+      if (mins < 60) return `${mins}m`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ${mins % 60}m`;
+      return `${Math.floor(hrs / 24)}d ${hrs % 24}h`;
+    }
+
+    async function loadOpenPositions() {
+      const body = document.getElementById('positionsBody');
+      const summaryEl = document.getElementById('positionSummary');
+      try {
+        const res = await apiCall('/api/paper/open');
+        const trades = res?.open_trades || [];
+        const summary = res?.summary || {};
+
+        if (summaryEl) {
+          summaryEl.innerHTML = [
+            miniStat('Open Positions', summary.open_positions ?? trades.length),
+            miniStat('Unrealized P&L', fmtMoney(summary.unrealized_pnl), Number(summary.unrealized_pnl || 0) >= 0 ? 'green' : 'red'),
+            miniStat('Deployed Margin', fmtMoney(summary.deployed_margin)),
+            miniStat('Total Equity', fmtMoney(summary.total_equity)),
+            miniStat('Valuation', summary.valuation_status || '—'),
+          ].join('');
+        }
+
+        if (!body) return;
+        if (!trades.length) {
+          body.innerHTML = '<tr><td colspan="11" class="empty-note">No open paper positions.</td></tr>';
+          return;
+        }
+
+        body.innerHTML = trades.map((t) => {
+          const pnl = Number(t.unrealized_pnl || 0);
+          const pct = Number(t.unrealized_pnl_pct || 0);
+          const pricedTag = t.priced === false
+            ? ' <span class="badge-restart" style="font-size:0.6rem;">UNPRICED</span>'
+            : (t.quote_status === 'STALE' ? ' <span class="badge-amber" style="font-size:0.6rem;">STALE</span>' : '');
+          return `<tr>
+            <td>${escapeHtml(String(t.id))}</td>
+            <td>${escapeHtml(t.symbol || '')}${pricedTag}</td>
+            <td class="${t.direction === 'LONG' ? 'num-pos' : 'num-neg'}">${escapeHtml(t.direction || '')}</td>
+            <td>${fmtNum(t.entry_price)}</td>
+            <td>${fmtNum(t.stop_loss)}</td>
+            <td>${fmtNum(t.target)}</td>
+            <td>${fmtNum(t.current_price)}</td>
+            <td class="${pnlClass(pnl)}">${fmtMoney(pnl)} (${fmtNum(pct)}%)</td>
+            <td>${fmtNum(t.quantity, 0)}</td>
+            <td>${escapeHtml(positionAge(t.entry_time))}</td>
+            <td><button class="btn-mini is-danger" onclick="closePosition(${Number(t.id)})">Close</button></td>
+          </tr>`;
+        }).join('');
+      } catch (e) {
+        if (body) body.innerHTML = `<tr><td colspan="11" class="empty-note">Load failed: ${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    function closePosition(tradeId) {
+      showConfirmModal(
+        `Close Paper Position #${tradeId}`,
+        'Closes this single position at the last known market price. The engine still applies its normal exit accounting.',
+        '📤',
+        async () => {
+          try {
+            const res = await apiCall(`/api/paper/close/${tradeId}`, 'POST', {});
+            logMessage(`Position #${tradeId} closed — ${res.status || 'ok'}`, 'ok');
+            loadOpenPositions();
+            fetchAllTelemetry();
+          } catch (e) {
+            logMessage(`Close #${tradeId} failed: ${e.message}`, 'err');
+          }
+        }
+      );
+    }
+
+    // ── Module 6: Model Bundle & Retrain ─────────────────────
+    async function loadModelBundle() {
+      const statsEl = document.getElementById('modelBundleStats');
+      const noteEl = document.getElementById('modelBundleNote');
+      try {
+        const res = await apiCall('/api/models/status');
+        if (!res) return;
+        const pub = res.published;
+        const local = res.bundle;
+        const files = res.files_present || [];
+        if (statsEl) {
+          statsEl.innerHTML = [
+            miniStat('Local Files', files.length),
+            miniStat('Local Bundle', local ? (local.version || 'marker present') : 'no marker'),
+            miniStat('Published Version', pub ? (pub.version || 'unversioned') : 'none'),
+            miniStat('Published At', pub?.trained_at || '—'),
+            miniStat('Accuracy Gate', res.min_accuracy_gate == null ? '—' : fmtNum(res.min_accuracy_gate, 2)),
+          ].join('');
+        }
+        if (noteEl) {
+          const parts = [`Models dir: ${res.models_dir || '—'}`];
+          if (pub?.source) parts.push(`source: ${pub.source}`);
+          if (pub?.files?.length) parts.push(`published files: ${pub.files.join(', ')}`);
+          const metrics = pub?.metrics && Object.keys(pub.metrics).length
+            ? Object.entries(pub.metrics).map(([k, v]) => `${k}=${fmtNum(v, 3)}`).join(', ')
+            : '';
+          if (metrics) parts.push(`metrics: ${metrics}`);
+          if (local?.trained_at) parts.push(`local trained_at: ${local.trained_at}`);
+          if (!pub) parts.push('nothing published in runtime_state yet — local disk is the only source');
+          noteEl.textContent = parts.join(' · ');
+        }
+      } catch (e) {
+        if (statsEl) statsEl.innerHTML = `<div class="empty-note">Bundle status unavailable: ${escapeHtml(e.message)}</div>`;
+        if (noteEl) noteEl.textContent = '';
+      }
+    }
+
+    async function executeModelSync(force) {
+      logMessage(`Syncing published model bundle${force ? ' (force)' : ''}…`, 'warn');
+      try {
+        const res = await apiCall('/api/models/sync', 'POST', { force: Boolean(force) });
+        if (res.applied) {
+          logMessage(`Model bundle applied${res.version ? ` — version ${res.version}` : ''}.`, 'ok');
+        } else {
+          logMessage(`Bundle NOT applied: ${res.reason || res.error || 'no change needed'}${res.version ? ` (at ${res.version})` : ''}.`, 'warn');
+        }
+        loadModelBundle();
+      } catch (e) {
+        logMessage(`Model sync failed: ${e.message}`, 'err');
+      }
+    }
+
+    function executeRetrainModels() {
+      showConfirmModal(
+        'Trigger XGBoost Retrain',
+        'Runs a full retrain on the API host as a background thread. On Render free tier this is disabled by LIGHTWEIGHT_API_MODE (503) — the supported path is the scheduled GitHub Actions job that publishes a bundle to runtime_state.',
+        '🧠',
+        async () => {
+          logMessage('Requesting XGBoost retrain…', 'warn');
+          try {
+            const res = await apiCall('/api/retrain', 'POST', {});
+            logMessage(`Retrain ${res.status || 'started'} — job ${res.job_id || '?'}`, 'ok');
+            loadRetrainJobs();
+          } catch (e) {
+            logMessage(`Retrain refused: ${e.message}`, 'err');
+          }
+        }
+      );
+    }
+
+    async function loadRetrainJobs() {
+      const el = document.getElementById('retrainJobs');
+      try {
+        const res = await apiCall('/api/retrain/status');
+        const jobs = res?.jobs || {};
+        const ids = Object.keys(jobs);
+        if (!el) return;
+        if (!ids.length) {
+          el.textContent = 'No retrain jobs recorded in this process.';
+          return;
+        }
+        el.textContent = ids.map((id) => {
+          const j = jobs[id] || {};
+          const bits = [`${id}: ${j.status || 'unknown'}`];
+          if (j.symbols) bits.push(String(j.symbols));
+          if (j.timeframe) bits.push(String(j.timeframe));
+          if (j.started_at) bits.push(`started ${j.started_at}`);
+          if (j.completed_at) bits.push(`done ${j.completed_at}`);
+          if (j.error) bits.push(`error: ${j.error}`);
+          return bits.join(' · ');
+        }).join('  |  ');
+      } catch (e) {
+        if (el) el.textContent = `Retrain status unavailable: ${e.message}`;
+      }
+    }
+
+    // ── Module 7: Learning Loop & Ensemble ───────────────────
+    async function loadLearningPanels() {
+      const statsEl = document.getElementById('learningStats');
+      const extremesEl = document.getElementById('learningExtremes');
+      const outcomesBody = document.getElementById('learningOutcomesBody');
+      const ensembleBody = document.getElementById('ensembleBody');
+
+      const stats = await apiCall('/api/learning/stats').catch(() => null);
+      if (stats) {
+        const overall = stats.insights?.overall || stats.overall || {};
+        const weights = stats.weights || {};
+        if (statsEl) {
+          statsEl.innerHTML = [
+            miniStat('Closed Trades', overall.total_trades ?? 0),
+            miniStat('Win Rate', `${fmtNum(overall.win_rate, 1)}%`),
+            miniStat('Avg P&L', `${fmtNum(overall.avg_pnl_pct, 2)}%`, Number(overall.avg_pnl_pct || 0) >= 0 ? 'green' : 'red'),
+            miniStat('Learned Weight Keys', Object.keys(weights).length),
+          ].join('');
+        }
+        if (extremesEl) {
+          const ins = stats.insights || {};
+          extremesEl.textContent = [
+            `Best type: ${ins.best_signal_type || '—'}`,
+            `Worst type: ${ins.worst_signal_type || '—'}`,
+            `Best regime: ${ins.best_regime || '—'}`,
+            `Best RSI zone: ${ins.optimal_rsi_zone || '—'}`,
+            stats.error ? `Error: ${stats.error}` : '',
+          ].filter(Boolean).join('  ·  ');
+        }
+      }
+
+      const outcomes = await apiCall('/api/learning/outcomes?limit=100').catch(() => null);
+      if (outcomesBody) {
+        const rows = outcomes?.outcomes || [];
+        if (!rows.length) {
+          outcomesBody.innerHTML = `<tr><td colspan="7" class="empty-note">No closed-trade outcomes logged yet${outcomes?.error ? `: ${escapeHtml(outcomes.error)}` : '.'}</td></tr>`;
+        } else {
+          outcomesBody.innerHTML = rows.map((r) => {
+            const pnl = Number(r.pnl_pct || r.pnl_percent || 0);
+            const outcome = String(r.outcome || r.result || '').toUpperCase();
+            return `<tr>
+              <td>${escapeHtml(r.symbol || '—')}</td>
+              <td>${escapeHtml(r.signal_type || r.strategy || '—')}</td>
+              <td>${escapeHtml(r.regime || '—')}</td>
+              <td>${escapeHtml(r.direction || '—')}</td>
+              <td class="${pnlClass(pnl)}">${fmtNum(pnl)}%</td>
+              <td class="${outcome === 'WIN' ? 'num-pos' : (outcome === 'LOSS' ? 'num-neg' : '')}">${escapeHtml(outcome || '—')}</td>
+              <td>${escapeHtml(r.closed_at || r.exit_time || '—')}</td>
+            </tr>`;
+          }).join('');
+        }
+      }
+
+      const ens = await apiCall('/api/ensemble/status').catch(() => null);
+      if (ensembleBody) {
+        if (!ens) {
+          ensembleBody.innerHTML = '<tr><td colspan="3" class="empty-note">Ensemble status unavailable.</td></tr>';
+        } else {
+          const models = ens.models || {};
+          const keys = Object.keys(models);
+          ensembleBody.innerHTML = keys.length
+            ? keys.map((k) => {
+                const m = models[k] || {};
+                const detail = m.error
+                  ? `error: ${m.error}`
+                  : Object.entries(m).filter(([kk]) => kk !== 'active').map(([kk, vv]) => `${kk}=${vv}`).join(', ');
+                return `<tr>
+                  <td>${escapeHtml(k)}</td>
+                  <td class="${m.active ? 'num-pos' : ''}">${m.active ? 'YES' : 'no'}</td>
+                  <td style="white-space: normal; max-width: 520px;">${escapeHtml(detail || '—')}</td>
+                </tr>`;
+              }).join('')
+            : '<tr><td colspan="3" class="empty-note">No ensemble members reported.</td></tr>';
+        }
+      }
+
+      const jobState = await apiCall('/api/ensemble/validate').catch(() => null);
+      const jobEl = document.getElementById('ensembleJobState');
+      if (jobEl && jobState) {
+        const j = jobState.job || {};
+        jobEl.textContent = `Validation: ${jobState.status || 'IDLE'}${j.started_at ? ` (started ${j.started_at})` : ''} · durable: ${jobState.durable ? 'yes' : 'no (in-memory)'}`;
+      }
+    }
+
+    async function triggerEnsembleValidation() {
+      logMessage('Queueing walk-forward ensemble validation…', 'info');
+      try {
+        const res = await apiCall('/api/ensemble/validate?run=true');
+        logMessage(`Validation ${res.status || 'queued'}: ${res.message || ''}`, 'ok');
+        loadLearningPanels();
+      } catch (e) {
+        logMessage(`Validation queue failed: ${e.message}`, 'err');
+      }
+    }
+
+    // ── Module 8: Autonomous Feed ────────────────────────────
+    async function loadAutonomousFeed() {
+      const host = document.getElementById('feedList');
+      const limit = document.getElementById('feedLimit')?.value || '25';
+      try {
+        const res = await apiCall(`/api/autonomous/feed?limit=${encodeURIComponent(limit)}`);
+        const feed = res?.feed || [];
+        if (!host) return;
+        if (!feed.length) {
+          host.innerHTML = '<div class="empty-note">No decisions recorded yet.</div>';
+          return;
+        }
+        host.innerHTML = feed.map((item) => {
+          const action = String(item.action || 'UNKNOWN').toUpperCase();
+          const cls = ['BUY', 'LONG', 'EXECUTED', 'ACCEPTED', 'OPEN', 'TARGET_HIT'].includes(action)
+            ? 'num-pos'
+            : (['SELL', 'SHORT', 'SKIP', 'BLOCKED', 'STOP_HIT', 'CLOSED'].includes(action) ? 'num-neg' : '');
+          const ts = item.timestamp ? String(item.timestamp).replace('T', ' ').slice(0, 19) : '—';
+          const meta = [item.direction, item.symbol].filter(Boolean).join(' ');
+          const scores = [];
+          if (item.qs_score !== undefined && item.qs_score !== null) scores.push(`QS ${fmtNum(item.qs_score, 1)}`);
+          if (item.ai_confidence !== undefined && item.ai_confidence !== null) scores.push(`AI ${fmtNum(item.ai_confidence, 1)}%`);
+          return `<div class="feed-item">
+            <span class="feed-ts">${escapeHtml(ts)}</span>
+            <span class="feed-action ${cls}">${escapeHtml(action)}</span>
+            <span class="feed-reason">${escapeHtml(item.reason || '—')}</span>
+            <span class="feed-meta">${escapeHtml(meta)}${scores.length ? ' · ' + escapeHtml(scores.join(' · ')) : ''}</span>
+          </div>`;
+        }).join('');
+      } catch (e) {
+        if (host) host.innerHTML = `<div class="empty-note">Feed unavailable: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    // ── Module 9: Manual Paper Trade ─────────────────────────
+    function readNum(id) {
+      const raw = document.getElementById(id)?.value;
+      if (raw === '' || raw === undefined || raw === null) return 0;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    async function submitManualTrade() {
+      const out = document.getElementById('manualTradeResult');
+      const symbol = (document.getElementById('mtSymbol')?.value || '').trim().toUpperCase();
+      const direction = (document.getElementById('mtDirection')?.value || 'LONG').toUpperCase();
+      const entry = readNum('mtEntry');
+      const stop = readNum('mtStop');
+      const target = readNum('mtTarget');
+
+      if (!symbol || entry <= 0 || stop <= 0 || target <= 0) {
+        if (out) out.textContent = 'Symbol, entry, stop loss and target are required and must be > 0.';
+        return;
+      }
+
+      // Pre-flight sanity: the engine will happily open a position whose stop/target
+      // sit on the wrong side of entry, so block the obvious arithmetic mistakes here.
+      const geometryOk = direction === 'LONG'
+        ? stop < entry && target > entry
+        : stop > entry && target < entry;
+      if (!geometryOk) {
+        const expect = direction === 'LONG'
+          ? 'stop < entry < target'
+          : 'target < entry < stop';
+        if (out) out.textContent = `Invalid ${direction} geometry — expected ${expect}.`;
+        return;
+      }
+
+      const rr = Math.abs(target - entry) / Math.abs(entry - stop);
+      const advisory = rr < 1.5
+        ? ` R:R is only ${fmtNum(rr, 2)} — the engine's min-R:R gate may reject this.`
+        : '';
+
+      const payload = {
+        symbol,
+        direction,
+        entry,
+        stop_loss: stop,
+        target,
+        atr: readNum('mtAtr'),
+        confidence: readNum('mtConfidence'),
+        strategy: (document.getElementById('mtStrategy')?.value || 'MANUAL').trim() || 'MANUAL',
+      };
+
+      logMessage(`Placing manual paper ${direction} on ${symbol} @ ${entry}…`, 'info');
+      try {
+        const res = await apiCall('/api/paper/trade', 'POST', payload);
+        if (out) out.textContent = `Opened #${res.trade?.id ?? '?'} — ${res.open_trades_count ?? '?'} open position(s).`;
+        logMessage(`Manual paper trade opened: ${symbol} ${direction} @ ${entry}`, 'ok');
+        loadOpenPositions();
+        fetchAllTelemetry();
+      } catch (e) {
+        if (out) out.textContent = `Rejected: ${e.message}`;
+        logMessage(`Manual paper trade rejected: ${e.message}`, 'err');
+      }
+    }
+
+    // ── Operator panel orchestrator ──────────────────────────
+    async function loadOperatorPanels() {
+      await Promise.allSettled([
+        loadRuntimeControls(),
+        loadOpenPositions(),
+        loadModelBundle(),
+        loadRetrainJobs(),
+        loadLearningPanels(),
+        loadAutonomousFeed(),
+      ]);
     }
 
     // ── Auto-Resume Session ──────────────────────────────────

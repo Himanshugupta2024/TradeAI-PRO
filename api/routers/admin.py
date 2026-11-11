@@ -151,6 +151,88 @@ async def toggle_market_control_route(
     )
 
 
+# ── Market Focus & Asset Class Selector ──────────────────────────────────────
+class MarketFocusUpdateRequest(BaseModel):
+    active_focus: str  # "nse" | "crypto" | "forex" | "all"
+    nse_enabled: Optional[bool] = True
+    crypto_enabled: Optional[bool] = True
+    forex_enabled: Optional[bool] = True
+    password: Optional[str] = None
+    reason: Optional[str] = None
+
+
+@router.get("/api/market-control/focus")
+async def get_market_focus_route():
+    """Return persistent market focus configuration and active dashboard filter."""
+    from agents.execution.market_control import get_market_focus_state
+    return await asyncio.to_thread(get_market_focus_state)
+
+
+@router.post("/api/market-control/focus")
+async def update_market_focus_route(
+    req: MarketFocusUpdateRequest,
+    request: FastApiRequest,
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+):
+    """
+    Operator update for Market Focus & Asset Class enablement (NSE, Crypto, Forex, All).
+    Requires Admin authorization via Header key, Bearer token, or request password.
+    """
+    from agents.execution.market_control import set_market_focus_state, verify_operator_password
+    client_ip = request.client.host if request.client else "unknown"
+
+    header_key = x_admin_key or x_api_key
+    if not header_key and authorization and authorization.strip().lower().startswith("bearer "):
+        header_key = authorization.strip()[7:].strip()
+
+    candidate_key = (req.password or "").strip() or (header_key or "").strip()
+
+    is_auth = False
+    if header_key:
+        try:
+            require_admin(x_admin_key=x_admin_key, x_api_key=x_api_key, authorization=authorization)
+            is_auth = True
+        except HTTPException:
+            pass
+    if not is_auth and candidate_key:
+        ok, _ = verify_operator_password(candidate_key, client_id=client_ip)
+        if ok:
+            is_auth = True
+
+    if not is_auth:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "success": False,
+                "message": "Operator authorization required to update market focus configuration.",
+                "state": None,
+            }
+        )
+
+    success, message, state = await asyncio.to_thread(
+        set_market_focus_state,
+        active_focus=req.active_focus,
+        nse_enabled=bool(req.nse_enabled),
+        crypto_enabled=bool(req.crypto_enabled),
+        forex_enabled=bool(req.forex_enabled),
+        operator="operator",
+        reason=req.reason or f"Operator set market focus to {req.active_focus.upper()}",
+    )
+
+    invalidate_autonomous_status_cache()
+    status_code = 200 if success else 400
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "success": success,
+            "message": message,
+            "state": state,
+        }
+    )
+
+
 # ── Telegram Alert Endpoints ──────────────────────────────────────────────────
 @router.get("/api/telegram/status")
 async def telegram_status():

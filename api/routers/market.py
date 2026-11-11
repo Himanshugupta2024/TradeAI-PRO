@@ -648,73 +648,67 @@ async def get_all_signals(response: Response):
 
             asyncio.create_task(_bootstrap_once())
 
-    results = []
-
+    # 1. Collect live in-memory signals from _signal_cache
+    live_signals: dict[str, dict] = {}
     for symbol in svc._signal_cache:
-
         sig = svc._get_signal_for_symbol(symbol)
+        if sig and isinstance(sig, dict) and sig.get("symbol"):
+            live_signals[sig["symbol"].upper().replace(".NS", "")] = sig
 
-        if sig:
+    # 2. Collect fallback snapshot signals from memory or durable state
+    fallback_signals: dict[str, dict] = {}
+    if getattr(svc, "_persisted_signals_snapshot", None):
+        for s in svc._persisted_signals_snapshot:
+            if isinstance(s, dict) and s.get("symbol"):
+                fallback_signals[s["symbol"].upper().replace(".NS", "")] = s
 
-            results.append(sig)
-
-        # Fast cold-boot fallback: if live cache is still computing, return persisted DB snapshot immediately
-
-    if not results and getattr(svc, "_persisted_signals_snapshot", None):
-        tracker.set_meta("count", len(svc._persisted_signals_snapshot))
-        tracker.set_meta("cache_hit", "persisted_snapshot")
-        tracker.finish()
-
-        return {
-
-            "signals": [apply_signal_freshness(s) for s in svc._persisted_signals_snapshot],
-
-            "updated_at": getattr(svc, "_persisted_signals_updated_at", None) or datetime.now().isoformat(),
-
-            "source": "persisted_snapshot",
-
-        }
-
-    # Durable runtime_state / intraday_store fallback for lightweight mode
-    if not results:
-        durable_sigs = []
+    if not fallback_signals:
         try:
             from db.runtime_state import get_runtime_state
             snap_v1 = get_runtime_state("latest_signals:v1")
             snap_raw = get_runtime_state("latest_signals_snapshot")
             sigs_v1 = snap_v1.get("signals", []) if isinstance(snap_v1, dict) else []
             sigs_raw = snap_raw.get("signals", []) if isinstance(snap_raw, dict) else []
-
-            merged = {s["symbol"].upper().replace(".NS", ""): s for s in sigs_raw if isinstance(s, dict) and s.get("symbol")}
-            for s in sigs_v1:
+            for s in sigs_raw + sigs_v1:
                 if isinstance(s, dict) and s.get("symbol"):
-                    merged[s["symbol"].upper().replace(".NS", "")] = s
-            durable_sigs = list(merged.values())
+                    fallback_signals[s["symbol"].upper().replace(".NS", "")] = s
         except Exception:
             pass
-        if not durable_sigs:
-            try:
-                import db.intraday_store as ids
-                latest_scan = ids.load_latest_scan()
-                if latest_scan and latest_scan.get("results"):
-                    durable_sigs = latest_scan["results"]
-            except Exception:
-                pass
-        if durable_sigs:
-            tracker.set_meta("count", len(durable_sigs))
-            tracker.set_meta("cache_hit", "durable_signals_snapshot")
-            tracker.finish()
-            return {
-                "signals": [apply_signal_freshness(s) for s in durable_sigs],
-                "updated_at": datetime.now().isoformat(),
-                "source": "durable_signals_snapshot",
-            }
+
+    if not fallback_signals:
+        try:
+            import db.intraday_store as ids
+            latest_scan = ids.load_latest_scan()
+            if latest_scan and latest_scan.get("results"):
+                for s in latest_scan["results"]:
+                    if isinstance(s, dict) and s.get("symbol"):
+                        fallback_signals[s["symbol"].upper().replace(".NS", "")] = s
+        except Exception:
+            pass
+
+    # 3. If live_signals has the full tracked universe (>= 10 symbols), it completely supersedes baseline.
+    # But if live_signals is only a partial subset (e.g. 1 or 2 ad-hoc quoted symbols), OVERLAY live onto baseline!
+    if len(live_signals) >= 10:
+        results = list(live_signals.values())
+        source = "live_cache"
+    elif fallback_signals:
+        merged = dict(fallback_signals)
+        merged.update(live_signals)
+        results = list(merged.values())
+        source = "merged_snapshot_live" if live_signals else "persisted_snapshot"
+    else:
+        results = list(live_signals.values())
+        source = "live_partial"
 
     tracker.set_meta("count", len(results))
-    tracker.set_meta("cache_hit", bool(results))
+    tracker.set_meta("cache_hit", source)
     tracker.finish()
 
-    return {"signals": [apply_signal_freshness(s) for s in results], "updated_at": datetime.now().isoformat()}
+    return {
+        "signals": [apply_signal_freshness(s) for s in results],
+        "updated_at": getattr(svc, "_persisted_signals_updated_at", None) or datetime.now().isoformat(),
+        "source": source,
+    }
 
 
 
@@ -3394,13 +3388,38 @@ def _get_major_indices_sync() -> dict[str, tuple[float | None, float | None]]:
         for sym in candidates:
             df = svc._market_data.get(sym)
             if isinstance(df, pd.DataFrame) and len(df) >= 2:
-                latest = float(df.iloc[-1]["close"])
-                first = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else float(df.iloc[0]["close"])
-                chg = ((latest - first) / first) * 100.0 if first else 0.0
-                res[idx_key] = (round(latest, 2), round(chg, 2))
-                break
+                # Check bar staleness during open market hours
+                ts_bar = df["timestamp"].iloc[-1] if "timestamp" in df.columns and len(df["timestamp"]) > 0 else df.index[-1]
+                bar_is_stale = False
+                try:
+                    if isinstance(ts_bar, str):
+                        dt_b = datetime.fromisoformat(ts_bar.replace("Z", "+00:00"))
+                    elif hasattr(ts_bar, "to_pydatetime"):
+                        dt_b = ts_bar.to_pydatetime()
+                    elif isinstance(ts_bar, datetime):
+                        dt_b = ts_bar
+                    else:
+                        dt_b = None
+                    if dt_b is not None:
+                        if dt_b.tzinfo is None:
+                            from api.data_honesty import IST
+                            dt_b = dt_b.replace(tzinfo=IST)
+                        from agents.execution.session_guard import is_nse_market_open
+                        now_ist = datetime.now(dt_b.tzinfo)
+                        is_open, _ = is_nse_market_open(now_ist)
+                        if is_open and (now_ist - dt_b).total_seconds() > 1800:
+                            bar_is_stale = True
+                except Exception:
+                    pass
+
+                if not bar_is_stale:
+                    latest = float(df.iloc[-1]["close"])
+                    first = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else float(df.iloc[0]["close"])
+                    chg = ((latest - first) / first) * 100.0 if first else 0.0
+                    res[idx_key] = (round(latest, 2), round(chg, 2))
+                    break
             sig = svc._signal_cache.get(sym)
-            if isinstance(sig, dict) and sig.get("close") is not None:
+            if isinstance(sig, dict) and sig.get("close") is not None and not sig.get("stale"):
                 p = float(sig["close"])
                 c = float(sig.get("change_pct", 0.0)) if sig.get("change_pct") is not None else 0.0
                 res[idx_key] = (round(p, 2), round(c, 2))
@@ -3434,11 +3453,13 @@ def _get_major_indices_sync() -> dict[str, tuple[float | None, float | None]]:
             for k in missing:
                 t = tickers.tickers.get(yf_map[k])
                 if t:
-                    hist = t.history(period="5d", interval="1d")
-                    if not hist.empty:
+                    hist = t.history(period="1d", interval="5m")
+                    if hist is None or hist.empty:
+                        hist = t.history(period="5d", interval="1d")
+                    if hist is not None and not hist.empty:
                         close = float(hist["Close"].iloc[-1])
-                        prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else close
-                        chg = ((close - prev) / prev) * 100.0 if prev else 0.0
+                        first = float(hist["Open"].iloc[0]) if float(hist["Open"].iloc[0]) != 0 else close
+                        chg = ((close - first) / first) * 100.0 if first else 0.0
                         res[k] = (round(close, 2), round(chg, 2))
         except Exception as exc:
             logger.debug("Indices yfinance fallback error: %s", exc)

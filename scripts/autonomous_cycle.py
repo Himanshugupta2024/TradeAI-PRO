@@ -325,14 +325,14 @@ async def run_single_autonomous_cycle(
                 summary["symbols_scanned"] += 1
 
                 try:
-                    c_idx = df.index[-1]
+                    c_ts = df["timestamp"].iloc[-1] if "timestamp" in df.columns and len(df["timestamp"]) > 0 else df.index[-1]
                     c_bar_dt = None
-                    if isinstance(c_idx, str):
-                        c_bar_dt = datetime.fromisoformat(c_idx.replace("Z", "+00:00"))
-                    elif hasattr(c_idx, "to_pydatetime"):
-                        c_bar_dt = c_idx.to_pydatetime()
-                    elif isinstance(c_idx, datetime):
-                        c_bar_dt = c_idx
+                    if isinstance(c_ts, str):
+                        c_bar_dt = datetime.fromisoformat(c_ts.replace("Z", "+00:00"))
+                    elif hasattr(c_ts, "to_pydatetime"):
+                        c_bar_dt = c_ts.to_pydatetime()
+                    elif isinstance(c_ts, datetime):
+                        c_bar_dt = c_ts
                     if c_bar_dt is not None:
                         if c_bar_dt.tzinfo is None:
                             c_bar_dt = c_bar_dt.replace(tzinfo=_IST)

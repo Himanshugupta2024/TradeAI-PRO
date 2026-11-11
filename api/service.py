@@ -815,11 +815,12 @@ def _get_feed_status() -> dict[str, object]:
             pass
     if not bar_raw and _market_data:
         try:
-            candidates = [
-                df.index[-1]
-                for df in _market_data.values()
-                if isinstance(df, pd.DataFrame) and not df.empty
-            ]
+            candidates = []
+            for df in _market_data.values():
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    ts_cand = df["timestamp"].iloc[-1] if "timestamp" in df.columns and len(df["timestamp"]) > 0 else df.index[-1]
+                    if not isinstance(ts_cand, (int, float)):
+                        candidates.append(ts_cand)
             if candidates:
                 bar_raw = max(candidates)
         except Exception:
