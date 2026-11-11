@@ -1610,128 +1610,74 @@ async def get_breakouts(
 
 
 @router.get("/api/morning-scan")
-
 async def get_morning_scan():
-
     """Return the latest persisted morning scan results (max 10)."""
-
-    session = SessionLocal()
-
     try:
+        from db.connection import SessionLocal
+        from db.models import MorningScan
 
-        latest = (
-
-            session.query(MorningScan.scan_time)
-
-            .order_by(MorningScan.scan_time.desc())
-
-            .first()
-
-        )
-
-        if not latest:
-
-            return disabled_scan_payload("morning_scan", "no_scan_recorded")
-
-        latest_scan_time = latest[0]
-
-        rows = (
-
-            session.query(MorningScan)
-
-            .filter(MorningScan.scan_time == latest_scan_time)
-
-            .order_by(MorningScan.confidence_score.desc())
-
-            .limit(10)
-
-            .all()
-
-        )
-
-        results = []
-
-        for row in rows:
-
-            results.append(
-
-                {
-
-                    "symbol": row.symbol,
-
-                    "entry_price": float(row.entry_price),
-
-                    "stop_loss": float(row.stop_loss),
-
-                    "target": float(row.target_price),
-
-                    "confidence_score": float(row.confidence_score),
-
-                    "reason": row.reason,
-
-                    "close": float(row.close),
-
-                    "rsi": float(row.rsi),
-
-                    "macd": float(row.macd),
-
-                    "macd_signal": float(row.macd_signal),
-
-                    "ema_20": float(row.ema_20),
-
-                    "ema_50": float(row.ema_50),
-
-                    "ema_200": float(row.ema_200),
-
-                    "volume": float(row.volume),
-
-                    "avg_volume_20": float(row.avg_volume_20),
-
-                    "volume_ratio": float(row.volume_ratio),
-
-                    "scan_time": row.scan_time.isoformat(),
-
-                    "scan_date": row.scan_date.isoformat(),
-
+        with SessionLocal() as session:
+            latest = (
+                session.query(MorningScan.scan_time)
+                .order_by(MorningScan.scan_time.desc())
+                .first()
+            )
+            if not latest:
+                return {
+                    "scan_time": None,
+                    "count": 0,
+                    "results": [],
+                    "status": "NO_SCAN_DATA",
+                    "message": "No morning scan recorded yet for today's session",
                 }
 
+            latest_scan_time = latest[0]
+            rows = (
+                session.query(MorningScan)
+                .filter(MorningScan.scan_time == latest_scan_time)
+                .order_by(MorningScan.confidence_score.desc())
+                .limit(10)
+                .all()
             )
 
-        return {
-
-            "scan_time": latest_scan_time.isoformat() if latest_scan_time else None,
-
-            "count": len(results),
-
-            "results": results,
-
-        }
-
+            results = []
+            for row in rows:
+                results.append(
+                    {
+                        "symbol": row.symbol,
+                        "entry_price": float(row.entry_price or 0.0),
+                        "stop_loss": float(row.stop_loss or 0.0),
+                        "target": float(row.target_price or 0.0),
+                        "confidence_score": float(row.confidence_score or 0.0),
+                        "reason": row.reason,
+                        "close": float(row.close or 0.0),
+                        "rsi": float(row.rsi or 50.0),
+                        "macd": float(row.macd or 0.0),
+                        "macd_signal": float(row.macd_signal or 0.0),
+                        "ema_20": float(row.ema_20 or 0.0),
+                        "ema_50": float(row.ema_50 or 0.0),
+                        "ema_200": float(row.ema_200 or 0.0),
+                        "volume": float(row.volume or 0.0),
+                        "avg_volume_20": float(row.avg_volume_20 or 0.0),
+                        "volume_ratio": float(row.volume_ratio or 1.0),
+                        "scan_time": row.scan_time.isoformat() if row.scan_time else None,
+                        "scan_date": row.scan_date.isoformat() if row.scan_date else None,
+                    }
+                )
+            return {
+                "scan_time": latest_scan_time.isoformat() if latest_scan_time else None,
+                "count": len(results),
+                "results": results,
+            }
     except Exception as e:
-
-        logger.error("Morning scan API error: %s", e)
-
-        return JSONResponse(
-
-            status_code=500,
-
-            content={
-
-                "scan_time": None,
-
-                "count": 0,
-
-                "results": [],
-
-                "error": "Failed to fetch morning scan results",
-
-            },
-
-        )
-
-    finally:
-
-        session.close()
+        logger.warning("Morning scan API error, returning clean fallback: %s", e)
+        return {
+            "scan_time": None,
+            "count": 0,
+            "results": [],
+            "status": "NO_SCAN_DATA",
+            "message": "No morning scan recorded yet for today's session",
+        }
 
 _quote_single_flight_locks: dict[str, asyncio.Lock] = {}
 _quote_latencies_ms: deque = deque(maxlen=500)

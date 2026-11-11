@@ -857,20 +857,34 @@ class EdgeScoreEngine:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         ac_lower = (asset_class or "all").lower()
 
+        from agents.execution.market_control import is_crypto_forex_enabled
+        crypto_forex_on = is_crypto_forex_enabled()
+
         if ac_lower == "all":
-            # Curated cross-asset liquid shortlist
-            items = [
-                ("RELIANCE", "nse"),
-                ("TCS", "nse"),
-                ("INFY", "nse"),
-                ("HDFCBANK", "nse"),
-                ("BTC/USDT", "crypto"),
-                ("ETH/USDT", "crypto"),
-                ("SOL/USDT", "crypto"),
-                ("EUR/USD", "forex"),
-                ("USD/INR", "forex"),
-            ]
+            if crypto_forex_on:
+                items = [
+                    ("RELIANCE", "nse"),
+                    ("TCS", "nse"),
+                    ("INFY", "nse"),
+                    ("HDFCBANK", "nse"),
+                    ("BTC/USDT", "crypto"),
+                    ("ETH/USDT", "crypto"),
+                    ("SOL/USDT", "crypto"),
+                    ("EUR/USD", "forex"),
+                    ("USD/INR", "forex"),
+                ]
+            else:
+                items = [
+                    ("RELIANCE", "nse"),
+                    ("TCS", "nse"),
+                    ("INFY", "nse"),
+                    ("HDFCBANK", "nse"),
+                    ("ICICIBANK", "nse"),
+                    ("SBIN", "nse"),
+                ]
         elif ac_lower == "crypto":
+            if not crypto_forex_on:
+                return []
             crypto_top = [
                 "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT",
                 "DOGE/USDT", "ADA/USDT", "AVAX/USDT", "LINK/USDT", "SUI/USDT",
@@ -885,6 +899,8 @@ class EdgeScoreEngine:
             ]
             items = [(s, "nse") for s in nse_top]
         elif ac_lower == "forex":
+            if not crypto_forex_on:
+                return []
             forex_top = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/INR", "EUR/INR", "AUD/USD", "USD/CAD", "GBP/INR"]
             items = [(s, "forex") for s in forex_top]
         elif ac_lower == "index":

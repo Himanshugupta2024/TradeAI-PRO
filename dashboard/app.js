@@ -10111,42 +10111,18 @@ function renderSignals(signals) {
 
 
         const entryVal = Number(sig.entry);
-
-
-
         const slVal = Number(sig.stop_loss);
-
-
-
         const tpVal = Number(sig.target);
-
-
+        const hasTradeLevels = sig.stop_loss != null && sig.target != null && Number(sig.stop_loss) > 0 && Number(sig.target) > 0;
 
         let rrLabel = '—';
-
-
-
-        if (Number.isFinite(entryVal) && Number.isFinite(slVal) && Number.isFinite(tpVal)) {
-
-
-
+        if (hasTradeLevels && Number.isFinite(entryVal) && Number.isFinite(slVal) && Number.isFinite(tpVal)) {
             const risk = Math.abs(entryVal - slVal);
-
-
-
             const reward = Math.abs(tpVal - entryVal);
-
-
-
             if (risk > 0 && reward > 0) {
-
-
-
                 rrLabel = `1:${(reward / risk).toFixed(2)}`;
-
-
-
             }
+        }
 
 
 
@@ -10602,7 +10578,7 @@ function renderSignals(signals) {
 
 
 
-                    <span class="level-value">${fmtPrice(sig.entry)}</span>
+                    <span class="level-value">${(!hasTradeLevels || ['HOLD', 'SKIP', 'MONITOR'].includes(String(sig.signal || '').toUpperCase())) ? '—' : fmtPrice(sig.entry)}</span>
 
 
 

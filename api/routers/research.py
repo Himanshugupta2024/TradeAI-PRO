@@ -243,6 +243,20 @@ async def get_edge_top_setups(
     """
     try:
         from agents.macro.edge_score_engine import EdgeScoreEngine
+        from agents.execution.market_control import is_crypto_forex_enabled
+
+        crypto_forex_on = is_crypto_forex_enabled()
+        if not crypto_forex_on and asset_class.lower() in ("crypto", "forex"):
+            return {
+                "asset_class": asset_class,
+                "min_score": min_score,
+                "count": 0,
+                "setups": [],
+                "force_refresh": force_refresh,
+                "status": "DISABLED_BY_MARKET_CONTROL",
+                "message": f"{asset_class.upper()} is disabled while NSE Focus Mode is active.",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
 
         def _compute_top():
             engine = (
@@ -286,7 +300,7 @@ async def get_edge_top_setups(
                 rows.append(
                     {
                         "symbol": symbol,
-                        "asset_class": getattr(cached, "asset_class", "forex"),
+                        "asset_class": getattr(cached, "asset_class", "nse"),
                         "edge_score": score,
                         "ltp": ltp,
                         "change_pct": change_pct,
@@ -309,13 +323,21 @@ async def get_edge_top_setups(
 
         setups = []
         try:
-            setups = await asyncio.wait_for(asyncio.to_thread(_compute_top), timeout=12.0)
+            setups = await asyncio.wait_for(asyncio.to_thread(_compute_top), timeout=5.0)
         except asyncio.TimeoutError:
-            logger.warning("Top setups calculation timed out (12s) — falling back to cached setups")
+            logger.warning("Top setups calculation timed out (5s) — loading fast cached setups without recalculation")
             try:
                 engine = EdgeScoreEngine()
-                ranked = engine.get_top_setups(asset_class, min_score, limit)
-                setups = [{"symbol": sym, "asset_class": asset_class, "edge_score": sc, "confidence": 1.0} for sym, sc in ranked]
+                for sym in ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN"]:
+                    cached = engine._load_cache(sym)
+                    if cached:
+                        setups.append({
+                            "symbol": sym,
+                            "asset_class": "nse",
+                            "edge_score": cached.edge_score,
+                            "confidence": cached.confidence,
+                            "rationale": cached.rationale or "Cached NSE Quant Score",
+                        })
             except Exception:
                 setups = []
 
