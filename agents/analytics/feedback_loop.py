@@ -63,7 +63,7 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 # ── 2D Regime Prior Weights (Multi-Regime Baseline Matrix) ─────────────────────
 DEFAULT_REGIME_WEIGHTS_2D: dict[str, dict[str, float]] = {
     "TRENDING": {
-        "BREAKOUT":     1.25,
+        "BREAKOUT":     1.30,
         "EMA_CROSS":    1.20,
         "MACD_CROSS":   1.15,
         "RSI_BOUNCE":   0.85,
