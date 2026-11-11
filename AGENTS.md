@@ -72,4 +72,17 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 - External Model Training Workflow:
   - Notebook: `notebooks/TradeAI_Model_Trainer.ipynb` reads `DATABASE_URL` via `kaggle_secrets.UserSecretsClient` or `google.colab.userdata.get('DATABASE_URL')`.
   - Automation: `.github/workflows/model_train_scheduled.yml` executes weekly (Sunday 00:00 UTC) with repo secret `DATABASE_URL`.
+- ML Batch Feature Slicing Contract:
+  - `extract_features(df)` extracts 173 total indicators (22 base + 23 advanced + 128 LSTM embeddings).
+  - Serialized model bundles (`models/xgb_model.pkl`, `models/lgbm_model.pkl`) are fitted on 45 base+advanced features (`self.feature_cols`).
+  - Both `predict_row` and `predict_batch` in `xgboost_model.py` and `lightgbm_model.py` must strictly align columns via `features.reindex(columns=self.feature_cols, fill_value=0.0)` and sanitize NaNs via `np.nan_to_num(X, nan=0.0)`. Passing raw 173-feature arrays causes silent fallback to flat `50.0%` conviction.
+- Admin & Telemetry API Contract:
+  - `/api/health` returns `database.connected` (boolean) and `uptime_seconds` (float).
+  - `/api/stats` returns `capital` (base equity) and `total_equity`.
+  - `/api/risk/state` returns `circuit_breaker_active` (boolean), `drawdown_pct`, and `daily_loss_pct`.
+  - `/api/autonomous/status` returns `status.enabled`, `status.recent_decisions_count`, `worker.signals_generated`, and `watchdog.status` / `watchdog.is_nse_market_open`.
+  - Operator key authentication must probe authenticated endpoints (`/api/admin/runtime-controls` with `X-Admin-Key`) to enforce fail-closed gate behavior.
+- Local Autonomous Dispatch Contract:
+  - `/api/autonomous/run-cycle` requires `allow_local=True` (or header `X-Allow-Local-Autonomous: true`, or env `ALLOW_LOCAL_AUTONOMOUS_CYCLE=true`) when triggering on-demand cycles on single-process/render instances without Celery/Redis queue workers (`CYCLE_DISPATCH_UNAVAILABLE`).
+
 
