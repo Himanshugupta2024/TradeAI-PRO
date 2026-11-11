@@ -433,10 +433,11 @@ async def get_dashboard_overview():
     stats["unrealized_pnl"] = val_summary["unrealized_pnl"]
 
     top_signals = []
+    mood = svc._compute_market_mood()
 
     for sym in list(svc._signal_cache.keys())[:15]:
 
-        sig = svc._get_signal_for_symbol(sym)
+        sig = svc._get_signal_for_symbol(sym, mood=mood)
 
         if sig and sig.get("signal") in ("LONG", "SHORT"):
 

@@ -1963,7 +1963,7 @@ def _stale_threshold_minutes(symbol: str) -> float:
     return 60.0 if "/" in str(symbol) else 30.0
 
 
-def _get_signal_for_symbol(symbol: str) -> dict:
+def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
     """Extract the latest signal data for a symbol (shared helper)."""
     if symbol not in _signal_cache:
         return None
@@ -2184,7 +2184,7 @@ def _get_signal_for_symbol(symbol: str) -> dict:
     )
 
     try:
-        current_mood_dict = _compute_market_mood()
+        current_mood_dict = mood if mood is not None else _compute_market_mood()
     except Exception:
         current_mood_dict = {}
 
@@ -2257,6 +2257,8 @@ def _get_signal_for_symbol(symbol: str) -> dict:
         "macd_hist": _safe_float(last, "MACD_hist"),
         "ema_20": _safe_float(last, "EMA_20"),
         "ema_50": _safe_float(last, "EMA_50"),
+        "vwap": vwap_val,
+        "atr": atr_val,
         # Context layer fields
         "context_score": _safe_float(last_signal, "context_score") or 0.0,
         "context_adjusted": bool(last_signal.get("context_adjusted", False)),
@@ -2921,7 +2923,12 @@ def _top_quality_factors_from_breakdown(sig: dict, limit: int = 3) -> list[dict]
     return [{"factor": a, "points": b} for a, b in items[:limit]]
 
 
-def _penalty_chips(drift: bool, event: bool, conflict: bool) -> list[dict]:
+def _penalty_chips(
+    drift: bool,
+    event: bool,
+    conflict: bool,
+    extra_chips: list[dict] | None = None,
+) -> list[dict]:
     out: list[dict] = []
     if drift:
         out.append({"name": "Drift guard", "points": 8.0})
@@ -2929,14 +2936,24 @@ def _penalty_chips(drift: bool, event: bool, conflict: bool) -> list[dict]:
         out.append({"name": "Event risk", "points": 10.0})
     if conflict:
         out.append({"name": "Signal conflict", "points": 12.0})
+    if extra_chips:
+        out.extend(extra_chips)
     return out
 
 
 def _phase2_composite_score(sig: dict, mood: dict) -> tuple[float, dict]:
     """
-    Phase 2 ranking: base QS blend + freshness + market bias alignment − penalties.
+    Enhanced composite ranking engine for "Best Right Now" setups:
+    Blends base quality, confidence, and news context, calibrated for:
+    - Freshness decay
+    - Benchmark / market bias alignment
+    - Asymmetric Risk:Reward (R:R) expectancy & directional geometry
+    - Proximity to optimal entry zone vs direction-aware chasing / adverse drift
+    - Multi-timeframe confluence and technical conflict penalties
+    - Volume surge confirmation (when available)
+    - Guardrail penalties (drift, event risk, signal conflict)
 
-    Advisory only — not a guarantee of future performance.
+    Advisory only — decision support for paper trading.
     """
     quality_score = int(sig.get("quality_score", 0))
     confidence = float(sig.get("confidence", 0))
@@ -2953,20 +2970,115 @@ def _phase2_composite_score(sig: dict, mood: dict) -> tuple[float, dict]:
 
     blended = base * (0.72 + 0.28 * freshness_mult)
 
-    signal_label = str(sig.get("signal", "HOLD")).upper()
+    signal_label = str(sig.get("signal") or sig.get("direction") or "HOLD").upper()
+    is_long = signal_label in ("LONG", "BUY")
+    is_short = signal_label in ("SHORT", "SELL")
+
     bias = float((mood.get("signals") or {}).get("bias_pct", 0))
     regime_adj = 0.0
-    if signal_label == "LONG":
+    if is_long:
         if bias > 7.0:
             regime_adj = 4.0
         elif bias < -7.0:
             regime_adj = -4.0
-    elif signal_label == "SHORT":
+    elif is_short:
         if bias < -7.0:
             regime_adj = 4.0
         elif bias > 7.0:
             regime_adj = -4.0
 
+    # Risk:Reward Expectancy & Geometry Adjustment
+    rr_adj = 0.0
+    entry_val = sig.get("entry")
+    sl_val = sig.get("stop_loss")
+    tp_val = sig.get("target")
+    rr_ratio: float | None = None
+    level_geometry_conflict = False
+
+    if entry_val is not None and sl_val is not None and tp_val is not None:
+        try:
+            e_f = float(entry_val)
+            sl_f = float(sl_val)
+            tp_f = float(tp_val)
+            if e_f > 0 and sl_f > 0 and tp_f > 0:
+                is_dir_valid = (
+                    (is_long and sl_f < e_f < tp_f)
+                    or (is_short and tp_f < e_f < sl_f)
+                    or (not is_long and not is_short)
+                )
+                if not is_dir_valid:
+                    level_geometry_conflict = True
+                    rr_adj = -10.0
+                else:
+                    r_dist = abs(e_f - sl_f)
+                    rw_dist = abs(tp_f - e_f)
+                    if r_dist > 0 and rw_dist > 0:
+                        rr_ratio = rw_dist / r_dist
+                        if rr_ratio >= 2.5:
+                            rr_adj = 4.0
+                        elif rr_ratio >= 2.0:
+                            rr_adj = 2.5
+                        elif rr_ratio >= 1.5:
+                            rr_adj = 1.0
+                        elif rr_ratio < 1.3:
+                            rr_adj = -6.0
+        except (ValueError, TypeError, ZeroDivisionError):
+            rr_adj = 0.0
+
+    # Entry Proximity & Direction-Aware Chasing / Adverse Drift Penalties
+    entry_dist = sig.get("entry_distance_pct")
+    chase_penalty = 0.0
+    entry_zone_bonus = 0.0
+    adverse_penalty = 0.0
+    if entry_dist is not None:
+        try:
+            d_val = float(entry_dist)
+            d_abs = abs(d_val)
+            if d_abs <= 0.35:
+                entry_zone_bonus = 2.0
+            else:
+                is_chasing = (
+                    (is_long and d_val > 0.35)
+                    or (is_short and d_val < -0.35)
+                    or (not is_long and not is_short and d_abs > 0.35)
+                )
+                if is_chasing:
+                    if d_abs >= 1.2:
+                        chase_penalty = min(7.0, round(d_abs * 3.0, 1))
+                    elif d_abs >= 0.7:
+                        chase_penalty = 2.0
+                else:
+                    if d_abs >= 1.5:
+                        adverse_penalty = min(6.0, round(d_abs * 2.0, 1))
+        except (ValueError, TypeError):
+            pass
+
+    # Confluence Alignment Contribution
+    conf_score = sig.get("confluence_score")
+    conf_pts = 0.0
+    if conf_score is not None:
+        try:
+            cs = float(conf_score)
+            if cs >= 75:
+                conf_pts = 4.0
+            elif cs >= 60:
+                conf_pts = 2.0
+            elif cs < 35:
+                conf_pts = -4.0
+        except (ValueError, TypeError):
+            pass
+
+    # Volume Confirmation (when available)
+    vol_ratio = sig.get("volume_ratio")
+    vol_pts = 0.0
+    if vol_ratio is not None:
+        try:
+            if float(vol_ratio) >= 1.3:
+                vol_pts = 3.0
+        except (ValueError, TypeError):
+            pass
+
+    # Hard guardrails & Technical conflicts
     cp = sig.get("conflict")
     has_conflict = (
         bool(cp.get("has_conflict"))
@@ -2977,6 +3089,7 @@ def _phase2_composite_score(sig: dict, mood: dict) -> tuple[float, dict]:
     event = bool(sig.get("event_risk_active"))
 
     penalty = 0.0
+    extra_chips: list[dict] = []
     if drift:
         penalty += 8.0
     if event:
@@ -2984,15 +3097,63 @@ def _phase2_composite_score(sig: dict, mood: dict) -> tuple[float, dict]:
     if has_conflict:
         penalty += 12.0
 
-    composite_v2 = max(0.0, min(100.0, blended + regime_adj - penalty))
+    if level_geometry_conflict:
+        penalty += 10.0
+        extra_chips.append({"name": "Invalid risk geometry", "points": 10.0})
+
+    # Technical conflict flags from data honesty / confluence checks
+    tech_pens = sig.get("confluence_penalties") or []
+    if "macro_conflict" in tech_pens:
+        penalty += 8.0
+        extra_chips.append({"name": "Macro trend conflict", "points": 8.0})
+    if "rsi_overbought_long" in tech_pens or "rsi_oversold_short" in tech_pens:
+        penalty += 5.0
+        extra_chips.append({"name": "RSI extreme conflict", "points": 5.0})
+    if "vwap_stretched" in tech_pens:
+        penalty += 4.0
+        extra_chips.append({"name": "VWAP extended", "points": 4.0})
+    if chase_penalty > 0:
+        extra_chips.append({"name": "Chasing penalty", "points": chase_penalty})
+    if adverse_penalty > 0:
+        extra_chips.append({"name": "Adverse drift", "points": adverse_penalty})
+
+    composite_v2 = max(
+        0.0,
+        min(
+            100.0,
+            blended
+            + regime_adj
+            + rr_adj
+            + entry_zone_bonus
+            + conf_pts
+            + vol_pts
+            - chase_penalty
+            - adverse_penalty
+            - penalty,
+        ),
+    )
+
+    # Top contributors synthesis
+    contributors = list(_top_quality_factors_from_breakdown(sig, 2))
+    if rr_ratio is not None and rr_adj > 0:
+        contributors.append({"factor": f"R:R {rr_ratio:.1f}x", "points": int(rr_adj)})
+    if conf_pts > 0:
+        contributors.append({"factor": "High Confluence", "points": int(conf_pts)})
+    if entry_zone_bonus > 0:
+        contributors.append({"factor": "In Entry Zone", "points": int(entry_zone_bonus)})
+    if vol_pts > 0:
+        contributors.append({"factor": "Volume Surge", "points": int(vol_pts)})
 
     explain: dict = {
         "base_blend": round(blended, 2),
         "freshness_mult": round(freshness_mult, 3),
         "regime_alignment_pts": round(regime_adj, 2),
-        "penalty_total": round(penalty, 2),
-        "top_contributors": _top_quality_factors_from_breakdown(sig, 3),
-        "penalty_detail": _penalty_chips(drift, event, has_conflict),
+        "rr_alignment_pts": round(rr_adj, 2),
+        "confluence_boost_pts": round(conf_pts, 2),
+        "entry_zone_bonus": round(entry_zone_bonus, 2),
+        "penalty_total": round(penalty + chase_penalty + adverse_penalty, 2),
+        "top_contributors": contributors[:4],
+        "penalty_detail": _penalty_chips(drift, event, has_conflict, extra_chips),
     }
     return composite_v2, explain
 
@@ -3370,6 +3531,9 @@ def _ensure_top_setups_fallback(payload: dict) -> dict:
         tp_p = float(s.get("target_1") or s.get("target") or s.get("t1") or 0.0)
         qs, q_source = _swing_quality_score(s)
         q_grade = "A" if qs >= 75 else ("B" if qs >= 60 else "C")
+        r_d = abs(entry_p - sl_p)
+        rw_d = abs(tp_p - entry_p)
+        rr_val = round(rw_d / max(r_d, 0.01), 1) if r_d > 0 and rw_d > 0 else 1.8
         setups.append({
             "symbol": str(s.get("symbol", "")),
             "signal": str(s.get("direction") or s.get("signal") or "LONG"),
@@ -3378,10 +3542,12 @@ def _ensure_top_setups_fallback(payload: dict) -> dict:
             "quality_source": q_source,
             "confidence": float(s.get("confidence") or 70.0),
             "composite_rank": float(qs),
+            "confluence_score": int(min(100, qs)),
             "entry": entry_p,
             "stop_loss": sl_p,
             "target": tp_p,
-            "rr": f"{max(round(abs(tp_p - entry_p) / max(abs(entry_p - sl_p), 0.01), 1), 1.5):.1f}x",
+            "rr": f"{max(rr_val, 1.5):.1f}x",
+            "risk_reward": max(rr_val, 1.5),
             "thesis": str(s.get("thesis") or s.get("pattern") or "Multi-factor swing setup"),
             "trend": str(s.get("trend") or "TRENDING"),
             "regime": str(s.get("regime") or "SWING_DAILY"),
@@ -3575,7 +3741,7 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
 
     signals_to_process: list[dict] = []
     for symbol in list(_signal_cache.keys()):
-        sig = _get_signal_for_symbol(symbol)
+        sig = _get_signal_for_symbol(symbol, mood=mood)
         if sig:
             signals_to_process.append(sig)
 
@@ -3603,12 +3769,143 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             else False
         )
 
-        composite, rank_explain = _phase2_composite_score(sig, mood)
-
-        # Build a concise one-line thesis
         trend = str(sig.get("trend", "NEUTRAL")).replace("TrendDirection.", "").upper()
         regime = str(sig.get("regime", "RANGING")).upper()
         rsi = sig.get("rsi")
+
+        # R:R calculation, label, and precision
+        rr_label = "—"
+        entry_val = sig.get("entry")
+        sl_val = sig.get("stop_loss")
+        tp_val = sig.get("target")
+        close_val = sig.get("close")
+        prec = price_decimals(float(entry_val)) if entry_val is not None else (price_decimals(float(close_val)) if close_val is not None else 2)
+        entry_val = round(float(entry_val), prec) if entry_val is not None else None
+        sl_val = round(float(sl_val), prec) if sl_val is not None else None
+        tp_val = round(float(tp_val), prec) if tp_val is not None else None
+        close_val = round(float(close_val), prec) if close_val is not None else None
+        if entry_val is not None:
+            if sl_val is not None and sl_val == entry_val:
+                sl_val = None
+            if tp_val is not None and tp_val == entry_val:
+                tp_val = None
+
+        is_long = signal_label in ("LONG", "BUY")
+        is_short = signal_label in ("SHORT", "SELL")
+
+        risk_dist = 0.0
+        reward_dist = 0.0
+        rr_ratio: float | None = None
+        effective_rr: float | None = None
+        levels_valid = False
+
+        if entry_val is not None and sl_val is not None and tp_val is not None:
+            e_f = float(entry_val)
+            s_f = float(sl_val)
+            t_f = float(tp_val)
+            if is_long and s_f < e_f < t_f:
+                levels_valid = True
+                risk_dist = e_f - s_f
+                reward_dist = t_f - e_f
+            elif is_short and t_f < e_f < s_f:
+                levels_valid = True
+                risk_dist = s_f - e_f
+                reward_dist = e_f - t_f
+            elif not is_long and not is_short:
+                risk_dist = abs(e_f - s_f)
+                reward_dist = abs(t_f - e_f)
+                levels_valid = risk_dist > 0 and reward_dist > 0
+
+            if levels_valid and risk_dist > 0 and reward_dist > 0:
+                rr_ratio = reward_dist / risk_dist
+                rr_label = f"1:{rr_ratio:.1f}"
+
+        # Distance from current price to the proposed entry — chasing guard & sweet spot
+        entry_distance_pct = None
+        chase_risk = False
+        in_entry_zone = False
+        try:
+            if entry_val is not None and close_val is not None:
+                entry_f = float(entry_val)
+                close_f = float(close_val)
+                if entry_f > 0:
+                    entry_distance_pct = round((close_f - entry_f) / entry_f * 100.0, 2)
+                    if is_long:
+                        chase_risk = entry_distance_pct >= 1.0
+                    elif is_short:
+                        chase_risk = entry_distance_pct <= -1.0
+                    in_entry_zone = abs(entry_distance_pct) <= 0.35
+        except (TypeError, ValueError):
+            entry_distance_pct = None
+            chase_risk = False
+            in_entry_zone = False
+
+        # Calculate effective forward R:R from current price
+        if levels_valid and close_val is not None and sl_val is not None and tp_val is not None:
+            c_f = float(close_val)
+            s_f = float(sl_val)
+            t_f = float(tp_val)
+            if is_long and s_f < c_f < t_f:
+                eff_risk = c_f - s_f
+                eff_reward = t_f - c_f
+                if eff_risk > 0 and eff_reward > 0:
+                    effective_rr = round(eff_reward / eff_risk, 2)
+            elif is_short and t_f < c_f < s_f:
+                eff_risk = s_f - c_f
+                eff_reward = c_f - t_f
+                if eff_risk > 0 and eff_reward > 0:
+                    effective_rr = round(eff_reward / eff_risk, 2)
+
+        # Volume confirmation from market data cache (NSE)
+        vol_ratio: float | None = None
+        df_sym = _market_data.get(symbol)
+        if df_sym is not None and isinstance(df_sym, pd.DataFrame) and not df_sym.empty and "volume" in df_sym.columns:
+            try:
+                vol_s = pd.to_numeric(df_sym["volume"], errors="coerce").dropna()
+                if len(vol_s) >= 10:
+                    cur_v = float(vol_s.iloc[-1])
+                    avg_v = float(vol_s.tail(20).mean())
+                    if avg_v > 0:
+                        vol_ratio = round(cur_v / avg_v, 2)
+            except Exception:
+                vol_ratio = None
+        if vol_ratio is None and sig.get("volume_ratio") is not None:
+            try:
+                vol_ratio = round(float(sig["volume_ratio"]), 2)
+            except Exception:
+                vol_ratio = None
+
+        # Build trade lifecycle status (do not recommend completed / stopped trades)
+        raw_status = sig.get("signal_status")
+        signal_status = str(raw_status).upper() if raw_status else "ACTIVE"
+        if close_val is not None:
+            c_f = float(close_val)
+            if tp_val is not None and (
+                (is_long and c_f >= float(tp_val)) or (is_short and c_f <= float(tp_val))
+            ):
+                signal_status = "TARGET_HIT"
+            elif sl_val is not None and (
+                (is_long and c_f <= float(sl_val)) or (is_short and c_f >= float(sl_val))
+            ):
+                signal_status = "STOPPED_OUT"
+
+        # Confluence evaluation with technical conflict detection
+        conf_n, conf_factors = _confluence_for_setup(sig, mood, for_display=True)
+
+        # Enriched signal payload for multi-factor composite ranking
+        sig_for_score = dict(sig)
+        sig_for_score["confluence_score"] = conf_n
+        sig_for_score["confluence_penalties"] = sig.get("confluence_penalties") or [
+            f.replace("Conflict: ", "") for f in conf_factors if f.startswith("Conflict: ")
+        ]
+        sig_for_score["entry_distance_pct"] = entry_distance_pct
+        sig_for_score["volume_ratio"] = vol_ratio
+        if rr_ratio is not None:
+            sig_for_score["risk_reward"] = rr_ratio
+
+        composite, rank_explain = _phase2_composite_score(sig_for_score, mood)
+
+        # Build a concise one-line thesis
         thesis_parts: list[str] = []
         if "BULL" in trend:
             thesis_parts.append("Uptrend")
@@ -3623,56 +3920,21 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                 thesis_parts.append(f"RSI oversold ({float(rsi):.0f})")
             elif float(rsi) > 70:
                 thesis_parts.append(f"RSI overbought ({float(rsi):.0f})")
+        if in_entry_zone:
+            thesis_parts.append("In entry zone")
+        if vol_ratio is not None and vol_ratio >= 1.3:
+            thesis_parts.append(f"Vol surge ({vol_ratio:.1f}x)")
+        if rr_ratio is not None and rr_ratio >= 2.0:
+            thesis_parts.append(f"Favorable R:R ({rr_ratio:.1f}x)")
         if context_score > 0.15:
             thesis_parts.append("Positive news context")
         elif context_score < -0.15:
             thesis_parts.append("Negative news context")
         thesis = ", ".join(thesis_parts) if thesis_parts else "Mixed conditions"
 
-        # R:R label and precision
-        rr_label = "—"
-        entry_val = sig.get("entry")
-        sl_val = sig.get("stop_loss")
-        tp_val = sig.get("target")
-        close_val = sig.get("close")
-        prec = price_decimals(float(entry_val)) if entry_val is not None else (price_decimals(float(close_val)) if close_val is not None else 2)
-        entry_val = round(float(entry_val), prec) if entry_val is not None else None
-        sl_val = round(float(sl_val), prec) if sl_val is not None else None
-        tp_val = round(float(tp_val), prec) if tp_val is not None else None
-        if entry_val is not None:
-            if sl_val is not None and sl_val == entry_val:
-                sl_val = None
-            if tp_val is not None and tp_val == entry_val:
-                tp_val = None
-
-        if entry_val and sl_val and tp_val:
-            risk_dist = abs(float(entry_val) - float(sl_val))
-            reward_dist = abs(float(tp_val) - float(entry_val))
-            if risk_dist > 0 and reward_dist > 0:
-                rr_label = f"1:{reward_dist / risk_dist:.1f}"
-
-        # Distance from current price to the proposed entry — chasing guard
-        entry_distance_pct = None
-        chase_risk = False
-        close_val = sig.get("close")
-        try:
-            if entry_val is not None and close_val is not None:
-                entry_f = float(entry_val)
-                close_f = float(close_val)
-                if entry_f > 0:
-                    entry_distance_pct = round((close_f - entry_f) / entry_f * 100.0, 2)
-                    if signal_label == "LONG":
-                        chase_risk = entry_distance_pct >= 1.0
-                    elif signal_label == "SHORT":
-                        chase_risk = entry_distance_pct <= -1.0
-        except (TypeError, ValueError):
-            entry_distance_pct = None
-            chase_risk = False
-
         cal = _calibration_for_setup(
             regime, float(quality_score), confidence, insights_for_cal
         )
-        conf_n, conf_factors = _confluence_for_setup(sig, mood)
 
         blockers: list[str] = []
         if drift_detected:
@@ -3684,6 +3946,26 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
         # Only treat stale data as a hard blocker if market is actively open/live
         if is_market_live and stale:
             blockers.append("stale_data")
+        # Trade lifecycle gate: do not recommend completed or stopped trades
+        if signal_status == "TARGET_HIT":
+            blockers.append("target_already_hit")
+        elif signal_status == "STOPPED_OUT":
+            blockers.append("stopped_out")
+        # Inverted / invalid level geometry
+        if (entry_val is not None or sl_val is not None or tp_val is not None) and not levels_valid and signal_label in ("LONG", "SHORT"):
+            blockers.append("inconsistent_levels")
+        # Severe chasing gate during live market
+        if is_market_live and chase_risk and entry_distance_pct is not None and abs(entry_distance_pct) >= 2.0:
+            blockers.append("chase_extended")
+        # Substandard R:R gate during live market
+        if is_market_live and risk_dist > 0 and reward_dist > 0 and rr_ratio is not None and rr_ratio < 1.3:
+            blockers.append("poor_risk_reward")
+        # Forward expectancy exhaustion gate during live market (effective R:R < 1.0)
+        if is_market_live and effective_rr is not None and effective_rr < 1.0 and chase_risk:
+            blockers.append("forward_expectancy_exhausted")
+        # Macro conflict gate during live market
+        if is_market_live and "macro_conflict" in sig_for_score.get("confluence_penalties", []):
+            blockers.append("macro_conflict")
 
         entry_data = {
             "symbol": symbol,
@@ -3697,12 +3979,18 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             "rank_explain": rank_explain,
             "calibration": cal,
             "rr": rr_label,
+            "risk_reward": round(rr_ratio, 2) if rr_ratio is not None else None,
+            "effective_rr": effective_rr,
             "entry_distance_pct": entry_distance_pct,
             "chase_risk": chase_risk,
+            "in_entry_zone": in_entry_zone,
+            "volume_ratio": vol_ratio,
+            "volume_confirmed": vol_ratio is not None and vol_ratio >= 1.3,
+            "signal_status": signal_status,
             "entry": entry_val,
             "stop_loss": sl_val,
             "target": tp_val,
-            "close": sig.get("close"),
+            "close": close_val,
             "rsi": rsi,
             "regime": regime,
             "trend": trend,
@@ -3734,15 +4022,36 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             entry_data["blockers"] = blockers
             avoid_list.append(entry_data)
 
-    top_setups.sort(key=lambda x: (0 if x.get("stale") else 1, x["composite_rank"]), reverse=True)
+    top_setups.sort(
+        key=lambda x: (
+            0 if x.get("stale") else 1,
+            1 if x.get("in_entry_zone") else 0,
+            x["composite_rank"],
+            x.get("confluence_score", 0),
+            x.get("effective_rr") or x.get("risk_reward") or 0.0,
+        ),
+        reverse=True,
+    )
     avoid_list.sort(key=lambda x: x["composite_rank"], reverse=True)
 
     fallback_applied = False
     fallback_source: str | None = None
-    if not top_setups and avoid_list:
+    hard_risk_blockers = {
+        "target_already_hit",
+        "stopped_out",
+        "chase_extended",
+        "poor_risk_reward",
+        "forward_expectancy_exhausted",
+        "inconsistent_levels",
+        "degenerate_levels",
+        "missing_or_invalid_levels",
+    }
+    if not top_setups and avoid_list and not is_market_live:
         fallback_candidates = [
             s for s in avoid_list
-            if s.get("signal") in ("LONG", "SHORT") and int(s.get("quality_score") or 0) >= 55
+            if s.get("signal") in ("LONG", "SHORT")
+            and int(s.get("quality_score") or 0) >= 55
+            and not any(b in hard_risk_blockers for b in (s.get("blockers") or []))
         ]
         if fallback_candidates:
             top_setups = fallback_candidates[:5]
@@ -3767,18 +4076,26 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             tp_p = float(s.get("target_1") or s.get("target") or s.get("t1") or 0.0)
             qs, q_source = _swing_quality_score(s)
             q_grade = "A" if qs >= 75 else ("B" if qs >= 60 else "C")
+            sw_dir = str(s.get("direction") or s.get("signal") or "LONG").upper()
+            sw_valid = (sw_dir in ("LONG", "BUY") and sl_p < entry_p < tp_p) or (sw_dir in ("SHORT", "SELL") and tp_p < entry_p < sl_p)
+            r_d = abs(entry_p - sl_p)
+            rw_d = abs(tp_p - entry_p)
+            rr_val = round(rw_d / max(r_d, 0.01), 1) if sw_valid and r_d > 0 and rw_d > 0 else 1.8
             top_setups.append({
                 "symbol": str(s.get("symbol", "")),
-                "signal": str(s.get("direction") or s.get("signal") or "LONG"),
+                "signal": sw_dir,
                 "quality_score": qs,
                 "quality_grade": q_grade,
                 "quality_source": q_source,
                 "confidence": float(s.get("confidence") or 70.0),
                 "composite_rank": float(qs),
+                "confluence_score": int(min(100, qs)),
                 "entry": entry_p,
                 "stop_loss": sl_p,
                 "target": tp_p,
-                "rr": f"{max(round(abs(tp_p - entry_p) / max(abs(entry_p - sl_p), 0.01), 1), 1.5):.1f}x",
+                "rr": f"{max(rr_val, 1.5):.1f}x",
+                "risk_reward": max(rr_val, 1.5),
+                "effective_rr": None,
                 "thesis": str(s.get("thesis") or s.get("pattern") or "Multi-factor swing setup"),
                 "trend": str(s.get("trend") or "TRENDING"),
                 "regime": str(s.get("regime") or "SWING_DAILY"),
@@ -3797,6 +4114,13 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                 sig_norm = "LONG" if sig in ("LONG", "BUY") else "SHORT"
                 qs = int(s.get("quality_score") or 70)
                 q_grade = "A" if qs >= 75 else ("B" if qs >= 60 else "C")
+                entry_p = float(s.get("entry") or s.get("entry_price") or s.get("close") or 0.0)
+                sl_p = float(s.get("stop_loss") or s.get("sl") or 0.0)
+                tp_p = float(s.get("target") or s.get("target_1") or s.get("t1") or 0.0)
+                p_valid = (sig_norm == "LONG" and sl_p < entry_p < tp_p) or (sig_norm == "SHORT" and tp_p < entry_p < sl_p)
+                r_d = abs(entry_p - sl_p)
+                rw_d = abs(tp_p - entry_p)
+                rr_val = round(rw_d / max(r_d, 0.01), 1) if p_valid and r_d > 0 and rw_d > 0 else 1.8
                 top_setups.append({
                     "symbol": str(s.get("symbol", "")),
                     "signal": sig_norm,
@@ -3804,9 +4128,13 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                     "quality_grade": q_grade,
                     "confidence": float(s.get("confidence") or 65.0),
                     "composite_rank": float(qs),
-                    "entry": float(s.get("entry") or s.get("entry_price") or s.get("close") or 0.0),
-                    "stop_loss": float(s.get("stop_loss") or s.get("sl") or 0.0),
-                    "target": float(s.get("target") or s.get("target_1") or s.get("t1") or 0.0),
+                    "confluence_score": int(min(100, qs)),
+                    "entry": entry_p,
+                    "stop_loss": sl_p,
+                    "target": tp_p,
+                    "rr": f"{max(rr_val, 1.5):.1f}x",
+                    "risk_reward": max(rr_val, 1.5),
+                    "effective_rr": None,
                     "trend": str(s.get("trend") or "NEUTRAL"),
                     "regime": str(s.get("regime") or "LAST_SESSION"),
                     "blockers": [],
@@ -3989,11 +4317,12 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             "fallback_applied": fallback_applied,
             "fallback_source": fallback_source,
             "session_state": "LIVE" if is_market_live else "EOD",
-            "scoring_version": "phase5_v1",
+            "scoring_version": "phase7_v3",
             "scoring_summary": (
                 "Composite blends quality, confidence, and context; freshness decay; "
-                "market bias alignment; drift/event/conflict penalties. "
-                "Confluence = independent factor alignment (trend, regime, bias, context, guardrails) — advisory."
+                "asymmetric R:R expectancy & directional geometry; multi-factor confluence; "
+                "entry pocket proximity vs direction-aware chase/adverse penalties; "
+                "and strict live guardrails (target-hit/stopped-out/macro-conflict/chase/expectancy filters)."
             ),
         },
         "market_guardrails": {

@@ -1582,7 +1582,7 @@
     });
 
     // ── Authenticated API Fetch Helper ───────────────────────
-    async function apiCall(endpoint, method = 'GET', body = null) {
+    async function apiCall(endpoint, method = 'GET', body = null, _retries = 2) {
       const headers = {
         'Accept': 'application/json',
       };
@@ -1606,6 +1606,13 @@
       }
 
       if (!res.ok) {
+        if ((res.status === 429 || res.status === 503) && _retries > 0 && ['GET', 'HEAD'].includes(method)) {
+          const ra = res.headers ? res.headers.get('retry-after') : null;
+          const waitSec = ra ? parseInt(ra, 10) : 0;
+          const delayMs = (waitSec > 0 ? waitSec * 1000 : 1800) + Math.floor(Math.random() * 1200);
+          await new Promise(r => setTimeout(r, delayMs));
+          return apiCall(endpoint, method, body, _retries - 1);
+        }
         if (res.status === 401 || res.status === 403) {
           logMessage(`Access Denied (HTTP ${res.status}) on ${endpoint}`, 'err');
           handleLogout();

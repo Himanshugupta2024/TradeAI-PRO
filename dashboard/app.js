@@ -57,7 +57,7 @@ const API = (() => {
 })();
 
 // ── Resilient JSON Fetcher with Dual-Origin Fallback & Content-Type Safety ──
-async function fetchSafeJSON(url, options = {}, timeoutMs = 12000) {
+async function fetchSafeJSON(url, options = {}, timeoutMs = 12000, _retries = 2) {
     const method = (options.method || 'GET').toUpperCase();
     if (method === 'GET' && typeof _inFlightRequests !== 'undefined' && _inFlightRequests.has(url)) {
         return _inFlightRequests.get(url).then(r => ({ ok: r.ok, status: r.status, data: r._cachedData || {} }));
@@ -68,6 +68,22 @@ async function fetchSafeJSON(url, options = {}, timeoutMs = 12000) {
         const opts = { ...options, signal: controller.signal };
         let res = await fetch(url, opts);
 
+        // Auto-retry on 429 (Rate Limit) or 503 (Render cold boot) for idempotent requests
+        if ((res.status === 429 || res.status === 503) && _retries > 0 && ['GET', 'HEAD'].includes(method)) {
+            clearTimeout(timer);
+            let delayMs = 1800 + Math.floor(Math.random() * 1500);
+            try {
+                const ra = res.headers && res.headers.get ? res.headers.get('retry-after') : null;
+                if (ra) {
+                    const sec = parseInt(ra, 10);
+                    if (!isNaN(sec) && sec > 0) delayMs = Math.min(sec * 1000, 30000);
+                }
+            } catch (_) {}
+            console.warn(`[fetchSafeJSON] HTTP ${res.status} from ${url} — retrying in ${(delayMs / 1000).toFixed(1)}s (${_retries} left)...`);
+            await new Promise(r => setTimeout(r, delayMs));
+            return fetchSafeJSON(url, options, timeoutMs, _retries - 1);
+        }
+
         const ct = (res.headers.get('content-type') || '').toLowerCase();
         if (!res.ok) {
             let errData = {};
@@ -77,7 +93,7 @@ async function fetchSafeJSON(url, options = {}, timeoutMs = 12000) {
             return {
                 ok: false,
                 status: res.status,
-                error: errData.error || (res.status === 429 ? 'Rate limit in effect. Retrying shortly...' : `HTTP ${res.status}`),
+                error: errData.error || (res.status === 429 ? 'Rate limit cooling down. Re-syncing shortly...' : `HTTP ${res.status}`),
                 detail: errData,
                 data: errData
             };
@@ -2459,19 +2475,27 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
 
 
-        // HTTP-level 503 or 429 → server waking up or burst rate-limited, retry with backoff
-        if (isSafeMethod && resp.status === 503 && _retries > 0) {
-            let delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
+        // HTTP-level 503 or 429 → server waking up or edge burst rate-limited, retry with backoff & jitter
+        if (isSafeMethod && (resp.status === 503 || resp.status === 429) && _retries > 0) {
+            let delay = 1500;
             try {
                 const retryAfterHeader = resp.headers && resp.headers.get ? resp.headers.get('retry-after') : null;
                 if (retryAfterHeader) {
                     const parsedSeconds = parseInt(retryAfterHeader, 10);
                     if (!isNaN(parsedSeconds) && parsedSeconds > 0) {
-                        delay = Math.min(parsedSeconds * 1000, 65000);
+                        delay = Math.min(parsedSeconds * 1000 + Math.floor(Math.random() * 600), 65000);
                     }
+                } else if (resp.status === 429) {
+                    // 429 edge rate limit: wait 1.5s - 3.5s with random jitter to avoid thundering herd
+                    delay = 1500 + Math.floor(Math.random() * 2000);
+                } else {
+                    // 503 cold boot / wakeup
+                    delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
                 }
-            } catch (_) {}
-            console.warn(`[fetch] ${resp.status} from ${url} — retrying in ${(delay / 1000).toFixed(1)}s (${_retries} left)...`);
+            } catch (_) {
+                delay = 2000;
+            }
+            console.warn(`[fetch] HTTP ${resp.status} from ${url} — retrying in ${(delay / 1000).toFixed(1)}s (${_retries} retries left)...`);
             await new Promise(r => setTimeout(r, delay));
             return fetchWithTimeout(url, options, timeoutMs, _retries - 1, _backoffMs * 1.5);
         }
@@ -4891,6 +4915,14 @@ function _renderTopSetups(setups, meta) {
             ? `<span class="cs-fresh-badge" style="background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.45);" title="Price has moved ${Math.abs(Number(s.entry_distance_pct) || 0).toFixed(2)}% from the planned entry">CHASE ${Math.abs(Number(s.entry_distance_pct) || 0).toFixed(1)}%</span>`
             : '';
 
+        const zoneBadge = (s.in_entry_zone || (s.entry_distance_pct != null && Math.abs(Number(s.entry_distance_pct)) <= 0.35))
+            ? `<span class="cs-zone-badge" style="background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.45);font-size:11px;padding:1px 5px;border-radius:4px;margin-left:4px;font-weight:700;" title="Price is within optimal entry pocket (±0.35%)">IN ZONE</span>`
+            : '';
+
+        const volBadge = (s.volume_confirmed || (s.volume_ratio != null && Number(s.volume_ratio) >= 1.3))
+            ? `<span class="cs-vol-badge" style="background:rgba(59,130,246,0.18);color:#60a5fa;border:1px solid rgba(59,130,246,0.35);font-size:11px;padding:1px 5px;border-radius:4px;margin-left:4px;font-weight:600;" title="Volume is ${Number(s.volume_ratio || 1.3).toFixed(1)}x 20-period average">VOL ${Number(s.volume_ratio || 1.3).toFixed(1)}x</span>`
+            : '';
+
 
 
         if (s.stale) {
@@ -4923,11 +4955,14 @@ function _renderTopSetups(setups, meta) {
 
         }
 
-
-
-
-
-
+        const rrVal = s.risk_reward != null ? Number(s.risk_reward) : (parseFloat(String(s.rr || '').replace(/[^0-9.]/g, '')) || 0);
+        const effVal = s.effective_rr != null ? Number(s.effective_rr) : null;
+        const rrColor = rrVal >= 2.0 ? '#10b981' : (rrVal >= 1.5 ? '#38bdf8' : '#f59e0b');
+        let rrDisplay = s.rr || (rrVal > 0 ? `1:${rrVal.toFixed(1)}` : '—');
+        if (effVal != null && Math.abs(effVal - rrVal) >= 0.4) {
+            const effColor = effVal >= 1.5 ? '#34d399' : (effVal >= 1.0 ? '#fbbf24' : '#f87171');
+            rrDisplay += ` <span style="font-size:10px;color:${effColor};font-weight:600;" title="Live forward R:R from current price">(eff 1:${effVal.toFixed(1)})</span>`;
+        }
 
         return `
 
@@ -4949,7 +4984,7 @@ function _renderTopSetups(setups, meta) {
 
 
 
-                    ${freshBadge}${chaseBadge}${s.session_badge ? `<span class="cs-pct-badge" style="background:rgba(99,102,241,0.22);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);font-size:11px;padding:1px 5px;border-radius:4px;margin-left:4px;">${s.session_badge}</span>` : ''}
+                    ${freshBadge}${chaseBadge}${zoneBadge}${volBadge}${s.session_badge ? `<span class="cs-pct-badge" style="background:rgba(99,102,241,0.22);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);font-size:11px;padding:1px 5px;border-radius:4px;margin-left:4px;">${s.session_badge}</span>` : ''}
 
 
 
@@ -5009,7 +5044,7 @@ function _renderTopSetups(setups, meta) {
 
 
 
-                    <div class="cs-level"><span class="cs-level-key">R:R </span><span class="cs-level-val">${s.rr || (s.risk_reward ? s.risk_reward + 'x' : '1.8x')}</span></div>
+                    <div class="cs-level"><span class="cs-level-key">R:R </span><span class="cs-level-val" style="color:${rrColor};font-weight:700;">${rrDisplay}</span></div>
 
 
 
@@ -23393,9 +23428,15 @@ async function loadIntradayLatest() {
 
     } catch (e) {
         console.warn("loadIntradayLatest error:", e);
-        if (meta) meta.textContent = "Could not load intraday snapshot.";
-        if (tbody) tbody.innerHTML = '<tr><td colspan="15" style="color:var(--red);text-align:center;padding:1.5rem;">Failed to load intraday data. Check network or server status.</td></tr>';
-        if (grid) grid.innerHTML = '<p style="color:var(--red);padding:1rem;">Failed to load intraday data</p>';
+        const is429 = e.status === 429 || (e.message && e.message.includes('429'));
+        if (is429) {
+            if (meta) meta.innerHTML = '<span style="color:var(--amber,#f59e0b);">⏳ Intraday feed cooling down (Rate limit). Auto-reconnecting in 4s...</span>';
+            setTimeout(() => loadIntradayLatest(), 4000);
+        } else {
+            if (meta) meta.textContent = "Could not load intraday snapshot.";
+            if (tbody) tbody.innerHTML = '<tr><td colspan="15" style="color:var(--red);text-align:center;padding:1.5rem;">Failed to load intraday data. Check network or server status.</td></tr>';
+            if (grid) grid.innerHTML = '<p style="color:var(--red);padding:1rem;">Failed to load intraday data</p>';
+        }
     }
 }
 
@@ -24026,11 +24067,19 @@ async function loadEdgeTopSetups(universe = null, force = false) {
         else if (_currentEdgeUniverse === 'crypto') assetParam = 'crypto';
         else if (_currentEdgeUniverse === 'index') assetParam = 'index';
 
-        const [setupsRes, overviewRes, flowRes, newsRes] = await Promise.all([
-            fetchWithTimeout(`${API}/api/edge/top-setups?asset_class=${assetParam}&limit=40${force ? '&force_refresh=true' : ''}`, {}, 25000, 1).catch(() => null),
-            fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 20000, 1).catch(() => null),
-            fetchWithTimeout(`${API}/api/tradeflow`, {}, 15000, 1).catch(() => null),
-            fetchWithTimeout(`${API}/api/nse/news`, {}, 15000, 1).catch(() => null),
+        // 1. Fetch primary setups first with high resilience to avoid edge burst conflicts
+        const setupsRes = await fetchWithTimeout(
+            `${API}/api/edge/top-setups?asset_class=${assetParam}&limit=40${force ? '&force_refresh=true' : ''}`,
+            {},
+            25000,
+            2
+        ).catch(() => null);
+
+        // 2. Fetch peripheral overview, tradeflow, and news in background
+        const [overviewRes, flowRes, newsRes] = await Promise.all([
+            fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 20000, 2).catch(() => null),
+            fetchWithTimeout(`${API}/api/tradeflow`, {}, 15000, 2).catch(() => null),
+            fetchWithTimeout(`${API}/api/nse/news`, {}, 15000, 2).catch(() => null),
         ]);
 
         if (spinner) spinner.style.animation = 'none';
@@ -24046,13 +24095,23 @@ async function loadEdgeTopSetups(universe = null, force = false) {
         };
 
         if (!setupsRes || !setupsRes.ok) {
+            const is429 = setupsRes && setupsRes.status === 429;
             const statusErr = setupsRes ? `HTTP ${setupsRes.status}` : 'Network Timeout / Offline';
             if (body) {
-                body.innerHTML = `<tr><td colspan="13" class="empty-row" style="color:#ef4444;padding:2rem;">
-                    <div style="font-size:1.05rem;margin-bottom:6px;font-weight:700;">⚠️ Radar Telemetry Unavailable (${statusErr})</div>
-                    <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:12px;">Quantitative radar service temporarily degraded or rate-limited. Preserving capital rules.</div>
-                    <button class="btn btn-secondary" onclick="loadEdgeTopSetups(null, true)" style="font-size:0.75rem;padding:4px 12px;border-radius:4px;cursor:pointer;">🔄 Retry Telemetry</button>
-                </td></tr>`;
+                if (is429) {
+                    body.innerHTML = `<tr><td colspan="13" class="empty-row" style="color:var(--amber,#f59e0b);padding:2rem;">
+                        <div style="font-size:1.05rem;margin-bottom:6px;font-weight:700;">⏳ Radar Telemetry Cooling Down (${statusErr})</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:12px;">Rate limit protection active. Auto-reconnecting in 4s...</div>
+                        <button class="btn btn-secondary" onclick="loadEdgeTopSetups(null, true)" style="font-size:0.75rem;padding:4px 12px;border-radius:4px;cursor:pointer;">🔄 Retry Telemetry</button>
+                    </td></tr>`;
+                    setTimeout(() => loadEdgeTopSetups(universe, force), 4500);
+                } else {
+                    body.innerHTML = `<tr><td colspan="13" class="empty-row" style="color:#ef4444;padding:2rem;">
+                        <div style="font-size:1.05rem;margin-bottom:6px;font-weight:700;">⚠️ Radar Telemetry Unavailable (${statusErr})</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:12px;">Quantitative radar service temporarily degraded or rate-limited. Preserving capital rules.</div>
+                        <button class="btn btn-secondary" onclick="loadEdgeTopSetups(null, true)" style="font-size:0.75rem;padding:4px 12px;border-radius:4px;cursor:pointer;">🔄 Retry Telemetry</button>
+                    </td></tr>`;
+                }
             }
             renderEdgeMetrics(null, []);
             return;
@@ -24079,11 +24138,20 @@ async function loadEdgeTopSetups(universe = null, force = false) {
     } catch (err) {
         if (spinner) spinner.style.animation = 'none';
         console.error('[loadEdgeTopSetups] error:', err);
+        const is429 = err.status === 429 || (err.message && err.message.includes('429'));
         if (body) {
-            body.innerHTML = `<tr><td colspan="13" class="empty-row" style="color:var(--red);">
-                Failed to load Edge Engine telemetry (${_escHtml(err.message)}).
-                <button onclick="loadEdgeTopSetups(null, true)" style="margin-left:8px;background:none;border:none;color:#38bdf8;cursor:pointer;text-decoration:underline;">Retry</button>
-            </td></tr>`;
+            if (is429) {
+                body.innerHTML = `<tr><td colspan="13" class="empty-row" style="color:var(--amber,#f59e0b);">
+                    ⏳ Radar telemetry rate limited. Reconnecting in 4s...
+                    <button onclick="loadEdgeTopSetups(null, true)" style="margin-left:8px;background:none;border:none;color:#38bdf8;cursor:pointer;text-decoration:underline;">Retry</button>
+                </td></tr>`;
+                setTimeout(() => loadEdgeTopSetups(universe, force), 4500);
+            } else {
+                body.innerHTML = `<tr><td colspan="13" class="empty-row" style="color:var(--red);">
+                    Failed to load Edge Engine telemetry (${_escHtml(err.message)}).
+                    <button onclick="loadEdgeTopSetups(null, true)" style="margin-left:8px;background:none;border:none;color:#38bdf8;cursor:pointer;text-decoration:underline;">Retry</button>
+                </td></tr>`;
+            }
         }
     }
 }
@@ -24708,7 +24776,7 @@ async function loadEdgeMacroHeatmap() {
 
 
 
-        const resp = await fetchWithTimeout(`${API}/api/edge/macro-heatmap`, {}, 20000, 1);
+        const resp = await fetchWithTimeout(`${API}/api/edge/macro-heatmap`, {}, 20000, 2);
 
 
 
@@ -24810,17 +24878,14 @@ async function loadEdgeMacroHeatmap() {
 
 
     } catch (err) {
-
-
-
         console.error('[loadEdgeMacroHeatmap] error:', err);
-
-
-
-        grid.innerHTML = `<p style="color:var(--red);font-size:0.9rem;">Failed to load macro heatmap (${_escHtml(err.message)})</p>`;
-
-
-
+        const is429 = err.status === 429 || (err.message && err.message.includes('429'));
+        if (is429) {
+            grid.innerHTML = `<p style="color:var(--amber,#f59e0b);font-size:0.9rem;">⏳ Macro heatmap cooling down (Rate limit). Auto-syncing in 3s...</p>`;
+            setTimeout(() => loadEdgeMacroHeatmap(), 3500);
+        } else {
+            grid.innerHTML = `<p style="color:var(--red);font-size:0.9rem;">Failed to load macro heatmap (${_escHtml(err.message)}) <button onclick="loadEdgeMacroHeatmap()" style="margin-left:6px;background:none;border:none;color:#38bdf8;cursor:pointer;text-decoration:underline;">Retry</button></p>`;
+        }
     }
 
 
@@ -26317,13 +26382,13 @@ async function loadSwingOutcomeStats() {
 
 
     } catch (err) {
-
-
-
-        panel.innerHTML = `<span style="color:var(--red)">Failed to load outcome stats (${_escHtml(err.message)})</span>`;
-
-
-
+        const is429 = err.status === 429 || (err.message && err.message.includes('429'));
+        if (is429) {
+            panel.innerHTML = `<span style="color:var(--amber,#f59e0b)">⏳ Outcome stats syncing shortly...</span>`;
+            setTimeout(() => loadOutcomeStats(), 3500);
+        } else {
+            panel.innerHTML = `<span style="color:var(--red)">Failed to load outcome stats (${_escHtml(err.message)})</span>`;
+        }
     }
 
 
@@ -27561,7 +27626,17 @@ async function loadNextDayPicks(reportId = null) {
 
     } catch (err) {
         console.error('[loadNextDayPicks] Failed:', err);
-        if (grid) grid.innerHTML = `<div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: #ef4444;">Failed to load next-day picks: ${err.message}. Retrying shortly...</div>`;
+        const is429 = err.status === 429 || (err.message && err.message.includes('429'));
+        if (grid) {
+            if (is429) {
+                grid.innerHTML = `<div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: var(--amber,#f59e0b);">
+                    ⏳ Post-close research cooling down (Rate limit). Auto-syncing in 3s...
+                </div>`;
+                setTimeout(() => loadNextDayPicks(reportId), 3500);
+            } else {
+                grid.innerHTML = `<div style="grid-column: 1/-1; padding: 2rem; text-align: center; color: #ef4444;">Failed to load next-day picks: ${err.message}. <button onclick="loadNextDayPicks()" style="margin-left:8px;background:none;border:none;color:#38bdf8;cursor:pointer;text-decoration:underline;">Retry</button></div>`;
+            }
+        }
     }
 }
 
