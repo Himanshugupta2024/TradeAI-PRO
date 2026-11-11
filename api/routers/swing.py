@@ -42,6 +42,7 @@ from fastapi.responses import JSONResponse
 
 from config import settings
 import api.service as svc
+from db import intraday_store, swing_store
 from api.security import require_admin
 from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
 from agents.feature_engine.indicators import calculate_indicators
@@ -470,13 +471,17 @@ async def intraday_run_scan():
         if prev_scan and prev_scan.get("signals"):
             sigs = prev_scan["signals"]
 
-    scan_id = await asyncio.to_thread(
-        lambda: intraday_store.save_scan(
-            sigs,
-            symbols_scanned=len(symbols),
-            trigger="api",
-        ),
-    )
+    scan_id = None
+    try:
+        scan_id = await asyncio.to_thread(
+            lambda: intraday_store.save_scan(
+                sigs,
+                symbols_scanned=len(symbols),
+                trigger="api",
+            ),
+        )
+    except Exception as exc:
+        logger.warning("Intraday save_scan failed: %s", exc)
 
     nifty_ctx = await asyncio.to_thread(get_nifty_market_context)
     long_count = sum(1 for s in sigs if s.get("direction") == "LONG")
@@ -530,7 +535,12 @@ async def intraday_latest():
     nifty_ctx = await asyncio.to_thread(get_nifty_market_context)
     sq_off = should_square_off_now()
 
-    row = await asyncio.to_thread(intraday_store.load_latest_scan)
+    row = None
+    try:
+        row = await asyncio.to_thread(intraday_store.load_latest_scan)
+    except Exception as exc:
+        logger.warning("Intraday load_latest_scan failed: %s", exc)
+        row = None
     session_dict = session.to_dict()
     if not row:
         session_dict["allows_new_entries"] = False
@@ -698,7 +708,11 @@ async def intraday_live_quote_endpoint(symbol: str):
 
 async def intraday_stats_endpoint(days: int = Query(14, ge=1, le=90)):
 
-    return await asyncio.to_thread(intraday_store.compute_stats, int(days))
+    try:
+        return await asyncio.to_thread(intraday_store.compute_stats, int(days))
+    except Exception as exc:
+        logger.warning("Intraday compute_stats failed: %s", exc)
+        return {"total_scans": 0, "total_signals": 0, "win_rate": 0.0, "status": "standby"}
 
 def _swing_symbol_lookup_message(sym: str, stages: dict) -> str:
 

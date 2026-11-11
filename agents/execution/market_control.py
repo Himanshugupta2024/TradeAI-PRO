@@ -385,3 +385,118 @@ def get_market_control_status() -> Dict[str, Any]:
         "last_updated_by": state.get("updated_by", ""),
         "recent_audit": state.get("audit_log", [])[-5:],
     }
+
+
+FOCUS_STATE_KEY = "market_focus_config:v1"
+
+
+def get_market_focus_state() -> Dict[str, Any]:
+    """
+    Fetch the persistent market focus configuration from authoritative DB.
+    Includes active focus ('nse', 'crypto', 'forex', 'all') and per-market enablement flags.
+    """
+    try:
+        from db.runtime_state import get_runtime_state
+        state = get_runtime_state(FOCUS_STATE_KEY)
+        if isinstance(state, dict):
+            active_focus = str(state.get("active_focus", "all")).lower()
+            if active_focus not in ("nse", "crypto", "forex", "all"):
+                active_focus = "all"
+            return {
+                "active_focus": active_focus,
+                "nse_enabled": bool(state.get("nse_enabled", True)),
+                "crypto_enabled": bool(state.get("crypto_enabled", True)),
+                "forex_enabled": bool(state.get("forex_enabled", True)),
+                "version": int(state.get("version", 1)),
+                "updated_at": str(state.get("updated_at", "")),
+                "updated_by": str(state.get("updated_by", "system")),
+                "audit_log": state.get("audit_log", [])[-20:],
+            }
+    except Exception as exc:
+        logger.error("Failed to load market focus state from DB: %s (using defaults)", exc)
+
+    return {
+        "active_focus": "all",
+        "nse_enabled": True,
+        "crypto_enabled": True,
+        "forex_enabled": True,
+        "version": 1,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": "system_default",
+        "audit_log": [],
+    }
+
+
+def set_market_focus_state(
+    active_focus: str,
+    nse_enabled: bool = True,
+    crypto_enabled: bool = True,
+    forex_enabled: bool = True,
+    operator: str = "operator",
+    reason: str = "",
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """
+    Update persistent market focus configuration and synchronize Section 6A policy.
+    Valid active_focus options: 'nse', 'crypto', 'forex', 'all'.
+    """
+    active_focus = str(active_focus or "all").lower().strip()
+    if active_focus not in ("nse", "crypto", "forex", "all"):
+        return False, f"Invalid active_focus: '{active_focus}'. Must be 'nse', 'crypto', 'forex', or 'all'.", get_market_focus_state()
+
+    current_state = get_market_focus_state()
+    new_version = current_state.get("version", 1) + 1
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    audit_entry = {
+        "action": f"SET_MARKET_FOCUS:{active_focus.upper()}",
+        "active_focus": active_focus,
+        "nse_enabled": bool(nse_enabled),
+        "crypto_enabled": bool(crypto_enabled),
+        "forex_enabled": bool(forex_enabled),
+        "timestamp": now_iso,
+        "operator": operator,
+        "reason": reason or f"Operator set market focus to {active_focus.upper()}",
+    }
+
+    audit_log = current_state.get("audit_log", [])
+    audit_log.append(audit_entry)
+
+    updated_payload = {
+        "active_focus": active_focus,
+        "nse_enabled": bool(nse_enabled),
+        "crypto_enabled": bool(crypto_enabled),
+        "forex_enabled": bool(forex_enabled),
+        "version": new_version,
+        "updated_at": now_iso,
+        "updated_by": operator,
+        "audit_log": audit_log[-20:],
+    }
+
+    try:
+        from db.runtime_state import set_runtime_state
+        set_runtime_state(FOCUS_STATE_KEY, updated_payload)
+        logger.info(
+            "Market focus state updated: focus=%s nse=%s crypto=%s forex=%s (v%d)",
+            active_focus, nse_enabled, crypto_enabled, forex_enabled, new_version
+        )
+
+        # Synchronize Section 6A crypto_forex_enabled flag so workers stay aligned
+        is_cf_active = bool(crypto_enabled or forex_enabled)
+        if active_focus in ("crypto", "forex"):
+            is_cf_active = True
+        elif active_focus == "nse":
+            is_cf_active = False
+
+        mc_state = get_market_control_state()
+        if mc_state.get("crypto_forex_enabled") != is_cf_active:
+            mc_state["crypto_forex_enabled"] = is_cf_active
+            mc_state["version"] = mc_state.get("version", 1) + 1
+            mc_state["updated_at"] = now_iso
+            mc_state["updated_by"] = operator
+            set_runtime_state(STATE_KEY, mc_state)
+
+        return True, f"Market focus successfully updated to {active_focus.upper()}.", updated_payload
+    except Exception as exc:
+        logger.error("Failed to persist updated market focus state: %s", exc)
+        return False, f"Database write failure: {exc}", current_state
+

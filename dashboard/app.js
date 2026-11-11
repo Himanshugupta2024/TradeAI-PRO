@@ -2460,7 +2460,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
 
         // HTTP-level 503 or 429 → server waking up or burst rate-limited, retry with backoff
-        if (isSafeMethod && (resp.status === 503 || resp.status === 429) && _retries > 0) {
+        if (isSafeMethod && resp.status === 503 && _retries > 0) {
             let delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
             try {
                 const retryAfterHeader = resp.headers && resp.headers.get ? resp.headers.get('retry-after') : null;
@@ -8138,13 +8138,58 @@ async function takePaperTrade(symbol, direction, entry, stopLoss, target, atr, s
 
 
 
+// ── Strategy Horizon & Time Barrier Resolver ─────────────────────────
+function _getTradeHorizonMeta(sym, signalType, timeframe) {
+    const s = String(sym || '').toUpperCase();
+    const st = String(signalType || '').toUpperCase();
+    const tf = String(timeframe || '').toLowerCase();
+
+    const isCrypto = s.includes('USDT') || s.includes('BTC') || s.includes('ETH') || s.includes('SOL');
+    const isForex = s.includes('/') || s.includes('EUR_') || s.includes('GBP_') || s.includes('USD_') || s.includes('JPY_');
+    const isIntraday = st.includes('INTRADAY') || st.includes('SCALP') || tf === '5m' || tf === '15m';
+
+    if (isCrypto) {
+        return {
+            short: '12–48h (Crypto)',
+            full: '12–48 Hours (Crypto Swing)',
+            barrierShort: 'Max 20 Bars',
+            barrierFull: '20 Bars (4H Time Barrier)',
+            subtext: 'Continuous 24/7 crypto momentum cycle',
+            rule: 'Auto-exit if target/stop not reached within 20 bars'
+        };
+    }
+    if (isForex) {
+        return {
+            short: '2–4 Days (Forex)',
+            full: '2–4 Trading Days (Forex)',
+            barrierShort: 'Weekend Session',
+            barrierFull: 'Friday Close Session Barrier',
+            subtext: '4H/1D macro liquidity cycle',
+            rule: 'Paper exit before Friday 23:59 GMT'
+        };
+    }
+    if (isIntraday) {
+        return {
+            short: 'Today (Intraday)',
+            full: 'Same-Day (Intraday MIS)',
+            barrierShort: 'Exit: 15:15 IST',
+            barrierFull: 'Today before 15:15 IST',
+            subtext: 'Cash market single-session momentum',
+            rule: 'Mandatory auto square-off before market close'
+        };
+    }
+    // Default NSE Equities Swing
+    return {
+        short: '2–5 Days (Swing)',
+        full: '2–5 Trading Days (Swing Spectrum)',
+        barrierShort: 'Max 10 Bars',
+        barrierFull: '10 Trading Sessions (Daily Bars)',
+        subtext: 'Daily EOD multi-bar continuation window',
+        rule: 'Triple-barrier time exit if target/stop untouched'
+    };
+}
+
 // ── Stats Strip ─────────────────────────────────────────
-
-
-
-
-
-
 
 function renderOverviewActiveTrades(openTrades, summary) {
     _lastOpenTrades = Array.isArray(openTrades) ? openTrades : [];
@@ -8222,6 +8267,8 @@ function renderOverviewActiveTrades(openTrades, summary) {
                     ? `<span class="pos-status-pulse" style="color:#38bdf8;">🌙 LAST SESSION EOD</span>`
                     : `<span class="pos-status-pulse">● RUNNING</span>`));
 
+        const horizonMeta = _getTradeHorizonMeta(t.symbol, t.signal_type || t.strategy, t.timeframe);
+
         return `
             <div class="pos-ticket ${sideClass}" data-symbol="${t.symbol}" data-id="${t.id}" data-entry="${entry}" data-qty="${qty}" data-dir="${t.direction}" data-tp="${tp}" data-sl="${sl}" onclick="openPositionDetail(${t.id})" style="cursor:pointer;" title="Click to view full position details">
                 <div class="pos-ticket-top">
@@ -8261,6 +8308,10 @@ function renderOverviewActiveTrades(openTrades, summary) {
                         <span id="posPnlVal-${t.id}">${pnlSign}${currSym}${Math.abs(pnl).toFixed(2)}</span>
                         <span class="pos-pnl-pct" id="posPnlPct-${t.id}">(${pnlPctSign}${pnlPct.toFixed(2)}%)</span>
                     </div>
+                </div>
+                <div class="pos-horizon-bar" style="display:flex;justify-content:space-between;align-items:center;font-size:0.68rem;padding:3px 6px;margin:2px 0 4px;background:rgba(59,130,246,0.06);border-radius:4px;border:1px solid rgba(59,130,246,0.15);">
+                    <span style="color:#93c5fd;font-weight:600;">⏱️ ${horizonMeta.short}</span>
+                    <span style="color:var(--text-muted);font-family:var(--font-mono);font-size:0.65rem;" title="${horizonMeta.rule}">${horizonMeta.barrierShort}</span>
                 </div>
                 <div class="pos-ticket-footer">
                     <span class="pos-dist-hint" id="posDist-${t.id}">${distText}</span>
@@ -8450,6 +8501,7 @@ async function openPositionDetail(tradeId) {
     const statusText = isClosed ? `● ${trade.status || 'CLOSED'}` : '● ACTIVE RUNNING';
     const statusColor = isClosed ? pnlColor : 'var(--green)';
     const pnlTitle = isClosed ? 'Final Realized P&amp;L' : 'Floating Unrealized P&amp;L';
+    const posHorizonMeta = _getTradeHorizonMeta(sym, trade.signal_type || trade.strategy, trade.timeframe);
 
     // Render Rich Body
     const bodyEl = document.getElementById('posModalBody');
@@ -8513,6 +8565,28 @@ async function openPositionDetail(tradeId) {
                     <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Trailing SL</div>
                     <div style="font-size:1.05rem;font-weight:700;font-family:var(--font-mono);color:#c084fc;margin-top:2px;">📐 Active</div>
                     <div style="font-size: 0.72rem;color:var(--text-muted);margin-top:2px;">Dynamic Lock</div>
+                </div>
+            </div>
+
+            <!-- Holding Horizon & Time Barrier (Square-Off) -->
+            <div style="background:rgba(59,130,246,0.07);border:1px solid rgba(59,130,246,0.22);border-radius:8px;padding:12px 14px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    <div style="font-size:0.70rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Expected Target Horizon</div>
+                    <div style="font-size:0.95rem;font-weight:700;color:#93c5fd;margin-top:2px;display:flex;align-items:center;gap:6px;">
+                        ⏱️ ${posHorizonMeta.full}
+                    </div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">
+                        ${posHorizonMeta.subtext}
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:0.70rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">Time Barrier (Auto Square-Off)</div>
+                    <div style="font-size:0.92rem;font-weight:700;font-family:var(--font-mono);color:#f0f6fc;margin-top:2px;">
+                        ${posHorizonMeta.barrierFull}
+                    </div>
+                    <div style="font-size:0.70rem;color:#f59e0b;margin-top:3px;">
+                        ⚠️ ${posHorizonMeta.rule}
+                    </div>
                 </div>
             </div>
 
@@ -10944,105 +11018,36 @@ function updateOpportunitiesGrid(opportunities, meta) {
 
 
     grid.innerHTML = opportunities.map(opp => {
-
-
-
+        if (!opp) return '';
+        const rawSig = String(opp.signal || opp.direction || 'HOLD').toUpperCase();
         let sigColor = 'var(--cyan)';
-
-
-
-        let sigText = opp.signal;
-
-
-
-        if (opp.signal.includes('BUY')) sigColor = 'var(--green)';
-
-
-
-        if (opp.signal.includes('SELL')) sigColor = 'var(--red)';
-
-
-
-        if (opp.signal.includes('BREAKOUT') || opp.signal.includes('SPIKE')) sigColor = 'var(--yellow)';
-
-
-
-
-
-
+        let sigText = rawSig;
+        if (rawSig.includes('BUY') || rawSig.includes('LONG')) sigColor = 'var(--green)';
+        else if (rawSig.includes('SELL') || rawSig.includes('SHORT')) sigColor = 'var(--red)';
+        else if (rawSig.includes('BREAKOUT') || rawSig.includes('SPIKE')) sigColor = 'var(--yellow)';
 
         // Strip .NS for display
-
-
-
-        const symbol = opp.symbol.replace('.NS', '');
-
-
-
-
-
-
+        const symbol = String(opp.symbol || 'UNKNOWN').replace('.NS', '');
+        const priceVal = Number(opp.price ?? opp.entry ?? opp.close ?? 0);
+        const rsiVal = opp.rsi ? opp.rsi : '-';
+        const volVal = opp.vol != null ? `${(Number(opp.vol) / 1000).toFixed(0)}k` : '-';
+        const volSpike = Boolean(opp.vol_spike);
 
         return `
-
-
-
             <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);padding:0.6rem;border-radius:6px;display:flex;flex-direction:column;gap:0.25rem;">
-
-
-
                 <div style="display:flex;justify-content:space-between;align-items:center;">
-
-
-
                     <span style="font-weight:bold;font-size:0.85rem">${symbol}</span>
-
-
-
                     <span style="font-size: 0.72rem;color:${sigColor};border:1px solid ${sigColor};padding:1px 4px;border-radius:3px;">${sigText}</span>
-
-
-
                 </div>
-
-
-
                 <div style="font-size:0.8rem;">
-
-
-
-                    <span style="color:var(--text-muted);">₹${opp.price.toFixed(2)}</span>
-
-
-
+                    <span style="color:var(--text-muted);">₹${priceVal.toFixed(2)}</span>
                 </div>
-
-
-
                 <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text-muted);">
-
-
-
-                    <span>RSI: ${opp.rsi ? opp.rsi : '-'}</span>
-
-
-
-                    <span>Vol: ${(opp.vol / 1000).toFixed(0)}k <span style="font-size:0.6rem;color:${opp.vol_spike ? 'var(--green)' : 'inherit'}">${opp.vol_spike ? '▲' : ''}</span></span>
-
-
-
+                    <span>RSI: ${rsiVal}</span>
+                    <span>Vol: ${volVal} <span style="font-size:0.6rem;color:${volSpike ? 'var(--green)' : 'inherit'}">${volSpike ? '▲' : ''}</span></span>
                 </div>
-
-
-
             </div>
-
-
-
         `;
-
-
-
     }).join('');
 
 
@@ -23748,7 +23753,7 @@ async function loadEdgeTopSetups(universe = null, force = false) {
         else if (_currentEdgeUniverse === 'index') assetParam = 'index';
 
         const [setupsRes, overviewRes, flowRes, newsRes] = await Promise.all([
-            fetchWithTimeout(`${API}/api/edge/top-setups?asset_class=${assetParam}&limit=40${force ? '&force_refresh=true' : ''}`, {}, 25000, 1),
+            fetchWithTimeout(`${API}/api/edge/top-setups?asset_class=${assetParam}&limit=40${force ? '&force_refresh=true' : ''}`, {}, 25000, 1).catch(() => null),
             fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 20000, 1).catch(() => null),
             fetchWithTimeout(`${API}/api/tradeflow`, {}, 15000, 1).catch(() => null),
             fetchWithTimeout(`${API}/api/nse/news`, {}, 15000, 1).catch(() => null),
@@ -27529,6 +27534,11 @@ function _renderWatchlistCard(sym, q, compName) {
                     </div>
                 </div>
 
+                <div class="watchlist-horizon" style="margin: 6px 0 8px; padding: 4px 8px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 0.70rem; opacity: 0.6;">
+                    <span style="color:var(--text-muted); display:flex; align-items:center; gap:4px;">⏱️ Horizon: --</span>
+                    <span style="color:var(--text-muted); font-family:var(--font-mono); font-size:0.67rem;">Barrier: --</span>
+                </div>
+
                 <div class="watchlist-actions" style="display:flex;align-items:center;gap:6px;">
                     <button class="watchlist-inspect-btn" onclick="retryWatchlistSymbol('${sym}')" style="background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.35); color: #60a5fa;" title="Retry loading ${sym} quote">
                         🔄 Retry
@@ -27551,6 +27561,7 @@ function _renderWatchlistCard(sym, q, compName) {
     const entry = q.entry || ltp;
     const sl = q.sl || (ltp * 0.98);
     const tp = q.tp || (ltp * 1.035);
+    const wlHorizonMeta = _getTradeHorizonMeta(sym, signalLabel, q.timeframe);
 
     const isLong = ['LONG', 'BUY'].includes(signalLabel.toUpperCase());
     const isShort = ['SHORT', 'SELL'].includes(signalLabel.toUpperCase());
@@ -27601,6 +27612,17 @@ function _renderWatchlistCard(sym, q, compName) {
                 <div>
                     <div class="watchlist-lvl-label" style="color:var(--green,#10b981);">Target (TP)</div>
                     <div class="watchlist-lvl-val" style="color:var(--green,#10b981);">₹${Number(tp).toFixed(1)}</div>
+                </div>
+            </div>
+
+            <div class="watchlist-horizon" style="margin: 6px 0 8px; padding: 5px 8px; background: rgba(59,130,246,0.07); border: 1px solid rgba(59,130,246,0.22); border-radius: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 0.70rem;">
+                <div style="display:flex; align-items:center; gap:5px;">
+                    <span style="font-size:0.8rem;">⏱️</span>
+                    <span style="color:var(--text-muted); font-weight:600;">Est. Horizon:</span>
+                    <span style="color:#93c5fd; font-weight:700;">${wlHorizonMeta.short}</span>
+                </div>
+                <div style="color:#94a3b8; font-family:var(--font-mono); font-size:0.67rem;" title="${wlHorizonMeta.rule}">
+                    ${wlHorizonMeta.barrierShort}
                 </div>
             </div>
 

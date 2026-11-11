@@ -307,7 +307,18 @@ async def get_edge_top_setups(
                 )
             return rows
 
-        setups = await asyncio.wait_for(asyncio.to_thread(_compute_top), timeout=30.0)
+        setups = []
+        try:
+            setups = await asyncio.wait_for(asyncio.to_thread(_compute_top), timeout=12.0)
+        except asyncio.TimeoutError:
+            logger.warning("Top setups calculation timed out (12s) — falling back to cached setups")
+            try:
+                engine = EdgeScoreEngine()
+                ranked = engine.get_top_setups(asset_class, min_score, limit)
+                setups = [{"symbol": sym, "asset_class": asset_class, "edge_score": sc, "confidence": 1.0} for sym, sc in ranked]
+            except Exception:
+                setups = []
+
         return {
             "asset_class": asset_class,
             "min_score": min_score,
@@ -315,12 +326,6 @@ async def get_edge_top_setups(
             "setups": setups,
             "force_refresh": force_refresh,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-    except asyncio.TimeoutError:
-        return {
-            "error": "Top setups timed out",
-            "asset_class": asset_class,
-            "setups": [],
         }
     except Exception as e:
         logger.error("Failed to get top EdgeScore setups: %s", e)

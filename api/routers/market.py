@@ -2099,9 +2099,11 @@ async def get_screener_opportunities():
                 opps.append({
                     "symbol": s.get("symbol"),
                     "direction": s.get("direction", "LONG"),
+                    "signal": s.get("direction", "LONG"),
                     "strategy": s.get("strategy", "INTRADAY"),
                     "confidence": float(s.get("confluence_score") or s.get("score") or 60.0),
                     "entry": s.get("entry"),
+                    "price": float(s.get("entry") or 0.0),
                     "target": s.get("target"),
                     "stop_loss": s.get("stop_loss"),
                     "rationale": s.get("rationale", ""),
@@ -2118,14 +2120,18 @@ async def get_screener_opportunities():
                 for sym, p in list(snap["prices"].items())[:5]:
                     sig = p.get("signal", "HOLD")
                     if sig in ("LONG", "SHORT", "BUY", "SELL"):
+                        sig_direction = "LONG" if sig in ("LONG", "BUY") else "SHORT"
+                        entry_val = float(p.get("close") or 0.0)
                         opps.append({
                             "symbol": sym,
-                            "direction": "LONG" if sig in ("LONG", "BUY") else "SHORT",
+                            "direction": sig_direction,
+                            "signal": sig_direction,
                             "strategy": "WORKER_CYCLE",
                             "confidence": 65.0,
-                            "entry": p.get("close"),
-                            "target": round(p.get("close", 0) * (1.02 if sig in ("LONG", "BUY") else 0.98), 2),
-                            "stop_loss": round(p.get("close", 0) * (0.99 if sig in ("LONG", "BUY") else 1.01), 2),
+                            "entry": entry_val,
+                            "price": entry_val,
+                            "target": round(entry_val * (1.02 if sig_direction == "LONG" else 0.98), 2),
+                            "stop_loss": round(entry_val * (0.99 if sig_direction == "LONG" else 1.01), 2),
                             "rationale": f"Market snapshot signal {sig} in regime {p.get('regime', 'TREND')}",
                             "source": "MARKET_SNAPSHOT",
                         })
