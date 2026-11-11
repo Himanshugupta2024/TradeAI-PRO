@@ -22,8 +22,9 @@ def calculate_position_size(
     risk_pct: float = 0.01,
     sl_atr_multiplier: float | None = None,
     max_single_trade_pct: float | None = None,
+    risk_regime: str = "NEUTRAL",
 ) -> int:
-    """Risk a fixed capital fraction per trade, scaled by ATR stop distance.
+    """Risk a fixed capital fraction per trade, scaled by ATR stop distance and market risk regime.
 
     Args:
         capital: Available capital.
@@ -32,6 +33,7 @@ def calculate_position_size(
         risk_pct: Fraction of capital to risk, e.g. 0.01 = 1%.
         sl_atr_multiplier: ATR multiple used for stop distance.
         max_single_trade_pct: Max notional per trade as fraction of capital.
+        risk_regime: Market risk regime ("RISK_ON", "NEUTRAL", "RISK_OFF").
 
     Returns:
         Integer quantity. Returns 0 when constraints cannot be satisfied.
@@ -40,6 +42,19 @@ def calculate_position_size(
     px = _to_float(entry)
     atr_v = _to_float(atr)
     risk_f = _to_float(risk_pct, 0.01)
+
+    # Dynamic regime risk multiplier
+    regime_u = str(risk_regime or "NEUTRAL").upper()
+    if "RISK_ON" in regime_u or "TRENDING" in regime_u:
+        regime_mult = 1.25
+    elif "RISK_OFF" in regime_u or "HIGH_VOLATILITY" in regime_u:
+        regime_mult = 0.35
+    elif "NEUTRAL" in regime_u or "RANGING" in regime_u:
+        regime_mult = 0.65
+    else:
+        regime_mult = 1.0
+
+    risk_f = risk_f * regime_mult
 
     sl_mult = _to_float(
         sl_atr_multiplier,

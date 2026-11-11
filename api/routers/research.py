@@ -595,65 +595,47 @@ async def get_edge_risk_gauge(
         vix_trend = _vix_trend(indicators.vix_change_pct)
 
         indicators_payload = {
-
             "vix": indicators.vix,
-
             "vix_change_pct": indicators.vix_change_pct,
-
             "vix_trend": vix_trend,
-
+            "india_vix": getattr(indicators, "india_vix", None),
+            "india_vix_change_pct": getattr(indicators, "india_vix_change_pct", None),
+            "india_vix_trend": getattr(indicators, "india_vix_trend", "FLAT"),
+            "ad_ratio": getattr(indicators, "ad_ratio", None),
+            "above_ema20_pct": getattr(indicators, "above_ema20_pct", None),
+            "breadth_regime": getattr(indicators, "breadth_regime", "NEUTRAL"),
             "btc_trend": indicators.btc_trend,
-
             "nifty_trend": indicators.nifty_trend,
-
             "usdjpy_level": indicators.usdjpy_level,
-
             "usdjpy_trend": indicators.usdjpy_trend,
-
             "gold_trend": indicators.gold_trend,
-
         }
 
         cache_age_seconds = max(
-
             0,
-
             int((datetime.now(timezone.utc) - indicators.timestamp).total_seconds()),
-
         )
 
         return {
-
             "risk_score": risk_score,
-
             "regime": regime,
-
             "indicators": indicators_payload,
-
             "updated_at": updated_at,
-
             "cache_age_seconds": cache_age_seconds,
-
             "force_refresh": force_refresh,
-
-            # Backward-compatible aliases for existing clients.
-
+            # Backward-compatible & enhanced aliases
             "risk_regime": regime,
-
             "vix_level": indicators.vix,
-
             "vix_trend": vix_trend,
-
+            "india_vix_level": getattr(indicators, "india_vix", None),
+            "india_vix_trend": getattr(indicators, "india_vix_trend", "FLAT"),
+            "market_breadth": getattr(indicators, "breadth_regime", "NEUTRAL"),
+            "ad_ratio": getattr(indicators, "ad_ratio", None),
             "btc_trend": indicators.btc_trend,
-
             "nifty_trend": indicators.nifty_trend,
-
             "usdjpy_trend": indicators.usdjpy_trend,
-
             "gold_trend": indicators.gold_trend,
-
             "timestamp": updated_at,
-
         }
 
     except Exception as e:

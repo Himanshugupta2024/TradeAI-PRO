@@ -124,6 +124,8 @@ class RiskGauge:
         # Count available indicators
         available = sum([
             indicators.vix is not None,
+            getattr(indicators, "india_vix", None) is not None,
+            getattr(indicators, "ad_ratio", None) is not None,
             indicators.btc_trend is not None,
             indicators.nifty_trend is not None,
             indicators.usdjpy_trend is not None,
@@ -139,7 +141,7 @@ class RiskGauge:
         # Calculate individual indicator scores
         scores = []
 
-        # VIX score
+        # US VIX score
         if indicators.vix is not None:
             if indicators.vix < self.VIX_LOW_THRESHOLD:
                 vix_score = 100.0  # Low volatility = risk-on
@@ -153,7 +155,34 @@ class RiskGauge:
                     (self.VIX_HIGH_THRESHOLD - self.VIX_LOW_THRESHOLD) * 200.0
                 )
             scores.append(vix_score)
-            logger.debug(f"VIX score: {vix_score:.1f} (VIX={indicators.vix:.2f})")
+            logger.debug(f"US VIX score: {vix_score:.1f} (VIX={indicators.vix:.2f})")
+
+        # India VIX score (Local NSE Volatility fear metric)
+        if getattr(indicators, "india_vix", None) is not None:
+            iv = indicators.india_vix
+            if iv < self.INDIA_VIX_LOW_THRESHOLD:
+                india_vix_score = 100.0
+            elif iv > self.INDIA_VIX_HIGH_THRESHOLD:
+                india_vix_score = -100.0
+            else:
+                india_vix_score = 100.0 - (
+                    (iv - self.INDIA_VIX_LOW_THRESHOLD) /
+                    (self.INDIA_VIX_HIGH_THRESHOLD - self.INDIA_VIX_LOW_THRESHOLD) * 200.0
+                )
+            scores.append(india_vix_score)
+            logger.debug(f"India VIX score: {india_vix_score:.1f} (VIX={iv:.2f})")
+
+        # Market Breadth score (Advance/Decline Ratio across Nifty 50 constituents)
+        if getattr(indicators, "ad_ratio", None) is not None:
+            ad = indicators.ad_ratio
+            if ad >= 2.0:
+                breadth_score = 100.0
+            elif ad <= 0.5:
+                breadth_score = -100.0
+            else:
+                breadth_score = ((ad - 0.5) / 1.5) * 200.0 - 100.0
+            scores.append(breadth_score)
+            logger.debug(f"Market Breadth score: {breadth_score:.1f} (AD={ad:.2f})")
 
         # BTC trend score
         if indicators.btc_trend:
@@ -220,6 +249,8 @@ class RiskGauge:
 
         # Fetch all indicators
         vix, vix_change = self._fetch_vix()
+        india_vix, india_vix_change, india_vix_trend = self._fetch_india_vix()
+        ad_ratio, above_ema20, breadth_regime = self._fetch_market_breadth()
         btc_trend = self._fetch_btc_trend()
         nifty_trend = self._fetch_nifty_trend()
         usdjpy_level, usdjpy_trend = self._fetch_usdjpy()
@@ -227,7 +258,8 @@ class RiskGauge:
 
         # Determine risk regime
         risk_regime = self._calculate_risk_regime(
-            vix, btc_trend, nifty_trend, usdjpy_trend, gold_trend
+            vix, btc_trend, nifty_trend, usdjpy_trend, gold_trend,
+            india_vix=india_vix, ad_ratio=ad_ratio,
         )
 
         indicators = RiskIndicators(
@@ -240,6 +272,12 @@ class RiskGauge:
             gold_trend=gold_trend,
             risk_regime=risk_regime,
             timestamp=datetime.now(timezone.utc),
+            india_vix=india_vix,
+            india_vix_change_pct=india_vix_change,
+            india_vix_trend=india_vix_trend,
+            ad_ratio=ad_ratio,
+            above_ema20_pct=above_ema20,
+            breadth_regime=breadth_regime,
         )
 
         # Save to cache
@@ -315,6 +353,90 @@ class RiskGauge:
         except Exception as e:
             logger.error(f"Failed to fetch VIX: {e}")
             return None, None
+
+    def _fetch_india_vix(self) -> tuple[Optional[float], Optional[float], Optional[str]]:
+        """
+        Fetch India VIX (^INDIAVIX) from Yahoo Finance.
+
+        Returns:
+            (current_india_vix, 7day_change_pct, trend) or (None, None, None)
+        """
+        try:
+            ticker = yf.Ticker("^INDIAVIX")
+            hist = ticker.history(period="1mo")
+
+            if hist.empty:
+                logger.debug("No India VIX data returned from Yahoo Finance")
+                return None, None, None
+
+            current_vix = float(hist["Close"].iloc[-1])
+
+            if len(hist) >= 8:
+                vix_7d_ago = float(hist["Close"].iloc[-8])
+                vix_change = ((current_vix - vix_7d_ago) / vix_7d_ago) * 100.0
+            else:
+                vix_change = None
+
+            prices = hist["Close"].tolist()
+            trend = self.calculate_trend(prices)
+            logger.info(
+                f"India VIX: {current_vix:.2f} (7d change: {vix_change:.2f}%, trend: {trend})"
+                if vix_change else f"India VIX: {current_vix:.2f}"
+            )
+            return current_vix, vix_change, trend
+
+        except Exception as e:
+            logger.debug(f"Failed to fetch India VIX: {e}")
+            return None, None, None
+
+    def _fetch_market_breadth(self) -> tuple[Optional[float], Optional[float], Optional[str]]:
+        """
+        Calculate Advance/Decline ratio and % above 20-period EMA across key Nifty constituent stocks.
+
+        Returns:
+            (ad_ratio, above_ema20_pct, breadth_regime)
+        """
+        try:
+            import api.service as svc
+            mdata = getattr(svc, "_market_data", {})
+            symbols = [
+                "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
+                "SBIN", "BHARTIARTL", "ITC", "LT", "KOTAKBANK"
+            ]
+            advances = 0
+            declines = 0
+            above_ema = 0
+            total_valid = 0
+
+            for sym in symbols:
+                df = mdata.get(sym)
+                if df is None:
+                    df = mdata.get(f"{sym}.NS")
+                if df is not None and len(df) >= 20 and "close" in df.columns:
+                    c = df["close"].values
+                    if len(c) >= 2:
+                        total_valid += 1
+                        if c[-1] >= c[-2]:
+                            advances += 1
+                        else:
+                            declines += 1
+                        ema20 = float(df["close"].ewm(span=20, adjust=False).mean().iloc[-1])
+                        if c[-1] >= ema20:
+                            above_ema += 1
+
+            if total_valid < 3:
+                # Cold cache baseline
+                return 1.2, 55.0, "NEUTRAL"
+
+            ad_ratio = round(advances / max(declines, 1), 2)
+            above_pct = round((above_ema / total_valid) * 100.0, 1)
+            regime = "STRONG_BREADTH" if ad_ratio >= 1.5 and above_pct >= 60.0 else (
+                "WEAK_BREADTH" if ad_ratio <= 0.7 or above_pct <= 40.0 else "NEUTRAL"
+            )
+            return ad_ratio, above_pct, regime
+        except Exception as e:
+            logger.debug(f"Market breadth calculation failed: {e}")
+            return None, None, None
 
     def _fetch_btc_trend(self) -> Optional[str]:
         """
@@ -491,6 +613,8 @@ class RiskGauge:
         nifty_trend: Optional[str],
         usdjpy_trend: Optional[str],
         gold_trend: Optional[str],
+        india_vix: Optional[float] = None,
+        ad_ratio: Optional[float] = None,
     ) -> str:
         """
         Determine overall risk regime from indicators.
@@ -502,12 +626,28 @@ class RiskGauge:
         risk_off_signals = 0
         total_signals = 0
 
-        # VIX
+        # Global US VIX
         if vix is not None:
             total_signals += 1
             if vix < self.VIX_LOW_THRESHOLD:
                 risk_on_signals += 1
             elif vix > self.VIX_HIGH_THRESHOLD:
+                risk_off_signals += 1
+
+        # Local India VIX (NSE fear index)
+        if india_vix is not None:
+            total_signals += 1
+            if india_vix < self.INDIA_VIX_LOW_THRESHOLD:
+                risk_on_signals += 1
+            elif india_vix > self.INDIA_VIX_HIGH_THRESHOLD:
+                risk_off_signals += 1
+
+        # Market Breadth AD Ratio
+        if ad_ratio is not None:
+            total_signals += 1
+            if ad_ratio >= 1.5:
+                risk_on_signals += 1
+            elif ad_ratio <= 0.7:
                 risk_off_signals += 1
 
         # BTC

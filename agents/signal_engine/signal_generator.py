@@ -444,10 +444,11 @@ def generate_signals(
     _edge_seasonal = edge_breakdown.seasonal_bonus if edge_breakdown else 0.0
     _edge_carry = edge_breakdown.carry_bonus if edge_breakdown else 0.0
 
-    # ── Self-Learning Weights ────────────────────────
+    # ── Self-Learning Weights (Regime-Conditioned 2D Matrix) ───────
     try:
         from agents.analytics.feedback_loop import WeightAdapter
-        _w = WeightAdapter()._load()
+        _regime_name = regime.value if hasattr(regime, "value") else (str(regime) if regime else "UNKNOWN")
+        _w = WeightAdapter().get_regime_weights(_regime_name)
     except Exception:
         _w = {}
     
@@ -857,6 +858,16 @@ def generate_signals(
     signal_threshold = settings.SIGNAL_SCORE_THRESHOLDS.get(
         regime_key, settings.SIGNAL_SCORE_DEFAULT
     )
+    # Check session phase: during MIDDAY_CHOP (11:30–13:30 IST), add +5 hurdle
+    # to protect capital from low-volume false breakouts and midday head-fakes
+    try:
+        from agents.analytics.feedback_loop import get_ist_session_phase
+        current_session_phase = get_ist_session_phase()
+        if current_session_phase == "MIDDAY_CHOP":
+            signal_threshold += 5.0
+            log.debug("MIDDAY_CHOP active: raised signal score threshold by +5.0 to %.1f", signal_threshold)
+    except Exception:
+        pass
     # AI confidence is now used as a SOFT BONUS in the score, not a hard gate.
     # The old hard gate (buy_score >= threshold) & ai_pass was double-gatekeeping
     # and blocking most signals in ranging markets with naturally low confidence.

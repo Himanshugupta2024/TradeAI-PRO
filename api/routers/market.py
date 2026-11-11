@@ -1699,22 +1699,46 @@ async def sector_heatmap():
     }
 
 @router.get("/api/analytics/scorecard")
-
-async def get_scorecard():
-
+async def get_scorecard(
+    bootstrap_if_empty: bool = Query(True, description="Auto-populate historical bar outcomes if sample size < 30"),
+):
     """
-
-    Multi-dimensional win-rate scorecard from the trade journal.
-
+    Multi-dimensional win-rate and institutional mathematical expectancy scorecard from the trade journal.
     Dimensions: regime, symbol, hour, confidence bucket, quality grade.
-
-    Also lists false signal reason distribution.
-
+    Metrics: win_rate, expectancy_r, profit_factor, payoff_ratio, max_drawdown_r, mfe_mae_diagnostics.
     """
-
-    scorecard = await asyncio.to_thread(get_journal().get_scorecard)
+    journal = get_journal()
+    scorecard = await asyncio.to_thread(journal.get_scorecard)
+    if bootstrap_if_empty and scorecard.get("resolved", 0) < 30:
+        try:
+            from agents.analytics.scorecard_bootstrapper import bootstrap_scorecard_from_history
+            added = await bootstrap_scorecard_from_history(min_trades=40)
+            if added > 0:
+                scorecard = await asyncio.to_thread(journal.get_scorecard)
+        except Exception as exc:
+            logger.debug("Automatic scorecard bootstrap attempt failed: %s", exc)
 
     return scorecard
+
+
+@router.post("/api/analytics/scorecard/bootstrap")
+async def trigger_scorecard_bootstrap(
+    force: bool = Query(False, description="Force re-running historical bar replay"),
+    min_trades: int = Query(50, description="Minimum target sample size"),
+):
+    """Admin endpoint to populate TradeJournal with empirical historical bar-replay trades."""
+    from agents.analytics.scorecard_bootstrapper import bootstrap_scorecard_from_history
+    added = await bootstrap_scorecard_from_history(min_trades=min_trades, force=force)
+    journal = get_journal()
+    sc = await asyncio.to_thread(journal.get_scorecard)
+    return {
+        "ok": True,
+        "added_trades": added,
+        "total_resolved": sc.get("resolved", 0),
+        "overall_win_rate": sc.get("overall_win_rate", 0.0),
+        "expectancy_r": sc.get("expectancy_r", 0.0),
+        "profit_factor": sc.get("profit_factor", 0.0),
+    }
 
 @router.get("/api/analytics/signals")
 

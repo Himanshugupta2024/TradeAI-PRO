@@ -45,12 +45,15 @@ def regime_adjusted_risk_pct(base_risk: float, regime=None) -> float:
     raw = regime.value if hasattr(regime, "value") else str(regime)
     regime_name = raw.strip().lower()
 
-    if regime_name == "high_volatility":
-        adjusted = base_risk * 0.5
-        log.debug("HIGH_VOLATILITY: risk reduced %.2f%% → %.2f%%", base_risk, adjusted)
-    elif regime_name == "trending":
+    if regime_name in ("risk_off", "high_volatility"):
+        adjusted = base_risk * 0.35 if regime_name == "risk_off" else base_risk * 0.5
+        log.debug("RISK_OFF / HIGH_VOLATILITY: risk reduced %.2f%% → %.2f%%", base_risk, adjusted)
+    elif regime_name in ("risk_on", "trending"):
         adjusted = base_risk * 1.25
-        log.debug("TRENDING: risk increased %.2f%% → %.2f%%", base_risk, adjusted)
+        log.debug("RISK_ON / TRENDING: risk increased %.2f%% → %.2f%%", base_risk, adjusted)
+    elif regime_name == "neutral":
+        adjusted = base_risk * 0.65
+        log.debug("NEUTRAL: risk scaled %.2f%% → %.2f%%", base_risk, adjusted)
     else:
         adjusted = base_risk
 

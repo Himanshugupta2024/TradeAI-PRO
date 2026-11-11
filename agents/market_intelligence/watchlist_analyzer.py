@@ -492,6 +492,7 @@ def calculate_trade_levels(
     trend_bias: str,
     total_score: int,
     adx: float,
+    symbol: str = "",
 ) -> Dict[str, Any]:
     """
     Resolves genuine structural levels:
@@ -515,6 +516,25 @@ def calculate_trade_levels(
     # Preliminary qualification for actionable setup
     is_qualified_long = (trend_bias == "BULLISH") and (total_score >= 70) and (adx >= 20.0)
     is_qualified_short = (trend_bias == "BEARISH") and (total_score >= 70) and (adx >= 20.0)
+
+    # Statistical Edge Gating from TradeJournal Scorecard
+    edge_gated = False
+    edge_rationale = ""
+    if symbol and (is_qualified_long or is_qualified_short):
+        try:
+            from agents.analytics.trade_journal import get_journal
+            journal = get_journal()
+            edge_info = journal.get_edge_score(
+                symbol=symbol,
+                regime="TRENDING" if trend_bias == "BULLISH" else "RANGING",
+            )
+            if edge_info.get("recommended_action") == "SUPPRESS_TO_HOLD":
+                is_qualified_long = False
+                is_qualified_short = False
+                edge_gated = True
+                edge_rationale = edge_info.get("rationale", "")
+        except Exception:
+            pass
 
     if is_qualified_long:
         # Trigger price: above last bar's high or near resistance
@@ -604,6 +624,8 @@ def calculate_trade_levels(
         "key_resistance": key_res,
         "invalidation_level": invalidation,
         "rr_ratio": None,
+        "edge_gated": edge_gated,
+        "edge_rationale": edge_rationale,
     }
 
 
@@ -927,6 +949,7 @@ async def analyze_watchlist_symbols(
                 trend_bias=trend_bias,
                 total_score=score,
                 adx=adx_val,
+                symbol=sym,
             )
 
             # Dynamic Horizon
@@ -950,6 +973,8 @@ async def analyze_watchlist_symbols(
                 adx=adx_val,
                 trend_bias=trend_bias,
             )
+            if levels.get("edge_gated"):
+                rationale = f"⚠️ Suppressed: {levels.get('edge_rationale', 'Negative regime expectancy')}. {rationale}"
 
             result_entry = {
                 "symbol": sym,

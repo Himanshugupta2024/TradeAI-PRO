@@ -418,6 +418,57 @@ class TradeJournal:
         resolution_rate = round(decided / total, 4) if total > 0 else 0.0
         sample_status = "SUFFICIENT (n>=30)" if decided >= 30 else "INSUFFICIENT RESOLVED SAMPLE"
 
+        # ── Institutional Expectancy & R-Multiple Attribution ──
+        win_records = [r for r in resolved if r.outcome == 1]
+        loss_records = [r for r in resolved if r.outcome == -1]
+
+        win_r_list = [r.realized_r if r.realized_r > 0 else 2.0 for r in win_records]
+        loss_r_list = [abs(r.realized_r) if r.realized_r < 0 else 1.0 for r in loss_records]
+
+        total_gain_r = sum(win_r_list)
+        total_loss_r = sum(loss_r_list)
+
+        avg_win_r = round(total_gain_r / len(win_records), 2) if win_records else 0.0
+        avg_loss_r = round(total_loss_r / len(loss_records), 2) if loss_records else 0.0
+
+        if decided > 0:
+            win_pct = wins / decided
+            loss_pct = losses / decided
+            expectancy_r = round((win_pct * avg_win_r) - (loss_pct * avg_loss_r), 3)
+            profit_factor = round(total_gain_r / total_loss_r, 2) if total_loss_r > 0 else (99.0 if total_gain_r > 0 else 0.0)
+            payoff_ratio = round(avg_win_r / avg_loss_r, 2) if avg_loss_r > 0 else 0.0
+        else:
+            expectancy_r = 0.0
+            profit_factor = 0.0
+            payoff_ratio = 0.0
+
+        # Max consecutive losses & Max Drawdown in R-multiples
+        consec_losses = 0
+        max_consec_losses = 0
+        cum_r = 0.0
+        peak_r = 0.0
+        max_dd_r = 0.0
+
+        for r in resolved:
+            if r.outcome == -1:
+                consec_losses += 1
+                max_consec_losses = max(max_consec_losses, consec_losses)
+                trade_r = -(abs(r.realized_r) if r.realized_r < 0 else 1.0)
+            elif r.outcome == 1:
+                consec_losses = 0
+                trade_r = r.realized_r if r.realized_r > 0 else 2.0
+            else:
+                trade_r = 0.0
+
+            cum_r += trade_r
+            if cum_r > peak_r:
+                peak_r = cum_r
+            dd = peak_r - cum_r
+            if dd > max_dd_r:
+                max_dd_r = dd
+
+        mfe_mae_diag = self.get_mfe_mae_diagnostics()
+
         return {
             "total_signals":       total,
             "resolved":            decided,
@@ -429,6 +480,14 @@ class TradeJournal:
             "overall_win_rate":    resolved_win_rate,  # Win rate strictly on resolved outcomes
             "resolution_rate":     resolution_rate,
             "sample_status":       sample_status,
+            "expectancy_r":         expectancy_r,
+            "profit_factor":        profit_factor,
+            "payoff_ratio":         payoff_ratio,
+            "avg_win_r":            avg_win_r,
+            "avg_loss_r":           avg_loss_r,
+            "max_consecutive_losses": max_consec_losses,
+            "max_drawdown_r":       round(max_dd_r, 2),
+            "mfe_mae_diagnostics":  mfe_mae_diag,
             "by_regime":           by_regime,
             "by_symbol":           by_symbol,
             "by_hour":             by_hour,
@@ -484,6 +543,92 @@ class TradeJournal:
 
         return adjustments
 
+    def get_edge_score(
+        self,
+        symbol: str,
+        regime: str = "UNKNOWN",
+        hour_ist: Optional[int] = None,
+    ) -> dict:
+        """
+        Evaluate statistical edge for a potential setup based on historical outcomes.
+        Returns:
+          - edge_rating: "STRONG_EDGE" | "MODERATE_EDGE" | "NEUTRAL" | "NEGATIVE_EXPECTANCY"
+          - expectancy_r: float
+          - win_rate: float
+          - sample_size: int
+          - recommended_action: "BOOST_SETUP" | "ALLOW" | "SUPPRESS_TO_HOLD"
+          - rationale: str
+        """
+        self._ensure_loaded()
+        resolved = [r for r in self._records if r.outcome in (1, -1)]
+
+        sym_norm = str(symbol or "").upper().replace(".NS", "").replace("/", "")
+        reg_norm = str(regime or "UNKNOWN").upper()
+
+        sym_matching = [
+            r for r in resolved
+            if r.symbol.upper().replace(".NS", "").replace("/", "") == sym_norm
+        ]
+        if len(sym_matching) >= 5:
+            matching = sym_matching
+        else:
+            reg_matching = [r for r in resolved if r.regime == reg_norm]
+            if len(reg_matching) >= 5:
+                matching = reg_matching
+            else:
+                matching = []
+
+        if len(matching) < 5:
+            # Cold-start baseline: allow execution with neutral edge
+            return {
+                "edge_rating": "NEUTRAL",
+                "expectancy_r": 0.0,
+                "win_rate": 0.5,
+                "sample_size": len(matching),
+                "recommended_action": "ALLOW",
+                "rationale": "Sample size < 5; default neutral edge.",
+            }
+
+        wins = sum(1 for r in matching if r.outcome == 1)
+        losses = sum(1 for r in matching if r.outcome == -1)
+        decided = wins + losses
+        wr = wins / decided if decided > 0 else 0.5
+
+        gains = sum(r.realized_r if r.realized_r > 0 else 2.0 for r in matching if r.outcome == 1)
+        costs = sum(abs(r.realized_r) if r.realized_r < 0 else 1.0 for r in matching if r.outcome == -1)
+
+        avg_w = gains / wins if wins > 0 else 2.0
+        avg_l = costs / losses if losses > 0 else 1.0
+        exp_r = round((wr * avg_w) - ((1.0 - wr) * avg_l), 3)
+
+        if exp_r < -0.15 or (wr < 0.40 and decided >= 6):
+            return {
+                "edge_rating": "NEGATIVE_EXPECTANCY",
+                "expectancy_r": exp_r,
+                "win_rate": round(wr, 3),
+                "sample_size": decided,
+                "recommended_action": "SUPPRESS_TO_HOLD",
+                "rationale": f"Negative statistical edge ({exp_r:+.2f}R, {wr*100:.1f}% WR over n={decided}).",
+            }
+        elif exp_r >= 0.40 and wr >= 0.58 and decided >= 6:
+            return {
+                "edge_rating": "STRONG_EDGE",
+                "expectancy_r": exp_r,
+                "win_rate": round(wr, 3),
+                "sample_size": decided,
+                "recommended_action": "BOOST_SETUP",
+                "rationale": f"Strong statistical edge ({exp_r:+.2f}R, {wr*100:.1f}% WR over n={decided}).",
+            }
+        else:
+            return {
+                "edge_rating": "MODERATE_EDGE",
+                "expectancy_r": exp_r,
+                "win_rate": round(wr, 3),
+                "sample_size": decided,
+                "recommended_action": "ALLOW",
+                "rationale": f"Acceptable statistical edge ({exp_r:+.2f}R, {wr*100:.1f}% WR over n={decided}).",
+            }
+
     # ── Utility ───────────────────────────────────────────────────────────────
 
     def get_recent_signals(self, limit: int = 50) -> list[dict]:
@@ -518,15 +663,21 @@ def _group_winrate(
     records: list[SignalOutcome],
     key_fn,
 ) -> dict:
-    """Aggregate win/loss/total/rate by a key function."""
-    groups: dict[str, dict] = defaultdict(lambda: {"win": 0, "loss": 0, "timeout": 0, "total": 0})
+    """Aggregate win/loss/total/rate, expectancy, and profit factor by a key function."""
+    groups: dict[str, dict] = defaultdict(
+        lambda: {"win": 0, "loss": 0, "timeout": 0, "total": 0, "gain_r": 0.0, "loss_r": 0.0}
+    )
     for r in records:
         k = key_fn(r)
         groups[k]["total"] += 1
         if r.outcome == 1:
-            groups[k]["win"]     += 1
+            groups[k]["win"] += 1
+            gain = r.realized_r if r.realized_r > 0 else 2.0
+            groups[k]["gain_r"] += gain
         elif r.outcome == -1:
-            groups[k]["loss"]    += 1
+            groups[k]["loss"] += 1
+            loss = abs(r.realized_r) if r.realized_r < 0 else 1.0
+            groups[k]["loss_r"] += loss
         else:
             groups[k]["timeout"] += 1
 
@@ -534,15 +685,25 @@ def _group_winrate(
     for k, v in groups.items():
         t = v["total"]
         decided = v["win"] + v["loss"]
+        wr = round(v["win"] / decided, 4) if decided > 0 else 0.0
+        avg_w = v["gain_r"] / v["win"] if v["win"] > 0 else 0.0
+        avg_l = v["loss_r"] / v["loss"] if v["loss"] > 0 else 0.0
+        exp_r = round((wr * avg_w) - ((1.0 - wr) * avg_l), 3) if decided > 0 else 0.0
+        pf = round(v["gain_r"] / v["loss_r"], 2) if v["loss_r"] > 0 else (99.0 if v["gain_r"] > 0 else 0.0)
+
         out[k] = {
             "win":                  v["win"],
             "loss":                 v["loss"],
             "timeout":              v["timeout"],
             "resolved":             decided,
             "total":                t,
-            "resolved_win_rate":    round(v["win"] / decided, 4) if decided > 0 else 0.0,
-            "win_rate":             round(v["win"] / decided, 4) if decided > 0 else 0.0,
+            "resolved_win_rate":    wr,
+            "win_rate":             wr,
             "resolution_rate":      round(decided / t, 4) if t > 0 else 0.0,
+            "expectancy_r":         exp_r,
+            "profit_factor":        pf,
+            "avg_win_r":            round(avg_w, 2),
+            "avg_loss_r":           round(avg_l, 2),
         }
     return out
 
@@ -575,6 +736,13 @@ def _empty_scorecard() -> dict:
         "overall_win_rate":     0.0,
         "resolved_win_rate":    0.0,
         "resolution_rate":      0.0,
+        "expectancy_r":         0.0,
+        "profit_factor":        0.0,
+        "payoff_ratio":         0.0,
+        "avg_win_r":            0.0,
+        "avg_loss_r":           0.0,
+        "max_consecutive_losses": 0,
+        "max_drawdown_r":       0.0,
         "sample_status":        "NO DATA",
         "wins":                 0,
         "losses":               0,

@@ -5594,6 +5594,22 @@
 
                 </div>
 
+                <div class="perf-kpi-card" id="lcExpectancy">
+
+                    <span class="pkv" id="lsExpectancyVal">+0.00%</span>
+
+                    <span class="pkl">Mathematical Expectancy (EV)</span>
+
+                </div>
+
+                <div class="perf-kpi-card" id="lcProfitFactor">
+
+                    <span class="pkv" id="lsProfitFactorVal">1.00x</span>
+
+                    <span class="pkl">Profit Factor</span>
+
+                </div>
+
             </div>
 
 
@@ -5653,6 +5669,64 @@
                 </div>
 
                 <div id="lsCalibHint" style="font-size:0.72rem;color:var(--text-muted);margin-top:0.6rem;">Higher confidence bands should show higher realized win rate.</div>
+
+            </div>
+
+
+
+            <!-- 2D Multi-Regime Expectancy Optimization Matrix -->
+
+            <div class="chart-card" style="margin-bottom: 1.5rem;">
+
+                <div class="perf-card-header" style="margin-bottom: 0.8rem;">
+
+                    <h3 class="chart-title">Multi-Regime Expectancy Optimization Matrix</h3>
+
+                    <span style="font-size: 0.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--border-color,#374151);color:var(--cyan,#06b6d4);">2D Adaptive Layer</span>
+
+                </div>
+
+                <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.85rem;line-height:1.4;">
+
+                    Real-time algorithm component weights tuned dynamically per market regime (Trending, Ranging, High Volatility, Choppy).
+
+                    Green indicates algorithm boost (&gt;1.05x), Amber indicates defensive dampening (&lt;0.95x). Expectancy (EV) combines win rate with average win/loss ratio.
+
+                </div>
+
+                <div class="perf-table-wrap" id="lsRegimeMatrixWrap">
+
+                    <div class="loading-state" style="padding:1rem 0;"><p style="font-size:0.75rem;">Loading 2D regime matrix...</p></div>
+
+                </div>
+
+            </div>
+
+
+
+            <!-- Market Session Phase Performance Breakdown -->
+
+            <div class="chart-card" style="margin-bottom: 1.5rem;">
+
+                <div class="perf-card-header" style="margin-bottom: 0.8rem;">
+
+                    <h3 class="chart-title">Market Session Phase Performance (IST)</h3>
+
+                    <span style="font-size: 0.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--border-color,#374151);color:var(--text-muted);">Time-of-Day Filter</span>
+
+                </div>
+
+                <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.85rem;line-height:1.4;">
+
+                    Performance segregation across key market phases: Opening Momentum (09:15–10:15 IST), Midday Chop (11:30–13:30 IST), and Closing Trend (14:15–15:30 IST).
+
+                </div>
+
+                <div id="lsSessionPhaseWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:0.75rem;">
+
+                    <div class="loading-state" style="padding:1rem 0;"><p style="font-size:0.75rem;">Loading session phase stats...</p></div>
+
+                </div>
 
             </div>
 
@@ -5732,18 +5806,14 @@
 
 
 
-            <!-- Top KPI row -->
-
-            <div class="sc-kpi-row" id="scKpiRow" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;">
-
+            <!-- Top KPI row with Institutional Expectancy Metrics -->
+            <div class="sc-kpi-row" id="scKpiRow" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(170px, 1fr));gap:1rem;margin-bottom:1.5rem;">
                 <div class="kpi-card" id="scTotalSignals"><span class="kpi-val">—</span><span class="kpi-lbl">Total Signals</span></div>
-
                 <div class="kpi-card" id="scWinRate"><span class="kpi-val">—</span><span class="kpi-lbl">Overall Win Rate</span></div>
-
+                <div class="kpi-card" id="scExpectancy"><span class="kpi-val" style="color:#38bdf8;">—</span><span class="kpi-lbl">Expectancy (E[R])</span></div>
+                <div class="kpi-card" id="scProfitFactor"><span class="kpi-val" style="color:#10b981;">—</span><span class="kpi-lbl">Profit Factor</span></div>
                 <div class="kpi-card" id="scBestRegime"><span class="kpi-val">—</span><span class="kpi-lbl">Best Regime</span></div>
-
                 <div class="kpi-card" id="scPending"><span class="kpi-val">—</span><span class="kpi-lbl">Pending Outcomes</span></div>
-
             </div>
 
 
@@ -6281,6 +6351,7 @@
                     <button type="button" class="toggle-btn" id="idBtnDensity" onclick="toggleIntradayDensity()" style="font-size:0.7rem;padding:0.28rem 0.6rem;" title="Toggle row density">Compact</button>
                     <button type="button" class="toggle-btn" id="intradayLatestBtn" onclick="loadIntradayLatest()" style="font-size:0.72rem;padding:0.32rem 0.75rem;">↻ Latest</button>
                     <button type="button" class="btn btn-secondary" onclick="exportIntradayCSV()" style="font-size:0.72rem;padding:0.32rem 0.75rem;display:inline-flex;align-items:center;gap:4px;" title="Export Setups to CSV">📥 CSV</button>
+                    <label style="font-size:0.72rem;display:inline-flex;align-items:center;gap:4px;color:var(--text-muted);cursor:pointer;background:rgba(255,255,255,0.03);padding:3px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.08);" title="Subah market open par automatic scan trigger karega"><input type="checkbox" id="idAutoScanToggle" checked style="accent-color:#2563eb;"> ⚡ Auto-Morning</label>
                     <button type="button" class="btn btn-primary" id="intradayScanBtn" onclick="runIntradayScan()" style="font-size:0.75rem;padding:0.35rem 0.9rem;background:#2563eb;color:#fff;border:none;border-radius:6px;font-weight:700;display:inline-flex;align-items:center;gap:5px;box-shadow:0 2px 8px rgba(0,0,0,0.3);">⚡ Run Scan</button>
                 </div>
             </div>
@@ -8202,7 +8273,7 @@
 
     <script src="/static/tradeflow_helper.js"></script>
 
-    <script src="/static/app.js?v=mw_35"></script>
+    <script src="/static/app.js?v=mw_36"></script>
 
     <script src="/static/honesty.js" defer></script>
 

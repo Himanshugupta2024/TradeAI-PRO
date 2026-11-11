@@ -60,6 +60,93 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "COMBINED":      1.0,   # Multiple signals in agreement
 }
 
+# ── 2D Regime Prior Weights (Multi-Regime Baseline Matrix) ─────────────────────
+DEFAULT_REGIME_WEIGHTS_2D: dict[str, dict[str, float]] = {
+    "TRENDING": {
+        "BREAKOUT":     1.25,
+        "EMA_CROSS":    1.20,
+        "MACD_CROSS":   1.15,
+        "RSI_BOUNCE":   0.85,
+        "DIVERGENCE":   1.10,
+        "VOLUME_SPIKE": 1.20,
+        "COMBINED":     1.10,
+    },
+    "RANGING": {
+        "BREAKOUT":     0.70,
+        "EMA_CROSS":    0.75,
+        "MACD_CROSS":   0.80,
+        "RSI_BOUNCE":   1.30,
+        "DIVERGENCE":   1.20,
+        "VOLUME_SPIKE": 0.90,
+        "COMBINED":     1.00,
+    },
+    "HIGH_VOLATILITY": {
+        "BREAKOUT":     0.90,
+        "EMA_CROSS":    0.85,
+        "MACD_CROSS":   1.05,
+        "RSI_BOUNCE":   1.15,
+        "DIVERGENCE":   1.15,
+        "VOLUME_SPIKE": 1.15,
+        "COMBINED":     1.05,
+    },
+    "CHOPPY": {
+        "BREAKOUT":     0.60,
+        "EMA_CROSS":    0.70,
+        "MACD_CROSS":   0.75,
+        "RSI_BOUNCE":   1.25,
+        "DIVERGENCE":   1.15,
+        "VOLUME_SPIKE": 0.85,
+        "COMBINED":     0.95,
+    },
+    "UNKNOWN": {k: 1.0 for k in DEFAULT_WEIGHTS},
+}
+
+
+def get_ist_session_phase(dt: Optional[Union[datetime, str]] = None) -> str:
+    """
+    Map a timestamp to its IST Market Session Phase.
+      - OPENING_MOMENTUM:  09:15 – 10:15 IST (Opening institutional volatility/expansion)
+      - MORNING_EXPANSION: 10:15 – 11:30 IST (Initial trend continuation)
+      - MIDDAY_CHOP:       11:30 – 13:30 IST (Low-volume midday lull, high fakeout rate)
+      - AFTERNOON_SETUP:   13:30 – 14:15 IST (European open alignment & pre-closing setup)
+      - CLOSING_TREND:     14:15 – 15:30 IST (Square-off & institutional closing momentum)
+      - OFF_HOURS:         Outside 09:15–15:30 IST
+    """
+    if dt is None:
+        parsed_dt = datetime.now(tz=_IST)
+    elif isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            parsed_dt = dt.replace(tzinfo=_IST)
+        else:
+            parsed_dt = dt.astimezone(_IST)
+    elif isinstance(dt, str):
+        clean_str = dt.strip().replace("Z", "+00:00")
+        try:
+            parsed_dt = datetime.fromisoformat(clean_str)
+            if parsed_dt.tzinfo is None:
+                parsed_dt = parsed_dt.replace(tzinfo=_IST)
+            else:
+                parsed_dt = parsed_dt.astimezone(_IST)
+        except Exception:
+            return "OFF_HOURS"
+    else:
+        return "OFF_HOURS"
+
+    minutes = parsed_dt.hour * 60 + parsed_dt.minute
+    if 555 <= minutes < 615:
+        return "OPENING_MOMENTUM"
+    elif 615 <= minutes < 690:
+        return "MORNING_EXPANSION"
+    elif 690 <= minutes < 810:
+        return "MIDDAY_CHOP"
+    elif 810 <= minutes < 855:
+        return "AFTERNOON_SETUP"
+    elif 855 <= minutes <= 930:
+        return "CLOSING_TREND"
+    else:
+        return "OFF_HOURS"
+
+
 
 def _get_pg_session():
     """Return a new SQLAlchemy session bound to the main database engine."""
@@ -275,6 +362,9 @@ class FeedbackAnalyser:
 
                 trades = []
                 for r in rows:
+                    entry_t = getattr(r, "entry_time", None)
+                    close_t = getattr(r, "closed_at", None)
+                    session_p = get_ist_session_phase(entry_t or close_t)
                     trades.append({
                         "signal_type": r.signal_type,
                         "regime": r.regime,
@@ -283,6 +373,9 @@ class FeedbackAnalyser:
                         "pnl_pct": r.pnl_pct,
                         "result": r.result,
                         "confidence": r.confidence,
+                        "entry_time": entry_t,
+                        "closed_at": close_t,
+                        "session_phase": session_p,
                     })
             finally:
                 session.close()
@@ -294,6 +387,21 @@ class FeedbackAnalyser:
 
             # ── 2. Regime win rates ───────────────────────────────────────────
             regime_stats = _group_win_rate(trades, "regime")
+
+            # ── 2b. Session phase win rates (IST Market Phase) ────────────────
+            session_phase_stats = _group_win_rate(trades, "session_phase")
+
+            # ── 2c. 2D Regime × Signal Type Matrix Stats ─────────────────────
+            regime_matrix_stats: dict[str, dict[str, dict]] = {}
+            for r_key in ["TRENDING", "RANGING", "HIGH_VOLATILITY", "CHOPPY", "UNKNOWN"]:
+                regime_matrix_stats[r_key] = {}
+                for sig_key in DEFAULT_WEIGHTS:
+                    sub = [
+                        t for t in trades
+                        if str(t.get("regime", "")).upper() == r_key
+                        and str(t.get("signal_type", "")).upper() == sig_key
+                    ]
+                    regime_matrix_stats[r_key][sig_key] = _stats_block(sub)
 
             # ── 3. RSI zone win rates ─────────────────────────────────────────
             rsi_zone_stats = _rsi_zone_analysis(trades)
@@ -310,7 +418,7 @@ class FeedbackAnalyser:
             conf_band_stats = _confidence_band_analysis(trades)
             conf_calibration = _confidence_calibration_summary(conf_band_stats)
 
-            # ── 5. Overall ────────────────────────────────────────────────────
+            # ── 5. Overall & Mathematical Expectancy (EV) ─────────────────────
             wins = [t for t in trades if t["result"] == "WIN"]
             total = len(trades)
             total_weight = sum(float(t.get("_w", 1.0)) for t in trades)
@@ -321,6 +429,7 @@ class FeedbackAnalyser:
             overall_win_rate_unweighted = round(len(wins) / total * 100, 1) if total else 0
             avg_pnl = round(_safe_div(weighted_pnl_sum, total_weight), 2)
             avg_pnl_unweighted = round(sum(float(t.get("pnl_pct", 0.0)) for t in trades) / total, 2) if total else 0
+            overall_ev = _calculate_expectancy_metrics(trades)
 
             # Model accuracy: win rate of the high-confidence subset only.
             # It is NOT overall model accuracy, so we ship the label and the
@@ -353,10 +462,13 @@ class FeedbackAnalyser:
             insights = {
                 "signal_type_stats":  signal_stats,
                 "regime_stats":       regime_stats,
+                "session_phase_stats": session_phase_stats,
+                "regime_matrix_stats": regime_matrix_stats,
                 "rsi_zone_stats":     rsi_zone_stats,
                 "volume_stats":       volume_stats,
                 "confidence_band_stats": conf_band_stats,
                 "confidence_calibration": conf_calibration,
+                "expectancy_metrics": overall_ev,
                 "overall": {
                     "total_trades":    total,
                     "effective_trades": round(total_weight, 2),
@@ -364,6 +476,11 @@ class FeedbackAnalyser:
                     "win_rate_unweighted": overall_win_rate_unweighted,
                     "avg_pnl_pct":     avg_pnl,
                     "avg_pnl_pct_unweighted": avg_pnl_unweighted,
+                    "avg_win":         overall_ev["avg_win"],
+                    "avg_loss":        overall_ev["avg_loss"],
+                    "profit_factor":   overall_ev["profit_factor"],
+                    "expectancy":      overall_ev["expectancy"],
+                    "weighted_expectancy": overall_ev["weighted_expectancy"],
                     "model_accuracy":  model_accuracy,
                     "model_accuracy_label": "high-confidence subset win rate (confidence >= 50)",
                     "model_accuracy_basis_trades": len(high_conf),
@@ -497,6 +614,8 @@ class WeightAdapter:
         if total_sample < PAPER_TRADING_UNLOCK_MIN_TRADES:
             log.info("Cold start active (%d/%d trades) — weights held at prior",
                      total_sample, PAPER_TRADING_UNLOCK_MIN_TRADES)
+            new_weights["regime_weights"] = dict(DEFAULT_REGIME_WEIGHTS_2D)
+            new_weights["weights_2d"] = dict(DEFAULT_REGIME_WEIGHTS_2D)
             new_weights["_updated_at"] = datetime.now(tz=_IST).isoformat()
             new_weights["_total_trades"] = total_sample
             new_weights["_learning_state"] = "COLD_START"
@@ -544,6 +663,52 @@ class WeightAdapter:
             # Hard clamp
             new_weights[sig_type] = round(min(bound_hi, max(bound_lo, proposed)), 3)
 
+        # ── 2D Multi-Regime Weight Matrix Adaptation ────────────────────────
+        existing_2d = existing.get("regime_weights") or existing.get("weights_2d") or {}
+        regime_matrix_stats = insights.get("regime_matrix_stats", {})
+        new_2d: dict[str, dict[str, float]] = {}
+
+        for regime_name, default_sub in DEFAULT_REGIME_WEIGHTS_2D.items():
+            new_2d[regime_name] = {}
+            existing_sub = existing_2d.get(regime_name, {})
+            for sig_type in DEFAULT_WEIGHTS:
+                base_prior = default_sub.get(sig_type, 1.0)
+                old_val = float(existing_sub.get(sig_type, base_prior))
+
+                cell_stat = regime_matrix_stats.get(regime_name, {}).get(sig_type, {})
+                nt = int(cell_stat.get("trades", 0))
+
+                if nt < WEIGHT_MIN_SAMPLE_TRADES:
+                    new_2d[regime_name][sig_type] = round(old_val, 3)
+                    continue
+
+                wr = float(cell_stat.get("win_rate", 50.0))
+                weighted_nt = float(cell_stat.get("weighted_trades", nt))
+                sample_str = max(0.0, min(250.0, weighted_nt))
+
+                # Bayesian shrinkage toward 50%
+                shrunk_wr = _safe_div(
+                    (wr * sample_str) + (50.0 * WEIGHT_PRIOR_STRENGTH),
+                    sample_str + WEIGHT_PRIOR_STRENGTH,
+                )
+
+                # Expectancy (EV) factor boost
+                ev = float(cell_stat.get("expectancy", 0.0) or 0.0)
+                ev_boost = min(1.5, max(-1.5, ev)) * 0.20
+
+                x = (shrunk_wr - 50.0) / 18.0 + ev_boost
+                sigmoid = 1.0 / (1.0 + math.exp(-x))
+                target = bound_lo + sigmoid * (bound_hi - bound_lo)
+
+                alpha = min(0.25, 0.08 + min(1.0, sample_str / 180.0) * 0.17)
+                proposed = old_val * (1.0 - alpha) + target * alpha
+                hi = old_val + WEIGHT_MAX_STEP_PER_UPDATE
+                lo = old_val - WEIGHT_MAX_STEP_PER_UPDATE
+                proposed = min(hi, max(lo, proposed))
+                new_2d[regime_name][sig_type] = round(min(bound_hi, max(bound_lo, proposed)), 3)
+
+        new_weights["regime_weights"] = new_2d
+        new_weights["weights_2d"] = new_2d
         new_weights["_updated_at"] = datetime.now(tz=_IST).isoformat()
         new_weights["_total_trades"] = total_sample
         new_weights["_effective_trades"] = insights.get("overall", {}).get("effective_trades", 0)
@@ -558,7 +723,8 @@ class WeightAdapter:
         try:
             from db.runtime_state import set_runtime_state
             set_runtime_state("learned_weights:v1", new_weights)
-            log.info("Persisted learned weights to DB runtime_state (bounds: [%.2f, %.2f])", bound_lo, bound_hi)
+            set_runtime_state("learned_weights_2d:v1", new_2d)
+            log.info("Persisted learned weights & 2D matrix to DB runtime_state (bounds: [%.2f, %.2f])", bound_lo, bound_hi)
         except Exception as exc:
             log.debug("WeightAdapter DB backup failed: %s", exc)
 
@@ -570,6 +736,31 @@ class WeightAdapter:
             log.error("WeightAdapter.update_weights write failed: %s", exc)
 
         return new_weights
+
+    def get_regime_weights(self, regime: str = "UNKNOWN") -> dict[str, float]:
+        """
+        Return signal component weights conditioned on the market regime.
+        Falls back gracefully to flat learned weights or DEFAULT_REGIME_WEIGHTS_2D.
+        """
+        regime_key = str(regime or "UNKNOWN").upper().strip()
+        all_data = self._load()
+        regime_matrix = all_data.get("regime_weights") or all_data.get("weights_2d")
+
+        if regime_matrix and isinstance(regime_matrix, dict) and regime_key in regime_matrix:
+            return dict(regime_matrix[regime_key])
+
+        # If specific regime is in DEFAULT_REGIME_WEIGHTS_2D
+        if regime_key in DEFAULT_REGIME_WEIGHTS_2D:
+            base_regime = dict(DEFAULT_REGIME_WEIGHTS_2D[regime_key])
+            # Blend lightly with flat weights if trained
+            for k in DEFAULT_WEIGHTS:
+                if k in all_data and isinstance(all_data[k], (int, float)):
+                    flat_w = float(all_data[k])
+                    base_regime[k] = round(base_regime[k] * 0.7 + flat_w * 0.3, 3)
+            return base_regime
+
+        # Fallback: flat weights
+        return {k: float(all_data.get(k, 1.0)) for k in DEFAULT_WEIGHTS}
 
     def _load(self) -> dict:
         if _WEIGHTS_PATH != Path("config/learned_weights.json") and _WEIGHTS_PATH.exists():
@@ -718,9 +909,15 @@ def get_learning_stats() -> dict:
         "bounds": [0.75, 1.25] if total_trades < 100 else [0.50, 1.75],
     }
 
+    regime_weights = weights.get("regime_weights") or weights.get("weights_2d") or DEFAULT_REGIME_WEIGHTS_2D
+
     return {
         "insights":  insights,
         "weights":   weights,
+        "weights_2d": regime_weights,
+        "regime_matrix_stats": insights.get("regime_matrix_stats", {}),
+        "session_phase_stats": insights.get("session_phase_stats", {}),
+        "expectancy_metrics": insights.get("expectancy_metrics", {}),
         "health":    health,
         "storage":   "postgresql" if _is_using_postgres() else "sqlite",
     }
@@ -786,6 +983,58 @@ def _normalise_signal_type(raw: str) -> str:
     return mapping.get(raw, "COMBINED")
 
 
+def _calculate_expectancy_metrics(group: list[dict]) -> dict:
+    """
+    Calculates profit factor and mathematical expectancy (EV) for a group of trades.
+    EV = (WinRate * AvgWin) - (LossRate * AvgLoss)
+    """
+    if not group:
+        return {
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "profit_factor": 1.0,
+            "expectancy": 0.0,
+            "weighted_expectancy": 0.0,
+        }
+    wins = [t for t in group if t.get("result") == "WIN"]
+    losses = [t for t in group if t.get("result") == "LOSS"]
+    total_count = len(group)
+
+    win_pnls = [float(t.get("pnl_pct", 0.0)) for t in wins if float(t.get("pnl_pct", 0.0)) > 0]
+    loss_pnls = [abs(float(t.get("pnl_pct", 0.0))) for t in losses if float(t.get("pnl_pct", 0.0)) < 0]
+
+    avg_win = round(sum(win_pnls) / len(win_pnls), 2) if win_pnls else 0.0
+    avg_loss = round(sum(loss_pnls) / len(loss_pnls), 2) if loss_pnls else 0.0
+
+    sum_wins = sum(win_pnls)
+    sum_losses = sum(loss_pnls)
+    if sum_losses > 0:
+        profit_factor = round(sum_wins / sum_losses, 2)
+    elif sum_wins > 0:
+        profit_factor = round(sum_wins, 2)
+    else:
+        profit_factor = 1.0
+
+    win_rate_dec = len(wins) / total_count if total_count else 0.0
+    loss_rate_dec = len(losses) / total_count if total_count else 0.0
+    expectancy = round((win_rate_dec * avg_win) - (loss_rate_dec * avg_loss), 2)
+
+    total_weight = sum(float(t.get("_w", 1.0)) for t in group)
+    weighted_wins = sum(float(t.get("_w", 1.0)) for t in wins)
+    weighted_losses = max(0.0, total_weight - weighted_wins)
+    weighted_wr_dec = _safe_div(weighted_wins, total_weight)
+    weighted_loss_dec = _safe_div(weighted_losses, total_weight)
+    weighted_expectancy = round((weighted_wr_dec * avg_win) - (weighted_loss_dec * avg_loss), 2)
+
+    return {
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "profit_factor": profit_factor,
+        "expectancy": expectancy,
+        "weighted_expectancy": weighted_expectancy,
+    }
+
+
 def _group_win_rate(trades: list[dict], key: str) -> dict:
     groups: dict[str, list] = {}
     for t in trades:
@@ -798,6 +1047,7 @@ def _group_win_rate(trades: list[dict], key: str) -> dict:
         total_weight = sum(float(t.get("_w", 1.0)) for t in group)
         weighted_wins = sum(float(t.get("_w", 1.0)) for t in wins)
         weighted_pnl = sum(float(t.get("pnl_pct", 0.0)) * float(t.get("_w", 1.0)) for t in group)
+        ev_metrics = _calculate_expectancy_metrics(group)
         result[val] = {
             "trades":   len(group),
             "wins":     len(wins),
@@ -806,6 +1056,11 @@ def _group_win_rate(trades: list[dict], key: str) -> dict:
             "win_rate_unweighted": round(len(wins) / len(group) * 100, 1) if group else 0,
             "avg_pnl":  round(_safe_div(weighted_pnl, total_weight), 2),
             "avg_pnl_unweighted": round(sum(float(t.get("pnl_pct", 0.0)) for t in group) / len(group), 2) if group else 0,
+            "avg_win":  ev_metrics["avg_win"],
+            "avg_loss": ev_metrics["avg_loss"],
+            "profit_factor": ev_metrics["profit_factor"],
+            "expectancy": ev_metrics["expectancy"],
+            "weighted_expectancy": ev_metrics["weighted_expectancy"],
         }
     return result
 
@@ -847,11 +1102,16 @@ def _rsi_zone_analysis(trades: list[dict]) -> dict:
 
 def _stats_block(group: list[dict]) -> dict:
     if not group:
-        return {"trades": 0, "weighted_trades": 0, "win_rate": 0, "avg_pnl": 0}
+        return {
+            "trades": 0, "wins": 0, "weighted_trades": 0, "win_rate": 0, "win_rate_unweighted": 0, "avg_pnl": 0,
+            "avg_pnl_unweighted": 0, "avg_win": 0.0, "avg_loss": 0.0, "profit_factor": 1.0,
+            "expectancy": 0.0, "weighted_expectancy": 0.0
+        }
     wins = [t for t in group if t["result"] == "WIN"]
     total_weight = sum(float(t.get("_w", 1.0)) for t in group)
     weighted_wins = sum(float(t.get("_w", 1.0)) for t in wins)
     weighted_pnl = sum(float(t.get("pnl_pct", 0.0)) * float(t.get("_w", 1.0)) for t in group)
+    ev_metrics = _calculate_expectancy_metrics(group)
     return {
         "trades":   len(group),
         "wins":     len(wins),
@@ -860,6 +1120,11 @@ def _stats_block(group: list[dict]) -> dict:
         "win_rate_unweighted": round(len(wins) / len(group) * 100, 1),
         "avg_pnl":  round(_safe_div(weighted_pnl, total_weight), 2),
         "avg_pnl_unweighted": round(sum(float(t.get("pnl_pct", 0.0)) for t in group) / len(group), 2),
+        "avg_win":  ev_metrics["avg_win"],
+        "avg_loss": ev_metrics["avg_loss"],
+        "profit_factor": ev_metrics["profit_factor"],
+        "expectancy": ev_metrics["expectancy"],
+        "weighted_expectancy": ev_metrics["weighted_expectancy"],
     }
 
 
@@ -869,6 +1134,15 @@ def _empty_insights() -> dict:
         "regime_stats":       {},
         "rsi_zone_stats":     {},
         "volume_stats":       {"above_avg": {"trades": 0}, "below_avg": {"trades": 0}},
+        "session_phase_stats": {},
+        "regime_matrix_stats": {},
+        "expectancy_metrics": {
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "profit_factor": 1.0,
+            "expectancy": 0.0,
+            "weighted_expectancy": 0.0,
+        },
         "confidence_band_stats": {},
         "confidence_calibration": {
             "is_monotonic": False,
@@ -882,6 +1156,11 @@ def _empty_insights() -> dict:
             "win_rate_unweighted": 0,
             "avg_pnl_pct": 0,
             "avg_pnl_pct_unweighted": 0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "profit_factor": 1.0,
+            "expectancy": 0.0,
+            "weighted_expectancy": 0.0,
             "model_accuracy": 0,
             "reliability_score": 0,
         },

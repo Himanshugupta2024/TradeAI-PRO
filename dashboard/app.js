@@ -11971,6 +11971,21 @@ async function loadLearningStats() {
 
         document.getElementById('lsBestRegimeVal').textContent = data.insights?.best_regime || '—';
 
+        // Populate Mathematical Expectancy (EV) & Profit Factor
+        const evEl = document.getElementById('lsExpectancyVal');
+        if (evEl) {
+            const evVal = o.expectancy != null ? o.expectancy : 0.0;
+            evEl.textContent = (evVal >= 0 ? '+' : '') + Number(evVal).toFixed(2) + '%';
+            evEl.style.color = evVal > 0 ? 'var(--green, #10b981)' : (evVal < 0 ? 'var(--red, #ef4444)' : 'var(--text-muted)');
+        }
+
+        const pfEl = document.getElementById('lsProfitFactorVal');
+        if (pfEl) {
+            const pfVal = o.profit_factor != null ? o.profit_factor : 1.0;
+            pfEl.textContent = Number(pfVal).toFixed(2) + 'x';
+            pfEl.style.color = pfVal >= 1.25 ? 'var(--green, #10b981)' : (pfVal < 1.0 ? 'var(--red, #ef4444)' : 'var(--text-primary)');
+        }
+
         // Populate Learning Health & Thresholds
         const h = data.health || {};
         const reqTrades = h.canonical_sample_requirement || 30;
@@ -12268,11 +12283,115 @@ async function loadLearningStats() {
 
         }
 
+        // ── 2D Regime × Strategy Weight Matrix ────────────────────────
+        const matrixWrap = document.getElementById('lsRegimeMatrixWrap');
+        if (matrixWrap) {
+            const weights2d = data.weights_2d || data.weights?.regime_weights || data.weights?.weights_2d || {};
+            const regStats = data.regime_matrix_stats || data.insights?.regime_matrix_stats || {};
+            const signalKeys = ["BREAKOUT", "EMA_CROSS", "MACD_CROSS", "RSI_BOUNCE", "DIVERGENCE", "VOLUME_SPIKE", "COMBINED"];
+            const regimeKeys = ["TRENDING", "RANGING", "HIGH_VOLATILITY", "CHOPPY"];
 
+            const theadHtml = `
+                <thead>
+                    <tr>
+                        <th style="text-align:left;min-width:130px;">Market Regime</th>
+                        ${signalKeys.map(s => `<th style="text-align:center;font-size:0.75rem;">${s.replace('_', ' ')}</th>`).join('')}
+                    </tr>
+                </thead>
+            `;
 
+            const tbodyHtml = regimeKeys.map(rk => {
+                const rowCells = signalKeys.map(sk => {
+                    const w = Number((weights2d[rk] && weights2d[rk][sk]) || 1.0);
+                    const cstat = (regStats[rk] && regStats[rk][sk]) || {};
+                    const nt = cstat.trades || 0;
+                    const wr = cstat.win_rate != null ? Number(cstat.win_rate) : 0;
+                    const ev = cstat.expectancy != null ? Number(cstat.expectancy) : 0;
 
+                    let bg = 'rgba(255,255,255,0.02)';
+                    let fg = 'var(--text-muted)';
+                    let border = '1px solid var(--border-color,#374151)';
+                    if (w >= 1.06) {
+                        bg = 'rgba(16,185,129,0.12)';
+                        fg = 'var(--green,#10b981)';
+                        border = '1px solid rgba(16,185,129,0.25)';
+                    } else if (w <= 0.94) {
+                        bg = 'rgba(239,68,68,0.12)';
+                        fg = 'var(--red,#ef4444)';
+                        border = '1px solid rgba(239,68,68,0.25)';
+                    }
 
+                    const tooltip = `${rk} × ${sk}: Weight ${w.toFixed(2)}x | ${nt} trades | ${wr.toFixed(1)}% WR | EV ${ev >= 0 ? '+' : ''}${ev.toFixed(2)}%`;
 
+                    return `
+                        <td style="text-align:center;padding:0.45rem 0.35rem;" title="${tooltip}">
+                            <div style="background:${bg};border:${border};border-radius:6px;padding:4px 6px;">
+                                <div style="font-weight:700;font-size:0.83rem;color:${fg};">${w.toFixed(2)}x</div>
+                                <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">
+                                    ${nt > 0 ? `${nt}t · ${wr.toFixed(0)}%` : 'prior'}
+                                </div>
+                            </div>
+                        </td>
+                    `;
+                }).join('');
+
+                return `
+                    <tr>
+                        <td style="font-weight:700;font-size:0.8rem;color:var(--text-primary);">${rk}</td>
+                        ${rowCells}
+                    </tr>
+                `;
+            }).join('');
+
+            matrixWrap.innerHTML = `
+                <table class="perf-table" style="width:100%;border-collapse:collapse;">
+                    ${theadHtml}
+                    <tbody>${tbodyHtml}</tbody>
+                </table>
+            `;
+        }
+
+        // ── Market Session Phase Performance Breakdown ─────────────────
+        const sessionWrap = document.getElementById('lsSessionPhaseWrap');
+        if (sessionWrap) {
+            const phaseStats = data.session_phase_stats || data.insights?.session_phase_stats || {};
+            const phases = [
+                { id: "OPENING_MOMENTUM", label: "Opening Momentum", hours: "09:15 – 10:15 IST", desc: "Institutional volatility & expansion" },
+                { id: "MORNING_EXPANSION", label: "Morning Expansion", hours: "10:15 – 11:30 IST", desc: "Trend continuation & follow-through" },
+                { id: "MIDDAY_CHOP", label: "Midday Chop", hours: "11:30 – 13:30 IST", desc: "Low-volume consolidation & fakeouts", warning: "Head-Fake Protection Active (+5 Hurdle)" },
+                { id: "AFTERNOON_SETUP", label: "Afternoon Setup", hours: "13:30 – 14:15 IST", desc: "European open alignment & positioning" },
+                { id: "CLOSING_TREND", label: "Closing Trend", hours: "14:15 – 15:30 IST", desc: "Intraday square-off & closing momentum" }
+            ];
+
+            sessionWrap.innerHTML = phases.map(p => {
+                const st = phaseStats[p.id] || {};
+                const nt = st.trades || 0;
+                const wr = st.win_rate != null ? Number(st.win_rate) : 0;
+                const avgPnl = st.avg_pnl != null ? Number(st.avg_pnl) : 0;
+                const ev = st.expectancy != null ? Number(st.expectancy) : 0;
+                const c = wr >= 50 ? 'var(--green,#10b981)' : (nt === 0 ? 'var(--text-muted)' : 'var(--red,#ef4444)');
+
+                return `
+                    <div style="border:1px solid var(--border-color,#374151);border-radius:8px;background:rgba(255,255,255,0.02);padding:0.75rem;">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.35rem;">
+                            <div>
+                                <div style="font-size:0.83rem;font-weight:700;color:var(--text-primary);">${p.label}</div>
+                                <div style="font-size:0.70rem;color:var(--text-muted);">${p.hours}</div>
+                            </div>
+                            <span style="font-size:0.85rem;font-weight:700;color:${c};">${nt > 0 ? `${wr.toFixed(1)}%` : 'No Trades'}</span>
+                        </div>
+                        <div class="perf-sym-track" style="height:5px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden;margin:6px 0;">
+                            <div class="perf-sym-fill" style="width:${nt > 0 ? wr : 0}%;background:${c};height:100%;border-radius:3px;"></div>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-muted);margin-top:0.35rem;">
+                            <span>${nt} trade(s)</span>
+                            <span>EV: <strong style="color:${ev >= 0 ? 'var(--green,#10b981)' : 'var(--red,#ef4444)'}">${ev >= 0 ? '+' : ''}${ev.toFixed(2)}%</strong></span>
+                        </div>
+                        ${p.warning ? `<div style="margin-top:0.45rem;font-size:0.68rem;padding:2px 6px;border-radius:4px;background:rgba(245,158,11,0.1);color:var(--yellow,#f59e0b);border:1px solid rgba(245,158,11,0.25);">${p.warning}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
 
         // Outcomes Table
 
@@ -17797,6 +17916,34 @@ function renderScorecard(data) {
     _scKpi('scWinRate', resolvedWr, resolved > 0 ? (wins / resolved >= 0.5 ? 'var(--green)' : 'var(--yellow)') : null);
     _scKpi('scPending', pending || timeouts);
 
+    // ── Institutional Expectancy & Profit Factor KPIs ──
+    const expR = data.expectancy_r !== undefined && data.expectancy_r !== null ? Number(data.expectancy_r) : null;
+    const pf = data.profit_factor !== undefined && data.profit_factor !== null ? Number(data.profit_factor) : null;
+    const payoff = data.payoff_ratio !== undefined && data.payoff_ratio !== null ? Number(data.payoff_ratio) : null;
+    const maxDd = data.max_drawdown_r !== undefined && data.max_drawdown_r !== null ? Number(data.max_drawdown_r) : null;
+
+    if (expR !== null) {
+        const sign = expR > 0 ? '+' : '';
+        const expColor = expR >= 0.3 ? 'var(--green, #10b981)' : (expR < 0 ? 'var(--red, #ef4444)' : '#38bdf8');
+        _scKpi('scExpectancy', `${sign}${expR.toFixed(2)}R`, expColor);
+        const expCard = document.getElementById('scExpectancy');
+        if (expCard) {
+            const lbl = expCard.querySelector('.kpi-lbl');
+            if (lbl) lbl.textContent = `Expectancy E[R] / trade`;
+        }
+    }
+
+    if (pf !== null) {
+        const pfColor = pf >= 1.5 ? 'var(--green, #10b981)' : (pf < 1.0 ? 'var(--red, #ef4444)' : '#fbbf24');
+        const pfDisplay = pf >= 90 ? '∞' : `${pf.toFixed(2)}x`;
+        _scKpi('scProfitFactor', pfDisplay, pfColor);
+        const pfCard = document.getElementById('scProfitFactor');
+        if (pfCard) {
+            const lbl = pfCard.querySelector('.kpi-lbl');
+            if (lbl) lbl.textContent = `Profit Factor (Payoff ${payoff ? payoff.toFixed(1) + ':1' : '—'})`;
+        }
+    }
+
     const winRateCard = document.getElementById('scWinRate');
     if (winRateCard) {
         const lbl = winRateCard.querySelector('.kpi-lbl');
@@ -17805,7 +17952,7 @@ function renderScorecard(data) {
     const pendingCard = document.getElementById('scPending');
     if (pendingCard) {
         const lbl = pendingCard.querySelector('.kpi-lbl');
-        if (lbl) lbl.textContent = `Pending / Timeouts (${pending + timeouts})`;
+        if (lbl) lbl.textContent = `Pending (${pending}) · Max DD ${maxDd ? maxDd.toFixed(1) + 'R' : '—'}`;
     }
     const totalCard = document.getElementById('scTotalSignals');
     if (totalCard) {
@@ -23124,6 +23271,55 @@ function exportIntradayCSV() {
     document.body.removeChild(link);
 }
 
+// ── Intraday Command Center State ────────────────────────────────────────────
+let _intradayAutoScanTriggeredAt = 0;
+let _intradayScanInProgress = false;
+let _intradayAutoPollTimer = null;
+
+function _checkAndTriggerMorningAutoScan(row) {
+    if (_intradayScanInProgress) return;
+
+    // Check user toggle preference
+    const toggle = document.getElementById("idAutoScanToggle");
+    if (toggle && !toggle.checked) return;
+
+    const session = (row && row.session) || _intradaySession;
+    if (!session) return;
+
+    // Only auto-trigger during active market / opening window (09:15 - 15:15 IST)
+    const isMarketActive = Boolean(session.is_trading_active || session.allows_new_entries);
+    if (!isMarketActive) return;
+
+    const now = Date.now();
+    // Throttle: don't auto-trigger more than once every 10 minutes
+    if (now - _intradayAutoScanTriggeredAt < 10 * 60 * 1000) return;
+
+    let needsMorningScan = false;
+    if (!row || (!row.scan_time && !row.last_scan_at)) {
+        needsMorningScan = true;
+    } else {
+        const lastScanDt = new Date(row.last_scan_at || row.scan_time);
+        const isToday = lastScanDt.toDateString() === new Date().toDateString();
+        const ageMinutes = (now - lastScanDt.getTime()) / (60 * 1000);
+
+        if (!isToday || row.freshness_status === "EOD" || row.freshness_status === "UNAVAILABLE") {
+            needsMorningScan = true;
+        } else if (ageMinutes >= 20) {
+            needsMorningScan = true;
+        }
+    }
+
+    if (needsMorningScan) {
+        _intradayAutoScanTriggeredAt = now;
+        console.log("⚡ [Intraday] Active morning session detected with stale/missing scan. Auto-triggering morning scan...");
+        const meta = document.getElementById("intradayScanMeta");
+        if (meta) {
+            meta.innerHTML = `<span style="color:#f59e0b;font-weight:700;">⚡ Morning Auto-Scan:</span> Active session detected — refreshing opening setups...`;
+        }
+        runIntradayScan(true);
+    }
+}
+
 async function loadIntradayLatest() {
     const meta = document.getElementById("intradayScanMeta");
     const niftyBanner = document.getElementById("intradayNiftyContext");
@@ -23167,8 +23363,6 @@ async function loadIntradayLatest() {
                 const lastScanStr = row.last_scan_at ? new Date(row.last_scan_at).toLocaleTimeString() : (row.scan_time || "—");
                 const sourceCandleStr = row.source_candle_at ? new Date(row.source_candle_at).toLocaleTimeString() : "15m delayed EOD/intraday";
                 const delayStr = row.provider_freshness || "15m Delayed";
-                // 20 was a fabricated default; show a dash when the backend
-                // doesn't report a scan universe.
                 const symbolsScanned = Number(row.symbols_scanned);
                 const coverageStr = Number.isFinite(symbolsScanned) && symbolsScanned > 0
                     ? `${symbolsScanned} symbols`
@@ -23184,6 +23378,19 @@ async function loadIntradayLatest() {
 
         applyIntradayFilters();
 
+        // ── Approach C: Morning Market Open Auto-Trigger ───────────────
+        _checkAndTriggerMorningAutoScan(row);
+
+        // ── Background Auto-Polling (every 90s while on intraday tab) ──
+        if (!_intradayAutoPollTimer) {
+            _intradayAutoPollTimer = setInterval(() => {
+                const activeTab = document.querySelector('.tab-content.active');
+                if (activeTab && activeTab.id === 'intradayTab' && !_intradayScanInProgress) {
+                    loadIntradayLatest();
+                }
+            }, 90000);
+        }
+
     } catch (e) {
         console.warn("loadIntradayLatest error:", e);
         if (meta) meta.textContent = "Could not load intraday snapshot.";
@@ -23192,7 +23399,10 @@ async function loadIntradayLatest() {
     }
 }
 
-async function runIntradayScan() {
+async function runIntradayScan(isAuto = false) {
+    if (_intradayScanInProgress) return;
+    _intradayScanInProgress = true;
+
     const btn = document.getElementById("intradayScanBtn");
     const tbody = document.getElementById("intradayTableBody");
     const grid = document.getElementById("intradayGrid");
@@ -23200,14 +23410,16 @@ async function runIntradayScan() {
 
     if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<span class="spin">⏳</span> Scanning...';
+        btn.innerHTML = isAuto ? '<span class="spin">⚡</span> Auto-Scanning...' : '<span class="spin">⏳</span> Scanning...';
     }
 
-    if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:2.5rem;color:var(--text-muted);"><div class="loader" style="margin:0 auto 0.75rem;"></div>Running 0-delay hybrid intraday scan across watchlist... please wait (~20-40s)</td></tr>';
-    }
-    if (grid) {
-        grid.innerHTML = '<div class="loading-state" style="padding:2rem;"><div class="loader" style="margin:0 auto 1rem;"></div><p style="color:var(--text-muted);">Running 0-delay hybrid intraday scan across watchlist... please wait (~20-40s)</p></div>';
+    if ((!_intradayAllSigs || _intradayAllSigs.length === 0) || !isAuto) {
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:2.5rem;color:var(--text-muted);"><div class="loader" style="margin:0 auto 0.75rem;"></div>Running 0-delay hybrid intraday scan across watchlist... please wait (~20-40s)</td></tr>';
+        }
+        if (grid) {
+            grid.innerHTML = '<div class="loading-state" style="padding:2rem;"><div class="loader" style="margin:0 auto 1rem;"></div><p style="color:var(--text-muted);">Running 0-delay hybrid intraday scan across watchlist... please wait (~20-40s)</p></div>';
+        }
     }
 
     try {
@@ -23238,6 +23450,7 @@ async function runIntradayScan() {
         if (tbody) tbody.innerHTML = '<tr><td colspan="15" style="color:var(--red);text-align:center;padding:1.5rem;">Intraday scan failed (timeout or server error).</td></tr>';
         if (grid) grid.innerHTML = '<p style="color:var(--red);padding:1rem;">Intraday scan failed (timeout or server error).</p>';
     } finally {
+        _intradayScanInProgress = false;
         if (btn) {
             btn.disabled = false;
             btn.innerHTML = "⚡ Run Scan";

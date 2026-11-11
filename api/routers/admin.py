@@ -743,16 +743,31 @@ async def get_learning_stats_endpoint():
         return get_learning_stats()
     except Exception as exc:
         logger.error("Learning stats error: %s", exc)
+        from agents.analytics.feedback_loop import DEFAULT_REGIME_WEIGHTS_2D
         return {
             "insights": {
                 "signal_type_stats": {},
                 "regime_stats": {},
+                "session_phase_stats": {},
+                "regime_matrix_stats": {},
                 "rsi_zone_stats": {},
                 "volume_stats": {},
+                "expectancy_metrics": {
+                    "avg_win": 0.0,
+                    "avg_loss": 0.0,
+                    "profit_factor": 1.0,
+                    "expectancy": 0.0,
+                    "weighted_expectancy": 0.0,
+                },
                 "overall": {
                     "total_trades": 0,
                     "win_rate": 0,
                     "avg_pnl_pct": 0,
+                    "avg_win": 0.0,
+                    "avg_loss": 0.0,
+                    "profit_factor": 1.0,
+                    "expectancy": 0.0,
+                    "weighted_expectancy": 0.0,
                     "model_accuracy": 0,
                 },
                 "best_signal_type": "—",
@@ -761,6 +776,16 @@ async def get_learning_stats_endpoint():
                 "optimal_rsi_zone": "—",
             },
             "weights": {},
+            "weights_2d": DEFAULT_REGIME_WEIGHTS_2D,
+            "regime_matrix_stats": {},
+            "session_phase_stats": {},
+            "expectancy_metrics": {
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 1.0,
+                "expectancy": 0.0,
+                "weighted_expectancy": 0.0,
+            },
             "error": str(exc),
         }
 
