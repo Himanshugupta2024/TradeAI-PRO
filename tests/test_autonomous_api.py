@@ -69,6 +69,28 @@ def test_trigger_autonomous_cycle_endpoint(client):
         assert data.get("error") == "RATE_LIMITED"
 
 
+def test_trigger_autonomous_cycle_allow_local_override(client, monkeypatch):
+    from api.routers import admin as admin_mod
+    admin_mod._last_manual_cycle_dispatch_time = 0.0
+    monkeypatch.setenv("LIGHTWEIGHT_API_MODE", "true")
+    monkeypatch.setenv("BACKGROUND_REFRESH_ENABLED", "false")
+    monkeypatch.delenv("ALLOW_LOCAL_AUTONOMOUS_CYCLE", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+    # Without allow_local, should refuse with 409
+    res = client.post("/api/autonomous/run-cycle", json={"universe": "tier1", "allow_local": False})
+    assert res.status_code == 409
+    assert res.json()["error"] == "CYCLE_DISPATCH_UNAVAILABLE"
+
+    # With allow_local=True, should succeed with 200
+    admin_mod._last_manual_cycle_dispatch_time = 0.0
+    res = client.post("/api/autonomous/run-cycle", json={"universe": "tier1", "allow_local": True})
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+    assert res.json()["method"] == "local_async"
+
+
 def test_consecutive_standby_deduplication_preserves_intervening_executions(client):
     """
     Verify that:

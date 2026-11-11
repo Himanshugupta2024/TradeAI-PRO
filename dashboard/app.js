@@ -2957,7 +2957,7 @@ async function runAutonomousCycleNow() {
         const res = await fetchWithTimeout(targetApi + '/api/autonomous/run-cycle', {
             method: 'POST',
             headers: reqHeaders,
-            body: JSON.stringify({ universe: 'tier1' }),
+            body: JSON.stringify({ universe: 'tier1', allow_local: true, force_scan: true }),
         }, 15000);
         let data = null;
         try {
@@ -2975,7 +2975,7 @@ async function runAutonomousCycleNow() {
                 const retryRes = await fetchWithTimeout(targetApi + '/api/autonomous/run-cycle', {
                     method: 'POST',
                     headers: reqHeaders,
-                    body: JSON.stringify({ universe: 'tier1' }),
+                    body: JSON.stringify({ universe: 'tier1', allow_local: true, force_scan: true }),
                 }, 15000);
                 let retryData = null;
                 try { retryData = await parseJsonResponse(retryRes); } catch (_) {}

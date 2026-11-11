@@ -1874,7 +1874,11 @@
     async function executeRunCycleNow() {
       logMessage('Triggering on-demand autonomous scan cycle...', 'info');
       try {
-        const res = await apiCall('/api/autonomous/run-cycle', 'POST', { universe: 'ALL' });
+        const res = await apiCall('/api/autonomous/run-cycle', 'POST', {
+          universe: 'ALL',
+          allow_local: true,
+          force_scan: true
+        });
         logMessage(`Scan cycle triggered! Dispatch: ${res.message || 'OK'}`, 'ok');
         setTimeout(fetchAllTelemetry, 1500);
       } catch (e) {

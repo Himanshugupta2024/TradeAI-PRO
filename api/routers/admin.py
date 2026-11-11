@@ -613,8 +613,14 @@ async def trigger_autonomous_cycle(payload: dict | None = None):
 
     from api.cycle_scheduler import local_cycle_allowed
 
+    allow_local_override = (
+        bool(payload.get("allow_local", False))
+        or bool(payload.get("force_scan", False))
+        or bool(payload.get("force", False))
+        or str(os.getenv("ALLOW_LOCAL_AUTONOMOUS_CYCLE", "false")).strip().lower() in ("1", "true", "yes", "on")
+    )
     _allowed, _refusal = local_cycle_allowed()
-    if not _allowed:
+    if not _allowed and not allow_local_override:
         return JSONResponse(
             status_code=409,
             content={
