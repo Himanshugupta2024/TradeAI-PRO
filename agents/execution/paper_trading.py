@@ -264,6 +264,18 @@ class PaperTradingEngine:
                 self._consecutive_losses = 0
         self._last_trade_date = today
 
+        # Risk check: operator kill switch (authoritative, checked first)
+        try:
+            from agents.execution.runtime_controls import is_trading_halted
+
+            halted, halt_reason = is_trading_halted()
+            if halted:
+                self.last_rejection_reason = f"Trading halted by operator — {halt_reason}"
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
+        except Exception as ks_err:
+            log.debug("Kill switch check skipped: %s", ks_err)
+
         # Safeguard: prevent trading with non-positive capital
         if self.capital <= 0:
             self.last_rejection_reason = f"Insufficient capital (current capital is {self.capital:.2f})"
@@ -271,9 +283,12 @@ class PaperTradingEngine:
             return None
 
         # Risk check: consecutive losses
-        if self._consecutive_losses >= settings.MAX_CONSECUTIVE_LOSSES:
+        from agents.execution.runtime_controls import effective_float, effective_int
+
+        max_consec_losses = effective_int("MAX_CONSECUTIVE_LOSSES", int(settings.MAX_CONSECUTIVE_LOSSES))
+        if self._consecutive_losses >= max_consec_losses:
             self.last_rejection_reason = (
-                f"Max consecutive losses reached ({self._consecutive_losses}/{settings.MAX_CONSECUTIVE_LOSSES}) - trading paused for today"
+                f"Max consecutive losses reached ({self._consecutive_losses}/{max_consec_losses}) - trading paused for today"
             )
             log.warning("BLOCKED: %d consecutive losses — pausing", self._consecutive_losses)
             return None
@@ -290,15 +305,16 @@ class PaperTradingEngine:
         # Risk check: daily loss limit (only block on losses, not profitable days)
         today = _today_ist()
         daily = self._daily_pnl.get(today, 0.0)
-        if daily < 0 and abs(daily) / max(self.capital, 1) >= settings.DAILY_LOSS_LIMIT_PCT / 100:
+        daily_loss_limit_pct = effective_float("DAILY_LOSS_LIMIT_PCT", float(settings.DAILY_LOSS_LIMIT_PCT))
+        if daily < 0 and abs(daily) / max(self.capital, 1) >= daily_loss_limit_pct / 100:
             self.last_rejection_reason = (
-                f"Daily loss limit hit ({daily:.2f} PnL, max {settings.DAILY_LOSS_LIMIT_PCT}%)"
+                f"Daily loss limit hit ({daily:.2f} PnL, max {daily_loss_limit_pct}%)"
             )
             log.warning("BLOCKED: Daily loss limit hit (%.2f)", daily)
             return None
 
         # Risk check: max open positions
-        max_open = int(getattr(settings, "PAPER_TRADING_MAX_OPEN", 5))
+        max_open = effective_int("PAPER_TRADING_MAX_OPEN", int(getattr(settings, "PAPER_TRADING_MAX_OPEN", 5)))
         if len(self.open_trades) >= max_open:
             self.last_rejection_reason = (
                 f"Maximum open positions limit ({len(self.open_trades)}/{max_open}) reached"
@@ -1206,6 +1222,8 @@ class PaperTradingEngine:
         if self.initial_capital > 0:
             drawdown_pct = max((self.initial_capital - self.capital) / self.initial_capital, 0.0)
         daily_loss_pct = abs(daily) / max(self.capital, 1.0)
+        from agents.execution.runtime_controls import effective_float, effective_int
+
         return {
             "circuit_breaker_active": self._circuit_breaker_active,
             "circuit_breaker_reason": self._circuit_breaker_reason,
@@ -1214,9 +1232,16 @@ class PaperTradingEngine:
             "portfolio_heat_pct": round(self.get_portfolio_heat_pct(), 6),
             "portfolio_heat_max": float(settings.MAX_PORTFOLIO_HEAT_PCT),
             "consecutive_losses": int(self._consecutive_losses),
-            "max_consecutive_losses": int(settings.MAX_CONSECUTIVE_LOSSES),
+            "max_consecutive_losses": effective_int(
+                "MAX_CONSECUTIVE_LOSSES", int(settings.MAX_CONSECUTIVE_LOSSES)
+            ),
             "daily_loss_pct": round(daily_loss_pct, 6),
-            "daily_loss_limit_pct": float(settings.DAILY_LOSS_LIMIT_PCT / 100.0),
+            "daily_loss_limit_pct": effective_float(
+                "DAILY_LOSS_LIMIT_PCT", float(settings.DAILY_LOSS_LIMIT_PCT)
+            ) / 100.0,
+            "max_open_positions": effective_int(
+                "PAPER_TRADING_MAX_OPEN", int(getattr(settings, "PAPER_TRADING_MAX_OPEN", 5))
+            ),
         }
 
     def reset_circuit_breaker(self, rebase_capital: bool = False) -> dict:

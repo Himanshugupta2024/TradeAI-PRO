@@ -533,8 +533,13 @@ def generate_signals(
         atr_sl_mult   = settings.ATR_SL_MULTIPLIER
 
     # Per-regime adaptive confidence and quality thresholds
+    # The regime table stays authoritative where defined; the operator-tunable
+    # AI_CONFIDENCE_THRESHOLD is the live fallback for unlisted regimes.
+    from agents.execution.runtime_controls import effective_int
+
     conf_threshold = settings.REGIME_CONFIDENCE_THRESHOLDS.get(
-        regime_key, settings.AI_CONFIDENCE_THRESHOLD
+        regime_key,
+        effective_int("AI_CONFIDENCE_THRESHOLD", int(settings.AI_CONFIDENCE_THRESHOLD)),
     )
     quality_threshold = settings.REGIME_QUALITY_THRESHOLDS.get(regime_key, 60)
 

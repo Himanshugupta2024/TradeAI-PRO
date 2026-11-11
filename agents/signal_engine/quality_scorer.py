@@ -50,7 +50,17 @@ GRADE_C = 40  # Below this → SKIP (too risky to trade)
 # ── Hard gate: minimum AI confidence to emit LONG/SHORT ──────────────────────
 # Read from settings so it can be tuned without code changes.
 # Default is now 40% (lowered from 55%) — see settings.SKIP_CONFIDENCE_THRESHOLD.
+# NOTE: the value actually enforced per signal comes from
+# `_min_confidence_for_signal()`, which also honours operator runtime overrides.
+# This constant is kept as the boot-time snapshot for importers/back-compat.
 MIN_CONFIDENCE_FOR_SIGNAL = settings.SKIP_CONFIDENCE_THRESHOLD  # percent
+
+
+def _min_confidence_for_signal() -> int:
+    """Live AI-confidence gate, honouring operator runtime overrides."""
+    from agents.execution.runtime_controls import effective_int
+
+    return effective_int("SKIP_CONFIDENCE_THRESHOLD", int(MIN_CONFIDENCE_FOR_SIGNAL))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,8 +141,9 @@ def score_signal(
     hard_gate_fail = ""
 
     # Gate 1: AI confidence too low — system itself is uncertain
-    if confidence < MIN_CONFIDENCE_FOR_SIGNAL:
-        hard_gate_fail = f"low_confidence({confidence:.0f}%<{MIN_CONFIDENCE_FOR_SIGNAL}%)"
+    confidence_gate = _min_confidence_for_signal()
+    if confidence < confidence_gate:
+        hard_gate_fail = f"low_confidence({confidence:.0f}%<{confidence_gate}%)"
 
     # Gate 2: VWAP guard — SHORT when price is >2% above VWAP is a high-risk short
     # (price has strong bullish momentum relative to fair value)

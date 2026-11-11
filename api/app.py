@@ -178,6 +178,18 @@ def _lifespan_context():
         svc._SERVER_START_TIME = time.time()
         is_lightweight = _env_flag("LIGHTWEIGHT_API_MODE", False)
 
+        # Project persisted operator knob overrides onto the settings module at
+        # boot. Live knobs already resolve per-decision; this covers the call
+        # sites that still read `settings.X` directly.
+        try:
+            from agents.execution.runtime_controls import apply_overrides_to_settings
+
+            applied = await asyncio.to_thread(apply_overrides_to_settings)
+            if applied:
+                svc.logger.info("Operator runtime overrides applied at boot: %s", ", ".join(applied))
+        except Exception as rc_exc:
+            svc.logger.warning("Runtime override boot application skipped: %s", rc_exc)
+
         # Run DB hydration and model warmup in a non-blocking background task so
         # Uvicorn binds the port immediately (<0.1s). This prevents Render free-tier
         # edge routers from timing out with 'hibernate-wake-error (503)'.

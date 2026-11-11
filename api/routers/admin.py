@@ -20,6 +20,10 @@ Routes:
   - POST /api/retrain
   - GET  /api/retrain/status
   - POST /api/refresh
+  - GET  /api/admin/runtime-controls
+  - POST /api/admin/runtime-controls
+  - POST /api/admin/runtime-controls/reset
+  - POST /api/admin/kill-switch
   - GET  /admin, /admin/, /admin.html
 """
 
@@ -35,7 +39,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from pydantic import BaseModel
-from fastapi import APIRouter, Query, HTTPException, Depends, Response, Header
+from fastapi import APIRouter, Query, HTTPException, Depends, Response, Header, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.requests import Request as FastApiRequest
 
@@ -933,14 +937,115 @@ async def retrain_status():
 
 
 @router.post("/api/refresh", dependencies=[Depends(require_admin)])
-async def refresh_data():
-    """Force refresh of all market data."""
-    await svc._refresh_market_data()
+async def refresh_data(background_tasks: BackgroundTasks):
+    """Force refresh of all market data (dispatched in background to avoid gateway timeouts)."""
+    background_tasks.add_task(svc._refresh_market_data)
     return {
-        "status": "ok",
+        "status": "refreshing",
+        "message": "Market data refresh started in background",
         "symbols": len(svc._market_data),
         "updated_at": datetime.now().isoformat(),
     }
+
+
+# ── Operator Runtime Controls (kill switch + live knobs) ─────────────────────
+class RuntimeKnobUpdateRequest(BaseModel):
+    values: Dict[str, Any]
+    reason: Optional[str] = None
+
+
+class RuntimeKnobResetRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class KillSwitchRequest(BaseModel):
+    halted: bool
+    reason: Optional[str] = None
+
+
+@router.get("/api/admin/runtime-controls", dependencies=[Depends(require_admin)])
+async def get_runtime_controls():
+    """Return kill-switch state plus every operator-tunable knob and its effective value."""
+    from agents.execution.runtime_controls import get_runtime_controls_status
+
+    payload = await asyncio.to_thread(get_runtime_controls_status)
+    return {"status": "ok", **payload}
+
+
+@router.post("/api/admin/runtime-controls", dependencies=[Depends(require_admin)])
+async def update_runtime_controls(payload: RuntimeKnobUpdateRequest):
+    """
+    Persist a validated batch of knob overrides.
+
+    `live: true` knobs apply on the next decision; `live: false` knobs only take
+    effect after the next process restart. The response names which is which.
+    """
+    from agents.execution.runtime_controls import (
+        KNOB_SPECS,
+        get_runtime_controls_status,
+        set_overrides,
+    )
+
+    ok, message, _state = await asyncio.to_thread(
+        set_overrides, dict(payload.values or {}), "operator", payload.reason or ""
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+
+    applied_live = sorted(
+        name for name in (payload.values or {}) if KNOB_SPECS.get(name, {}).get("live")
+    )
+    deferred = sorted(
+        name for name in (payload.values or {}) if not KNOB_SPECS.get(name, {}).get("live")
+    )
+    status_payload = await asyncio.to_thread(get_runtime_controls_status)
+    return {
+        "status": "ok",
+        "message": message,
+        "applied_live": applied_live,
+        "requires_restart": deferred,
+        **status_payload,
+    }
+
+
+@router.post("/api/admin/runtime-controls/reset", dependencies=[Depends(require_admin)])
+async def reset_runtime_controls(payload: RuntimeKnobResetRequest | None = None):
+    """Clear every knob override and restore configured defaults."""
+    from agents.execution.runtime_controls import (
+        get_runtime_controls_status,
+        reset_overrides,
+    )
+
+    reason = (payload.reason if payload else "") or ""
+    ok, message, _state = await asyncio.to_thread(reset_overrides, "operator", reason)
+    if not ok:
+        raise HTTPException(status_code=500, detail=message)
+
+    status_payload = await asyncio.to_thread(get_runtime_controls_status)
+    return {"status": "ok", "message": message, **status_payload}
+
+
+@router.post("/api/admin/kill-switch", dependencies=[Depends(require_admin)])
+async def toggle_kill_switch(payload: KillSwitchRequest):
+    """
+    Engage or release the operator kill switch.
+
+    Engaging blocks **new** entries from the paper engine and the autonomous
+    daemon. Open positions are untouched so they can still be managed.
+    """
+    from agents.execution.runtime_controls import (
+        get_runtime_controls_status,
+        set_kill_switch,
+    )
+
+    ok, message, _state = await asyncio.to_thread(
+        set_kill_switch, bool(payload.halted), "operator", payload.reason or ""
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail=message)
+
+    status_payload = await asyncio.to_thread(get_runtime_controls_status)
+    return {"status": "ok", "message": message, **status_payload}
 
 
 # ── Admin Web Console ─────────────────────────────────────────────────────────

@@ -37,6 +37,23 @@ def _today_ist() -> str:
     return _now_ist().date().isoformat()
 
 
+def _resolve_knob_override(name: str, default: Any, caster):
+    """Return the operator override for `name` if present, else `default`.
+
+    Never raises — an unreadable override store falls back to configuration.
+    Values are validated on write, so a plain cast is sufficient here.
+    """
+    try:
+        from agents.execution.runtime_controls import get_override_state
+
+        values = get_override_state().get("values") or {}
+        if name in values:
+            return caster(values[name])
+    except Exception as exc:
+        log.debug("Runtime override lookup failed for %s: %s", name, exc)
+    return default
+
+
 class AutonomousExecutionDaemon:
     """
     Autonomous Execution Daemon for TradeAI-PRO.
@@ -50,9 +67,13 @@ class AutonomousExecutionDaemon:
         min_ai_confidence: float = 40.0,
         max_portfolio_heat: float = 0.15,
     ) -> None:
-        self.max_positions: int = int(os.getenv("AUTONOMOUS_MAX_POSITIONS", str(max_positions)))
-        self.min_qs_score: float = float(os.getenv("AUTONOMOUS_MIN_QS_SCORE", str(min_qs_score)))
-        self.min_ai_confidence: float = float(os.getenv("AUTONOMOUS_MIN_AI_CONFIDENCE", str(min_ai_confidence)))
+        # Configured defaults are captured once; the live accessors below layer
+        # operator runtime overrides on top of them per decision.
+        self._default_max_positions: int = int(os.getenv("AUTONOMOUS_MAX_POSITIONS", str(max_positions)))
+        self._default_min_qs_score: float = float(os.getenv("AUTONOMOUS_MIN_QS_SCORE", str(min_qs_score)))
+        self._default_min_ai_confidence: float = float(
+            os.getenv("AUTONOMOUS_MIN_AI_CONFIDENCE", str(min_ai_confidence))
+        )
         self.max_portfolio_heat: float = max_portfolio_heat
         self._max_log_entries: int = 100
         persisted_enabled = None
@@ -68,6 +89,38 @@ class AutonomousExecutionDaemon:
             self.enabled = os.getenv("AUTONOMOUS_TRADING_ENABLED", "true").lower() in ("1", "true", "yes")
         self.last_eod_review_date: Optional[str] = None
         self._last_scan_time: Optional[str] = None
+
+    # ── Live operator-tunable thresholds ─────────────────────────────────────
+    # These resolve through the operator override store on every read, so a
+    # runtime knob change takes effect on the next daemon cycle without a
+    # restart. Resolution order is: operator override → configured default
+    # (env var if set, else the constructor argument captured in `__init__`).
+    # If the override store is unreadable the configured default is used.
+    @property
+    def max_positions(self) -> int:
+        return _resolve_knob_override("AUTONOMOUS_MAX_POSITIONS", self._default_max_positions, int)
+
+    @max_positions.setter
+    def max_positions(self, value: int) -> None:
+        self._default_max_positions = int(value)
+
+    @property
+    def min_qs_score(self) -> float:
+        return _resolve_knob_override("AUTONOMOUS_MIN_QS_SCORE", self._default_min_qs_score, float)
+
+    @min_qs_score.setter
+    def min_qs_score(self, value: float) -> None:
+        self._default_min_qs_score = float(value)
+
+    @property
+    def min_ai_confidence(self) -> float:
+        return _resolve_knob_override(
+            "AUTONOMOUS_MIN_AI_CONFIDENCE", self._default_min_ai_confidence, float
+        )
+
+    @min_ai_confidence.setter
+    def min_ai_confidence(self, value: float) -> None:
+        self._default_min_ai_confidence = float(value)
 
     def record_decision(
         self,
@@ -203,6 +256,25 @@ class AutonomousExecutionDaemon:
         self._last_scan_time = _now_ist().isoformat()
         if not self.enabled:
             return []
+
+        # Operator kill switch — blocks new entries only. Open positions stay
+        # under the normal exit/review path so the operator can still flatten.
+        try:
+            from agents.execution.runtime_controls import is_trading_halted
+
+            _halted, _halt_reason = is_trading_halted()
+            if _halted:
+                log.warning("[Autonomous] Cycle skipped — %s", _halt_reason)
+                self.record_decision(
+                    action="SKIP",
+                    symbol="*",
+                    direction="",
+                    price=0.0,
+                    reason=f"Kill switch engaged — {_halt_reason}",
+                )
+                return []
+        except Exception as _ks_err:
+            log.debug("[Autonomous] Kill switch check skipped: %s", _ks_err)
 
         # Resolve any pending shadow trades from earlier blocked candidates
         try:

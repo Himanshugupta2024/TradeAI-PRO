@@ -122,8 +122,15 @@ def can_take_trade(portfolio_state: dict) -> tuple[bool, str]:
     open_trades = int(state.get("open_trades", 0) or 0)
     daily_pnl_pct = _to_float(state.get("daily_pnl_pct", 0.0), 0.0)
 
-    max_open = int(getattr(settings, "INTRADAY_MAX_OPEN_TRADES", 4) or 4)
-    max_loss = _to_float(getattr(settings, "INTRADAY_MAX_DAILY_LOSS_PCT", 0.02), 0.02)
+    from agents.execution.runtime_controls import effective_float, effective_int
+
+    max_open = effective_int(
+        "INTRADAY_MAX_OPEN_TRADES", int(getattr(settings, "INTRADAY_MAX_OPEN_TRADES", 4) or 4)
+    )
+    max_loss = effective_float(
+        "INTRADAY_MAX_DAILY_LOSS_PCT",
+        _to_float(getattr(settings, "INTRADAY_MAX_DAILY_LOSS_PCT", 0.02), 0.02),
+    )
 
     if open_trades >= max_open:
         return False, "Max open trades reached"
