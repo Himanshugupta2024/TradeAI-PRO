@@ -71,6 +71,12 @@ async def get_next_day_picks_history_route():
     history = await asyncio.to_thread(get_next_day_picks_history)
     return {"ok": True, "count": len(history), "history": history}
 
+@router.get("/api/research/next-day-picks/latest")
+async def get_latest_next_day_picks_alias_route():
+    """Alias for /api/research/next-day-picks to ensure /latest probes succeed."""
+    from agents.market_intelligence.next_day_picks import get_latest_next_day_picks
+    return await asyncio.to_thread(get_latest_next_day_picks)
+
 @router.get("/api/research/next-day-picks/{report_id}")
 async def get_next_day_pick_by_id_route(report_id: str):
     """Fetch specific historical Next-Day Picks report by report_id."""

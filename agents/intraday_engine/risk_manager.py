@@ -116,7 +116,11 @@ def calculate_risk_reward(entry: float, stop_loss: float, target: float) -> floa
     return float(round(reward / risk, 4))
 
 
-def can_take_trade(portfolio_state: dict) -> tuple[bool, str]:
+def can_take_trade(
+    portfolio_state: dict,
+    symbol: str | None = None,
+    sector: str | None = None,
+) -> tuple[bool, str]:
     """Portfolio-level guardrails for intraday execution."""
     state = portfolio_state or {}
     open_trades = int(state.get("open_trades", 0) or 0)
@@ -136,6 +140,13 @@ def can_take_trade(portfolio_state: dict) -> tuple[bool, str]:
         return False, "Max open trades reached"
     if daily_pnl_pct <= -max_loss:
         return False, "Daily loss limit hit - trading paused"
+
+    # Sector concentration limit (max 2 positions per sector)
+    if sector and state.get("sector_positions"):
+        sec_positions = int(state["sector_positions"].get(sector.upper(), 0) or 0)
+        if sec_positions >= 2:
+            return False, f"Sector concentration limit reached for {sector} (max 2 positions)"
+
     return True, "OK"
 
 

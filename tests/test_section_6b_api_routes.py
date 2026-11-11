@@ -23,6 +23,15 @@ def test_get_next_day_picks_api():
     assert isinstance(data["picks"], list)
 
 
+def test_get_next_day_picks_latest_alias_api():
+    res = client.get("/api/research/next-day-picks/latest")
+    assert res.status_code == 200
+    data = res.json()
+    assert "report_id" in data
+    assert "target_session_date" in data
+    assert "picks" in data
+
+
 def test_generate_next_day_picks_api():
     res = client.post("/api/research/next-day-picks/generate", json={"force": True, "max_picks": 3})
     assert res.status_code == 200

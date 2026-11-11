@@ -329,6 +329,29 @@ class PaperTradingEngine:
             log.warning("BLOCKED: %s", self.last_rejection_reason)
             return None
 
+        # Risk check: Sector Concentration Guardrail (max 2 positions per sector)
+        _SECTOR_MAP = {
+            "HDFCBANK": "BANKING", "ICICIBANK": "BANKING", "SBIN": "BANKING", "KOTAKBANK": "BANKING", "AXISBANK": "BANKING",
+            "TCS": "IT", "INFY": "IT", "WIPRO": "IT", "HCLTECH": "IT", "TECHM": "IT",
+            "RELIANCE": "ENERGY", "ONGC": "ENERGY", "BPCL": "ENERGY",
+            "TATAMOTORS": "AUTO", "MARUTI": "AUTO", "M&M": "AUTO", "BAJAJ-AUTO": "AUTO",
+            "SUNPHARMA": "PHARMA", "DRREDDY": "PHARMA", "CIPLA": "PHARMA",
+            "TATASTEEL": "METALS", "JSWSTEEL": "METALS", "HINDALCO": "METALS", "VEDL": "METALS",
+        }
+        sym_clean = self._normalize_symbol(symbol).replace(".NS", "").replace("/", "")
+        sector = _SECTOR_MAP.get(sym_clean)
+        if sector:
+            sec_count = sum(
+                1 for t in self.open_trades
+                if _SECTOR_MAP.get(self._normalize_symbol(t.symbol).replace(".NS", "").replace("/", "")) == sector
+            )
+            if sec_count >= 2:
+                self.last_rejection_reason = (
+                    f"Sector concentration limit reached for {sector} ({sec_count}/2 positions open)"
+                )
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
+
         # Risk check: cooldown timer (normalized key check)
         norm_sym = self._normalize_symbol(symbol)
         if norm_sym in self._cooldowns and self._cooldowns[norm_sym] > 0:

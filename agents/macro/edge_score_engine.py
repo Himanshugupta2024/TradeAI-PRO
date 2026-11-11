@@ -857,8 +857,9 @@ class EdgeScoreEngine:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         ac_lower = (asset_class or "all").lower()
 
-        from agents.execution.market_control import is_crypto_forex_enabled
+        from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
         crypto_forex_on = is_crypto_forex_enabled()
+        research_on = is_crypto_research_allowed()
 
         if ac_lower == "all":
             if crypto_forex_on:
@@ -883,7 +884,7 @@ class EdgeScoreEngine:
                     ("SBIN", "nse"),
                 ]
         elif ac_lower == "crypto":
-            if not crypto_forex_on:
+            if not crypto_forex_on and not research_on:
                 return []
             crypto_top = [
                 "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT",
@@ -899,7 +900,7 @@ class EdgeScoreEngine:
             ]
             items = [(s, "nse") for s in nse_top]
         elif ac_lower == "forex":
-            if not crypto_forex_on:
+            if not crypto_forex_on and not research_on:
                 return []
             forex_top = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/INR", "EUR/INR", "AUD/USD", "USD/CAD", "GBP/INR"]
             items = [(s, "forex") for s in forex_top]

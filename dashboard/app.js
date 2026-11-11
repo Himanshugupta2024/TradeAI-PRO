@@ -10126,10 +10126,6 @@ function renderSignals(signals) {
 
 
 
-        }
-
-
-
 
 
 

@@ -208,7 +208,11 @@ def _compute_eod_technical_metrics(df: pd.DataFrame) -> Dict[str, Any]:
 
     # Volume Ratio (Last volume vs 20-day mean)
     vol_mean_20 = float(np.mean(vols[-20:])) if len(vols) >= 20 else float(np.mean(vols))
-    vol_ratio = (vols[-1] / vol_mean_20) if vol_mean_20 > 0 else 1.0
+    last_vol = vols[-1]
+    if len(vols) > 1 and last_vol < 0.1 * vol_mean_20 and vols[-2] > 0.3 * vol_mean_20:
+        vol_ratio = (vols[-2] / vol_mean_20) if vol_mean_20 > 0 else 1.0
+    else:
+        vol_ratio = (last_vol / vol_mean_20) if vol_mean_20 > 0 else 1.0
 
     # 20-Day High / Low
     high_20d = float(np.max(highs[-20:]))
@@ -470,33 +474,45 @@ def analyze_candidate(
         1
     )
 
-    # 4. Construct Planned Trade Setup (Realistic R:R 1.6x–2.0x, Bounded to Daily ATR Expected Move)
+    # 4. Construct Planned Trade Setup (Dynamic R:R >= 1.5x based on real technical pivot & resistance levels)
     if bias == "LONG":
         trigger_price = round(close * 1.002, 2)
         trigger_zone = f"₹{round(trigger_price * 0.998, 2)} – ₹{round(trigger_price * 1.005, 2)}"
-        # Structural stop: place below S1 or 0.65x ATR buffer (bounded to 0.6x–1.0x ATR to survive morning noise)
+        # Structural stop: place below S1 or 0.65x ATR buffer (bounded to 0.6x–1.2x ATR to survive morning noise)
         raw_risk = max(0.65 * atr, trigger_price - s1)
-        risk = round(max(0.6 * atr, min(1.0 * atr, raw_risk)), 2)
+        risk = round(max(0.6 * atr, min(1.2 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price - risk, 2)
 
-        # Realistic target: 1.75x risk (aligned with 1.0x–1.4x ATR, avoiding fantasy 7% projections)
-        reward = round(1.75 * risk, 2)
-        target_1 = round(trigger_price + reward, 2)
+        # Dynamic technical target based on real resistance levels (R1 / R2 / ATR expansion)
+        if r1 > trigger_price and (r1 - trigger_price) >= (1.5 * risk):
+            target_1 = round(r1, 2)
+        elif r2 > trigger_price and (r2 - trigger_price) >= (1.5 * risk):
+            target_1 = round(r2, 2)
+        else:
+            target_1 = round(trigger_price + max(1.8 * risk, 1.25 * atr), 2)
+
+        reward = round(target_1 - trigger_price, 2)
         rr_ratio = round(reward / risk, 2)
-        target_2 = round(target_1 + (0.5 * atr), 2)
-        invalidation = f"Avoid if gap down opens below ₹{stop_loss} (risk buffer breached) or NIFTY plunges >1% at 09:15 open."
+        target_2 = round(r2 if r2 > target_1 else target_1 + (0.8 * atr), 2)
+        invalidation = f"Avoid if gap down opens below ₹{stop_loss} (S1: ₹{s1}) or NIFTY plunges >1% at 09:15 open."
     else:
         trigger_price = round(close * 0.998, 2)
         trigger_zone = f"₹{round(trigger_price * 0.995, 2)} – ₹{round(trigger_price * 1.002, 2)}"
         raw_risk = max(0.65 * atr, r1 - trigger_price)
-        risk = round(max(0.6 * atr, min(1.0 * atr, raw_risk)), 2)
+        risk = round(max(0.6 * atr, min(1.2 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price + risk, 2)
 
-        reward = round(1.75 * risk, 2)
-        target_1 = round(trigger_price - reward, 2)
+        if s1 < trigger_price and (trigger_price - s1) >= (1.5 * risk):
+            target_1 = round(s1, 2)
+        elif s2 < trigger_price and (trigger_price - s2) >= (1.5 * risk):
+            target_1 = round(s2, 2)
+        else:
+            target_1 = round(trigger_price - max(1.8 * risk, 1.25 * atr), 2)
+
+        reward = round(trigger_price - target_1, 2)
         rr_ratio = round(reward / risk, 2)
-        target_2 = round(target_1 - (0.5 * atr), 2)
-        invalidation = f"Avoid if gap up opens above ₹{stop_loss} (resistance breached) or strong morning sector surge."
+        target_2 = round(s2 if s2 < target_1 else target_1 - (0.8 * atr), 2)
+        invalidation = f"Avoid if gap up opens above ₹{stop_loss} (R1: ₹{r1}) or strong morning sector surge."
 
     # Minimum Risk:Reward Gate Enforcement
     if rr_ratio < 1.5:
@@ -948,12 +964,33 @@ def resolve_report_outcomes(
 
 
 def get_latest_next_day_picks() -> Dict[str, Any]:
-    """Retrieve the latest published Next-Day Picks report, generating on-demand if absent."""
+    """Retrieve the latest published Next-Day Picks report, generating on-demand if absent or expired."""
     state = get_runtime_state(STATE_KEY_LATEST)
+    now_ist = datetime.now(_IST)
+    source_date, target_date, _, _ = resolve_next_trading_session(now_ist)
+
     if isinstance(state, dict) and state.get("report_id"):
+        state_source = state.get("source_session_date")
+        state_target = state.get("target_session_date")
+
+        # 1. Valid active report for current trading session
+        if state_source == source_date.isoformat() and state_target == target_date.isoformat():
+            return state
+
+        # 2. Expired report: target date has passed
+        if state_target and state_target < now_ist.date().isoformat():
+            logger.info("Next-Day Picks target session %s expired (current date: %s). Regenerating...", state_target, now_ist.date())
+            return generate_next_day_picks(ref_dt=now_ist, force_refresh=True)
+
+        # 3. New EOD session available (e.g. post-close after 15:30 IST today and cached report was previous day)
+        if state_source and state_source != source_date.isoformat():
+            if now_ist.time() >= dtime(15, 30) or now_ist.date() > date.fromisoformat(state_source):
+                logger.info("New EOD session available (%s vs cached %s). Regenerating Next-Day Picks...", source_date, state_source)
+                return generate_next_day_picks(ref_dt=now_ist, force_refresh=True)
+
         return state
-    # Generate initial report if absent
-    return generate_next_day_picks()
+
+    return generate_next_day_picks(ref_dt=now_ist)
 
 
 def get_next_day_picks_history() -> List[Dict[str, Any]]:

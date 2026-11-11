@@ -46,6 +46,13 @@ class RiskIndicators:
     gold_trend: Optional[str]              # "RISING" | "FALLING" | "FLAT"
     risk_regime: str                       # "RISK_ON" | "RISK_OFF" | "NEUTRAL"
     timestamp: datetime
+    # Enhanced Indian Market & Breadth indicators
+    india_vix: Optional[float] = None
+    india_vix_change_pct: Optional[float] = None
+    india_vix_trend: Optional[str] = None
+    ad_ratio: Optional[float] = None
+    above_ema20_pct: Optional[float] = None
+    breadth_regime: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Convert to dict for JSON serialization"""
@@ -55,24 +62,29 @@ class RiskIndicators:
 
     @classmethod
     def from_dict(cls, data: dict) -> "RiskIndicators":
-        """Create from dict (JSON deserialization)"""
-        data["timestamp"] = datetime.fromisoformat(data["timestamp"])
-        return cls(**data)
+        """Create from dict (JSON deserialization with field filtering)"""
+        d = dict(data)
+        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
 class RiskGauge:
     """Measures market risk environment"""
 
-    # VIX thresholds
+    # VIX thresholds (Global US VIX)
     VIX_LOW_THRESHOLD = 15.0    # VIX < 15 = low volatility (risk-on)
     VIX_HIGH_THRESHOLD = 30.0   # VIX > 30 = high volatility (risk-off)
+
+    # India VIX thresholds (NSE Local Equities)
+    INDIA_VIX_LOW_THRESHOLD = 13.0   # India VIX < 13 = Volatility compression
+    INDIA_VIX_HIGH_THRESHOLD = 22.0  # India VIX > 22 = High volatility turbulence
 
     # Trend calculation parameters
     TREND_MA_PERIOD = 7         # 7-day moving average
     TREND_THRESHOLD_PCT = 2.0   # 2% threshold for trend classification
 
     # Minimum indicators required
-    MIN_INDICATORS = 3          # Need at least 3 of 5 indicators
+    MIN_INDICATORS = 3          # Need at least 3 of indicators
 
     def __init__(
         self,
