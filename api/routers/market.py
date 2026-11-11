@@ -2399,71 +2399,75 @@ async def search_quote(symbol: str):
     last = df.iloc[-1]
 
     # Build quote response
-
     sig = svc._get_signal_for_symbol(clean)
+    if sig is None and clean_base != clean:
+        sig = svc._get_signal_for_symbol(clean_base)
+
+    if sig is None and getattr(svc, "_persisted_signals_snapshot", None):
+        for s in svc._persisted_signals_snapshot:
+            if isinstance(s, dict) and s.get("symbol", "").upper().replace(".NS", "") in (clean_base, clean.upper()):
+                sig = s
+                break
+
+    if sig is None:
+        c_val = round(float(last.get("close", 0.0)), 2)
+        sig = {
+            "symbol": clean,
+            "signal": "HOLD",
+            "direction": "HOLD",
+            "signal_status": "NO_SIGNAL",
+            "actionable": False,
+            "entry": c_val,
+            "close": c_val,
+            "change_pct": round(float(last.get("change_pct", 0.0)), 2),
+            "stop_loss": None,
+            "target": None,
+            "levels_source": "UNAVAILABLE",
+            "rsi": round(float(last.get("RSI_14", 50.0)), 1) if pd.notna(last.get("RSI_14")) else None,
+            "trend": str(last.get("htf_trend", "NEUTRAL")),
+            "confidence": 45.0,
+            "timestamp": (
+                last["timestamp"].isoformat()
+                if hasattr(last.get("timestamp"), "isoformat")
+                else str(last.get("timestamp") or datetime.now(timezone.utc).isoformat())
+            ),
+        }
 
     # Recent OHLCV data (last 100 bars)
-
     tail = df.tail(100)
-
     chart_data = []
-
     for _, row in tail.iterrows():
-
         chart_data.append(
-
             {
-
-                "timestamp": row["timestamp"].isoformat(),
-
+                "timestamp": (
+                    row["timestamp"].isoformat()
+                    if hasattr(row.get("timestamp"), "isoformat")
+                    else str(row.get("timestamp") or datetime.now(timezone.utc).isoformat())
+                ),
                 "open": round(float(row["open"]), 2),
-
                 "high": round(float(row["high"]), 2),
-
                 "low": round(float(row["low"]), 2),
-
                 "close": round(float(row["close"]), 2),
-
                 "volume": round(float(row["volume"]), 0),
-
                 "rsi": round(float(row["RSI_14"]), 1)
-
                 if pd.notna(row.get("RSI_14"))
-
                 else None,
-
                 "ema_20": round(float(row["EMA_20"]), 2)
-
                 if pd.notna(row.get("EMA_20"))
-
                 else None,
-
                 "ema_50": round(float(row["EMA_50"]), 2)
-
                 if pd.notna(row.get("EMA_50"))
-
                 else None,
-
                 "vwap": round(float(row["VWAP"]), 2)
-
                 if pd.notna(row.get("VWAP"))
-
                 else None,
-
                 "macd_hist": round(float(row["MACD_hist"]), 4)
-
                 if pd.notna(row.get("MACD_hist"))
-
                 else None,
-
                 "signal": str(row.get("signal", "HOLD"))
-
                 if "signal" in row.index
-
                 else "HOLD",
-
             }
-
         )
 
     # Compute MACD histogram for current bar

@@ -26926,6 +26926,15 @@ function renderMacroIntelligence(macro) {
         }
     }
 
+    // Macro Feed Source / Timestamp
+    const tsEl = document.getElementById('macroTimestamp');
+    if (tsEl) {
+        const isLive = macro.feed_source === 'LIVE';
+        tsEl.innerHTML = isLive
+            ? `<span style="display:inline-flex;align-items:center;gap:4px;color:#10b981;font-weight:600;"><span style="width:6px;height:6px;background:#10b981;border-radius:50%;display:inline-block;"></span>Live Commodities</span>`
+            : `<span style="display:inline-flex;align-items:center;gap:4px;color:#f59e0b;font-weight:600;"><span style="width:6px;height:6px;background:#f59e0b;border-radius:50%;display:inline-block;"></span>Session Close</span>`;
+    }
+
     // Cue Pill
     const cuePill = document.getElementById('macroCuePill');
     if (cuePill) {
