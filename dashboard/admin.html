@@ -1729,16 +1729,6 @@
       }
     }
 
-    async function executeRetrainModels() {
-      logMessage('Triggering AI meta-learner model retraining in background...', 'info');
-      try {
-        const res = await apiCall('/api/retrain', 'POST');
-        logMessage(`Model retrain started! Task status: ${res.status || 'Dispatched'}`, 'ok');
-      } catch (e) {
-        logMessage(`Retrain trigger failed: ${e.message}`, 'err');
-      }
-    }
-
     async function executeToggleSection6A() {
       logMessage('Checking Section 6A policy lock...', 'info');
       try {
