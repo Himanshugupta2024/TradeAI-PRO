@@ -27751,34 +27751,112 @@ function _renderWatchlistCard(sym, q, compName) {
     const changePct = q.changePct || 0;
     const signalLabel = q.signalLabel || 'MONITOR';
     const conf = q.conf;
-    const entry = q.entry || ltp;
-    const wlHorizonMeta = _getTradeHorizonMeta(sym, signalLabel, q.timeframe);
-
     const isLong = ['LONG', 'BUY'].includes(signalLabel.toUpperCase());
     const isShort = ['SHORT', 'SELL'].includes(signalLabel.toUpperCase());
-    const isActionable = isLong || isShort;
-    const sl = (isActionable && q.sl && Number(q.sl) > 0) ? Number(q.sl) : null;
-    const tp = (isActionable && q.tp && Number(q.tp) > 0) ? Number(q.tp) : null;
-    const confDisplay = (conf !== undefined && conf !== null && Number(conf) > 0) ? `${conf}/100` : '—';
-    const sigColor = isLong ? 'var(--green, #10b981)' : (isShort ? 'var(--red, #ef4444)' : '#94a3b8');
-    const sigBg = isLong ? 'rgba(16,185,129,0.12)' : (isShort ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)');
-    const sigBorder = isLong ? 'rgba(16,185,129,0.3)' : (isShort ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.1)');
+    const isActionable = Boolean(q.isActionable || isLong || isShort);
+    const isInsufficient = signalLabel === 'INSUFFICIENT_DATA' || q.status === 'INSUFFICIENT_DATA';
+
+    // Resolved Company Name
+    const displayName = q.companyName || compName;
+
+    // Dynamic Horizon derivation
+    let wlHorizonMeta;
+    if (q.horizon && q.horizon.short) {
+        wlHorizonMeta = {
+            short: q.horizon.short,
+            barrierShort: q.horizon.barrier_short,
+            rule: q.horizon.full || q.horizon.barrier_full || ''
+        };
+    } else {
+        wlHorizonMeta = _getTradeHorizonMeta(sym, signalLabel, q.timeframe);
+    }
+
+    // Factor breakdown tooltip
+    let scoreTooltip = 'Quant Multi-Factor Score';
+    if (q.factorBreakdown) {
+        const fb = q.factorBreakdown;
+        scoreTooltip = `Trend: ${fb.trend}/30 | Mom: ${fb.momentum}/25 | Vol: ${fb.volume}/15 | RS: ${fb.relative_strength}/15 | Struct: ${fb.structure}/15`;
+    }
+
+    const confDisplay = (conf !== undefined && conf !== null && Number(conf) >= 0) ? `${conf}/100` : '—';
+    const sigColor = isLong ? 'var(--green, #10b981)' : (isShort ? 'var(--red, #ef4444)' : (signalLabel === 'HOLD' ? '#38bdf8' : '#94a3b8'));
+    const sigBg = isLong ? 'rgba(16,185,129,0.12)' : (isShort ? 'rgba(239,68,68,0.12)' : (signalLabel === 'HOLD' ? 'rgba(56,189,248,0.12)' : 'rgba(255,255,255,0.06)'));
+    const sigBorder = isLong ? 'rgba(16,185,129,0.3)' : (isShort ? 'rgba(239,68,68,0.3)' : (signalLabel === 'HOLD' ? 'rgba(56,189,248,0.3)' : 'rgba(255,255,255,0.1)'));
 
     const chgClass = changePct >= 0 ? 'text-profit' : 'text-loss';
     const chgStr = `${changePct >= 0 ? '+' : ''}${Number(changePct).toFixed(2)}%`;
+
+    // Levels Grid Duality (Actionable vs Observation vs Insufficient)
+    let levelsHtml = '';
+    if (isInsufficient) {
+        levelsHtml = `
+            <div class="watchlist-levels" style="grid-template-columns: 1fr; text-align: center; padding: 6px 0;">
+                <span style="font-size: 0.72rem; color: var(--text-muted);">⚠️ Insufficient historical data (&lt; 200 daily bars for scoring)</span>
+            </div>
+        `;
+    } else if (isActionable) {
+        const entryVal = q.entry ? '₹' + Number(q.entry).toFixed(1) : '₹' + Number(ltp).toFixed(1);
+        const slVal = q.sl ? '₹' + Number(q.sl).toFixed(1) : '—';
+        const tpVal = q.tp ? '₹' + Number(q.tp).toFixed(1) : '—';
+        const rrLabel = q.rrRatio ? ` (${Number(q.rrRatio).toFixed(1)}R)` : '';
+        levelsHtml = `
+            <div class="watchlist-levels">
+                <div>
+                    <div class="watchlist-lvl-label">Entry (Trigger)</div>
+                    <div class="watchlist-lvl-val" style="color:var(--text-primary);">${entryVal}</div>
+                </div>
+                <div>
+                    <div class="watchlist-lvl-label" style="color:var(--red,#ef4444);">Stop Loss</div>
+                    <div class="watchlist-lvl-val" style="color:var(--red,#ef4444);">${slVal}</div>
+                </div>
+                <div>
+                    <div class="watchlist-lvl-label" style="color:var(--green,#10b981);">Target${rrLabel}</div>
+                    <div class="watchlist-lvl-val" style="color:var(--green,#10b981);">${tpVal}</div>
+                </div>
+            </div>
+        `;
+    } else {
+        // HOLD or MONITOR - Duality: Key Support, Key Resistance, Invalidation
+        const suppVal = q.keySupport ? '₹' + Number(q.keySupport).toFixed(1) : '—';
+        const resVal = q.keyResistance ? '₹' + Number(q.keyResistance).toFixed(1) : '—';
+        const invalVal = q.invalidationLevel ? '₹' + Number(q.invalidationLevel).toFixed(1) : '—';
+        levelsHtml = `
+            <div class="watchlist-levels">
+                <div>
+                    <div class="watchlist-lvl-label" style="color:#60a5fa;" title="Nearest swing support zone">Key Support</div>
+                    <div class="watchlist-lvl-val" style="color:#93c5fd;">${suppVal}</div>
+                </div>
+                <div>
+                    <div class="watchlist-lvl-label" style="color:#f472b6;" title="Nearest swing resistance zone">Key Resistance</div>
+                    <div class="watchlist-lvl-val" style="color:#fbcfe8;">${resVal}</div>
+                </div>
+                <div>
+                    <div class="watchlist-lvl-label" style="color:#fbbf24;" title="Structural invalidation level">Invalidation</div>
+                    <div class="watchlist-lvl-val" style="color:#fde68a;">${invalVal}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Rationale HTML
+    const rationaleHtml = q.rationale ? `
+        <div class="watchlist-rationale" style="margin: 4px 0 8px; font-size: 0.69rem; color: #94a3b8; line-height: 1.35; background: rgba(255,255,255,0.02); padding: 5px 8px; border-radius: 5px; border-left: 2px solid var(--accent, #3b82f6);" title="Deterministic factor analysis">
+            💡 ${q.rationale}
+        </div>
+    ` : '';
 
     return `
         <div class="watchlist-card" id="wl-card-${sym}">
             <div class="watchlist-header">
                 <div class="watchlist-sym-block">
                     <span class="watchlist-sym">${sym}</span>
-                    <span class="watchlist-name">${_escHtml(compName)}</span>
+                    <span class="watchlist-name">${_escHtml(displayName)}</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;">
                     <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:${sigBg};color:${sigColor};border:1px solid ${sigBorder};">
                         ${signalLabel}
                     </span>
-                    <span style="font-size: 0.70rem;font-family:var(--font-mono);color:var(--text-muted);background:rgba(255,255,255,0.03);padding:2px 5px;border-radius:4px;">
+                    <span style="font-size: 0.70rem;font-family:var(--font-mono);color:var(--text-muted);background:rgba(255,255,255,0.03);padding:2px 5px;border-radius:4px;cursor:help;" title="${scoreTooltip}">
                         ${confDisplay}
                     </span>
                 </div>
@@ -27795,22 +27873,9 @@ function _renderWatchlistCard(sym, q, compName) {
                 </div>
             </div>
 
-            <div class="watchlist-levels">
-                <div>
-                    <div class="watchlist-lvl-label">Entry Ref</div>
-                    <div class="watchlist-lvl-val" style="color:var(--text-primary);">₹${Number(entry || ltp).toFixed(1)}</div>
-                </div>
-                <div>
-                    <div class="watchlist-lvl-label" style="color:var(--red,#ef4444);">Stop Loss</div>
-                    <div class="watchlist-lvl-val" style="color:${sl ? 'var(--red,#ef4444)' : 'var(--text-muted)'};">${sl ? '₹' + Number(sl).toFixed(1) : '—'}</div>
-                </div>
-                <div>
-                    <div class="watchlist-lvl-label" style="color:var(--green,#10b981);">Target (TP)</div>
-                    <div class="watchlist-lvl-val" style="color:${tp ? 'var(--green,#10b981)' : 'var(--text-muted)'};">${tp ? '₹' + Number(tp).toFixed(1) : '—'}</div>
-                </div>
-            </div>
+            ${levelsHtml}
 
-            <div class="watchlist-horizon" style="margin: 6px 0 8px; padding: 5px 8px; background: rgba(59,130,246,0.07); border: 1px solid rgba(59,130,246,0.22); border-radius: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 0.70rem;">
+            <div class="watchlist-horizon" style="margin: 6px 0 6px; padding: 5px 8px; background: rgba(59,130,246,0.07); border: 1px solid rgba(59,130,246,0.22); border-radius: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 0.70rem;">
                 <div style="display:flex; align-items:center; gap:5px;">
                     <span style="font-size:0.8rem;">⏱️</span>
                     <span style="color:var(--text-muted); font-weight:600;">Est. Horizon:</span>
@@ -27821,8 +27886,10 @@ function _renderWatchlistCard(sym, q, compName) {
                 </div>
             </div>
 
+            ${rationaleHtml}
+
             <div class="watchlist-actions">
-                <button class="watchlist-inspect-btn" onclick="fetchAndShowQuote('${sym}')" title="Inspect ${sym} 5m/15m chart and technical indicators">
+                <button class="watchlist-inspect-btn" onclick="fetchAndShowQuote('${sym}')" title="Inspect ${sym} chart and detailed analysis">
                     ⚡ Inspect Chart & Setup
                 </button>
                 <button class="watchlist-remove-btn" onclick="removeFromWatchlist('${sym}')" title="Remove ${sym} from Watchlist">
@@ -28087,17 +28154,31 @@ async function loadDedicatedWatchlist(options = {}) {
 
     activeList.forEach(sym => {
         const bQuote = bulkQuotes[sym];
-        if (bQuote && Number(bQuote.ltp || 0) > 0) {
-            const ltp = Number(bQuote.ltp);
-            const isAct = ['LONG', 'SHORT', 'BUY', 'SELL'].includes(String(bQuote.signal || '').toUpperCase());
+        if (bQuote && (Number(bQuote.ltp || 0) > 0 || bQuote.status === 'INSUFFICIENT_DATA')) {
+            const ltp = Number(bQuote.ltp || 0);
+            const isAct = Boolean(bQuote.is_actionable);
             const qObj = {
                 ltp,
                 changePct: Number(bQuote.change_pct || 0),
                 signalLabel: bQuote.signal || 'MONITOR',
-                conf: Number(bQuote.confidence || 0),
-                entry: Number(bQuote.entry || ltp),
-                sl: (isAct && bQuote.stop_loss) ? Number(bQuote.stop_loss) : null,
-                tp: (isAct && bQuote.target) ? Number(bQuote.target) : null,
+                conf: (bQuote.confidence !== undefined && bQuote.confidence !== null) ? Number(bQuote.confidence) : null,
+                factorBreakdown: bQuote.factor_breakdown || null,
+                isActionable: isAct,
+                entry: bQuote.entry !== null ? Number(bQuote.entry) : null,
+                sl: (isAct && bQuote.stop_loss !== null) ? Number(bQuote.stop_loss) : null,
+                tp: (isAct && bQuote.target !== null) ? Number(bQuote.target) : null,
+                target2: (isAct && bQuote.target_2 !== null) ? Number(bQuote.target_2) : null,
+                keySupport: bQuote.key_support !== null ? Number(bQuote.key_support) : null,
+                keyResistance: bQuote.key_resistance !== null ? Number(bQuote.key_resistance) : null,
+                invalidationLevel: bQuote.invalidation_level !== null ? Number(bQuote.invalidation_level) : null,
+                rrRatio: bQuote.rr_ratio !== null ? Number(bQuote.rr_ratio) : null,
+                horizon: bQuote.horizon || null,
+                rationale: bQuote.rationale || '',
+                companyName: bQuote.company_name || null,
+                asOf: bQuote.as_of || null,
+                dataDelayMinutes: bQuote.data_delay_minutes ?? null,
+                timeframe: bQuote.timeframe || '1d',
+                status: bQuote.status || 'OK',
                 isError: false,
                 isLoading: false,
                 isSyncing: false,

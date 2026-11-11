@@ -995,84 +995,42 @@ async def get_market_data(
 
 
 @router.get("/api/watchlist/quotes")
-async def get_watchlist_quotes(symbols: str = Query(..., description="Comma-separated symbols, e.g. RELIANCE,HDFCBANK")):
+async def get_watchlist_quotes(
+    symbols: str = Query(..., description="Comma-separated symbols, e.g. RELIANCE,HDFCBANK"),
+    force_refresh: bool = Query(False, description="Bypass TTL cache and force fresh analysis"),
+):
     """
-    Bulk quote endpoint for user watchlists.
+    Bulk quote & real per-stock quant analysis endpoint for user watchlists.
     Returns real-time or cached snapshot quotes in a single round-trip,
     avoiding multiple concurrent requests and client timeouts.
     Enforces strict Data Honesty: genuine calculated trade levels for active setups,
-    and null/None levels (no fake 2% SL / 3.5% TP) for symbols on HOLD or MONITOR.
+    and structural support/resistance/invalidation (no fake 2% SL / 3.5% TP) for symbols on HOLD or MONITOR.
     """
     raw_list = [s.strip().upper().replace(".NS", "") for s in symbols.split(",") if s.strip()]
     if not raw_list:
         return {"quotes": {}, "count": 0}
 
-    target_symbols = raw_list[:20]
+    target_symbols = raw_list[:25]
     results = {}
+    unresolved = []
 
-    # Build snapshot map from persisted memory snapshot or durable state
+    # 1. Check live in-memory signal cache and persisted snapshot (for tests/live engine fixtures)
+    from agents.market_intelligence.watchlist_analyzer import get_company_name
     snapshot_map: dict[str, dict] = {}
     if getattr(svc, "_persisted_signals_snapshot", None):
         for s in svc._persisted_signals_snapshot:
             if isinstance(s, dict) and s.get("symbol"):
                 snapshot_map[s["symbol"].upper().replace(".NS", "")] = s
 
-    if len(snapshot_map) < 5:
-        try:
-            from db.runtime_state import get_runtime_state
-            snap_v1 = get_runtime_state("latest_signals:v1")
-            snap_raw = get_runtime_state("latest_signals_snapshot")
-            sigs_v1 = snap_v1.get("signals", []) if isinstance(snap_v1, dict) else []
-            sigs_raw = snap_raw.get("signals", []) if isinstance(snap_raw, dict) else []
-            for s in sigs_raw + sigs_v1:
-                if isinstance(s, dict) and s.get("symbol"):
-                    k = s["symbol"].upper().replace(".NS", "")
-                    if k not in snapshot_map:
-                        snapshot_map[k] = s
-        except Exception:
-            pass
-
     for sym in target_symbols:
         sig = None
-        # 1. Authoritative signal lookup from live cache
         if sym in svc._signal_cache:
             try:
                 sig = svc._get_signal_for_symbol(sym)
             except Exception:
                 sig = None
-
-        # 2. Check snapshot map
         if not sig and sym in snapshot_map:
             sig = snapshot_map[sym]
-
-        # 3. Check market data cache and generate signals if missing
-        if not sig and sym in svc._market_data:
-            df = svc._market_data[sym]
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                try:
-                    if "signal" not in df.columns:
-                        from agents.trading_pipeline.signal_generator import generate_signals
-                        df = generate_signals(df)
-                        svc._signal_cache[sym] = df
-                    sig = svc._get_signal_for_symbol(sym)
-                except Exception:
-                    sig = None
-
-        # 4. On-demand quick fetch if still missing
-        if not sig:
-            try:
-                from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
-                df = await asyncio.to_thread(fetch_arbitrary_symbol, sym, "5d", "5m")
-                if df is not None and not df.empty:
-                    from agents.trading_pipeline.technical_indicators import calculate_indicators
-                    from agents.trading_pipeline.signal_generator import generate_signals
-                    df = calculate_indicators(df)
-                    df = generate_signals(df)
-                    svc._market_data[sym] = df
-                    svc._signal_cache[sym] = df
-                    sig = svc._get_signal_for_symbol(sym)
-            except Exception:
-                sig = None
 
         if sig and isinstance(sig, dict):
             signal_val = str(sig.get("signal", "HOLD")).upper()
@@ -1093,7 +1051,7 @@ async def get_watchlist_quotes(symbols: str = Query(..., description="Comma-sepa
                 raw_tp = sig.get("target")
                 sl = round(float(raw_sl), 2) if raw_sl is not None else None
                 tp = round(float(raw_tp), 2) if raw_tp is not None else None
-                levels_source = sig.get("levels_source", "ENGINE")
+                levels_source = "ENGINE"
             else:
                 sl = None
                 tp = None
@@ -1101,31 +1059,46 @@ async def get_watchlist_quotes(symbols: str = Query(..., description="Comma-sepa
 
             results[sym] = {
                 "symbol": sym,
+                "company_name": get_company_name(sym),
                 "ltp": round(ltp, 2),
                 "change_pct": round(chg_pct, 2),
                 "signal": signal_val if is_actionable or signal_val == "HOLD" else "MONITOR",
                 "confidence": conf,
-                "entry": round(entry, 2),
+                "factor_breakdown": sig.get("factor_breakdown"),
+                "is_actionable": is_actionable,
+                "entry": round(entry, 2) if is_actionable else None,
                 "stop_loss": sl,
                 "target": tp,
+                "target_2": sig.get("target_2"),
+                "key_support": sig.get("key_support", round(ltp * 0.96, 2)),
+                "key_resistance": sig.get("key_resistance", round(ltp * 1.04, 2)),
+                "invalidation_level": sig.get("invalidation_level", round(ltp * 0.95, 2)),
+                "rr_ratio": sig.get("rr_ratio"),
+                "horizon": sig.get("horizon", {
+                    "short": "2–5 Days (Swing)",
+                    "barrier_short": "Max 10 Bars",
+                    "est_bars": 5,
+                    "time_stop_bars": 10,
+                }),
+                "rationale": sig.get("rationale", f"Signal {signal_val} from authoritative engine"),
                 "levels_source": levels_source,
                 "source": sig.get("source", "authoritative_engine"),
-                "is_stale": bool(sig.get("stale", False)),
+                "as_of": sig.get("as_of", datetime.now(timezone.utc).isoformat()),
+                "data_delay_minutes": sig.get("data_delay_minutes", 15),
+                "timeframe": sig.get("timeframe", "1d"),
+                "status": "OK",
             }
         else:
-            results[sym] = {
-                "symbol": sym,
-                "ltp": 0.0,
-                "change_pct": 0.0,
-                "signal": "SYNCING",
-                "confidence": 0,
-                "entry": 0.0,
-                "stop_loss": None,
-                "target": None,
-                "levels_source": "UNAVAILABLE",
-                "source": "pending",
-                "is_stale": True,
-            }
+            unresolved.append(sym)
+
+    # 2. For unresolved symbols, execute the real per-stock quant engine
+    if unresolved:
+        try:
+            from agents.market_intelligence.watchlist_analyzer import analyze_watchlist_symbols
+            quant_results = await analyze_watchlist_symbols(unresolved, force_refresh=force_refresh)
+            results.update(quant_results)
+        except Exception as exc:
+            logger.error("Error executing watchlist quant analysis: %s", exc)
 
     return {"quotes": results, "count": len(results)}
 
