@@ -175,11 +175,14 @@ def _compute_eod_technical_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     last_open = float(df["open"].values[-1])
     prev_close = float(closes[-2]) if len(closes) > 1 else last_close
 
-    # Moving Averages
+    # Moving Averages (Scaled to available completed bar length)
     s_closes = pd.Series(closes)
-    ema20 = float(s_closes.ewm(span=20, adjust=False).mean().iloc[-1])
-    ema50 = float(s_closes.ewm(span=50, adjust=False).mean().iloc[-1]) if len(closes) >= 50 else ema20
-    ema200 = float(s_closes.ewm(span=200, adjust=False).mean().iloc[-1]) if len(closes) >= 200 else ema50
+    n_bars = len(closes)
+    ema20 = float(s_closes.ewm(span=min(20, n_bars), adjust=False).mean().iloc[-1])
+    span50 = min(50, n_bars) if n_bars > 20 else 20
+    ema50 = float(s_closes.ewm(span=span50, adjust=False).mean().iloc[-1])
+    span200 = min(200, n_bars) if n_bars > span50 else span50
+    ema200 = float(s_closes.ewm(span=span200, adjust=False).mean().iloc[-1])
 
     # ATR 14
     high_low = highs[1:] - lows[1:]
@@ -427,30 +430,61 @@ def analyze_candidate(
     r2 = metrics["r2"]
     s2 = metrics["s2"]
 
-    # 1. Directional Bias & Scoring
-    tech_score = 50.0
-    bias = "LONG"
+    # 1. Directional Bias & Scoring (Balanced Confluence Model)
+    bull_points = 50.0
+    bear_points = 50.0
 
-    # Bullish technical factors
     if close > ema20 and ema20 > ema50:
-        tech_score += 15.0
-    if close > ema200:
-        tech_score += 10.0
+        bull_points += 15.0
+    elif close < ema20 and ema20 < ema50:
+        bear_points += 15.0
+
+    if close > ema200 * 1.005:
+        bull_points += 10.0
+    elif close < ema200 * 0.995:
+        bear_points += 10.0
+
     if 45.0 <= rsi <= 68.0:
-        tech_score += 12.0  # Healthy momentum, not overbought
-    elif rsi > 70.0:
-        tech_score -= 5.0   # Overbought caution
+        bull_points += 12.0
+    elif rsi > 68.0:
+        bull_points += 6.0  # Strong trend momentum with slight overbought discount
+    elif 32.0 <= rsi <= 48.0:
+        bear_points += 12.0
+    elif rsi < 32.0:
+        bear_points += 6.0
+
     if vol_ratio >= 1.25:
-        tech_score += 10.0  # Volume expansion
+        if close >= metrics["open"]:
+            bull_points += 10.0
+        else:
+            bear_points += 10.0
 
-    # Direction selection based on trend
-    if close < ema20 and close < ema50 and rsi < 45.0:
+    # Benchmark Regime Alignment
+    if benchmark_trend == "BULLISH":
+        bull_points += 8.0
+    elif benchmark_trend == "BEARISH":
+        bear_points += 12.0
+        bull_points -= 10.0
+    elif benchmark_trend == "NEUTRAL":
+        bull_points -= 2.0
+        bear_points -= 2.0
+
+    # Filter entangled EMAs (range-bound sideways chop)
+    ema_separation_pct = abs(ema20 - ema50) / ema50 * 100.0 if ema50 > 0 else 0.0
+    if ema_separation_pct < 0.25:
+        # Moving averages entangled: require strong volume breakout above R1 / breakdown below S1
+        if not (vol_ratio >= 1.5 and (close > r1 or close < s1)):
+            return None
+
+    if bull_points >= 65.0 and bull_points >= bear_points + 4.0 and close > ema20 and ema20 > ema50:
+        bias = "LONG"
+        tech_score = min(98.0, max(30.0, bull_points))
+    elif bear_points >= 65.0 and bear_points >= bull_points + 4.0 and close < ema20 and ema20 < ema50:
         bias = "SHORT"
-        tech_score = 50.0 + (ema20 - close) / close * 100.0 + (50.0 - rsi) * 0.5
-        if vol_ratio >= 1.25:
-            tech_score += 10.0
-
-    tech_score = min(98.0, max(30.0, tech_score))
+        tech_score = min(98.0, max(30.0, bear_points))
+    else:
+        # Ambiguous chop: neither clean breakout nor breakdown
+        return None
 
     # 2. Catalysts
     catalysts = _discover_catalysts_for_symbol(symbol, source_date)
@@ -476,11 +510,14 @@ def analyze_candidate(
 
     # 4. Construct Planned Trade Setup (Dynamic R:R >= 1.5x based on real technical pivot & resistance levels)
     if bias == "LONG":
-        trigger_price = round(close * 1.002, 2)
-        trigger_zone = f"₹{round(trigger_price * 0.998, 2)} – ₹{round(trigger_price * 1.005, 2)}"
-        # Structural stop: place below S1 or 0.65x ATR buffer (bounded to 0.6x–1.2x ATR to survive morning noise)
-        raw_risk = max(0.65 * atr, trigger_price - s1)
-        risk = round(max(0.6 * atr, min(1.2 * atr, raw_risk)), 2)
+        last_h = metrics["high"]
+        # Breakout trigger MUST exceed the last session's High
+        trigger_price = round(max(last_h * 1.001, r1 if (r1 > last_h and r1 <= last_h * 1.008) else last_h * 1.001), 2)
+        trigger_zone = f"₹{round(trigger_price, 2)} – ₹{round(trigger_price + 0.25 * atr, 2)}"
+
+        # Structural stop: place below S1 or pivot with minimum 1.0x ATR buffer
+        raw_risk = max(1.0 * atr, trigger_price - min(s1, metrics["pivot"]))
+        risk = round(max(1.0 * atr, min(2.0 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price - risk, 2)
 
         # Dynamic technical target based on real resistance levels (R1 / R2 / ATR expansion)
@@ -489,17 +526,20 @@ def analyze_candidate(
         elif r2 > trigger_price and (r2 - trigger_price) >= (1.5 * risk):
             target_1 = round(r2, 2)
         else:
-            target_1 = round(trigger_price + max(1.8 * risk, 1.25 * atr), 2)
+            target_1 = round(trigger_price + max(1.8 * risk, 2.0 * atr), 2)
 
         reward = round(target_1 - trigger_price, 2)
         rr_ratio = round(reward / risk, 2)
         target_2 = round(r2 if r2 > target_1 else target_1 + (0.8 * atr), 2)
-        invalidation = f"Avoid if gap down opens below ₹{stop_loss} (S1: ₹{s1}) or NIFTY plunges >1% at 09:15 open."
+        invalidation = f"Avoid if gap down opens below ₹{stop_loss} (risk buffer breached) or NIFTY plunges >1% at 09:15 open."
     else:
-        trigger_price = round(close * 0.998, 2)
-        trigger_zone = f"₹{round(trigger_price * 0.995, 2)} – ₹{round(trigger_price * 1.002, 2)}"
-        raw_risk = max(0.65 * atr, r1 - trigger_price)
-        risk = round(max(0.6 * atr, min(1.2 * atr, raw_risk)), 2)
+        last_l = metrics["low"]
+        # Breakdown trigger MUST break below the last session's Low
+        trigger_price = round(min(last_l * 0.999, s1 if (s1 < last_l and s1 >= last_l * 0.992) else last_l * 0.999), 2)
+        trigger_zone = f"₹{round(trigger_price - 0.25 * atr, 2)} – ₹{round(trigger_price, 2)}"
+
+        raw_risk = max(1.0 * atr, max(r1, metrics["pivot"]) - trigger_price)
+        risk = round(max(1.0 * atr, min(2.0 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price + risk, 2)
 
         if s1 < trigger_price and (trigger_price - s1) >= (1.5 * risk):
@@ -507,12 +547,12 @@ def analyze_candidate(
         elif s2 < trigger_price and (trigger_price - s2) >= (1.5 * risk):
             target_1 = round(s2, 2)
         else:
-            target_1 = round(trigger_price - max(1.8 * risk, 1.25 * atr), 2)
+            target_1 = round(trigger_price - max(1.8 * risk, 2.0 * atr), 2)
 
         reward = round(trigger_price - target_1, 2)
         rr_ratio = round(reward / risk, 2)
         target_2 = round(s2 if s2 < target_1 else target_1 - (0.8 * atr), 2)
-        invalidation = f"Avoid if gap up opens above ₹{stop_loss} (R1: ₹{r1}) or strong morning sector surge."
+        invalidation = f"Avoid if gap up opens above ₹{stop_loss} (risk buffer breached) or strong morning sector surge."
 
     # Minimum Risk:Reward Gate Enforcement
     if rr_ratio < 1.5:
@@ -629,15 +669,15 @@ def _get_daily_candles_for_symbol(symbol: str, source_date: date) -> Optional[pd
     """
     try:
         from agents.market_intelligence.nse_fetcher import fetch_ohlcv, fetch_arbitrary_symbol
-        df = fetch_ohlcv(symbol, period="60d", interval="1d")
+        df = fetch_ohlcv(symbol, period="100d", interval="1d")
         if df is None or len(df) < 15:
-            df = fetch_arbitrary_symbol(f"{symbol}.NS", period="60d", interval="1d")
+            df = fetch_arbitrary_symbol(f"{symbol}.NS", period="100d", interval="1d")
         if df is None or len(df) < 15:
             from config.symbol_aliases import SYMBOL_ALIASES
             aliases = SYMBOL_ALIASES.get(symbol, [])
             for alias in aliases:
                 if alias not in (symbol, f"{symbol}.NS"):
-                    df = fetch_arbitrary_symbol(alias, period="60d", interval="1d")
+                    df = fetch_arbitrary_symbol(alias, period="100d", interval="1d")
                     if df is not None and len(df) >= 15:
                         break
         if df is not None and len(df) >= 15:
@@ -648,6 +688,51 @@ def _get_daily_candles_for_symbol(symbol: str, source_date: date) -> Optional[pd
         logger.warning("Live exchange fetch failed for %s: %s", symbol, exc)
 
     return None
+
+
+# ── Benchmark Trend Detection (Strict Zero-Synthetic Policy) ────────────
+
+def _detect_benchmark_trend(source_date: Optional[date] = None) -> Tuple[str, str]:
+    """
+    Evaluate NIFTY 50 (^NSEI) daily candle trend to determine overall market regime.
+    Returns (regime: "BULLISH" | "BEARISH" | "NEUTRAL", summary: str).
+    Uses genuine exchange data.
+    """
+    try:
+        from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
+        df = fetch_arbitrary_symbol("^NSEI", period="60d", interval="1d")
+        if df is not None and len(df) >= 20:
+            df = df.copy()
+            df.columns = [c.lower() for c in df.columns]
+            closes = df["close"].dropna()
+            if len(closes) >= 20:
+                c = float(closes.iloc[-1])
+                ema20 = float(closes.ewm(span=20, adjust=False).mean().iloc[-1])
+                ema50 = float(closes.ewm(span=min(50, len(closes)), adjust=False).mean().iloc[-1])
+                chg5d = float((c - closes.iloc[-5]) / closes.iloc[-5] * 100) if len(closes) >= 5 else 0.0
+
+                if c > ema20 and ema20 > ema50 and chg5d > 0.2:
+                    return (
+                        "BULLISH",
+                        f"NIFTY 50 trading in bullish regime at ₹{c:,.2f} above 20-EMA (₹{ema20:,.2f}) and 50-EMA (₹{ema50:,.2f}) with 5-day momentum +{chg5d:.1f}%."
+                    )
+                elif c < ema20 and ema20 < ema50 and chg5d < -0.2:
+                    return (
+                        "BEARISH",
+                        f"NIFTY 50 trading in bearish regime at ₹{c:,.2f} below 20-EMA (₹{ema20:,.2f}) and 50-EMA (₹{ema50:,.2f}) with 5-day pullback {chg5d:.1f}%."
+                    )
+                else:
+                    return (
+                        "NEUTRAL",
+                        f"NIFTY 50 trading in neutral consolidation at ₹{c:,.2f} near 20-EMA (₹{ema20:,.2f}). Choppy breadth favors strict stock-specific confluence."
+                    )
+    except Exception as exc:
+        logger.warning("Benchmark trend detection fallback to NEUTRAL: %s", exc)
+
+    return (
+        "NEUTRAL",
+        "NIFTY 50 consolidation regime. Strict technical confluence gates enforced."
+    )
 
 
 # ── Full Pipeline Execution ───────────────────────────────────────────────────
@@ -690,7 +775,11 @@ def generate_next_day_picks(
     else:
         logger.info("Strict Section 6A NSE Focus Mode verified: Crypto & Forex zero-work enforced.")
 
-    # 3. Two-Stage Pipeline
+    # 3. Benchmark Market Regime Evaluation
+    benchmark_trend, macro_summary = _detect_benchmark_trend(source_date)
+    logger.info("Next-Day Picks benchmark regime evaluated: %s", benchmark_trend)
+
+    # 4. Two-Stage Pipeline
     # Stage 1: Screen Liquid Universe
     symbols_to_screen = universe if universe is not None else TIER1_RESEARCH_UNIVERSE
     candidates = []
@@ -699,7 +788,7 @@ def generate_next_day_picks(
         try:
             df = _get_daily_candles_for_symbol(sym, source_date)
             if df is not None and len(df) >= 15:
-                cand = analyze_candidate(sym, df, source_date, target_date)
+                cand = analyze_candidate(sym, df, source_date, target_date, benchmark_trend=benchmark_trend)
                 if cand:
                     cand["data_source"] = "NSE_EXCHANGE_EOD"
                     cand["is_synthetic"] = False
@@ -715,13 +804,16 @@ def generate_next_day_picks(
             if cand:
                 candidates.append(cand)
 
-    # Stage 2: Rank & Sector Diversification Filter
-    candidates.sort(key=lambda x: x["rank_score"], reverse=True)
+    # Stage 2: Rank & Quality Filter (Stand down in neutral/weak markets)
+    # Filter candidates by minimum composite rank to prevent forced padding
+    min_rank_threshold = 73.0 if benchmark_trend == "NEUTRAL" else 68.0
+    qualified_candidates = [c for c in candidates if c.get("rank_score", 0.0) >= min_rank_threshold]
+    qualified_candidates.sort(key=lambda x: x["rank_score"], reverse=True)
 
     # Enforce sector diversification: max 1 pick per sector for the primary slots
     selected_picks = []
     seen_sectors = set()
-    for cand in candidates:
+    for cand in qualified_candidates:
         sec = cand.get("sector")
         if sec not in seen_sectors:
             selected_picks.append(cand)
@@ -729,10 +821,10 @@ def generate_next_day_picks(
             if len(selected_picks) >= max_picks:
                 break
 
-    # If fewer than max_picks due to sector variety, fill remaining slots by highest score
+    # If slots remain but we have qualified candidates with duplicate sector, only add if rank >= 75.0
     if len(selected_picks) < max_picks:
-        for cand in candidates:
-            if cand not in selected_picks:
+        for cand in qualified_candidates:
+            if cand not in selected_picks and cand.get("rank_score", 0.0) >= 75.0:
                 selected_picks.append(cand)
                 if len(selected_picks) >= max_picks:
                     break
@@ -742,9 +834,9 @@ def generate_next_day_picks(
 
     status = "READY" if selected_picks else "NO_QUALIFIED_SETUPS"
     status_reason = (
-        f"Successfully identified {len(selected_picks)} high-conviction setup(s) meeting strict 1.5+ R:R criteria."
+        f"Successfully identified {len(selected_picks)} high-conviction setup(s) meeting strict 1.5+ R:R criteria in {benchmark_trend} market regime."
         if selected_picks else
-        "No stocks met the required 1.5x Risk:Reward ratio and multi-factor confluence gates for this session."
+        f"No stocks met the required 1.5x Risk:Reward ratio and multi-factor confluence gates for this session (Regime: {benchmark_trend}). Stand-down active."
     )
 
     report_payload: Dict[str, Any] = {
@@ -767,14 +859,12 @@ def generate_next_day_picks(
         "data_source": "NSE_EXCHANGE_EOD",
         "is_synthetic": False,
         "model_version": "NextDay-Confluence-v2.1",
+        "benchmark_regime": benchmark_trend,
         "status": status,
         "status_reason": status_reason,
         "picks_count": len(selected_picks),
         "picks": selected_picks,
-        "macro_context_summary": (
-            "NIFTY 50 trading in steady consolidation above key short-term EMAs. "
-            "Domestic institutional flow remains resilient while global crude volatility is actively tracked."
-        ),
+        "macro_context_summary": macro_summary,
         "disclaimer": (
             "Research analysis only. Educational algorithmic signals with zero live broker order placement. "
             "Ranking score is an analytical confluence index and does not guarantee market fill or profit."

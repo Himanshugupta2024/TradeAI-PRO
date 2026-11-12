@@ -401,7 +401,7 @@ async def predict_stock_price(
             "as_of": datetime.now(timezone.utc).isoformat(),
             "data_delay_minutes": 15,
             "feed_source": "YAHOO_NSE_DELAYED",
-            "horizon": "2-5 Trading Days (Swing)",
+            "horizon": "5–8 Trading Days (Swing)",
             "status": "INSUFFICIENT_DATA",
             "direction": None,
             "probabilities": None,
@@ -542,6 +542,17 @@ async def predict_stock_price(
         target_price=range_data["expected_target"],
     )
 
+    from agents.market_intelligence.watchlist_analyzer import calculate_time_horizon
+    is_act = direction in ("UP", "DOWN", "LONG", "SHORT")
+    horizon_meta = calculate_time_horizon(
+        is_actionable=is_act,
+        entry=float(c_last),
+        target=float(range_data["expected_target"]) if is_act else None,
+        atr14=float(atr14_val),
+        timeframe="1d",
+    )
+    dynamic_horizon = horizon_meta.get("short", "5–8 Trading Days (Swing)")
+
     payload = {
         "symbol": clean_sym,
         "company_name": comp_name,
@@ -549,8 +560,9 @@ async def predict_stock_price(
         "as_of_iso": now_utc.isoformat(),
         "data_delay_minutes": 15,
         "feed_source": "YAHOO_NSE_DELAYED",
-        "horizon": "2-5 Trading Days (Swing)",
-        "prediction_horizon": "2-5 Trading Days (Swing)",
+        "horizon": dynamic_horizon,
+        "prediction_horizon": dynamic_horizon,
+        "horizon_details": horizon_meta,
         "model_version": "v1.2.0-ensemble-6layer",
         "prediction_timestamp": now_utc.isoformat(),
         "status": "PREDICTION_ACTIVE",

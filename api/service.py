@@ -1592,8 +1592,14 @@ async def _refresh_market_data():
     """
     Single-flight entrypoint for market data refresh.
     If a refresh cycle is already in-flight, reuses that task to avoid thundering-herd duplicate downloads.
+    Enforces a 60-second minimum interval guard to eliminate redundant polling loops.
     """
-    global _refresh_task
+    global _refresh_task, _last_refresh
+    now = datetime.now()
+    if _last_refresh != datetime.min and (now - _last_refresh).total_seconds() < 60.0:
+        logger.debug("[SingleFlight] Min interval guard: %.1fs since last refresh (min 60s required)", (now - _last_refresh).total_seconds())
+        return
+
     async with _get_refresh_task_lock():
         if _refresh_task is not None and not _refresh_task.done():
             logger.info("[SingleFlight] Reusing existing in-flight market refresh task")
@@ -1626,7 +1632,7 @@ async def _refresh_market_data_inner():
             router = get_default_router()
             t_batch = time.perf_counter()
             dfs_5m = await router.get_batch_ohlcv(TOP_NSE_SYMBOLS, period="5d", interval="5m")
-            dfs_1d = await router.get_batch_ohlcv(TOP_NSE_SYMBOLS, period="60d", interval="1d")
+            dfs_1d = await router.get_batch_ohlcv(TOP_NSE_SYMBOLS, period="2y", interval="1d")
             elapsed_batch = time.perf_counter() - t_batch
             refresh_tracker.record("batch_ohlcv", elapsed_batch * 1000.0)
             logger.info(
@@ -5152,15 +5158,22 @@ class SnapshotBroadcaster:
     Prevents N-client polling storm and keeps memory/compute footprint minimal.
     """
 
+    MAX_WS_CLIENTS: int = 50
+
     def __init__(self) -> None:
         self._clients: set[WebSocket] = set()
         self._cached_payload: dict[str, Any] | None = None
         self._cached_json: str | None = None
         self._last_snapshot_version: Any = None
 
-    def register(self, ws: WebSocket) -> None:
+    def register(self, ws: WebSocket) -> bool:
+        """Register client for live broadcast, capped at MAX_WS_CLIENTS (50)."""
+        if len(self._clients) >= self.MAX_WS_CLIENTS:
+            logger.warning("[Broadcaster] WS registry capacity exceeded (%d active), rejecting client", len(self._clients))
+            return False
         self._clients.add(ws)
         logger.info("[Broadcaster] Client registered (%d active)", len(self._clients))
+        return True
 
     def unregister(self, ws: WebSocket) -> None:
         self._clients.discard(ws)

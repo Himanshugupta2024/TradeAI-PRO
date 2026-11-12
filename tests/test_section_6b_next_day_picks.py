@@ -249,3 +249,84 @@ def test_outcome_resolution_all_permutations():
     res_ambig = resolve_report_outcomes(report_id, candles_ambig)
     updated_pick = res_ambig["report"]["picks"][0]
     assert updated_pick["outcome_status"] == "AMBIGUOUS"
+
+
+# ── Test 5: Architectural Upgrades Regression Suite ───────────────────────────
+
+def test_long_breakout_trigger_strictly_exceeds_day_high():
+    """Verify long breakout trigger price strictly exceeds previous day's high."""
+    src_date = date(2026, 11, 11)
+    tgt_date = date(2026, 11, 12)
+
+    dates = [src_date - timedelta(days=30 - i) for i in range(30)]
+    closes = [400.0 + (i * 2.0) for i in range(30)]
+    highs = [c + 5.0 for c in closes]
+    lows = [c - 3.0 for c in closes]
+    opens = [c - 1.0 for c in closes]
+    volumes = [2000000 for _ in range(30)]
+
+    df = pd.DataFrame({
+        "timestamp": dates, "open": opens, "high": highs, "low": lows,
+        "close": closes, "volume": volumes
+    })
+    cand = analyze_candidate("TATAMOTORS", df, src_date, tgt_date, benchmark_trend="BULLISH")
+    assert cand is not None
+    assert cand["directional_bias"] == "LONG"
+    # Trigger price must strictly exceed the completed bar's high
+    last_high = highs[-1]
+    assert cand["trade_plan"]["trigger_price"] > last_high
+    assert cand["trade_plan"]["risk_reward"] >= 1.5
+
+
+def test_short_breakdown_trigger_and_risk_reward():
+    """Verify downward trending stock generates short breakdown setup with strict R:R."""
+    src_date = date(2026, 11, 11)
+    tgt_date = date(2026, 11, 12)
+
+    # 30-day downward trending series
+    dates = [src_date - timedelta(days=30 - i) for i in range(30)]
+    closes = [1000.0 - (i * 6.0) for i in range(30)]
+    opens = [c + 2.0 for c in closes]
+    highs = [c + 3.0 for c in closes]
+    lows = [c - 4.0 for c in closes]
+    volumes = [1500000 for _ in range(30)]
+
+    df = pd.DataFrame({
+        "timestamp": dates, "open": opens, "high": highs, "low": lows,
+        "close": closes, "volume": volumes
+    })
+
+    cand = analyze_candidate("WEAKSTOCK", df, src_date, tgt_date, benchmark_trend="BEARISH")
+    assert cand is not None
+    assert cand["directional_bias"] == "SHORT"
+    last_low = lows[-1]
+    # Short trigger price must be at or below last low
+    assert cand["trade_plan"]["trigger_price"] <= last_low
+    # Stop loss must be above trigger price
+    assert cand["trade_plan"]["stop_loss"] > cand["trade_plan"]["trigger_price"]
+    # Target 1 must be below trigger price
+    assert cand["trade_plan"]["target_1"] < cand["trade_plan"]["trigger_price"]
+    assert cand["trade_plan"]["risk_reward"] >= 1.5
+
+
+def test_chop_filtering_returns_none_for_indecisive_bars():
+    """Ambiguous chop without clean edge returns None rather than forcing a biased setup."""
+    src_date = date(2026, 11, 11)
+    tgt_date = date(2026, 11, 12)
+
+    # Completely flat series hovering at same price
+    dates = [src_date - timedelta(days=30 - i) for i in range(30)]
+    closes = [500.0 + (1.0 if i % 2 == 0 else -1.0) for i in range(30)]
+    opens = [500.0 for _ in range(30)]
+    highs = [502.0 for _ in range(30)]
+    lows = [498.0 for _ in range(30)]
+    volumes = [100000 for _ in range(30)]
+
+    df = pd.DataFrame({
+        "timestamp": dates, "open": opens, "high": highs, "low": lows,
+        "close": closes, "volume": volumes
+    })
+
+    cand = analyze_candidate("FLATSTOCK", df, src_date, tgt_date, benchmark_trend="NEUTRAL")
+    assert cand is None  # Screened out, no false breakout signal
+
