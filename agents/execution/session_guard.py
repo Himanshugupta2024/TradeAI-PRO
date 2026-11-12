@@ -159,7 +159,12 @@ def evaluate_data_freshness(
         except Exception:
             return "UNAVAILABLE", 999999.0
 
-    # Ensure UTC normalized comparison
+    # Explicit Datetime Contracts:
+    # 1. Internal age comparison is strictly UTC-normalized:
+    #    - Naive crypto timestamps are assumed UTC.
+    #    - Naive NSE equity timestamps (from yfinance/nse_fetcher) are localized to Asia/Kolkata (IST),
+    #      then converted to UTC before computing age against datetime.now(timezone.utc).
+    # 2. Session boundary checks convert ts_utc to Asia/Kolkata (bar_ist) for 09:15-15:30 IST window gating.
     if ts_val.tzinfo is None:
         if "/" not in symbol:
             # NSE equities from nse_fetcher are in Asia/Kolkata
