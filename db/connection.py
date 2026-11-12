@@ -4,6 +4,7 @@ Auto-creates all tables on import.
 """
 
 import logging
+from contextlib import contextmanager
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from config.settings import DATABASE_URL, IS_PRODUCTION
@@ -148,6 +149,7 @@ def check_db_connectivity() -> bool:
         return False
 
 
+@contextmanager
 def get_session():
     """Yield a new DB session (use in `with` or as context manager)."""
     session = SessionLocal()

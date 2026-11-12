@@ -273,6 +273,13 @@ def evaluate_health_v2(
         snap_dt, age_seconds, is_nse_open, now_ist, data_age_source=data_age_source
     )
 
+    router_telemetry = {}
+    try:
+        from data.router import get_default_router
+        router_telemetry = get_default_router().get_health_status()
+    except Exception:
+        pass
+
     return {
         "status": overall_status,
         "healthy": (overall_status == "HEALTHY"),
@@ -293,5 +300,6 @@ def evaluate_health_v2(
         "last_bar_at": feed_status.get("last_bar_at") or (snap_dt.isoformat() if data_age_source == "LAST_BAR" and snap_dt else None),
         "bar_age_seconds": feed_status.get("bar_age_seconds") or (round(age_seconds, 1) if data_age_source == "LAST_BAR" and age_seconds is not None else None),
         "is_market_open": is_nse_open,
+        "router_telemetry": router_telemetry,
         "market_session_status": nse_reason,
     }

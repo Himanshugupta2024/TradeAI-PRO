@@ -68,6 +68,27 @@ class Candle(Base):
         return f"<Candle {self.symbol} {self.timeframe} {self.timestamp}>"
 
 
+class Candle5m(Base):
+    __tablename__ = "candles_5m"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(30), nullable=False, index=True)
+    timestamp = Column(DateTime, nullable=False, index=True)
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Float, nullable=False, default=0.0)
+    source = Column(String(30), nullable=False, default="YAHOO")
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "timestamp", name="uq_candle_5m"),
+    )
+
+    def __repr__(self):
+        return f"<Candle5m {self.symbol} {self.timestamp} {self.close}>"
+
+
 # ── Feature ──────────────────────────────────────────────
 
 class Feature(Base):

@@ -242,3 +242,24 @@ def test_company_name_resolution():
     assert "Precision Wires" in get_company_name("PRECWIRE")
     assert "Reliance Industries" in get_company_name("RELIANCE")
     assert "UNKNOWN · NSE Equity" == get_company_name("UNKNOWN")
+
+
+def test_candles_5m_persistence():
+    """Verify 5-minute candles persist into candles_5m table."""
+    from db.connection import init_db
+    from db.candles_store import upsert_candles_5m_sync
+    init_db()
+
+    df = pd.DataFrame([
+        {
+            "timestamp": datetime.now(timezone.utc),
+            "open": 2500.0,
+            "high": 2520.0,
+            "low": 2490.0,
+            "close": 2510.0,
+            "volume": 100000.0,
+        }
+    ])
+    count = upsert_candles_5m_sync("RELIANCE", df, source="YAHOO_TEST")
+    assert count == 1
+
