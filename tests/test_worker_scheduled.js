@@ -446,6 +446,33 @@ async function runTests() {
     assert.strictEqual(noTokenResult.cycle.reason, 'no_token');
     console.log('✓ Test 9 passed.');
 
+    // ------------------------------------------------------------------------
+    // Test 10: market refresh is triggered when CRON_SECRET is configured
+    // ------------------------------------------------------------------------
+    console.log('Test 10: market refresh is dispatched when CRON_SECRET is present...');
+    const refreshCalls = [];
+    const refreshFetch = async (url, options = {}) => {
+      refreshCalls.push({ url, options });
+      return { ok: true, status: 200 };
+    };
+
+    const refreshResult = await handleScheduled(
+      { cron: '*/2 3-10 * * 1-5' },
+      { CRON_SECRET: 'test-secret-123' },
+      {},
+      refreshFetch,
+      at(12, 0)
+    );
+
+    assert.strictEqual(refreshCalls.length, 2, 'keep-warm ping + market refresh call');
+    const cronCall = refreshCalls.find((c) => String(c.url).includes('/api/cron/refresh'));
+    assert.ok(cronCall, 'must trigger /api/cron/refresh');
+    assert.strictEqual(cronCall.options.method, 'POST');
+    assert.strictEqual(cronCall.options.headers['X-Cron-Secret'], 'test-secret-123');
+    assert.strictEqual(cronCall.options.headers['User-Agent'], 'TradeAI-Cloudflare-Cron-Refresh/1.0');
+    assert.strictEqual(refreshResult.refresh.ok, true);
+    console.log('✓ Test 10 passed.');
+
   } finally {
     // Restore global fetch and caches
     globalThis.fetch = originalGlobalFetch;
