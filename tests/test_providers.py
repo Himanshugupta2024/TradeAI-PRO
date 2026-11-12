@@ -110,3 +110,58 @@ async def test_yahoo_batch_ohlcv_parsing():
     tcs_df = res["TCS"]
     assert len(tcs_df) == 3
     assert tcs_df.iloc[-1]["close"] == 3535.0
+
+
+@pytest.mark.asyncio
+async def test_yahoo_batch_quotes_chart_meta(monkeypatch):
+    """Verify Yahoo Query1 Chart Meta extracts real tick LTP, true chartPreviousClose, and change%."""
+    import httpx
+    provider = YahooProvider(timeout=5.0)
+
+    mock_resp_reliance = {
+        "chart": {
+            "result": [
+                {
+                    "meta": {
+                        "regularMarketPrice": 1339.7,
+                        "chartPreviousClose": 1335.4,
+                        "regularMarketTime": 1794477544,
+                        "regularMarketDayOpen": 1335.4,
+                        "regularMarketDayHigh": 1342.5,
+                        "regularMarketDayLow": 1330.9,
+                        "regularMarketVolume": 12500000,
+                        "exchangeName": "NSI",
+                        "currency": "INR",
+                    }
+                }
+            ]
+        }
+    }
+
+    class MockResponse:
+        def __init__(self, json_data, status_code=200):
+            self._json = json_data
+            self.status_code = status_code
+
+        def json(self):
+            return self._json
+
+    async def mock_get(self, url, *args, **kwargs):
+        if "RELIANCE" in url:
+            return MockResponse(mock_resp_reliance)
+        return MockResponse({}, status_code=404)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+
+    quotes = await provider.get_batch_quotes(["RELIANCE"])
+    assert "RELIANCE" in quotes
+    q = quotes["RELIANCE"]
+
+    assert q.price == 1339.7
+    assert q.prev_close == 1335.4
+    assert q.change_pct == 0.32
+    assert q.source == "YAHOO_CHART_META"
+    assert q.regular_market_time is not None
+    assert q.data_age_seconds is not None
+    assert q.is_valid() is True
+

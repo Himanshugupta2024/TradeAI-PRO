@@ -16,6 +16,7 @@ from typing import Any
 
 import pandas as pd
 import yfinance as yf
+import httpx
 
 from data.providers.base import MarketDataProvider, MarketQuote
 
@@ -74,79 +75,168 @@ class YahooProvider(MarketDataProvider):
         res = await self.get_batch_quotes([symbol])
         return res.get(symbol)
 
+    async def _fetch_single_chart_meta(
+        self,
+        client: httpx.AsyncClient,
+        clean_sym: str,
+        yf_sym: str,
+    ) -> MarketQuote | None:
+        """Fetch real-time tick price, true chartPreviousClose, and trade epoch via Yahoo Query1 Chart Meta."""
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_sym}?interval=1m&range=1d"
+        try:
+            resp = await client.get(url, timeout=self.timeout)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            results = data.get("chart", {}).get("result")
+            if not results:
+                return None
+            meta = results[0].get("meta", {})
+            ltp = meta.get("regularMarketPrice")
+            if ltp is None or not math.isfinite(ltp) or ltp <= 0:
+                return None
+
+            prev_close = meta.get("chartPreviousClose") or meta.get("previousClose")
+            change_pct = None
+            if prev_close and float(prev_close) > 0:
+                change_pct = round(((float(ltp) - float(prev_close)) / float(prev_close)) * 100.0, 2)
+
+            mkt_time_epoch = meta.get("regularMarketTime")
+            regular_mkt_time = None
+            data_age_sec = None
+            now_utc = datetime.now(timezone.utc)
+            if mkt_time_epoch:
+                regular_mkt_time = datetime.fromtimestamp(mkt_time_epoch, tz=timezone.utc)
+                data_age_sec = max(0.0, (now_utc - regular_mkt_time).total_seconds())
+
+            open_val = float(meta.get("regularMarketDayOpen") or ltp)
+            high_val = float(meta.get("regularMarketDayHigh") or ltp)
+            low_val = float(meta.get("regularMarketDayLow") or ltp)
+            vol_val = float(meta.get("regularMarketVolume") or 0.0)
+
+            quote = MarketQuote(
+                symbol=clean_sym,
+                price=float(ltp),
+                open=open_val,
+                high=high_val,
+                low=low_val,
+                close=float(ltp),
+                volume=vol_val,
+                source="YAHOO_CHART_META",
+                fetched_at=now_utc,
+                regular_market_time=regular_mkt_time,
+                prev_close=float(prev_close) if prev_close else None,
+                change_pct=change_pct,
+                data_age_seconds=data_age_sec,
+                quality_score=0.98,
+                extra={
+                    "exchange_name": meta.get("exchangeName"),
+                    "currency": meta.get("currency"),
+                },
+            )
+            return quote if quote.is_valid() else None
+        except Exception as exc:
+            logger.debug("[YahooProvider] Chart meta fetch failed for %s: %s", clean_sym, exc)
+            return None
+
     async def get_batch_quotes(self, symbols: list[str]) -> dict[str, MarketQuote]:
-        """Fetch quotes for multiple symbols in a single vectorized HTTP download."""
+        """Fetch quotes for multiple symbols via Yahoo Query1 Chart Meta, with yf.download fallback."""
         if not symbols:
             return {}
 
         clean_to_yf = {s: _normalize_yahoo_symbol(s) for s in symbols}
-        yf_tickers = list(set(clean_to_yf.values()))
         t0 = time.perf_counter()
-
-        def _fetch_sync():
-            return yf.download(
-                tickers=yf_tickers,
-                period="5d",
-                interval="5m",
-                group_by="ticker",
-                threads=True,
-                timeout=self.timeout,
-                progress=False,
-            )
-
-        try:
-            df = await asyncio.to_thread(_fetch_sync)
-            latency_ms = (time.perf_counter() - t0) * 1000.0
-            self.health.record_success(latency_ms)
-        except Exception as exc:
-            self.health.record_failure()
-            logger.warning("[YahooProvider] Batch download failed: %s", exc)
-            return {}
-
-        if df is None or df.empty:
-            return {}
-
         quotes: dict[str, MarketQuote] = {}
-        now = datetime.now(timezone.utc)
-        is_multi = len(yf_tickers) > 1
 
-        for clean_sym, yf_sym in clean_to_yf.items():
-            try:
-                if is_multi:
-                    if yf_sym not in df.columns.levels[0]:
-                        continue
-                    sym_df = df[yf_sym].dropna(how="all")
-                else:
-                    sym_df = df.dropna(how="all")
+        # 1. Primary path: Vectorized async fetch via Yahoo Query1 Chart Meta (sub-second tick prices)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        try:
+            async with httpx.AsyncClient(headers=headers, timeout=self.timeout) as client:
+                tasks = [
+                    self._fetch_single_chart_meta(client, clean_sym, yf_sym)
+                    for clean_sym, yf_sym in clean_to_yf.items()
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for res in results:
+                    if isinstance(res, MarketQuote) and res.is_valid():
+                        quotes[res.symbol] = res
+        except Exception as exc:
+            logger.warning("[YahooProvider] Primary Query1 batch fetch error: %s", exc)
 
-                if sym_df.empty:
-                    continue
+        missing = [s for s in symbols if s not in quotes]
 
-                last_row = sym_df.iloc[-1]
-                close_val = float(last_row.get("Close", 0.0))
-                open_val = float(last_row.get("Open", close_val))
-                high_val = float(last_row.get("High", close_val))
-                low_val = float(last_row.get("Low", close_val))
-                vol_val = float(last_row.get("Volume", 0.0))
-
-                quote = MarketQuote(
-                    symbol=clean_sym,
-                    price=close_val,
-                    open=open_val,
-                    high=high_val,
-                    low=low_val,
-                    close=close_val,
-                    volume=vol_val,
-                    source="YAHOO",
-                    fetched_at=now,
-                    quality_score=0.95,
+        # 2. Fallback path for missing symbols: legacy yf.download
+        if missing:
+            missing_yf = list({clean_to_yf[s] for s in missing})
+            def _fetch_sync():
+                return yf.download(
+                    tickers=missing_yf,
+                    period="5d",
+                    interval="5m",
+                    group_by="ticker",
+                    threads=True,
+                    timeout=self.timeout,
+                    progress=False,
                 )
 
-                if quote.is_valid():
-                    quotes[clean_sym] = quote
-            except Exception as parse_err:
-                logger.debug("[YahooProvider] Parse error for %s: %s", clean_sym, parse_err)
-                continue
+            try:
+                df = await asyncio.to_thread(_fetch_sync)
+                if df is not None and not df.empty:
+                    now = datetime.now(timezone.utc)
+                    is_multi = len(missing_yf) > 1
+                    for clean_sym in missing:
+                        yf_sym = clean_to_yf[clean_sym]
+                        try:
+                            if is_multi:
+                                if yf_sym not in df.columns.levels[0]:
+                                    continue
+                                sym_df = df[yf_sym].dropna(how="all")
+                            else:
+                                sym_df = df.dropna(how="all")
+
+                            if sym_df.empty:
+                                continue
+
+                            last_row = sym_df.iloc[-1]
+                            close_val = float(last_row.get("Close", 0.0))
+                            open_val = float(last_row.get("Open", close_val))
+                            high_val = float(last_row.get("High", close_val))
+                            low_val = float(last_row.get("Low", close_val))
+                            vol_val = float(last_row.get("Volume", 0.0))
+
+                            prev_close_val = None
+                            change_pct_val = None
+                            if len(sym_df) > 1:
+                                prev_close_val = float(sym_df.iloc[-2].get("Close", close_val))
+                                if prev_close_val > 0:
+                                    change_pct_val = round(((close_val - prev_close_val) / prev_close_val) * 100.0, 2)
+
+                            quote = MarketQuote(
+                                symbol=clean_sym,
+                                price=close_val,
+                                open=open_val,
+                                high=high_val,
+                                low=low_val,
+                                close=close_val,
+                                volume=vol_val,
+                                source="YAHOO_YF_FALLBACK",
+                                fetched_at=now,
+                                prev_close=prev_close_val,
+                                change_pct=change_pct_val,
+                                quality_score=0.90,
+                            )
+                            if quote.is_valid():
+                                quotes[clean_sym] = quote
+                        except Exception as parse_err:
+                            logger.debug("[YahooProvider] Fallback parse error for %s: %s", clean_sym, parse_err)
+            except Exception as fb_exc:
+                logger.warning("[YahooProvider] Fallback yf.download failed: %s", fb_exc)
+
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        if quotes:
+            self.health.record_success(latency_ms)
+        else:
+            self.health.record_failure()
 
         return quotes
 

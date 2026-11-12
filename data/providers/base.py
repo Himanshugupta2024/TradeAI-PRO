@@ -25,6 +25,10 @@ class MarketQuote:
     volume: float | None = None
     source: str = "UNKNOWN"
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    regular_market_time: datetime | None = None
+    prev_close: float | None = None
+    change_pct: float | None = None
+    data_age_seconds: float | None = None
     stale: bool = False
     quality_score: float = 1.0
     extra: dict[str, Any] = field(default_factory=dict)

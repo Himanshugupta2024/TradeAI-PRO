@@ -355,3 +355,40 @@ def test_session_state_resolution_evening_post_market_and_midnight_pre_market():
     t_friday_evening = datetime(2026, 11, 6, 18, 0, 0, tzinfo=_IST)
     _, next_desc_fri = get_next_nse_session(t_friday_evening)
     assert "Monday (2026-11-09) at 09:15 IST" in next_desc_fri
+
+
+def test_evaluate_market_session_utc_container_normalization():
+    """
+    Render Linux containers run in UTC. Naive datetimes (e.g. 08:34 UTC)
+    must be interpreted as UTC and normalized to 14:04 IST (trading active),
+    NEVER naively treated as 08:34 IST (pre-market/standby bug).
+    """
+    from agents.intraday_engine.session import evaluate_market_session
+
+    # 1. 08:34:00 UTC on Wednesday Nov 4, 2026 == 14:04:00 IST
+    naive_utc_live = datetime(2026, 11, 4, 8, 34, 0)
+    sess_live = evaluate_market_session(naive_utc_live)
+    assert sess_live.is_trading_active is True
+    assert sess_live.session_state == "NORMAL_SESSION"
+    assert "14:04:00 IST" in sess_live.current_time_ist
+
+    # 2. 03:40:00 UTC on Wednesday Nov 4 == 09:10:00 IST (Pre-market)
+    naive_utc_pre = datetime(2026, 11, 4, 3, 40, 0)
+    sess_pre = evaluate_market_session(naive_utc_pre)
+    assert sess_pre.is_trading_active is False
+    assert sess_pre.session_state == "PRE_MARKET"
+    assert "09:10:00 IST" in sess_pre.current_time_ist
+
+    # 3. 10:05:00 UTC on Wednesday Nov 4 == 15:35:00 IST (Post-market)
+    naive_utc_post = datetime(2026, 11, 4, 10, 5, 0)
+    sess_post = evaluate_market_session(naive_utc_post)
+    assert sess_post.is_trading_active is False
+    assert sess_post.session_state == "POST_MARKET"
+    assert "15:35:00 IST" in sess_post.current_time_ist
+
+    # 4. Saturday 08:00:00 UTC == Weekend
+    naive_utc_weekend = datetime(2026, 11, 7, 8, 0, 0)
+    sess_wknd = evaluate_market_session(naive_utc_weekend)
+    assert sess_wknd.is_trading_active is False
+    assert sess_wknd.session_state == "WEEKEND"
+

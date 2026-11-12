@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, time as dtime
+from datetime import date, datetime, time as dtime, timezone
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
@@ -85,7 +85,8 @@ def evaluate_market_session(now: Optional[datetime] = None) -> MarketSessionInfo
     if dt is None:
         dt = datetime.now(_IST)
     elif dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_IST)
+        # Guardrail: Naive datetimes (e.g. from Render UTC container) must be assumed UTC first, then converted to IST
+        dt = dt.replace(tzinfo=timezone.utc).astimezone(_IST)
     else:
         dt = dt.astimezone(_IST)
 

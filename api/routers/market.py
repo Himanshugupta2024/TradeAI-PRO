@@ -1076,7 +1076,7 @@ async def get_watchlist_quotes(
                 "invalidation_level": sig.get("invalidation_level", round(ltp * 0.95, 2)),
                 "rr_ratio": sig.get("rr_ratio"),
                 "horizon": sig.get("horizon", {
-                    "short": "2–5 Days (Swing)",
+                    "short": "5–8 Days (Swing)",
                     "barrier_short": "Max 10 Bars",
                     "est_bars": 5,
                     "time_stop_bars": 10,
