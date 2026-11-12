@@ -428,3 +428,133 @@ def test_extract_and_blend_premarket_base_state(synthetic_ohlcv):
     assert blended["high_20d"] >= base["high_20d"]
 
 
+def test_get_nse_expected_volume_fraction():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from agents.market_intelligence.watchlist_analyzer import get_nse_expected_volume_fraction
+
+    ist = ZoneInfo("Asia/Kolkata")
+    # 09:15 open -> ~0.03
+    t_open = datetime(2026, 11, 12, 9, 15, tzinfo=ist)
+    assert get_nse_expected_volume_fraction(t_open) == 0.03
+
+    # 09:45 (30m elapsed) -> ~0.155
+    t_morning = datetime(2026, 11, 12, 9, 45, tzinfo=ist)
+    frac_morning = get_nse_expected_volume_fraction(t_morning)
+    assert 0.14 <= frac_morning <= 0.17
+
+    # 10:15 (60m elapsed) -> 0.28
+    t_rush_end = datetime(2026, 11, 12, 10, 15, tzinfo=ist)
+    assert get_nse_expected_volume_fraction(t_rush_end) == 0.28
+
+    # 15:30 close -> 1.0
+    t_close = datetime(2026, 11, 12, 15, 30, tzinfo=ist)
+    assert get_nse_expected_volume_fraction(t_close) == 1.0
+
+    # 16:00 post-market -> 1.0
+    t_post = datetime(2026, 11, 12, 16, 0, tzinfo=ist)
+    assert get_nse_expected_volume_fraction(t_post) == 1.0
+
+
+def test_calculate_volume_ratio_time_of_day_rvol():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from agents.market_intelligence.watchlist_analyzer import calculate_volume_ratio
+
+    ist = ZoneInfo("Asia/Kolkata")
+    # 20 days with 100,000 avg volume
+    vol_history = [100000.0] * 19
+
+    # At 09:45 AM (30 min into day): expected fraction is ~0.155 (15,500 shares)
+    t_0945 = datetime(2026, 11, 12, 9, 45, tzinfo=ist)
+
+    # Suppose current bar has 31,000 shares (2x normal morning volume)
+    vol_series = pd.Series(vol_history + [31000.0])
+    rvol = calculate_volume_ratio(vol_series, window=20, dt_ist=t_0945)
+    # Expected: 31,000 / ~15,500 ≈ 2.0x
+    assert 1.9 <= rvol <= 2.1
+
+    # At 16:00 (EOD): same 31,000 shares against 100,000 avg is 0.31x
+    t_eod = datetime(2026, 11, 12, 16, 0, tzinfo=ist)
+    rvol_eod = calculate_volume_ratio(vol_series, window=20, dt_ist=t_eod)
+    assert 0.30 <= rvol_eod <= 0.32
+
+
+def test_composite_relative_strength():
+    from agents.market_intelligence.watchlist_analyzer import calculate_relative_strength
+
+    stock_close = pd.Series([100.0] * 19 + [105.0])    # +5% 20d return
+    bench_close = pd.Series([1000.0] * 19 + [1020.0])  # +2% 20d return
+    # 20d structural alpha = +3.0%
+
+    # Case A: Standalone 20d
+    rs_pure = calculate_relative_strength(stock_close, bench_close, 20)
+    assert rs_pure == 3.0
+
+    # Case B: Composite with Intraday (Stock is +0.5%, NIFTY is -1.5% -> intraday alpha = +2.0%)
+    rs_comp = calculate_relative_strength(
+        stock_close, bench_close, 20,
+        intraday_stock_chg=0.5,
+        intraday_bench_chg=-1.5,
+    )
+    # Expected: 3.0 * 0.7 + 2.0 * 0.3 = 2.1 + 0.6 = 2.7
+    assert rs_comp == 2.7
+
+
+def test_india_vix_regime_gating():
+    from agents.market_intelligence.watchlist_analyzer import calculate_trade_levels
+
+    close = 1000.0
+    atr = 20.0
+    supports = [980.0, 960.0]
+    resistances = [1050.0, 1080.0]
+
+    # Scenario 1: Normal VIX (< 14) -> score 72 qualifies for LONG (threshold 70), SL 1.5x ATR (30 pts)
+    norm = calculate_trade_levels(
+        close=close, high_last=1005.0, low_last=995.0, atr14=atr,
+        supports=supports, resistances=resistances, trend_bias="BULLISH",
+        total_score=72, adx=25.0, vix_val=12.5,
+    )
+    assert norm["signal"] == "LONG"
+    assert norm["is_actionable"] is True
+    assert norm["vix_regime"] == "NORMAL"
+    assert norm["vix_threshold"] == 70
+    assert norm["vix_atr_multiplier"] == 1.5
+
+    # Scenario 2: Elevated VIX (14-18) -> score 72 is suppressed to HOLD (needs 74)
+    elev_suppressed = calculate_trade_levels(
+        close=close, high_last=1005.0, low_last=995.0, atr14=atr,
+        supports=supports, resistances=resistances, trend_bias="BULLISH",
+        total_score=72, adx=25.0, vix_val=16.0,
+    )
+    assert elev_suppressed["signal"] == "HOLD"
+    assert elev_suppressed["is_actionable"] is False
+    assert elev_suppressed["vix_regime"] == "ELEVATED"
+    assert elev_suppressed["vix_threshold"] == 74
+
+    # Scenario 3: High Volatility VIX (> 18) -> score 76 is suppressed to HOLD (needs 78)
+    high_suppressed = calculate_trade_levels(
+        close=close, high_last=1005.0, low_last=995.0, atr14=atr,
+        supports=supports, resistances=resistances, trend_bias="BULLISH",
+        total_score=76, adx=25.0, vix_val=21.0,
+    )
+    assert high_suppressed["signal"] == "HOLD"
+    assert high_suppressed["is_actionable"] is False
+    assert high_suppressed["vix_regime"] == "HIGH_VOLATILITY"
+
+    # Scenario 4: High Volatility VIX (> 18) -> score 80 qualifies, but SL floor widened to 2.0x ATR (40 pts)
+    high_qualified = calculate_trade_levels(
+        close=close, high_last=1005.0, low_last=995.0, atr14=atr,
+        supports=supports, resistances=resistances, trend_bias="BULLISH",
+        total_score=80, adx=25.0, vix_val=21.0,
+    )
+    assert high_qualified["signal"] == "LONG"
+    assert high_qualified["is_actionable"] is True
+    assert high_qualified["vix_regime"] == "HIGH_VOLATILITY"
+    assert high_qualified["vix_threshold"] == 78
+    assert high_qualified["vix_atr_multiplier"] == 2.0
+    # Entry is 1005 * 1.001 = 1006.01; SL floor = entry - 2.0 * 20 = 966.01
+    assert high_qualified["stop_loss"] <= (high_qualified["entry"] - 2.0 * atr)
+
+
+

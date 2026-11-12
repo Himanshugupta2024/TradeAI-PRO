@@ -36,6 +36,7 @@ _IST = ZoneInfo("Asia/Kolkata")
 _WATCHLIST_ANALYSIS_CACHE: Dict[str, Dict[str, Any]] = {}
 _WATCHLIST_CACHE_TTL_SEC: float = 60.0
 _BENCHMARK_SYMBOL: str = "^NSEI"  # NIFTY 50
+_VIX_SYMBOL: str = "^INDIAVIX"   # India VIX Volatility Index
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Comprehensive NSE Company Names Directory
@@ -219,15 +220,62 @@ def calculate_bollinger_width(
     return width
 
 
-def calculate_volume_ratio(volume: pd.Series, window: int = 20) -> float:
-    """Ratio of latest volume to 20-day simple moving average volume."""
+def get_nse_expected_volume_fraction(dt_ist: Optional[datetime] = None) -> float:
+    """
+    Returns the expected cumulative volume fraction [0.03, 1.0] for the current
+    time of day during the NSE cash trading session (09:15-15:30 IST, 375 minutes).
+    Uses the empirical Indian cash market U-shaped volume curve:
+      - 09:15 to 10:15 (Morning rush): ~28% of total day's volume
+      - 10:15 to 14:00 (Mid-day consolidation): steadily accumulates to ~72%
+      - 14:00 to 15:30 (Closing rush): reaches 100%
+      - Outside market hours (EOD / post-15:30): returns 1.0.
+    """
+    if dt_ist is None:
+        dt_ist = datetime.now(_IST)
+
+    m_open = dt_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+    m_close = dt_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+
+    if dt_ist <= m_open:
+        return 0.03
+    if dt_ist >= m_close:
+        return 1.0
+
+    elapsed_mins = (dt_ist - m_open).total_seconds() / 60.0
+
+    if elapsed_mins <= 60.0:
+        return max(0.03, round(0.03 + (elapsed_mins / 60.0) * 0.25, 3))
+    elif elapsed_mins <= 285.0:
+        mid_ratio = (elapsed_mins - 60.0) / (285.0 - 60.0)
+        return round(0.28 + mid_ratio * 0.44, 3)
+    else:
+        close_ratio = (elapsed_mins - 285.0) / (375.0 - 285.0)
+        return round(0.72 + close_ratio * 0.28, 3)
+
+
+def calculate_volume_ratio(
+    volume: pd.Series,
+    window: int = 20,
+    dt_ist: Optional[datetime] = None,
+) -> float:
+    """
+    Time-of-day normalized relative volume (RVOL).
+    Compares latest cumulative volume against the expected volume at this exact time of day,
+    preventing morning breakout momentum from being penalized by whole-day volume averages.
+    """
     if volume.empty or len(volume) < window:
         return 1.0
     recent_vol = float(volume.iloc[-1])
     avg_vol = float(volume.tail(window).mean())
     if avg_vol <= 0:
         return 1.0
-    return round(recent_vol / avg_vol, 2)
+
+    expected_fraction = get_nse_expected_volume_fraction(dt_ist)
+    expected_vol_tod = avg_vol * expected_fraction
+    if expected_vol_tod <= 0:
+        return 1.0
+
+    return round(recent_vol / expected_vol_tod, 2)
 
 
 def calculate_distance_52w(
@@ -290,17 +338,27 @@ def calculate_relative_strength(
     stock_close: pd.Series,
     benchmark_close: pd.Series,
     window: int = 20,
+    intraday_stock_chg: Optional[float] = None,
+    intraday_bench_chg: Optional[float] = None,
 ) -> float:
     """
-    Calculate 20-day excess return of stock vs benchmark (e.g. NIFTY 50).
-    Returns percentage points, e.g. +2.15% means outperforming NIFTY by 2.15%.
+    Calculate excess return of stock vs benchmark (e.g. NIFTY 50).
+    Blends 20-day structural alpha (70%) with intraday excess return (30%)
+    to capture immediate institutional accumulation during broad market sell-offs.
     """
     if len(stock_close) < window or len(benchmark_close) < window:
         return 0.0
 
     stock_ret = (float(stock_close.iloc[-1]) / float(stock_close.iloc[-window])) - 1.0
     bench_ret = (float(benchmark_close.iloc[-1]) / float(benchmark_close.iloc[-window])) - 1.0
-    return round((stock_ret - bench_ret) * 100.0, 2)
+    rs_20d = (stock_ret - bench_ret) * 100.0
+
+    if intraday_stock_chg is not None and intraday_bench_chg is not None:
+        intraday_alpha = intraday_stock_chg - intraday_bench_chg
+        composite_rs = rs_20d * 0.7 + intraday_alpha * 0.3
+        return round(composite_rs, 2)
+
+    return round(rs_20d, 2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -493,12 +551,17 @@ def calculate_trade_levels(
     total_score: int,
     adx: float,
     symbol: str = "",
+    vix_val: Optional[float] = None,
+    vix_chg_pct: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
-    Resolves genuine structural levels:
+    Resolves genuine structural levels with India VIX Regime Gating:
+    - Normal Regime (VIX < 14): Score >= 70, SL floor 1.5x ATR
+    - Elevated Regime (14 <= VIX <= 18): Score >= 74, SL floor 1.75x ATR
+    - High Volatility Regime (VIX > 18 or intraday spike >= +8%): Score >= 78, SL floor 2.0x ATR
     - If LONG / SHORT candidate:
         * entry: trigger price
-        * stop_loss: swing pivot with 1.5x ATR floor
+        * stop_loss: swing pivot with dynamic ATR floor
         * target: nearest resistance or 2R
         * target_2: 3R
         * rr_ratio: (target - entry) / (entry - sl)
@@ -513,9 +576,29 @@ def calculate_trade_levels(
     # Invalidation level: break of nearest structural support or resistance
     invalidation = key_supp if trend_bias != "BEARISH" else key_res
 
+    # India VIX Regime Gate logic
+    vix = float(vix_val) if (vix_val is not None and not np.isnan(vix_val) and vix_val > 0) else 13.5
+    vix_spike = bool(vix_chg_pct is not None and not np.isnan(vix_chg_pct) and vix_chg_pct >= 8.0)
+
+    if vix > 18.0 or vix_spike:
+        score_threshold_long = 78
+        score_threshold_short = 70
+        atr_multiplier = 2.0
+        vix_regime = "HIGH_VOLATILITY"
+    elif vix >= 14.0:
+        score_threshold_long = 74
+        score_threshold_short = 70
+        atr_multiplier = 1.75
+        vix_regime = "ELEVATED"
+    else:
+        score_threshold_long = 70
+        score_threshold_short = 70
+        atr_multiplier = 1.5
+        vix_regime = "NORMAL"
+
     # Preliminary qualification for actionable setup
-    is_qualified_long = (trend_bias == "BULLISH") and (total_score >= 70) and (adx >= 20.0)
-    is_qualified_short = (trend_bias == "BEARISH") and (total_score >= 70) and (adx >= 20.0)
+    is_qualified_long = (trend_bias == "BULLISH") and (total_score >= score_threshold_long) and (adx >= 20.0)
+    is_qualified_short = (trend_bias == "BEARISH") and (total_score >= score_threshold_short) and (adx >= 20.0)
 
     # Statistical Edge Gating from TradeJournal Scorecard
     edge_gated = False
@@ -540,9 +623,9 @@ def calculate_trade_levels(
         # Trigger price: above last bar's high or near resistance
         entry = round(high_last * 1.001, 2)
 
-        # SL: below last swing low with 1.5x ATR14 floor
-        raw_sl = (supports[0] - 0.2 * atr14) if supports else (entry - 1.5 * atr14)
-        min_risk_dist = 1.5 * atr14
+        # SL: below last swing low with dynamic ATR14 floor
+        min_risk_dist = atr_multiplier * atr14
+        raw_sl = (supports[0] - 0.2 * atr14) if supports else (entry - min_risk_dist)
         if (entry - raw_sl) < min_risk_dist:
             sl = round(entry - min_risk_dist, 2)
         else:
@@ -550,7 +633,7 @@ def calculate_trade_levels(
 
         risk = entry - sl
         if risk <= 0:
-            risk = 1.5 * atr14
+            risk = min_risk_dist
             sl = round(entry - risk, 2)
 
         # TP1: nearest resistance or 2R
@@ -572,6 +655,9 @@ def calculate_trade_levels(
                 "key_resistance": key_res,
                 "invalidation_level": invalidation,
                 "rr_ratio": rr,
+                "vix_regime": vix_regime,
+                "vix_threshold": score_threshold_long,
+                "vix_atr_multiplier": atr_multiplier,
             }
 
     elif is_qualified_short:
@@ -626,6 +712,9 @@ def calculate_trade_levels(
         "rr_ratio": None,
         "edge_gated": edge_gated,
         "edge_rationale": edge_rationale,
+        "vix_regime": vix_regime,
+        "vix_threshold": score_threshold_long,
+        "vix_atr_multiplier": atr_multiplier,
     }
 
 
@@ -828,7 +917,7 @@ async def analyze_watchlist_symbols(
         from data.providers.yahoo import YahooProvider
 
         provider = YahooProvider(timeout=10.0)
-        fetch_list = list(set(missing_symbols + [_BENCHMARK_SYMBOL]))
+        fetch_list = list(set(missing_symbols + [_BENCHMARK_SYMBOL, _VIX_SYMBOL]))
 
         try:
             ohlcv_map = await provider.get_batch_ohlcv(
@@ -846,8 +935,28 @@ async def analyze_watchlist_symbols(
             nifty_df = ohlcv_map.get("NIFTY 50")
 
         nifty_close = nifty_df["close"] if nifty_df is not None and "close" in nifty_df.columns else pd.Series(dtype=float)
+        nifty_chg_pct = 0.0
+        if not nifty_close.empty and len(nifty_close) >= 2:
+            n_prev = float(nifty_close.iloc[-2])
+            n_curr = float(nifty_close.iloc[-1])
+            if n_prev > 0:
+                nifty_chg_pct = round(((n_curr - n_prev) / n_prev) * 100.0, 2)
+
+        vix_df = ohlcv_map.get(_VIX_SYMBOL)
+        if vix_df is None or vix_df.empty:
+            vix_df = ohlcv_map.get("INDIA VIX")
+
+        vix_val: Optional[float] = None
+        vix_chg_pct: Optional[float] = None
+        if vix_df is not None and not vix_df.empty and "close" in vix_df.columns:
+            v_s = vix_df["close"].dropna()
+            if not v_s.empty:
+                vix_val = float(v_s.iloc[-1])
+                if len(v_s) >= 2 and float(v_s.iloc[-2]) > 0:
+                    vix_chg_pct = round(((vix_val - float(v_s.iloc[-2])) / float(v_s.iloc[-2])) * 100.0, 2)
 
         now_utc = datetime.now(timezone.utc)
+        now_ist = datetime.now(_IST)
 
         # 3. Analyze each missing symbol
         for sym in missing_symbols:
@@ -934,11 +1043,17 @@ async def analyze_watchlist_symbols(
             bb_width_s = calculate_bollinger_width(close_s, 20, 2.0)
             bb_width = float(bb_width_s.iloc[-1])
 
-            vol_ratio = calculate_volume_ratio(vol_s, 20)
+            vol_ratio = calculate_volume_ratio(vol_s, 20, dt_ist=now_ist)
             dist_52h, dist_52l = calculate_distance_52w(high_s, low_s, close_s, 250)
             supports, resistances = calculate_swing_pivots(high_s, low_s, close_s, window=5)
 
-            rs_20d = calculate_relative_strength(close_s, nifty_close, 20) if not nifty_close.empty else 0.0
+            rs_composite = calculate_relative_strength(
+                close_s,
+                nifty_close,
+                20,
+                intraday_stock_chg=change_pct,
+                intraday_bench_chg=nifty_chg_pct,
+            ) if not nifty_close.empty else 0.0
 
             # 5-Factor Scoring (0-100)
             score, breakdown, trend_bias = score_stock_factors(
@@ -950,12 +1065,12 @@ async def analyze_watchlist_symbols(
                 macd_hist=curr_hist,
                 macd_hist_prev=prev_hist,
                 vol_ratio=vol_ratio,
-                rs_20d=rs_20d,
+                rs_20d=rs_composite,
                 adx=adx_val,
                 dist_52h=dist_52h,
             )
 
-            # Trade Levels & Actionability
+            # Trade Levels & Actionability with India VIX Regime Gating
             levels = calculate_trade_levels(
                 close=ltp,
                 high_last=float(high_s.iloc[-1]),
@@ -967,6 +1082,8 @@ async def analyze_watchlist_symbols(
                 total_score=score,
                 adx=adx_val,
                 symbol=sym,
+                vix_val=vix_val,
+                vix_chg_pct=vix_chg_pct,
             )
 
             # Dynamic Horizon
@@ -986,10 +1103,12 @@ async def analyze_watchlist_symbols(
                 ema200=ema200,
                 rsi=rsi_val,
                 vol_ratio=vol_ratio,
-                rs_20d=rs_20d,
+                rs_20d=rs_composite,
                 adx=adx_val,
                 trend_bias=trend_bias,
             )
+            if levels.get("vix_regime") in ("ELEVATED", "HIGH_VOLATILITY") and vix_val:
+                rationale = f"{rationale} (VIX {vix_val:.1f} {levels.get('vix_regime')})"
             if levels.get("edge_gated"):
                 rationale = f"⚠️ Suppressed: {levels.get('edge_rationale', 'Negative regime expectancy')}. {rationale}"
 
@@ -1023,9 +1142,12 @@ async def analyze_watchlist_symbols(
                     "atr_pct": atr_pct,
                     "bb_width": round(bb_width, 2),
                     "vol_ratio": vol_ratio,
+                    "rvol": vol_ratio,
                     "dist_52h": dist_52h,
                     "dist_52l": dist_52l,
-                    "rs_20d": rs_20d,
+                    "rs_20d": rs_composite,
+                    "vix": round(vix_val, 2) if vix_val is not None else None,
+                    "vix_regime": levels.get("vix_regime", "NORMAL"),
                     "supports": supports,
                     "resistances": resistances,
                 },
