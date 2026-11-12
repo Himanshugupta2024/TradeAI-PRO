@@ -4,7 +4,7 @@
   "main": "src/worker.js",
   "compatibility_date": "2026-11-03",
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": ["*/2 3-10 * * 1-5"]
   },
   "assets": {
     "directory": "./dashboard",

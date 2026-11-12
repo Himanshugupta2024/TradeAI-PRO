@@ -66,9 +66,12 @@ class YahooProvider(MarketDataProvider):
 
     name: str = "yahoo"
 
-    def __init__(self, timeout: float = 8.0):
+    def __init__(self, timeout: float = 8.0, max_concurrency: int = 5):
         super().__init__()
         self.timeout = timeout
+        self._sem = asyncio.Semaphore(max_concurrency)
+        self._cooldown_until: float = 0.0
+        self._current_backoff_sec: float = 30.0
 
     async def get_quote(self, symbol: str) -> MarketQuote | None:
         """Fetch quote for a single symbol using the batch engine."""
@@ -82,11 +85,30 @@ class YahooProvider(MarketDataProvider):
         yf_sym: str,
     ) -> MarketQuote | None:
         """Fetch real-time tick price, true chartPreviousClose, and trade epoch via Yahoo Query1 Chart Meta."""
+        if time.time() < self._cooldown_until:
+            return None
+
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_sym}?interval=1m&range=1d"
         try:
-            resp = await client.get(url, timeout=self.timeout)
+            async with self._sem:
+                resp = await client.get(url, timeout=self.timeout)
+
+            if resp.status_code == 429:
+                self._cooldown_until = time.time() + self._current_backoff_sec
+                logger.warning(
+                    "[YahooProvider] HTTP 429 rate limit hit for %s. Backing off for %.1fs (next backoff %.1fs)",
+                    clean_sym,
+                    self._current_backoff_sec,
+                    min(120.0, self._current_backoff_sec * 2.0),
+                )
+                self._current_backoff_sec = min(120.0, self._current_backoff_sec * 2.0)
+                return None
+
             if resp.status_code != 200:
                 return None
+
+            # Reset backoff on successful response
+            self._current_backoff_sec = 30.0
             data = resp.json()
             results = data.get("chart", {}).get("result")
             if not results:
@@ -284,14 +306,16 @@ class YahooProvider(MarketDataProvider):
             return {}
 
         results: dict[str, pd.DataFrame] = {}
-        is_multi = len(yf_tickers) > 1
 
         for clean_sym, yf_sym in clean_to_yf.items():
             try:
-                if is_multi:
-                    if yf_sym not in df.columns.levels[0]:
+                if isinstance(df.columns, pd.MultiIndex):
+                    if yf_sym in df.columns.levels[0]:
+                        sym_df = df[yf_sym].dropna(how="all").copy()
+                    elif len(yf_tickers) == 1:
+                        sym_df = df.droplevel(0, axis=1).dropna(how="all").copy()
+                    else:
                         continue
-                    sym_df = df[yf_sym].dropna(how="all").copy()
                 else:
                     sym_df = df.dropna(how="all").copy()
 

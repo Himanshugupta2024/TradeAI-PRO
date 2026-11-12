@@ -719,7 +719,7 @@ async function dispatchAutonomousCycle(env, fetchFn, now) {
 
 export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = new Date()) {
   // Keep-warm ping. Probe the cheap liveness route, not /api/health: the rich
-  // health endpoint walks the DB, model registry and feed state, so a 5-minute
+  // health endpoint walks the DB, model registry and feed state, so a 2-minute
   // cron hammering it burns the free instance's CPU budget for no benefit.
   const healthUrl = `${BACKEND_ORIGIN}/api/health/live`;
   try {
@@ -730,8 +730,29 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = ne
         "Accept": "application/json",
       },
     });
+
+    // Trigger single-flight live market refresh on Render backend during market hours
+    let refresh = null;
+    const cronUrl = `${BACKEND_ORIGIN}/api/cron/refresh`;
+    try {
+      const refreshHeaders = {
+        "User-Agent": "TradeAI-Cloudflare-Cron-Refresh/1.0",
+        "Accept": "application/json",
+      };
+      if (env && env.CRON_SECRET) {
+        refreshHeaders["X-Cron-Secret"] = env.CRON_SECRET;
+      }
+      const rRes = await fetchFn(cronUrl, {
+        method: "POST",
+        headers: refreshHeaders,
+      });
+      refresh = { ok: rRes.ok, status: rRes.status };
+    } catch (refErr) {
+      console.warn(`[cron] Market refresh trigger to ${cronUrl} non-fatal error:`, refErr);
+    }
+
     const cycle = await dispatchAutonomousCycle(env, fetchFn, now);
-    return { ok: res.ok, status: res.status, url: healthUrl, cycle };
+    return { ok: res.ok, status: res.status, url: healthUrl, refresh, cycle };
   } catch (err) {
     console.error(`[cron] Health ping to ${healthUrl} failed:`, err);
     throw err;

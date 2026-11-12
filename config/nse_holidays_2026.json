@@ -1,0 +1,29 @@
+{
+  "year": 2026,
+  "description": "Official Gazetted NSE Standard Equity Trading Holidays for 2026",
+  "holidays": {
+    "2026-01-26": "Republic Day",
+    "2026-03-03": "Holi",
+    "2026-03-20": "Id-Ul-Fitr (Ramzan Id)",
+    "2026-03-27": "Ram Navami",
+    "2026-04-03": "Good Friday",
+    "2026-04-14": "Dr. Ambedkar Jayanti",
+    "2026-05-01": "Maharashtra Day",
+    "2026-05-27": "Bakri Id / Eid ul-Adha",
+    "2026-06-26": "Muharram",
+    "2026-08-15": "Independence Day",
+    "2026-10-02": "Mahatma Gandhi Jayanti",
+    "2026-10-20": "Dussehra",
+    "2026-11-08": "Diwali Laxmi Pujan",
+    "2026-11-10": "Diwali Balipratipada",
+    "2026-11-24": "Gurunanak Jayanti",
+    "2026-12-25": "Christmas"
+  },
+  "special_sessions": {
+    "2026-11-08": {
+      "name": "Diwali Laxmi Pujan (Muhurat Trading)",
+      "start": "18:15:00",
+      "end": "19:15:00"
+    }
+  }
+}

@@ -219,6 +219,14 @@ def _lifespan_context():
                 svc.logger.warning("Signals cache hydration raised on startup: %s", exc)
 
             try:
+                from agents.market_intelligence.watchlist_analyzer import hydrate_watchlist_cache_from_db
+                hydrated_wl = await asyncio.to_thread(hydrate_watchlist_cache_from_db)
+                if hydrated_wl > 0:
+                    svc.logger.info("Restored %d watchlist EOD quotes from Supabase on startup.", hydrated_wl)
+            except Exception as exc:
+                svc.logger.debug("Watchlist EOD startup restoration skipped: %s", exc)
+
+            try:
                 from agents.analytics.feedback_loop import backfill_closed_paper_trades
                 from db.runtime_state import get_runtime_state
                 from db.connection import SessionLocal

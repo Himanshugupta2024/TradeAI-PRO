@@ -691,33 +691,6 @@ async def get_all_signals(response: Response):
         except Exception:
             pass
 
-    if len(fallback_signals) < 10:
-        try:
-            from db.runtime_state import get_runtime_state
-            snap_mkt = get_runtime_state("latest_market_snapshot")
-            if snap_mkt and isinstance(snap_mkt, dict) and "prices" in snap_mkt:
-                for sym, p_info in snap_mkt["prices"].items():
-                    clean_s = sym.upper().replace(".NS", "")
-                    if clean_s not in fallback_signals and isinstance(p_info, dict) and p_info.get("close") is not None:
-                        fallback_signals[clean_s] = {
-                            "symbol": clean_s,
-                            "signal": "HOLD",
-                            "direction": "HOLD",
-                            "signal_status": "NO_SIGNAL",
-                            "actionable": False,
-                            "close": float(p_info["close"]),
-                            "entry": float(p_info["close"]),
-                            "change_pct": float(p_info.get("change_pct", 0.0)),
-                            "rsi": float(p_info.get("rsi", 50.0)),
-                            "regime": p_info.get("regime", "TRENDING"),
-                            "trend": "NEUTRAL",
-                            "confidence": 45.0,
-                            "timestamp": snap_mkt.get("timestamp") or datetime.now(timezone.utc).isoformat(),
-                            "source": "market_snapshot_fallback",
-                        }
-        except Exception:
-            pass
-
     # 3. If live_signals has the full tracked universe (>= 10 symbols), it completely supersedes baseline.
     # But if live_signals is only a partial subset (e.g. 1 or 2 ad-hoc quoted symbols), OVERLAY live onto baseline!
     if len(live_signals) >= 10:
@@ -1025,13 +998,14 @@ async def get_watchlist_quotes(
 
     for sym in target_symbols:
         sig = None
-        if sym in svc._signal_cache:
-            try:
-                sig = svc._get_signal_for_symbol(sym)
-            except Exception:
-                sig = None
-        if not sig and sym in snapshot_map:
-            sig = snapshot_map[sym]
+        if not force_refresh:
+            if sym in svc._signal_cache:
+                try:
+                    sig = svc._get_signal_for_symbol(sym)
+                except Exception:
+                    sig = None
+            if not sig and sym in snapshot_map:
+                sig = snapshot_map[sym]
 
         if sig and isinstance(sig, dict):
             signal_val = str(sig.get("signal", "HOLD")).upper()
@@ -1964,7 +1938,9 @@ async def websocket_prices(websocket: WebSocket, token: str | None = None):
             return
 
     await websocket.accept()
-    svc.broadcaster.register(websocket)
+    if not svc.broadcaster.register(websocket):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Broadcaster capacity reached")
+        return
 
     # Immediately push current cached snapshot on connection
     try:

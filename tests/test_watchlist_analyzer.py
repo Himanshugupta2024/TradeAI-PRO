@@ -332,3 +332,99 @@ async def test_analyze_watchlist_symbols_sufficient_data(synthetic_ohlcv, monkey
     assert "barrier_short" in entry["horizon"]
     assert entry["rationale"] is not None
 
+
+def test_persist_and_hydrate_watchlist_eod_snapshot(monkeypatch):
+    from agents.market_intelligence.watchlist_analyzer import (
+        persist_watchlist_eod_snapshot,
+        hydrate_watchlist_cache_from_db,
+        _WATCHLIST_ANALYSIS_CACHE,
+    )
+    import db.runtime_state as rs
+
+    fake_db = {}
+
+    def mock_set(key, val):
+        fake_db[key] = val
+        return True
+
+    def mock_get(key, default=None):
+        return fake_db.get(key, default)
+
+    monkeypatch.setattr(rs, "set_runtime_state", mock_set)
+    monkeypatch.setattr(rs, "get_runtime_state", mock_get)
+
+    sample_quotes = {
+        "RELIANCE": {
+            "symbol": "RELIANCE",
+            "ltp": 1339.7,
+            "change_pct": 0.5,
+            "signal": "HOLD",
+            "key_support": 1329.35,
+            "key_resistance": 1344.9,
+            "invalidation_level": 1329.35,
+            "horizon": {"short": "5–8 Days (Swing)", "barrier_short": "Max 10 Bars"},
+        },
+        "HDFCBANK": {
+            "symbol": "HDFCBANK",
+            "ltp": 809.8,
+            "change_pct": 1.2,
+            "signal": "LONG",
+            "entry": 809.8,
+            "stop_loss": 802.4,
+            "target": 821.7,
+            "horizon": {"short": "5–8 Days (Swing)", "barrier_short": "Max 10 Bars"},
+        },
+    }
+
+    # 1. Persist to DB
+    ok = persist_watchlist_eod_snapshot(sample_quotes, session_date="2026-11-12")
+    assert ok is True
+    assert "watchlist:eod_snapshot:v1" in fake_db
+    stored = fake_db["watchlist:eod_snapshot:v1"]
+    assert stored["count"] == 2
+    assert stored["session_date"] == "2026-11-12"
+    assert stored["settlement_type"] == "OFFICIAL_VWAP_SETTLED"
+
+    # Clear memory cache
+    _WATCHLIST_ANALYSIS_CACHE.clear()
+    assert len(_WATCHLIST_ANALYSIS_CACHE) == 0
+
+    # 2. Hydrate from DB
+    count = hydrate_watchlist_cache_from_db()
+    assert count == 2
+    assert "RELIANCE" in _WATCHLIST_ANALYSIS_CACHE
+    assert _WATCHLIST_ANALYSIS_CACHE["RELIANCE"]["ltp"] == 1339.7
+    assert _WATCHLIST_ANALYSIS_CACHE["HDFCBANK"]["signal"] == "LONG"
+
+
+def test_extract_and_blend_premarket_base_state(synthetic_ohlcv):
+    from agents.market_intelligence.watchlist_analyzer import (
+        extract_premarket_base_state,
+        blend_live_quote_with_base_state,
+    )
+
+    base = extract_premarket_base_state(synthetic_ohlcv, "RELIANCE")
+    assert base is not None
+    assert base["symbol"] == "RELIANCE"
+    assert base["close_prev"] > 0
+    assert base["ema19_prev"] > 0
+    assert base["ema49_prev"] > 0
+    assert base["ema199_prev"] > 0
+    assert base["atr13_prev"] > 0
+
+    # Live tick blending (O(1) without DataFrame)
+    blended = blend_live_quote_with_base_state(
+        base,
+        ltp=base["close_prev"] * 1.02,
+        high=base["close_prev"] * 1.03,
+        low=base["close_prev"] * 0.99,
+        volume=base["vol_20d_avg"] * 1.5,
+    )
+    assert blended["ema20"] > 0
+    assert blended["ema50"] > 0
+    assert blended["ema200"] > 0
+    assert blended["atr14"] > 0
+    assert blended["vol_ratio"] == 1.5
+    assert blended["high_20d"] >= base["high_20d"]
+
+

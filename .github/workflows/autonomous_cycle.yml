@@ -2,15 +2,18 @@ name: Autonomous Paper Trading Cycle
 
 on:
   schedule:
-    # Mon-Fri: Run every 20 minutes between 03:45 UTC (09:15 IST) and 10:00 UTC (15:30 IST)
+    # 03:25 UTC = 08:55 IST (Pre-Market 199-Bar Indicator State Caching)
+    - cron: '25 3 * * 1-5'
     # 03:45 UTC = 09:15 IST (Market Open)
     - cron: '45 3 * * 1-5'
     # 04:00 - 09:40 UTC = 09:30 - 15:10 IST (Active Trading Window)
     - cron: '*/20 4-9 * * 1-5'
     # 09:45 UTC = 15:15 IST (Mandatory EOD Square-Off Cycle)
     - cron: '45 9 * * 1-5'
-    # 10:00 UTC = 15:30 IST (Market Close / Final EOD Management)
-    - cron: '0,15 10 * * 1-5'
+    # 10:00 UTC = 15:30 IST (Market Close / Initial EOD Management)
+    - cron: '0 10 * * 1-5'
+    # 10:12 UTC = 15:42 IST (Official NSE VWAP Settlement & EOD Snapshot Freeze)
+    - cron: '12 10 * * 1-5'
     # Weekends / Crypto: Run every 3 hours for continuous 24/7 crypto scanning
     - cron: '0 */3 * * 0,6'
 
@@ -33,6 +36,16 @@ on:
         default: false
       dry_run:
         description: 'Dry run (calculate signals but do not execute paper trades)'
+        required: false
+        type: boolean
+        default: false
+      settlement_sweep:
+        description: 'Execute official 15:42 IST settlement sweep'
+        required: false
+        type: boolean
+        default: false
+      premarket_prep:
+        description: 'Execute 08:55 IST pre-market preparation'
         required: false
         type: boolean
         default: false
@@ -86,6 +99,12 @@ jobs:
             fi
             if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
               ARGS="$ARGS --dry-run"
+            fi
+            if [ "${{ github.event.inputs.settlement_sweep }}" = "true" ]; then
+              ARGS="$ARGS --settlement-sweep"
+            fi
+            if [ "${{ github.event.inputs.premarket_prep }}" = "true" ]; then
+              ARGS="$ARGS --premarket-prep"
             fi
           elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             # Handle client_payload from repository_dispatch

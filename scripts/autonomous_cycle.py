@@ -108,6 +108,18 @@ def parse_args() -> argparse.Namespace:
         help="Calculate indicators and signals without executing paper orders.",
     )
     parser.add_argument(
+        "--settlement-sweep",
+        action="store_true",
+        default=False,
+        help="Execute official NSE VWAP settlement sweep (15:35-15:55 IST) and persist EOD snapshot.",
+    )
+    parser.add_argument(
+        "--premarket-prep",
+        action="store_true",
+        default=False,
+        help="Execute 08:55 IST pre-market preparation to cache 199-bar base states for live O(1) blending.",
+    )
+    parser.add_argument(
         "--max-symbols",
         type=int,
         default=20,
@@ -165,6 +177,8 @@ async def run_single_autonomous_cycle(
     force_scan: bool = False,
     dry_run: bool = False,
     max_symbols: int = 20,
+    settlement_sweep: bool = False,
+    premarket_prep: bool = False,
 ) -> dict[str, Any]:
     """
     Execute one complete autonomous paper trading worker cycle.
@@ -180,7 +194,8 @@ async def run_single_autonomous_cycle(
 
     logger.info("================================================================================")
     logger.info("🚀 [AutonomousWorker] Starting Cycle: %s (IST: %s)", run_id, now_ist.strftime("%Y-%m-%d %H:%M:%S"))
-    logger.info("   Options: universe=%s, force_scan=%s, dry_run=%s, max_symbols=%d", universe_arg, force_scan, dry_run, max_symbols)
+    logger.info("   Options: universe=%s, force_scan=%s, dry_run=%s, max_symbols=%d, settlement_sweep=%s, premarket_prep=%s",
+                universe_arg, force_scan, dry_run, max_symbols, settlement_sweep, premarket_prep)
     logger.info("================================================================================")
 
     # 1. Initialize Database
@@ -242,6 +257,54 @@ async def run_single_autonomous_cycle(
                     active_symbols.append(sym)
                 else:
                     logger.debug("[Session] Skipping %s: NSE Cash market closed (%s)", sym, nse_reason)
+
+        # 3b. Specialized Infrastructure Triggers (Settlement Sweep & Pre-Market Prep)
+        is_settlement_window = settlement_sweep or (
+            now_ist.weekday() < 5 and now_ist.hour == 15 and 35 <= now_ist.minute <= 55
+        )
+        is_premarket_window = premarket_prep or (
+            now_ist.weekday() < 5 and ((now_ist.hour == 8 and now_ist.minute >= 45) or (now_ist.hour == 9 and now_ist.minute < 10))
+        )
+
+        if is_settlement_window:
+            logger.info("🏁 [SettlementSweep] Executing official NSE 15:42 IST VWAP settlement sweep...")
+            try:
+                from agents.market_intelligence.watchlist_analyzer import (
+                    analyze_watchlist_symbols,
+                    persist_watchlist_eod_snapshot,
+                )
+                nse_symbols = [s for s in raw_symbols if "/" not in s]
+                if nse_symbols:
+                    quant_quotes = await analyze_watchlist_symbols(nse_symbols, force_refresh=True)
+                    saved = persist_watchlist_eod_snapshot(quant_quotes, settlement_type="OFFICIAL_VWAP_SETTLED")
+                    logger.info("💾 [SettlementSweep] Persisted official EOD snapshot for %d symbols (saved: %s)", len(quant_quotes), saved)
+                    summary["settlement_sweep"] = {"symbols": len(quant_quotes), "persisted": saved}
+            except Exception as sw_exc:
+                logger.error("[SettlementSweep] Failed to execute settlement sweep: %s", sw_exc)
+
+        if is_premarket_window:
+            logger.info("🌅 [PreMarketPrep] Executing 08:55 IST pre-market base indicator state caching...")
+            try:
+                from agents.market_intelligence.watchlist_analyzer import (
+                    extract_premarket_base_state,
+                    persist_premarket_base_state,
+                )
+                from data.providers.yahoo import YahooProvider
+
+                nse_symbols = [s for s in raw_symbols if "/" not in s]
+                if nse_symbols:
+                    provider = YahooProvider(timeout=10.0)
+                    ohlcv_map = await provider.get_batch_ohlcv(nse_symbols, period="1y", interval="1d")
+                    base_states = {}
+                    for sym, df in ohlcv_map.items():
+                        state = extract_premarket_base_state(df, sym)
+                        if state:
+                            base_states[sym] = state
+                    saved = persist_premarket_base_state(base_states)
+                    logger.info("💾 [PreMarketPrep] Persisted base states for %d symbols (saved: %s)", len(base_states), saved)
+                    summary["premarket_prep"] = {"symbols": len(base_states), "persisted": saved}
+            except Exception as pm_exc:
+                logger.error("[PreMarketPrep] Failed to execute pre-market prep: %s", pm_exc)
 
         if not active_symbols:
             logger.info("ℹ️ [Session] No eligible symbols for active market hours. Standby status maintained.")
@@ -673,6 +736,8 @@ def main():
             force_scan=args.force_scan,
             dry_run=args.dry_run,
             max_symbols=args.max_symbols,
+            settlement_sweep=args.settlement_sweep,
+            premarket_prep=args.premarket_prep,
         )
     )
     print("\n--- AUTONOMOUS CYCLE SUMMARY ---")

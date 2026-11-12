@@ -1063,6 +1063,41 @@ async def refresh_data(background_tasks: BackgroundTasks):
     }
 
 
+@router.post("/api/cron/refresh")
+async def cron_refresh_market_data(
+    background_tasks: BackgroundTasks,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Cloudflare Worker Cron Keep-Alive and Live Market Refresh Trigger.
+    Validates X-Cron-Secret header when CRON_SECRET is configured.
+    Checks market hours gate before dispatching single-flight refresh.
+    """
+    import hmac
+    configured_secret = os.getenv("CRON_SECRET")
+    if configured_secret:
+        if not x_cron_secret or not hmac.compare_digest(x_cron_secret, configured_secret):
+            raise HTTPException(status_code=403, detail="Invalid cron authorization secret")
+
+    from agents.execution.market_control import is_nse_activity_window_active
+    is_open, reason = is_nse_activity_window_active()
+    if not is_open:
+        return {
+            "status": "SKIPPED",
+            "reason": f"Market closed ({reason})",
+            "market_open": False,
+            "dispatched": False,
+        }
+
+    background_tasks.add_task(svc._refresh_market_data)
+    return {
+        "status": "DISPATCHED",
+        "market_open": True,
+        "dispatched": True,
+        "triggered_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # ── Operator Runtime Controls (kill switch + live knobs) ─────────────────────
 class RuntimeKnobUpdateRequest(BaseModel):
     values: Dict[str, Any]

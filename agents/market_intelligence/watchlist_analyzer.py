@@ -806,6 +806,23 @@ async def analyze_watchlist_symbols(
 
     missing_symbols = [s for s in clean_symbols if s not in results]
 
+    # 1b. Fast Cold-Start Recovery: If missing symbols exist, check durable Supabase snapshot before heavy download
+    if missing_symbols and not force_refresh:
+        try:
+            from db.runtime_state import get_runtime_state
+            snapshot = get_runtime_state(_EOD_SNAPSHOT_KEY, default=None)
+            if snapshot and isinstance(snapshot, dict) and "quotes" in snapshot:
+                db_quotes = snapshot["quotes"]
+                for sym in list(missing_symbols):
+                    if sym in db_quotes and isinstance(db_quotes[sym], dict) and db_quotes[sym].get("ltp"):
+                        cached_entry = dict(db_quotes[sym])
+                        cached_entry["_cached_at"] = now_ts
+                        _WATCHLIST_ANALYSIS_CACHE[sym] = cached_entry
+                        results[sym] = cached_entry
+                missing_symbols = [s for s in clean_symbols if s not in results]
+        except Exception as snap_err:
+            logger.debug("[WatchlistAnalyzer] Cold-start snapshot lookup skipped: %s", snap_err)
+
     if missing_symbols:
         # 2. Fetch OHLCV batch including NIFTY 50 benchmark
         from data.providers.yahoo import YahooProvider
@@ -1035,4 +1052,209 @@ async def analyze_watchlist_symbols(
         entry_copy.pop("_cached_at", None)
         clean_results[sym] = entry_copy
 
+    # Auto-persist EOD snapshot outside market hours or during settlement sweep
+    try:
+        now_ist = datetime.now(_IST)
+        # If after 15:35 IST or weekend, save as durable EOD snapshot
+        if now_ist.weekday() >= 5 or now_ist.hour > 15 or (now_ist.hour == 15 and now_ist.minute >= 35):
+            persist_watchlist_eod_snapshot(clean_results)
+    except Exception as eod_persist_exc:
+        logger.debug("Automatic EOD snapshot persist skipped: %s", eod_persist_exc)
+
     return clean_results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EOD Snapshot Persistence & Warm-Boot Hydration
+# ─────────────────────────────────────────────────────────────────────────────
+_EOD_SNAPSHOT_KEY = "watchlist:eod_snapshot:v1"
+_PREMARKET_STATE_KEY = "watchlist:premarket_state:v1"
+
+
+def persist_watchlist_eod_snapshot(
+    quotes: Dict[str, Any],
+    session_date: Optional[str] = None,
+    settlement_type: str = "OFFICIAL_VWAP_SETTLED",
+) -> bool:
+    """
+    Persist clean watchlist quotes dictionary to Supabase runtime_state.
+    Guarantees that on cold container restart or night-time dashboard usage,
+    quotes can be hydrated instantly without hitting Yahoo rate limits or memory limits.
+    """
+    if not quotes or not isinstance(quotes, dict):
+        return False
+
+    clean_quotes = {}
+    for sym, q in quotes.items():
+        if isinstance(q, dict) and q.get("ltp") is not None:
+            c = dict(q)
+            c.pop("_cached_at", None)
+            clean_quotes[sym] = c
+
+    if not clean_quotes:
+        return False
+
+    now_ist = datetime.now(_IST)
+    s_date = session_date or now_ist.strftime("%Y-%m-%d")
+
+    payload = {
+        "version": "1.0.0",
+        "session_date": s_date,
+        "settlement_type": settlement_type,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(clean_quotes),
+        "quotes": clean_quotes,
+    }
+
+    try:
+        from db.runtime_state import set_runtime_state
+        set_runtime_state(_EOD_SNAPSHOT_KEY, payload)
+        logger.info(
+            "💾 [WatchlistAnalyzer] Persisted %d EOD quotes to %s (date: %s, type: %s)",
+            len(clean_quotes),
+            _EOD_SNAPSHOT_KEY,
+            s_date,
+            settlement_type,
+        )
+        return True
+    except Exception as exc:
+        logger.warning("[WatchlistAnalyzer] Failed to persist EOD snapshot: %s", exc)
+        return False
+
+
+def hydrate_watchlist_cache_from_db() -> int:
+    """
+    Hydrate in-memory _WATCHLIST_ANALYSIS_CACHE from Supabase runtime_state.
+    Called on server startup in api/app.py lifespan to eliminate cold-start latency.
+    Returns the number of symbols successfully hydrated.
+    """
+    try:
+        from db.runtime_state import get_runtime_state
+        snapshot = get_runtime_state(_EOD_SNAPSHOT_KEY, default=None)
+        if not snapshot or not isinstance(snapshot, dict):
+            return 0
+
+        quotes = snapshot.get("quotes")
+        if not quotes or not isinstance(quotes, dict):
+            return 0
+
+        now_ts = time.time()
+        hydrated_count = 0
+        for sym, q_entry in quotes.items():
+            if isinstance(q_entry, dict) and q_entry.get("ltp") is not None:
+                cached_entry = dict(q_entry)
+                cached_entry["_cached_at"] = now_ts
+                _WATCHLIST_ANALYSIS_CACHE[sym] = cached_entry
+                hydrated_count += 1
+
+        logger.info(
+            "⚡ [WatchlistAnalyzer] Hydrated %d watchlist quotes from %s into memory cache",
+            hydrated_count,
+            _EOD_SNAPSHOT_KEY,
+        )
+        return hydrated_count
+    except Exception as exc:
+        logger.debug("[WatchlistAnalyzer] Watchlist cache hydration from DB skipped: %s", exc)
+        return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pre-Market Base State Caching & O(1) Incremental Live Blending
+# ─────────────────────────────────────────────────────────────────────────────
+def extract_premarket_base_state(df: pd.DataFrame, sym: str) -> Optional[Dict[str, Any]]:
+    """
+    Extract base indicator state from 199 completed daily bars at 08:55 IST.
+    Computes static pre-market values needed for O(1) live-tick blending.
+    """
+    if df is None or len(df) < 199:
+        return None
+
+    close_s = df["close"]
+    high_s = df["high"]
+    low_s = df["low"]
+    vol_s = df["volume"]
+
+    ema20_s = calculate_ema(close_s, 20)
+    ema50_s = calculate_ema(close_s, 50)
+    ema200_s = calculate_ema(close_s, 200)
+    atr14_s = calculate_atr(high_s, low_s, close_s, 14)
+
+    # Base indicators prior to today's active live bar
+    return {
+        "symbol": sym,
+        "close_prev": float(close_s.iloc[-1]),
+        "ema19_prev": float(ema20_s.iloc[-1]),
+        "ema49_prev": float(ema50_s.iloc[-1]),
+        "ema199_prev": float(ema200_s.iloc[-1]),
+        "atr13_prev": float(atr14_s.iloc[-1]),
+        "high_20d": float(high_s.iloc[-20:].max()),
+        "low_20d": float(low_s.iloc[-20:].min()),
+        "vol_20d_avg": float(vol_s.iloc[-20:].mean()) if not vol_s.empty else 1.0,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def persist_premarket_base_state(base_states: Dict[str, Dict[str, Any]]) -> bool:
+    """Save 08:55 IST pre-market indicator states to Supabase runtime_state."""
+    if not base_states:
+        return False
+    try:
+        from db.runtime_state import set_runtime_state
+        payload = {
+            "version": "1.0.0",
+            "session_date": datetime.now(_IST).strftime("%Y-%m-%d"),
+            "states": base_states,
+        }
+        set_runtime_state(_PREMARKET_STATE_KEY, payload)
+        logger.info("💾 [WatchlistAnalyzer] Saved pre-market base states for %d symbols", len(base_states))
+        return True
+    except Exception as exc:
+        logger.warning("[WatchlistAnalyzer] Failed to persist pre-market base state: %s", exc)
+        return False
+
+
+def blend_live_quote_with_base_state(
+    base: Dict[str, Any],
+    ltp: float,
+    high: Optional[float] = None,
+    low: Optional[float] = None,
+    volume: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    O(1) closed-form live indicator blending.
+    Takes pre-market base state and applies the live tick without allocating
+    a 200-bar DataFrame, honoring Render's 512 MB RAM ceiling.
+    """
+    h = high if high is not None and high > 0 else ltp
+    l = low if low is not None and low > 0 else ltp
+    prev_close = base.get("close_prev", ltp)
+
+    # Recursive closed-form EMA update
+    alpha20 = 2.0 / (20 + 1)
+    alpha50 = 2.0 / (50 + 1)
+    alpha200 = 2.0 / (200 + 1)
+
+    live_ema20 = round(ltp * alpha20 + base["ema19_prev"] * (1.0 - alpha20), 2)
+    live_ema50 = round(ltp * alpha50 + base["ema49_prev"] * (1.0 - alpha50), 2)
+    live_ema200 = round(ltp * alpha200 + base["ema199_prev"] * (1.0 - alpha200), 2)
+
+    # True Range & Wilder 14-period ATR update
+    tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
+    live_atr14 = round((base["atr13_prev"] * 13.0 + tr) / 14.0, 2)
+    live_atr_pct = round((live_atr14 / ltp) * 100.0, 2) if ltp > 0 else 0.0
+
+    # Volume ratio
+    avg_vol = base.get("vol_20d_avg", 1.0)
+    vol_ratio = round((volume / avg_vol), 2) if volume and avg_vol > 0 else 1.0
+
+    return {
+        "ema20": live_ema20,
+        "ema50": live_ema50,
+        "ema200": live_ema200,
+        "atr14": live_atr14,
+        "atr_pct": live_atr_pct,
+        "vol_ratio": vol_ratio,
+        "high_20d": max(base.get("high_20d", h), h),
+        "low_20d": min(base.get("low_20d", l), l),
+    }
+
