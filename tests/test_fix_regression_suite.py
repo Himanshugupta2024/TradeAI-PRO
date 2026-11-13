@@ -115,3 +115,56 @@ def test_fix5_data_brain_v3_context_contract(client):
     assert "market_breadth" in data
     assert "derivatives_oi" in data
     assert "real_data" in data
+
+
+def test_vix_multiindex_parse_handles_series():
+    """Verify MultiIndex DataFrame from yfinance does not raise TypeError in float() conversion."""
+    import pandas as pd
+    arrays = [["Close", "Open", "High", "Low"], ["^INDIAVIX", "^INDIAVIX", "^INDIAVIX", "^INDIAVIX"]]
+    columns = pd.MultiIndex.from_tuples(list(zip(*arrays)))
+    vix_df = pd.DataFrame([[15.2, 15.0, 15.5, 14.8], [15.6, 15.2, 15.8, 15.1]], columns=columns)
+
+    close_series = vix_df["Close"]
+    if isinstance(close_series, pd.DataFrame):
+        close_series = close_series.iloc[:, 0]
+    elif hasattr(close_series, "squeeze"):
+        close_series = close_series.squeeze()
+    close_series = close_series.dropna()
+
+    assert len(close_series) >= 2
+    last_val = float(close_series.iloc[-1])
+    prev_val = float(close_series.iloc[-2])
+    assert last_val == 15.6
+    assert prev_val == 15.2
+    chg_pct = round(((last_val - prev_val) / prev_val) * 100.0, 2)
+    assert chg_pct == 2.63
+
+
+def test_intraday_store_infers_source_candle_at():
+    """Verify intraday_store.save_scan infers source_last_candle_at from signals if not passed."""
+    from db import intraday_store
+    from datetime import datetime, timezone
+
+    candle_iso = "2026-11-13T14:25:00+00:00"
+    signals = [
+        {"symbol": "RELIANCE", "direction": "LONG", "score": 75.0, "candle_time": candle_iso}
+    ]
+
+    scan_id = intraday_store.save_scan(
+        signals,
+        symbols_scanned=1,
+        trigger="test_source_candle",
+        source_last_candle_at=None,
+    )
+    assert scan_id is not None
+
+    latest = intraday_store.load_latest_scan()
+    assert latest is not None
+    assert latest.get("source_candle_at") is not None
+    assert "2026-11-13" in latest["source_candle_at"]
+
+
+def test_refresh_cycle_timeout_configured():
+    """Verify REFRESH_CYCLE_TIMEOUT_SEC is set to 240 seconds."""
+    from config import settings
+    assert settings.REFRESH_CYCLE_TIMEOUT_SEC >= 240

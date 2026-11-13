@@ -654,6 +654,7 @@ async def run_single_autonomous_cycle(
                 scan_id=f"iscan-{run_id}",
                 started_at=datetime.fromisoformat(now_iso.replace("Z", "+00:00")),
                 completed_at=datetime.now(timezone.utc),
+                source_last_candle_at=max_bar_dt,
                 market_session_date=now_ist.date(),
                 provider="yfinance" if any("/" not in s for s in active_symbols) else "binance",
                 provider_freshness="15m Delayed",

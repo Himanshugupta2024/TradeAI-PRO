@@ -1959,17 +1959,30 @@ async def _refresh_market_data_inner():
             vix_df = await asyncio.to_thread(
                 yf.download, "^INDIAVIX", period="5d", interval="1d", progress=False
             )
-            if vix_df is not None and not vix_df.empty and len(vix_df) >= 2:
-                _vix_context.update(
-                    last=round(float(vix_df["Close"].iloc[-1]), 2),
-                    prev=round(float(vix_df["Close"].iloc[-2]), 2),
-                    change_pct=round(
-                        float((vix_df["Close"].iloc[-1] - vix_df["Close"].iloc[-2])
-                              / vix_df["Close"].iloc[-2] * 100), 2
-                    ),
-                    status="ok",
-                    updated_at=datetime.now(timezone.utc).isoformat(),
-                )
+            if vix_df is not None and not vix_df.empty:
+                # Handle MultiIndex columns returned by modern yfinance
+                close_series = vix_df["Close"] if "Close" in vix_df else None
+                if close_series is not None:
+                    if isinstance(close_series, pd.DataFrame):
+                        close_series = close_series.iloc[:, 0]
+                    elif hasattr(close_series, "squeeze"):
+                        close_series = close_series.squeeze()
+                    close_series = close_series.dropna()
+                    if len(close_series) >= 2:
+                        last_val = float(close_series.iloc[-1])
+                        prev_val = float(close_series.iloc[-2])
+                        chg_pct = round(((last_val - prev_val) / prev_val) * 100.0, 2) if prev_val > 0 else 0.0
+                        _vix_context.update(
+                            last=round(last_val, 2),
+                            prev=round(prev_val, 2),
+                            change_pct=chg_pct,
+                            status="ok",
+                            updated_at=datetime.now(timezone.utc).isoformat(),
+                        )
+                    else:
+                        _vix_context.update(status="unavailable", reason="insufficient VIX rows")
+                else:
+                    _vix_context.update(status="unavailable", reason="no Close column in VIX data")
             else:
                 _vix_context.update(status="unavailable", reason="no VIX data returned")
         except Exception as vix_exc:

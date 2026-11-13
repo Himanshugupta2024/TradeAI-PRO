@@ -68,6 +68,23 @@ def save_scan(
     if not scan_id:
         scan_id = f"iscan-{now_ist.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
 
+    # Infer source_last_candle_at from signals if not explicitly provided
+    if source_last_candle_at is None:
+        candle_times = []
+        for s in (signals or []):
+            if isinstance(s, dict):
+                ct = s.get("source_candle_at") or s.get("candle_time") or s.get("source_candle_time") or s.get("timestamp")
+                if ct:
+                    try:
+                        ct_dt = datetime.fromisoformat(str(ct).replace("Z", "+00:00"))
+                        if ct_dt.tzinfo is not None:
+                            ct_dt = ct_dt.astimezone(timezone.utc).replace(tzinfo=None)
+                        candle_times.append(ct_dt)
+                    except Exception:
+                        pass
+        if candle_times:
+            source_last_candle_at = max(candle_times)
+
     # Enrich signals with generated_at, valid_until, source_candle_at
     rows = []
     qualified_count = 0

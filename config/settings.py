@@ -177,7 +177,7 @@ NSE_SYMBOL_TIMEOUT_SECONDS = float(os.getenv("NSE_SYMBOL_TIMEOUT_SECONDS", "150"
 
 # Background refresh controls.
 REFRESH_INTERVAL_SEC = int(os.getenv("REFRESH_INTERVAL_SEC", "60"))
-REFRESH_CYCLE_TIMEOUT_SEC = int(os.getenv("REFRESH_CYCLE_TIMEOUT_SEC", "120"))
+REFRESH_CYCLE_TIMEOUT_SEC = int(os.getenv("REFRESH_CYCLE_TIMEOUT_SEC", "240"))
 BACKGROUND_READY_WAIT_SEC = int(os.getenv("BACKGROUND_READY_WAIT_SEC", "180"))
 
 # ── Indicator Parameters ─────────────────────────────────

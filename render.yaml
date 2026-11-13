@@ -56,7 +56,7 @@ services:
       - key: REFRESH_INTERVAL_SEC
         value: "180"
       - key: REFRESH_CYCLE_TIMEOUT_SEC
-        value: "150"
+        value: "240"
       - key: INTRADAY_RVOL_GATE_ENABLED
         value: "false"
       - key: LIGHTWEIGHT_API_MODE

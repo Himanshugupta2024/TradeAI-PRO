@@ -461,6 +461,23 @@ async def intraday_run_scan():
 
     # Bounded execution: max 55s budget; on overrun switch to background scan + poll
     sigs = []
+    latest_candle_dt = None
+    try:
+        for sym_df in getattr(svc, "_market_data", {}).values():
+            if isinstance(sym_df, pd.DataFrame) and not sym_df.empty:
+                ts_val = None
+                if "timestamp" in sym_df.columns:
+                    ts_val = pd.to_datetime(sym_df["timestamp"].iloc[-1])
+                elif isinstance(sym_df.index, pd.DatetimeIndex):
+                    ts_val = sym_df.index[-1].to_pydatetime()
+                if ts_val is not None:
+                    if ts_val.tzinfo is None:
+                        ts_val = ts_val.replace(tzinfo=_IST)
+                    if latest_candle_dt is None or ts_val > latest_candle_dt:
+                        latest_candle_dt = ts_val
+    except Exception:
+        pass
+
     try:
         sigs = await asyncio.wait_for(
             asyncio.to_thread(scan_intraday_setups, symbols, portfolio_state),
@@ -477,6 +494,7 @@ async def intraday_run_scan():
                     result,
                     symbols_scanned=len(symbols),
                     trigger="api_bg",
+                    source_last_candle_at=latest_candle_dt,
                 )
             except Exception as bg_exc:
                 logger.error("Background intraday scan failed: %s", bg_exc)
@@ -500,6 +518,7 @@ async def intraday_run_scan():
                 sigs,
                 symbols_scanned=len(symbols),
                 trigger="api",
+                source_last_candle_at=latest_candle_dt,
             ),
         )
     except Exception as exc:
@@ -557,6 +576,23 @@ async def intraday_latest():
     nifty_ctx = await asyncio.to_thread(get_nifty_market_context)
     sq_off = should_square_off_now()
 
+    latest_candle_dt = None
+    try:
+        for sym_df in getattr(svc, "_market_data", {}).values():
+            if isinstance(sym_df, pd.DataFrame) and not sym_df.empty:
+                ts_val = None
+                if "timestamp" in sym_df.columns:
+                    ts_val = pd.to_datetime(sym_df["timestamp"].iloc[-1])
+                elif isinstance(sym_df.index, pd.DatetimeIndex):
+                    ts_val = sym_df.index[-1].to_pydatetime()
+                if ts_val is not None:
+                    if ts_val.tzinfo is None:
+                        ts_val = ts_val.replace(tzinfo=_IST)
+                    if latest_candle_dt is None or ts_val > latest_candle_dt:
+                        latest_candle_dt = ts_val
+    except Exception:
+        pass
+
     row = None
     try:
         row = await asyncio.to_thread(intraday_store.load_latest_scan)
@@ -574,7 +610,7 @@ async def intraday_latest():
             "qualified_setups": 0,
             "scan_time": None,
             "last_scan_at": None,
-            "source_candle_at": None,
+            "source_candle_at": latest_candle_dt.isoformat() if latest_candle_dt else None,
             "scan_age_seconds": None,
             "data_age_seconds": None,
             "freshness_status": "UNAVAILABLE",
@@ -635,6 +671,16 @@ async def intraday_latest():
     if not feed_is_realtime:
         session_dict["allows_new_entries"] = False
         session_dict["data_freshness_mode"] = row.get("freshness_status") or "DELAYED"
+
+    if not row.get("source_candle_at"):
+        row_candle_at = None
+        for s in raw_sigs:
+            if isinstance(s, dict):
+                cand = s.get("source_candle_at") or s.get("candle_time") or s.get("source_candle_time")
+                if cand:
+                    row_candle_at = str(cand)
+                    break
+        row["source_candle_at"] = row_candle_at or (latest_candle_dt.isoformat() if latest_candle_dt else None)
 
     row["session"] = session_dict
     row["allows_new_entries"] = session_dict["allows_new_entries"]
