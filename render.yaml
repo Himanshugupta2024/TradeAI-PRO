@@ -52,7 +52,13 @@ services:
       - key: INITIAL_LOAD_ENABLED
         value: "false"
       - key: BACKGROUND_REFRESH_ENABLED
-        value: false
+        value: "true"
+      - key: REFRESH_INTERVAL_SEC
+        value: "180"
+      - key: REFRESH_CYCLE_TIMEOUT_SEC
+        value: "150"
+      - key: INTRADAY_RVOL_GATE_ENABLED
+        value: "false"
       - key: LIGHTWEIGHT_API_MODE
         value: "true"
       - key: ALLOW_LOCAL_AUTONOMOUS_CYCLE
@@ -69,3 +75,5 @@ services:
         value: 5
       - key: SYMBOL_FETCH_TIMEOUT_SECONDS
         value: 20
+      - key: CRON_SECRET
+        sync: false

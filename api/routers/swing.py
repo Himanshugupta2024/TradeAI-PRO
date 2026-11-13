@@ -51,6 +51,7 @@ from agents.feature_engine.trend import classify_trend, propagate_trend_to_ltf
 from agents.market_intelligence.breakout_scanner import scan_all_symbols as breakout_scan_all
 from agents.market_intelligence.swing_scanner import scan_all_symbols as swing_scan_all
 from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol, fetch_ohlcv, validate_nse_symbol
+from agents.market_intelligence.index_mover import calculate_index_movers
 from agents.stock_screener import opportunity_stocks, start_morning_scan_task, start_screener_task
 
 logger = logging.getLogger(__name__)
@@ -427,7 +428,7 @@ async def swing_scan_now():
 
     }
 
-@router.post("/api/intraday/scan")
+@router.post("/api/intraday/scan", dependencies=[Depends(require_admin)])
 async def intraday_run_scan():
     """Paper-only intraday heuristics on tracked NSE symbols with warmup & timeout guard."""
     from agents.intraday_engine.scanner import (
@@ -442,7 +443,7 @@ async def intraday_run_scan():
     _IST = ZoneInfo("Asia/Kolkata")
     now_ist = datetime.now(_IST)
     session = evaluate_market_session()
-    symbols = ["RELIANCE", "TCS", "INFY", "HDFCBANK"]  # Snappy on-demand execution under 10s
+    symbols = list(svc.TOP_NSE_SYMBOLS)[:15]  # Full tracked universe
     engine = svc._get_engine()
     stats = engine.get_stats()
     capital = float(
@@ -458,18 +459,39 @@ async def intraday_run_scan():
         "capital": capital,
     }
 
-    # Bounded execution: max 9.5s to prevent browser timeout
+    # Bounded execution: max 55s budget; on overrun switch to background scan + poll
     sigs = []
     try:
         sigs = await asyncio.wait_for(
             asyncio.to_thread(scan_intraday_setups, symbols, portfolio_state),
-            timeout=9.5,
+            timeout=55.0,
         )
     except asyncio.TimeoutError:
-        logger.warning("Intraday scan timed out (9.5s) — loading latest durable scan")
-        prev_scan = await asyncio.to_thread(intraday_store.load_latest_scan)
-        if prev_scan and prev_scan.get("signals"):
-            sigs = prev_scan["signals"]
+        logger.warning("Intraday scan timed out (55s) — starting background scan")
+
+        async def _bg_scan():
+            try:
+                result = await asyncio.to_thread(scan_intraday_setups, symbols, portfolio_state)
+                await asyncio.to_thread(
+                    intraday_store.save_scan,
+                    result,
+                    symbols_scanned=len(symbols),
+                    trigger="api_bg",
+                )
+            except Exception as bg_exc:
+                logger.error("Background intraday scan failed: %s", bg_exc)
+
+        asyncio.create_task(_bg_scan())
+        return JSONResponse(
+            status_code=202,
+            content={
+                "data_status": "SCAN_IN_PROGRESS",
+                "message": "Full-universe scan running in background; press Latest again in ~60-90s.",
+                "count": 0,
+                "signals": [],
+                "symbols_scanned": len(symbols),
+            },
+        )
 
     scan_id = None
     try:

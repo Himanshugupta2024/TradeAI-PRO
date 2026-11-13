@@ -244,10 +244,10 @@ def scan_intraday_setups(
 
                 quote = get_nse_live_quote(s)
                 if quote is not None:
-                    is_eligible, reason = validate_quote_for_trade(quote, trade_type="INTRADAY")
+                    is_eligible, reason = validate_quote_for_trade(quote, trade_type="INTRADAY_SIGNAL")
                     if is_eligible:
                         df = merge_live_candle_overlay(raw_df, quote)
-                        data_status = "LIVE"
+                        data_status = "LIVE" if reason == "ELIGIBLE_REALTIME" else "DELAYED"
                     else:
                         logger.info(
                             "intraday %s blocked by staleness gate: %s (source=%s, freshness=%s)",

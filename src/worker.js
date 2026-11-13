@@ -647,7 +647,7 @@ export default {
 
   /**
    * Cloudflare Cron Trigger scheduled handler.
-   * Runs every 5 minutes to ping the Render backend health endpoint,
+   * Runs every 2 minutes (2-min cron) to ping the Render backend health endpoint,
    * keeping the Render free container warm even when GitHub Actions is disabled.
    *
    * It also dispatches the autonomous cycle workflow every 20 minutes during the
@@ -676,7 +676,7 @@ export function istClock(date = new Date()) {
 
 /**
  * Decide whether this cron tick should dispatch a cycle.
- * Cron fires every 5 minutes; cadence check keeps it to one dispatch per 20 minutes.
+ * Cron fires every 2 minutes; cadence check keeps it to one dispatch per 20 minutes.
  */
 export function shouldDispatchCycle(date = new Date()) {
   const { weekday, minutesOfDay, minuteOfHour } = istClock(date);

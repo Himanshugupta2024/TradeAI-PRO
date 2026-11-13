@@ -242,15 +242,19 @@ def evaluate_health_v2(
             hours_ago = int(age_seconds // 3600)
             freshness_reason = f"EOD Snapshot valid ({hours_ago}h ago, market closed)"
     else:
-        # Market open: Expecting ~15m delay (tolerance up to 30 mins)
-        if age_seconds <= 1800:
+        # Market open: with background refresh running, tighten freshness tiers
+        if age_seconds <= 300:
             freshness_tier = "DATA_FRESH"
             freshness_healthy = True
-            freshness_reason = f"Feed fresh (~15m delayed, updated {int(age_seconds // 60)}m ago)"
+            freshness_reason = f"Feed fresh (updated {int(age_seconds // 60)}m ago)"
+        elif age_seconds <= 900:
+            freshness_tier = "DATA_DELAYED"
+            freshness_healthy = True
+            freshness_reason = f"Delayed public feed (updated {int(age_seconds // 60)}m ago)"
         else:
             freshness_tier = "STALE_DATA"
             freshness_healthy = False
-            freshness_reason = f"Market feed is lagging ({int(age_seconds // 60)}m old > 30m limit)"
+            freshness_reason = f"Market feed is lagging ({int(age_seconds // 60)}m old > 15m limit)"
 
     # ── Consolidated Status & Reason ──────────────────────────────────────────
     if not infra_healthy:

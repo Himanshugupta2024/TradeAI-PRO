@@ -337,25 +337,25 @@ _CONTEXT_MOOD_CACHE_TTL: float = 60.0
 
 
 @router.get("/api/context/v3")
-
 async def get_data_brain_v3_context():
-
     """Return live snapshots of all 5 orthogonal Data Brain V3 context dimensions."""
+    india_vix = getattr(svc, "_vix_context", {})
+    fii_dii = getattr(svc, "_flow_context", {})
+    breadth = getattr(svc, "_breadth_context", {})
+    derivatives = getattr(svc, "_derivatives_context", {})
+
+    sections = [india_vix, fii_dii, breadth, derivatives]
+    all_ok = all(isinstance(s, dict) and s.get("status") == "ok" for s in sections)
+    any_ok = any(isinstance(s, dict) and s.get("status") == "ok" for s in sections)
 
     return {
-
-        "status": "ok",
-
-        "india_vix": getattr(svc, "_vix_context", {}),
-
-        "fii_dii_flow": getattr(svc, "_flow_context", {}),
-
-        "market_breadth": getattr(svc, "_breadth_context", {}),
-
-        "derivatives_oi": getattr(svc, "_derivatives_context", {}),
-
+        "status": "ok" if all_ok else ("partial" if any_ok else "unavailable"),
+        "india_vix": india_vix,
+        "fii_dii_flow": fii_dii,
+        "market_breadth": breadth,
+        "derivatives_oi": derivatives,
+        "real_data": any_ok,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-
     }
 
 @router.get("/api/ai/ensemble/status")

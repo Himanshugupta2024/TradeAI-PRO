@@ -1075,9 +1075,13 @@ async def cron_refresh_market_data(
     """
     import hmac
     configured_secret = os.getenv("CRON_SECRET")
-    if configured_secret:
-        if not x_cron_secret or not hmac.compare_digest(x_cron_secret, configured_secret):
-            raise HTTPException(status_code=403, detail="Invalid cron authorization secret")
+    if not configured_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="CRON_SECRET not configured — cron refresh disabled (fail-closed)",
+        )
+    if not x_cron_secret or not hmac.compare_digest(x_cron_secret, configured_secret):
+        raise HTTPException(status_code=403, detail="Invalid cron authorization secret")
 
     from agents.execution.market_control import is_nse_activity_window_active
     is_open, reason = is_nse_activity_window_active()

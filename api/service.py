@@ -205,6 +205,16 @@ _persisted_signals_updated_at: str | None = None
 # Regime hysteresis: (confirmed_regime, tentative_regime, consecutive_count)
 _regime_hysteresis: dict[str, tuple[str, str, int]] = {}
 
+# HTF daily candle cache — refreshed at most once every 6 hours (data barely changes intraday)
+_htf_daily_cache: dict = {"dfs": {}, "ts": 0.0}
+_HTF_CACHE_TTL_SECONDS = 6 * 3600  # 6 hours
+
+# Data Brain V3 context caches — populated at end of each refresh cycle
+_vix_context: dict = {"status": "pending"}
+_flow_context: dict = {"status": "pending"}
+_breadth_context: dict = {"status": "pending"}
+_derivatives_context: dict = {"status": "unavailable", "reason": "no free OI source"}
+
 
 @dataclass
 class AppState:
@@ -1632,7 +1642,22 @@ async def _refresh_market_data_inner():
             router = get_default_router()
             t_batch = time.perf_counter()
             dfs_5m = await router.get_batch_ohlcv(TOP_NSE_SYMBOLS, period="5d", interval="5m")
-            dfs_1d = await router.get_batch_ohlcv(TOP_NSE_SYMBOLS, period="2y", interval="1d")
+
+            # Cache HTF daily bars — they barely change intraday; re-download every 6h max
+            now_perf = time.perf_counter()
+            if (now_perf - _htf_daily_cache["ts"] > _HTF_CACHE_TTL_SECONDS) or not _htf_daily_cache["dfs"]:
+                dfs_1d = await router.get_batch_ohlcv(TOP_NSE_SYMBOLS, period="2y", interval="1d")
+                _htf_daily_cache["dfs"] = dfs_1d
+                _htf_daily_cache["ts"] = now_perf
+                logger.info("[HTF Cache] Refreshed 1d daily candles for %d symbols", len(dfs_1d))
+            else:
+                dfs_1d = _htf_daily_cache["dfs"]
+                logger.debug(
+                    "[HTF Cache] Reusing cached 1d daily candles (%d symbols, age=%.0fs)",
+                    len(dfs_1d),
+                    now_perf - _htf_daily_cache["ts"],
+                )
+
             elapsed_batch = time.perf_counter() - t_batch
             refresh_tracker.record("batch_ohlcv", elapsed_batch * 1000.0)
             logger.info(
@@ -1927,6 +1952,64 @@ async def _refresh_market_data_inner():
 
         except Exception as auto_err:
             logger.debug("[Service] Autonomous daemon cycle skipped: %s", auto_err)
+
+        # ── Data Brain V3 context population ──────────────────────────────
+        try:
+            import yfinance as yf
+            vix_df = await asyncio.to_thread(
+                yf.download, "^INDIAVIX", period="5d", interval="1d", progress=False
+            )
+            if vix_df is not None and not vix_df.empty and len(vix_df) >= 2:
+                _vix_context.update(
+                    last=round(float(vix_df["Close"].iloc[-1]), 2),
+                    prev=round(float(vix_df["Close"].iloc[-2]), 2),
+                    change_pct=round(
+                        float((vix_df["Close"].iloc[-1] - vix_df["Close"].iloc[-2])
+                              / vix_df["Close"].iloc[-2] * 100), 2
+                    ),
+                    status="ok",
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                )
+            else:
+                _vix_context.update(status="unavailable", reason="no VIX data returned")
+        except Exception as vix_exc:
+            logger.debug("VIX context fetch failed: %s", vix_exc)
+            _vix_context.update(status="unavailable", reason=str(vix_exc)[:100])
+
+        try:
+            from agents.market_intelligence.market_data import fetch_fii_dii_flow
+            flow = await asyncio.to_thread(fetch_fii_dii_flow)
+            if flow:
+                _flow_context.update(flow)
+                _flow_context["status"] = "ok"
+            else:
+                _flow_context.update(status="unavailable", reason="empty response from NSE")
+        except Exception as flow_exc:
+            logger.debug("FII/DII flow fetch failed: %s", flow_exc)
+            _flow_context.update(status="unavailable", reason=str(flow_exc)[:100])
+
+        try:
+            adv = decl = 0
+            for sym_name, df_sym in _market_data.items():
+                if df_sym is None or len(df_sym) < 2:
+                    continue
+                last_close = float(df_sym["close"].iloc[-1]) if "close" in df_sym else None
+                prev_close = float(df_sym["close"].iloc[-2]) if "close" in df_sym and len(df_sym) >= 2 else None
+                if last_close is not None and prev_close is not None:
+                    if last_close > prev_close:
+                        adv += 1
+                    else:
+                        decl += 1
+            _breadth_context.update(
+                advances=adv,
+                declines=decl,
+                total=adv + decl,
+                status="ok" if (adv + decl) > 0 else "unavailable",
+                updated_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception as breadth_exc:
+            logger.debug("Market breadth calculation failed: %s", breadth_exc)
+            _breadth_context.update(status="unavailable", reason=str(breadth_exc)[:100])
 
         _last_refresh = datetime.now()
         refresh_tracker.set_meta("nse_loaded", len(TOP_NSE_SYMBOLS))

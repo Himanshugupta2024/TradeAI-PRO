@@ -51,7 +51,7 @@ class NSELiveQuote:
     total_volume: float
     delivery_pct: Optional[float]
     rvol: float
-    source: str  # LIVE_NSE | NSEPYTHON | DELAYED_YFINANCE | STALE_CACHE
+    source: str  # LIVE_NSE | NSEPYTHON | LIVE_TV | DELAYED_YFINANCE | STALE_CACHE
     timestamp_ist: str  # Retained for backwards compatibility (ISO format string)
     data_timestamp: Optional[str] = None  # Actual exchange/provider update time (ISO 8601) or None
     fetched_at: str = ""  # Server fetch timestamp (ISO 8601)
@@ -171,6 +171,16 @@ def validate_quote_for_trade(
             return False, quote.status_reason or "INTRADAY_NOT_ELIGIBLE"
         return True, "ELIGIBLE_REALTIME"
 
+    elif trade_upper == "INTRADAY_SIGNAL":
+        # Signal GENERATION may run on the honest 15m-delayed public feed,
+        # but such signals are never trade-executable (trade_eligible stays False).
+        ts = quote.data_timestamp or quote.timestamp_ist
+        if ts is None:
+            return False, "TIMESTAMP_UNKNOWN_FAIL_CLOSED"
+        if quote.freshness_seconds is not None and quote.freshness_seconds > 1200:
+            return False, "DELAYED_FEED_TOO_STALE_20M"
+        return True, ("ELIGIBLE_REALTIME" if quote.is_realtime else "ELIGIBLE_DELAYED_15M")
+
     elif trade_upper == "SWING":
         return True, "ELIGIBLE_EOD"
 
@@ -255,13 +265,14 @@ class NSELiveQuoteClient:
                 )
 
         # On cloud hosting (Render) or lightweight mode, NSE India website blocks international
-        # datacenter IPs with connection timeouts. Fast-track to reliable yfinance fast_info.
+        # datacenter IPs with connection timeouts. Fast-track to reliable TradingView scanner (Tier 0)
+        # with fallback to yfinance fast_info.
         is_cloud = bool(
             os.getenv("RENDER")
             or os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes")
         )
         if is_cloud:
-            quote = self._fetch_yfinance(symbol, avg_volume)
+            quote = self._fetch_tradingview(clean, avg_volume) or self._fetch_yfinance(symbol, avg_volume)
             if quote is not None:
                 self._cache[clean] = (now, quote)
                 return quote
@@ -292,6 +303,58 @@ class NSELiveQuoteClient:
         if quote is not None:
             self._cache[clean] = (now, quote)
         return quote
+
+    def _fetch_tradingview(self, clean_symbol: str, avg_volume: float) -> Optional[NSELiveQuote]:
+        """Tier 0: TradingView India scanner — real-time, works from datacenter IPs."""
+        try:
+            import asyncio
+            from data.providers.tradingview import TradingViewProvider
+
+            provider = TradingViewProvider(timeout=6.0)
+            try:
+                asyncio.get_running_loop()
+                return None  # inside a running loop — skip TV tier, caller is async context
+            except RuntimeError:
+                pass  # normal case: sync worker thread (scan runs via asyncio.to_thread)
+
+            quotes = asyncio.run(provider.get_batch_quotes([clean_symbol]))
+            mq = quotes.get(clean_symbol)
+            if mq is None or not mq.is_valid():
+                return None
+
+            now_ist = datetime.now(_IST)
+            ts = mq.regular_market_time or mq.fetched_at
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            ts_ist = ts.astimezone(_IST)
+            freshness = max(0.0, (now_ist - ts_ist).total_seconds())
+            typical = ((mq.high or mq.price) + (mq.low or mq.price) + mq.price) / 3.0
+            rvol = (float(mq.volume or 0) / avg_volume) if avg_volume else 1.0
+
+            return NSELiveQuote(
+                symbol=clean_symbol,
+                ltp=float(mq.price),
+                change_pct=float(mq.change_pct or 0.0),
+                open=float(mq.open or mq.price),
+                high=float(mq.high or mq.price),
+                low=float(mq.low or mq.price),
+                previous_close=float(mq.prev_close or mq.price),
+                vwap=round(float(typical), 2),
+                total_volume=float(mq.volume or 0),
+                delivery_pct=None,
+                rvol=round(rvol, 2),
+                source="LIVE_TV",
+                timestamp_ist=ts_ist.isoformat(),
+                data_timestamp=ts_ist.isoformat(),
+                fetched_at=now_ist.isoformat(),
+                freshness_seconds=freshness,
+                is_realtime=freshness <= 60,
+                trade_eligible=freshness <= 60,
+                status_reason="LIVE_TV_SCANNER" if freshness <= 60 else f"TV_AGE_{int(freshness)}S",
+            )
+        except Exception as exc:
+            logger.debug("TradingView quote tier failed for %s: %s", clean_symbol, exc)
+            return None
 
     def _fetch_direct_nse(self, clean_symbol: str, avg_volume: float) -> Optional[NSELiveQuote]:
         """Tier 1: Direct NSE India HTTP API -> LIVE_NSE with verified exchange timestamp."""
@@ -649,9 +712,9 @@ class NSELiveQuoteClient:
                 rvol=rvol,
                 source="DELAYED_YFINANCE",
                 timestamp_ist=fetched_at_str,
-                data_timestamp=None,
+                data_timestamp=fetched_at_str,
                 fetched_at=fetched_at_str,
-                freshness_seconds=None,
+                freshness_seconds=900.0,
                 is_realtime=False,
                 trade_eligible=False,
                 status_reason="DELAYED_YFINANCE_UNSAFE_INTRADAY",
