@@ -504,3 +504,30 @@ async def health_providers_check():
 
     }
 
+
+
+@router.get("/api/warmup")
+async def warmup_check():
+    """
+    Dedicated warm-up endpoint for edge workers / cron jobs.
+    Returns WARMING_UP if market cache is empty and container is booting.
+    Returns READY if market cache is hydrated.
+    Triggers background refresh if cache is empty and lock is free.
+    """
+    symbols_loaded = len(getattr(svc, "_market_data", {}))
+    is_ready = bool(getattr(svc, "_loading_status", {}).get("ready", False)) or symbols_loaded >= 5
+
+    # If not ready, ensure background refresh is initiated
+    if not is_ready and hasattr(svc, "_get_refresh_lock"):
+        lock = svc._get_refresh_lock()
+        if lock and not lock.locked():
+            asyncio.create_task(svc._refresh_market_data())
+
+    status_str = "READY" if is_ready else "WARMING_UP"
+    return {
+        "status": status_str,
+        "is_ready": is_ready,
+        "symbols_loaded": symbols_loaded,
+        "phase": getattr(svc, "_loading_status", {}).get("phase", "warming_up"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }

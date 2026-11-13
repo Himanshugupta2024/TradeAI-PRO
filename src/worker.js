@@ -76,6 +76,7 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/crypto/intelligence",
   "/api/morning-scan",
   "/api/market-control/status",
+  "/api/market-control/focus",
   "/api/autonomous/feed",
   "/api/autonomous/status",
   "/api/signals/all",
@@ -95,11 +96,16 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/forex/intelligence",
   "/api/forex/sessions",
   "/api/macro/intelligence",
+  "/api/edge/top-setups",
   "/api/edge/macro-heatmap",
   "/api/edge/risk-gauge",
   "/api/research/next-day-picks",
   "/api/research/next-day-picks/history",
   "/api/nse/prediction",
+  "/api/tradeflow",
+  "/api/performance",
+  "/api/index-mover/movers",
+  "/api/learning/stats",
 ]);
 
 // Health and readiness routes must NEVER be cached by Cloudflare edge.
@@ -123,7 +129,8 @@ function isPathCacheable(pathname) {
     pathname.startsWith("/api/search/") ||
     pathname.startsWith("/api/swing/symbol/") ||
     pathname.startsWith("/api/forex/ohlcv/") ||
-    pathname.startsWith("/api/watchlist/quotes")
+    pathname.startsWith("/api/watchlist/quotes") ||
+    pathname.startsWith("/api/prediction/")
   ) {
     return true;
   }
@@ -245,6 +252,81 @@ export function getDegradedFallbackResponse(pathname) {
       results: [],
       status: "empty",
       message: "No morning scan recorded yet. Edge degraded fallback active.",
+      degraded: true,
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/market-control/focus") {
+    const payload = {
+      active_focus: "all",
+      nse_enabled: true,
+      crypto_enabled: true,
+      forex_enabled: true,
+      version: 1,
+      updated_at: new Date().toISOString(),
+      updated_by: "edge_fallback",
+      audit_log: [],
+      degraded: true,
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/tradeflow") {
+    const payload = {
+      status: "ok",
+      fii_net: 0.0,
+      dii_net: 0.0,
+      retail_net: 0.0,
+      fii_buy: 0.0,
+      fii_sell: 0.0,
+      dii_buy: 0.0,
+      dii_sell: 0.0,
+      flows: [],
+      source: "EDGE_DEGRADED_FALLBACK",
+      degraded: true,
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/performance") {
+    const payload = {
+      status: "ok",
+      capital: 100000.0,
+      total_pnl: 0.0,
+      total_return_pct: 0.0,
+      win_rate: 0.0,
+      total_trades: 0,
+      sharpe_ratio: 0.0,
+      max_drawdown: 0.0,
+      profit_factor: 0.0,
+      best_trade: 0.0,
+      worst_trade: 0.0,
+      equity_curve: [],
+      wins: [],
+      losses: [],
+      breakevens: [],
+      closed_trades: [],
+      monthly: {},
+      by_symbol: {},
+      exit_reasons: {},
+      degraded: true,
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/edge/top-setups") {
+    const payload = {
+      status: "ok",
+      count: 0,
+      setups: [],
+      summary: {
+        breadth: "NEUTRAL",
+        regime: "OFF_HOURS",
+        bullish_count: 0,
+        bearish_count: 0,
+      },
+      source: "EDGE_DEGRADED_FALLBACK",
       degraded: true,
     };
     return new Response(JSON.stringify(payload), { status: 200, headers });
@@ -749,6 +831,10 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = ne
       } catch (refErr) {
         console.warn(`[cron] Market refresh trigger to ${cronUrl} non-fatal error:`, refErr);
       }
+    } else {
+      console.error(
+        "[cron] CRON_SECRET is not configured in Worker environment secrets (run: npx wrangler secret put CRON_SECRET). Authenticated cron refresh skipped."
+      );
     }
 
     const cycle = await dispatchAutonomousCycle(env, fetchFn, now);

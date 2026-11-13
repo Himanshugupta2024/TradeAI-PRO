@@ -388,13 +388,21 @@ def get_market_control_status() -> Dict[str, Any]:
 
 
 FOCUS_STATE_KEY = "market_focus_config:v1"
+_FOCUS_STATE_CACHE: Dict[str, Any] = {}
+_FOCUS_STATE_CACHE_TIME: float = 0.0
+_FOCUS_CACHE_TTL_SEC: float = 60.0
 
 
 def get_market_focus_state() -> Dict[str, Any]:
     """
-    Fetch the persistent market focus configuration from authoritative DB.
+    Fetch the persistent market focus configuration from authoritative DB (cached in-memory for 60s).
     Includes active focus ('nse', 'crypto', 'forex', 'all') and per-market enablement flags.
     """
+    global _FOCUS_STATE_CACHE, _FOCUS_STATE_CACHE_TIME
+    now = time.time()
+    if _FOCUS_STATE_CACHE and (now - _FOCUS_STATE_CACHE_TIME) < _FOCUS_CACHE_TTL_SEC:
+        return dict(_FOCUS_STATE_CACHE)
+
     try:
         from db.runtime_state import get_runtime_state
         state = get_runtime_state(FOCUS_STATE_KEY)
@@ -402,7 +410,7 @@ def get_market_focus_state() -> Dict[str, Any]:
             active_focus = str(state.get("active_focus", "all")).lower()
             if active_focus not in ("nse", "crypto", "forex", "all"):
                 active_focus = "all"
-            return {
+            cached = {
                 "active_focus": active_focus,
                 "nse_enabled": bool(state.get("nse_enabled", True)),
                 "crypto_enabled": bool(state.get("crypto_enabled", True)),
@@ -412,10 +420,13 @@ def get_market_focus_state() -> Dict[str, Any]:
                 "updated_by": str(state.get("updated_by", "system")),
                 "audit_log": state.get("audit_log", [])[-20:],
             }
+            _FOCUS_STATE_CACHE = cached
+            _FOCUS_STATE_CACHE_TIME = now
+            return dict(cached)
     except Exception as exc:
         logger.error("Failed to load market focus state from DB: %s (using defaults)", exc)
 
-    return {
+    default_state = {
         "active_focus": "all",
         "nse_enabled": True,
         "crypto_enabled": True,
@@ -425,6 +436,9 @@ def get_market_focus_state() -> Dict[str, Any]:
         "updated_by": "system_default",
         "audit_log": [],
     }
+    _FOCUS_STATE_CACHE = default_state
+    _FOCUS_STATE_CACHE_TIME = now
+    return dict(default_state)
 
 
 def set_market_focus_state(
@@ -489,6 +503,9 @@ def set_market_focus_state(
     try:
         from db.runtime_state import set_runtime_state
         set_runtime_state(FOCUS_STATE_KEY, updated_payload)
+        global _FOCUS_STATE_CACHE, _FOCUS_STATE_CACHE_TIME
+        _FOCUS_STATE_CACHE = dict(updated_payload)
+        _FOCUS_STATE_CACHE_TIME = time.time()
         logger.info(
             "Market focus state updated: focus=%s nse=%s crypto=%s forex=%s (v%d)",
             active_focus, nse_enabled, crypto_enabled, forex_enabled, new_version

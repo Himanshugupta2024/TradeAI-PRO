@@ -499,8 +499,33 @@ async def _hydrate_signals_cache_from_db() -> bool:
                 (data_v1.get("timestamp") if isinstance(data_v1, dict) else None)
                 or (data_snap.get("updated_at") if isinstance(data_snap, dict) else None)
                 or (data_snap.get("timestamp") if isinstance(data_snap, dict) else None)
-                or datetime.now(timezone.utc).isoformat()
+                or None
             )
+
+            # Session check: if hydrated snapshot is from a previous calendar day, expire signals
+            from zoneinfo import ZoneInfo
+            _IST_tz = ZoneInfo("Asia/Kolkata")
+            now_ist = datetime.now(_IST_tz)
+            snap_date = None
+            if _persisted_signals_updated_at:
+                try:
+                    s_dt = datetime.fromisoformat(_persisted_signals_updated_at)
+                    snap_date = s_dt.date()
+                except Exception:
+                    pass
+
+            if snap_date and snap_date < now_ist.date():
+                logger.info(
+                    "Hydrated DB snapshot is from previous session (%s vs today %s) — marking signals as historical",
+                    snap_date,
+                    now_ist.date(),
+                )
+                for s in _persisted_signals_snapshot:
+                    if isinstance(s, dict):
+                        s["actionable"] = False
+                        s["signal_status"] = "EXPIRED_PREVIOUS_SESSION"
+                        s["stale"] = True
+
             logger.info("Hydrated %d signals from DB snapshot on startup", len(_persisted_signals_snapshot))
             return True
     except Exception as e:
@@ -2053,16 +2078,60 @@ def _cap_confidence(raw) -> float:
 
 def _signal_age_minutes(ts) -> float:
     try:
+        if ts is None:
+            return 999.0
         dt = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
-        now = datetime.now(dt.tzinfo) if getattr(dt, "tzinfo", None) else datetime.now()
+        if isinstance(dt, str):
+            dt = datetime.fromisoformat(dt)
+        from zoneinfo import ZoneInfo
+        ist_tz = ZoneInfo("Asia/Kolkata")
+        now = datetime.now(ist_tz)
+        if getattr(dt, "tzinfo", None) is None:
+            dt = dt.replace(tzinfo=ist_tz)
+        else:
+            dt = dt.astimezone(ist_tz)
         return max((now - dt).total_seconds() / 60.0, 0.0)
     except Exception:
-        return 0.0
+        return 999.0
 
 
 def _stale_threshold_minutes(symbol: str) -> float:
     # Crypto runs 24/7, so allow up to 60 minutes. NSE intraday signals are stricter.
     return 60.0 if "/" in str(symbol) else 30.0
+
+
+def _get_previous_daily_close(symbol: str, today_date: date) -> float | None:
+    """Find the previous completed session's daily closing price strictly dated before today."""
+    try:
+        # 1. Search in cached HTF daily bars
+        df_daily = _htf_daily_cache.get("dfs", {}).get(symbol)
+        if df_daily is None or df_daily.empty:
+            df_daily = _daily_data_cache.get(symbol)
+
+        if df_daily is not None and not df_daily.empty:
+            ts_col = "timestamp" if "timestamp" in df_daily.columns else ("Date" if "Date" in df_daily.columns else None)
+            if ts_col:
+                d_series = pd.to_datetime(df_daily[ts_col], errors="coerce").dt.date
+                past_daily = df_daily[d_series < today_date]
+                if not past_daily.empty and "close" in past_daily.columns:
+                    c = past_daily.iloc[-1]["close"]
+                    if pd.notna(c) and float(c) > 0:
+                        return float(c)
+
+        # 2. Fallback: Search in 5m intraday DataFrame in _market_data / _signal_cache
+        df_5m = _market_data.get(symbol)
+        if df_5m is None or df_5m.empty:
+            df_5m = _signal_cache.get(symbol)
+        if df_5m is not None and not df_5m.empty and "timestamp" in df_5m.columns and "close" in df_5m.columns:
+            d_series_5m = pd.to_datetime(df_5m["timestamp"], errors="coerce").dt.date
+            past_5m = df_5m[d_series_5m < today_date]
+            if not past_5m.empty:
+                c = past_5m.iloc[-1]["close"]
+                if pd.notna(c) and float(c) > 0:
+                    return float(c)
+    except Exception as exc:
+        logger.debug("Failed to get previous daily close for %s: %s", symbol, exc)
+    return None
 
 
 def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
@@ -2073,30 +2142,46 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
     df = _signal_cache[symbol]
     last = df.iloc[-1]
 
+    from zoneinfo import ZoneInfo
+    ist_tz = ZoneInfo("Asia/Kolkata")
+    now_ist = datetime.now(ist_tz)
+    today_date = now_ist.date()
+
     # Always use current-bar values for these live fields
     c_raw = float(last["close"])
     prec_close = price_decimals(c_raw)
     current_close = round(c_raw, prec_close)
-    first_open_raw = df.iloc[0].get("open", current_close) if "open" in df.columns else current_close
-    try:
-        first_open = float(first_open_raw) if float(first_open_raw) != 0 else current_close
-    except (ValueError, TypeError):
-        first_open = current_close
-    day_chg_pct = round(((current_close - first_open) / first_open) * 100.0, 2) if first_open else 0.0
+
+    # Truthful Day Change: (current_close - prev_close) / prev_close * 100
+    prev_close = _get_previous_daily_close(symbol, today_date)
+    if prev_close and prev_close > 0:
+        day_chg_pct = round(((current_close - prev_close) / prev_close) * 100.0, 2)
+    else:
+        day_chg_pct = 0.0
+
     current_rsi = (
         round(float(last["RSI_14"]), 1) if pd.notna(last.get("RSI_14")) else None
     )
     current_trend = _clean_trend(last.get("htf_trend", "NEUTRAL"))
     current_regime = _regime_cache.get(symbol, "RANGING")
     ts_val = last.get("timestamp")
-    current_ts = ts_val.isoformat() if hasattr(ts_val, "isoformat") else (str(ts_val) if ts_val is not None else datetime.now(timezone.utc).isoformat())
+    current_ts = ts_val.isoformat() if hasattr(ts_val, "isoformat") else (str(ts_val) if ts_val is not None else None)
     current_conf = _cap_confidence(last.get("confidence", last.get("ai_confidence", 0)))
     current_age_min = _signal_age_minutes(ts_val)
     stale_threshold_min = _stale_threshold_minutes(symbol)
 
-    # Look for non-HOLD signal within the LAST 100 bars (recent window)
-    recent = df.tail(100)
-    signals = recent[recent["signal"] != "HOLD"] if "signal" in recent.columns else pd.DataFrame()
+    # Session-isolated signal lookup:
+    # Active intraday signals during a live session must strictly come from TODAY'S bars.
+    # When no bars exist for today (weekend / holiday / test fixtures), evaluate recent window.
+    ts_series = pd.to_datetime(df["timestamp"], errors="coerce") if "timestamp" in df.columns else pd.Series(dtype="datetime64[ns]")
+    today_mask = ts_series.dt.date == today_date if not ts_series.empty else pd.Series([False] * len(df))
+
+    if today_mask.any():
+        today_bars = df[today_mask]
+        signals = today_bars[today_bars["signal"] != "HOLD"] if "signal" in today_bars.columns else pd.DataFrame()
+    else:
+        recent = df.tail(100)
+        signals = recent[recent["signal"] != "HOLD"] if "signal" in recent.columns else pd.DataFrame()
 
     if signals.empty:
         local_trend = "NEUTRAL"
@@ -2439,29 +2524,25 @@ def _compute_gainers_losers_from_cache(mode: str) -> list[dict]:
         try:
             close = float(df.iloc[-1]["close"])
 
-            # Find today's open: first bar of the current trading day
+            from zoneinfo import ZoneInfo
+            now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+            today_date = now_ist.date()
+
+            prev_close = _get_previous_daily_close(symbol, today_date)
+            if not prev_close or prev_close <= 0:
+                continue
+
+            pct_change = ((close - prev_close) / prev_close) * 100
+
             today = (
                 df["timestamp"].iloc[-1].date()
                 if hasattr(df["timestamp"].iloc[-1], "date")
                 else None
             )
-            if today:
-                today_bars = df[df["timestamp"].dt.date == today]
-                if len(today_bars) >= 2:
-                    day_open = float(today_bars.iloc[0]["open"])
-                else:
-                    # Weekend/holiday: use first bar's open from available data
-                    day_open = float(df.iloc[0]["open"])
-            else:
-                day_open = float(df.iloc[0]["open"])
-
-            if day_open == 0:
-                continue
-
-            pct_change = ((close - day_open) / day_open) * 100
+            today_bars = df[df["timestamp"].dt.date == today] if today else pd.DataFrame()
 
             # Volume: sum of today's bars (total daily volume so far)
-            if today and len(today_bars) > 0:
+            if not today_bars.empty:
                 total_vol = float(today_bars["volume"].sum())
             else:
                 total_vol = float(df["volume"].tail(20).sum())

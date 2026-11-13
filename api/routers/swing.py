@@ -699,6 +699,9 @@ async def intraday_latest():
         "qualified_setups": qualified_count,
     }
     row["data_status"] = "LIVE" if feed_is_realtime else ("DELAYED (15m)" if is_today else "EOD / HISTORICAL")
+    if session.session_state == "OPENING_PERIOD" and len(active_sigs) == 0:
+        row["opening_range_status"] = "WARMING_UP"
+        row["message"] = "Opening Period (09:15–09:45 ORB Window): Initial candles forming. Signals will begin once opening range establishes."
     return row
 
 

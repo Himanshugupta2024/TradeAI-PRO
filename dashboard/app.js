@@ -720,7 +720,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => updateAiModelHealthBadge(), 1800);
     setTimeout(() => loadNsePredictionTab(), 2000);
     setInterval(() => { if (!document.hidden && currentTab === 'overview') loadNsePredictionTab(); }, 60000);
-    setInterval(() => { if (!document.hidden) { fetchMarketFocusConfig(); } }, 20000);
+    setInterval(() => { if (!document.hidden) { fetchMarketFocusConfig(); } }, 90000);
     setTimeout(() => connectPriceWebSocket(), 2400);
 
     startBackgroundRefresh();
@@ -23395,8 +23395,27 @@ async function loadIntradayLatest() {
         // Update scan meta with full Scan Freshness Contract details
         if (meta) {
             if (row.scan_time || row.last_scan_at) {
-                const lastScanStr = row.last_scan_at ? new Date(row.last_scan_at).toLocaleTimeString() : (row.scan_time || "—");
-                const sourceCandleStr = row.source_candle_at ? new Date(row.source_candle_at).toLocaleTimeString() : "15m delayed EOD/intraday";
+                const formatSessionAwareTime = (dateInput) => {
+                    if (!dateInput) return "—";
+                    try {
+                        const d = new Date(dateInput);
+                        if (isNaN(d.getTime())) return String(dateInput);
+                        const now = new Date();
+                        const timeOpt = { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' };
+                        const timeStr = d.toLocaleTimeString('en-IN', timeOpt);
+                        const dDate = d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                        const nowDate = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+                        if (dDate === nowDate) {
+                            return `Today ${timeStr}`;
+                        }
+                        const dayName = d.toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'Asia/Kolkata' });
+                        return `${dayName} ${timeStr}`;
+                    } catch (_) {
+                        return String(dateInput);
+                    }
+                };
+                const lastScanStr = row.last_scan_at ? formatSessionAwareTime(row.last_scan_at) : (row.scan_time ? formatSessionAwareTime(row.scan_time) : "—");
+                const sourceCandleStr = row.source_candle_at ? formatSessionAwareTime(row.source_candle_at) : "15m delayed EOD/intraday";
                 const delayStr = row.provider_freshness || "15m Delayed";
                 const symbolsScanned = Number(row.symbols_scanned);
                 const coverageStr = Number.isFinite(symbolsScanned) && symbolsScanned > 0
@@ -24881,8 +24900,7 @@ async function loadEdgeMacroHeatmap() {
         console.error('[loadEdgeMacroHeatmap] error:', err);
         const is429 = err.status === 429 || (err.message && err.message.includes('429'));
         if (is429) {
-            grid.innerHTML = `<p style="color:var(--amber,#f59e0b);font-size:0.9rem;">⏳ Macro heatmap cooling down (Rate limit). Auto-syncing in 3s...</p>`;
-            setTimeout(() => loadEdgeMacroHeatmap(), 3500);
+            grid.innerHTML = `<p style="color:var(--amber,#f59e0b);font-size:0.9rem;">⏳ Macro heatmap rate limit cooling down. <button onclick="loadEdgeMacroHeatmap()" style="margin-left:6px;background:none;border:none;color:#38bdf8;cursor:pointer;text-decoration:underline;">Retry Now</button></p>`;
         } else {
             grid.innerHTML = `<p style="color:var(--red);font-size:0.9rem;">Failed to load macro heatmap (${_escHtml(err.message)}) <button onclick="loadEdgeMacroHeatmap()" style="margin-left:6px;background:none;border:none;color:#38bdf8;cursor:pointer;text-decoration:underline;">Retry</button></p>`;
         }
@@ -27270,7 +27288,11 @@ async function fetchMarketControlStatus() {
     }
 }
 
-async function fetchMarketFocusConfig() {
+let _lastMarketFocusFetchTs = 0;
+async function fetchMarketFocusConfig(force = false) {
+    const now = Date.now();
+    if (!force && (now - _lastMarketFocusFetchTs) < 60000) return;
+    _lastMarketFocusFetchTs = now;
     try {
         const res = await fetchWithTimeout(`${API}/api/market-control/focus`, {}, 8000);
         if (res.ok) {
