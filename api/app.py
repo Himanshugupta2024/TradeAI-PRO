@@ -184,7 +184,7 @@ def _lifespan_context():
         try:
             from agents.execution.runtime_controls import apply_overrides_to_settings
 
-            applied = await asyncio.to_thread(apply_overrides_to_settings)
+            applied = await asyncio.wait_for(asyncio.to_thread(apply_overrides_to_settings), timeout=2.0)
             if applied:
                 svc.logger.info("Operator runtime overrides applied at boot: %s", ", ".join(applied))
         except Exception as rc_exc:

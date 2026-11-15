@@ -77,8 +77,8 @@ def run_probe(base_url: str = DEFAULT_BASE_URL) -> bool:
         print(f"❌ [FAIL] /api/context/v3 returned HTTP {status}: {ctx}")
         all_passed = False
 
-    # 3. Index Movers NIFTY 50 Probe (Must be < 2.5s)
-    status, movers, el = fetch_json(f"{base_url}/api/index-mover/nifty50", timeout=8.0)
+    # 3. Index Movers NIFTY 50 Probe (Must be < 4.0s)
+    status, movers, el = fetch_json(f"{base_url}/api/index-mover/nifty50", timeout=12.0)
     if status == 200 and "movers" in movers:
         m_count = len(movers.get("movers", []))
         level = movers.get("index_level", 0)

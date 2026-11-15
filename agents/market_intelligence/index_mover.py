@@ -107,9 +107,21 @@ def _fetch_batch_constituent_changes(symbols: list[str]) -> dict[str, float]:
         return {}
     results: dict[str, float] = {}
 
+    # TradingView symbol alias mapping for symbols whose tickers differ on TV India scanner
+    tv_alias_map = {
+        "TATAMOTORS": "TMPV",
+        "BAJAJ-AUTO": "BAJAJ_AUTO",
+    }
+    clean_to_tv = {}
+    tv_to_clean = {}
+    for s in symbols:
+        tv_sym = tv_alias_map.get(s, s)
+        full_tv = f"NSE:{tv_sym}" if not tv_sym.startswith("NSE:") else tv_sym
+        clean_to_tv[s] = full_tv
+        tv_to_clean[full_tv] = s
+
     # Tier 1: TradingView India Scanner (fastest: 1 HTTP POST, ~1s for 50 tickers)
     try:
-        clean_to_tv = {s: (f"NSE:{s}" if not s.startswith("NSE:") else s) for s in symbols}
         payload = {
             "symbols": {"tickers": list(clean_to_tv.values())},
             "columns": ["close", "change"],
@@ -128,7 +140,7 @@ def _fetch_batch_constituent_changes(symbols: list[str]) -> dict[str, float]:
                     s = str(row.get("s", ""))
                     d = row.get("d", [])
                     if len(d) >= 2 and d[1] is not None:
-                        clean_sym = s.replace("NSE:", "")
+                        clean_sym = tv_to_clean.get(s, s.replace("NSE:", ""))
                         try:
                             val = float(d[1])
                             if math.isfinite(val):
@@ -141,10 +153,10 @@ def _fetch_batch_constituent_changes(symbols: list[str]) -> dict[str, float]:
     # Check which symbols are still missing
     missing = [s for s in symbols if s not in results]
     if missing:
-        # Tier 2: yfinance batch download (single vectorized call)
+        # Tier 2: yfinance batch download (strictly threads=False to protect Render free tier CPU/RAM)
         try:
             tickers = [f"{s}{_NSE_SUFFIX}" for s in missing]
-            batch_df = yf.download(tickers, period="2d", interval="1d", group_by="ticker", threads=True, progress=False)
+            batch_df = yf.download(tickers, period="2d", interval="1d", group_by="ticker", threads=False, progress=False, timeout=5.0)
             if batch_df is not None and not batch_df.empty:
                 for s in missing:
                     t = f"{s}{_NSE_SUFFIX}"

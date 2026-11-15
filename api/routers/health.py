@@ -73,12 +73,23 @@ async def favicon():
 
     return Response(status_code=204)
 
+_HEALTH_RESPONSE_CACHE: dict = {}
+_HEALTH_RESPONSE_TS: float = 0.0
+_HEALTH_RESPONSE_TTL: float = 3.0  # 3 seconds cache to eliminate DB contention and sub-second health probe latency
+
 @router.api_route("/api/health", methods=["GET", "HEAD"])
 async def health_check(response: Response = None):
     """Health check endpoint — shows loading progress, server status, and DB availability."""
     if response is not None:
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
+
+    global _HEALTH_RESPONSE_CACHE, _HEALTH_RESPONSE_TS
+    now_mono = time.monotonic()
+    if _HEALTH_RESPONSE_CACHE and (now_mono - _HEALTH_RESPONSE_TS) < _HEALTH_RESPONSE_TTL:
+        cached = dict(_HEALTH_RESPONSE_CACHE)
+        cached["uptime_seconds"] = round(time.time() - getattr(svc, "_SERVER_START_TIME", time.time()), 1)
+        return cached
 
     try:
 
@@ -118,7 +129,7 @@ async def health_check(response: Response = None):
     worker_status = None
     try:
         from db.runtime_state import get_runtime_state
-        worker_status = get_runtime_state("autonomous_worker:latest_status")
+        worker_status = await asyncio.to_thread(get_runtime_state, "autonomous_worker:latest_status")
     except Exception:
         pass
 
@@ -154,7 +165,7 @@ async def health_check(response: Response = None):
         else:
             try:
                 from db.runtime_state import get_runtime_state
-                snap = get_runtime_state("latest_signals:v1")
+                snap = await asyncio.to_thread(get_runtime_state, "latest_signals:v1")
                 if snap and isinstance(snap, dict):
                     signals_count = int(snap.get("count", len(snap.get("signals", []))))
             except Exception:
@@ -162,7 +173,7 @@ async def health_check(response: Response = None):
             if signals_count == 0:
                 try:
                     import db.intraday_store as ids
-                    latest_scan = ids.load_latest_scan()
+                    latest_scan = await asyncio.to_thread(ids.load_latest_scan)
                     if latest_scan and latest_scan.get("results"):
                         signals_count = len(latest_scan["results"])
                 except Exception:
@@ -175,7 +186,7 @@ async def health_check(response: Response = None):
     except Exception:
         pass
 
-    return {
+    res_payload = {
         "status": status_str,
         "healthy": h2.get("healthy", db_ok),
         "api_health": api_health,
@@ -210,6 +221,9 @@ async def health_check(response: Response = None):
         "memory_rss_mb": memory_rss_mb,
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
+    _HEALTH_RESPONSE_CACHE = res_payload
+    _HEALTH_RESPONSE_TS = now_mono
+    return res_payload
 
 @router.api_route("/api/ready", methods=["GET", "HEAD"])
 async def readiness_check(response: Response = None):

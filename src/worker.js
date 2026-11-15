@@ -111,6 +111,7 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/sectors",
   "/api/learning/outcomes",
   "/api/swing-scanner",
+  "/api/section-6b/picks",
 ]);
 
 // Health and readiness routes must NEVER be cached by Cloudflare edge.
@@ -371,6 +372,87 @@ export function getDegradedFallbackResponse(pathname) {
       status: "degraded",
       insights: {},
       stats: {},
+      degraded: true,
+      source: "EDGE_DEGRADED_FALLBACK",
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/signals/all") {
+    const payload = {
+      status: "degraded",
+      signals: [],
+      count: 0,
+      degraded: true,
+      source: "EDGE_DEGRADED_FALLBACK",
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/sectors") {
+    const payload = {
+      status: "degraded",
+      sectors: [],
+      count: 0,
+      degraded: true,
+      source: "EDGE_DEGRADED_FALLBACK",
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/breakouts") {
+    const payload = {
+      status: "degraded",
+      breakouts: [],
+      count: 0,
+      degraded: true,
+      source: "EDGE_DEGRADED_FALLBACK",
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/swing-scanner") {
+    const payload = {
+      status: "degraded",
+      results: [],
+      count: 0,
+      degraded: true,
+      source: "EDGE_DEGRADED_FALLBACK",
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath.startsWith("/api/watchlist/quotes")) {
+    const payload = {
+      status: "degraded",
+      quotes: {},
+      degraded: true,
+      source: "EDGE_DEGRADED_FALLBACK",
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath.startsWith("/api/index-mover/")) {
+    const payload = {
+      status: "degraded",
+      index: "NIFTY 50",
+      index_level: 25000.0,
+      index_change_pts: 0.0,
+      index_pct: 0.0,
+      movers: [],
+      top_gainers: [],
+      top_draggers: [],
+      degraded: true,
+      source: "EDGE_DEGRADED_FALLBACK",
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/learning/outcomes") {
+    const payload = {
+      status: "degraded",
+      outcomes: [],
+      count: 0,
       degraded: true,
       source: "EDGE_DEGRADED_FALLBACK",
     };
