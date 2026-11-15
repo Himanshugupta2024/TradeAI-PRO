@@ -27654,6 +27654,23 @@ function closeAiPredictionModal() {
     if (backdrop) backdrop.style.display = 'none';
 }
 
+/**
+ * Turn an HTTP status from /api/prediction into something a user can act on.
+ * Raw "HTTP 429" tells nobody whether to wait, reload, or give up.
+ */
+function _predictionErrorText(status) {
+    if (status === 429) {
+        return 'Edge rate limit hit — requests from this network are temporarily throttled. Wait about a minute, then retry.';
+    }
+    if (status === 503) {
+        return 'Prediction backend is waking up or briefly unavailable (free-tier instance). Retry in a few seconds.';
+    }
+    if (status === 502 || status === 504) {
+        return 'Prediction backend did not answer in time. The first call for a symbol runs a cold compute pass (~50s); repeat calls are cached, so a retry is usually fast.';
+    }
+    return `Prediction service returned HTTP ${status}.`;
+}
+
 async function openAiPredictionModal(sym) {
     const cleanSym = (sym || '').trim().toUpperCase().replace('.NS', '');
     if (!cleanSym) return;
@@ -27683,11 +27700,26 @@ async function openAiPredictionModal(sym) {
     `;
 
     try {
-        const resp = await fetch(`/api/prediction/${cleanSym}`);
+        // Cold prediction path runs a 3-symbol Yahoo batch (symbol + ^NSEI + ^INDIAVIX)
+        // and has measured ~48s on the free tier. The edge kills it around 43-48s with a
+        // 502, so the client budget sits just above that to surface the real reason.
+        // 429 / 503 are retried inside fetchWithTimeout (Retry-After aware).
+        const resp = await fetchWithTimeout(`/api/prediction/${cleanSym}`, {}, 55000, 2, 3000);
         if (!resp.ok) {
-            throw new Error(`HTTP ${resp.status}: Unable to fetch prediction`);
+            const httpErr = new Error(_predictionErrorText(resp.status));
+            httpErr.status = resp.status;
+            throw httpErr;
         }
-        const data = await resp.json();
+        const rawBody = await resp.text();
+        let data = null;
+        try {
+            data = rawBody && rawBody.trim() ? JSON.parse(rawBody) : null;
+        } catch (_) {
+            data = null;
+        }
+        if (!data || typeof data !== 'object') {
+            throw new Error('Prediction service returned an empty or malformed body.');
+        }
 
         if (data.status === 'INSUFFICIENT_DATA') {
             nameEl.textContent = data.company_name || cleanSym;
@@ -27834,10 +27866,15 @@ async function openAiPredictionModal(sym) {
         `;
 
     } catch (err) {
+        const isTimeout = err && err.name === 'TimeoutError';
+        const errTitle = isTimeout ? 'Prediction Timed Out' : 'Prediction Fetch Error';
+        const errBody = isTimeout
+            ? 'The prediction engine did not finish in 55s. Cold computes on the free tier can exceed the edge timeout; retry once — a warm cache answers in under a second.'
+            : (err && err.message ? err.message : 'Unknown error');
         contentEl.innerHTML = `
             <div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:16px;text-align:center;">
-                <div style="color:#f87171;font-weight:700;font-size:0.95rem;">Prediction Fetch Error</div>
-                <div style="color:#cbd5e1;font-size:0.8rem;margin-top:6px;">${_escHtml(err.message)}</div>
+                <div style="color:#f87171;font-weight:700;font-size:0.95rem;">${_escHtml(errTitle)}</div>
+                <div style="color:#cbd5e1;font-size:0.8rem;margin-top:6px;">${_escHtml(errBody)}</div>
                 <button onclick="openAiPredictionModal('${cleanSym}')" style="margin-top:12px;background:rgba(59,130,246,0.2);border:1px solid #3b82f6;color:#60a5fa;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:0.75rem;">
                     🔄 Retry Prediction
                 </button>
