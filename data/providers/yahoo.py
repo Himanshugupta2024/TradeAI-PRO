@@ -3,6 +3,15 @@ TradeAI-PRO V2 — Yahoo Finance Vectorized Batch Provider.
 
 Fetches multi-symbol quotes and historical candles in a single vectorized HTTP call
 using `yf.download(..., threads=True, timeout=8)`.
+
+ARCHITECTURAL CONTRACT — DUAL DATETIME SYSTEMS:
+1. UTC Datetime (timezone.utc):
+   - Used for all internal DataFrame indices, regular market time epochs, database persistence,
+     provider telemetry, and WebSocket quote broadcasts.
+2. IST Datetime (UTC+5:30 / Asia/Kolkata):
+   - Strictly reserved for exchange cash session hours evaluation (09:15–15:30 IST)
+     and health freshness tier scoring in `api/health_v2.py`.
+   - Never mix naive UTC with naive IST timestamps without explicit tz conversion.
 """
 from __future__ import annotations
 

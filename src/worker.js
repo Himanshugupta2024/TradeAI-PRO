@@ -427,8 +427,20 @@ export default {
     if (url.pathname.startsWith("/ws/")) {
       const upgradeHeader = request.headers.get("Upgrade");
       if (upgradeHeader && upgradeHeader.toLowerCase() === "websocket") {
-        const targetWsUrl = new URL(url.pathname + url.search, BACKEND_ORIGIN);
-        return fetch(targetWsUrl.toString(), request);
+        try {
+          const targetWsUrl = new URL(url.pathname + url.search, BACKEND_ORIGIN);
+          return await fetch(targetWsUrl.toString(), request);
+        } catch (wsErr) {
+          return new Response(JSON.stringify({ error: "Origin WebSocket unavailable", detail: String(wsErr) }), {
+            status: 503,
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+              "Retry-After": "5",
+              "Cache-Control": "no-store, no-cache, must-revalidate",
+            },
+          });
+        }
       }
       return new Response("Expected WebSocket Upgrade", { status: 426 });
     }

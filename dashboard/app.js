@@ -1438,7 +1438,7 @@ function connectPriceWebSocket() {
 
 
 
-            console.error('[WS] Error:', err);
+            console.debug('[WS] Live price stream unavailable, utilizing HTTP polling');
 
 
 
@@ -1454,7 +1454,7 @@ function connectPriceWebSocket() {
 
 
 
-        console.error('[WS] Failed to connect:', e);
+        console.debug('[WS] Socket initiation deferred:', e);
 
 
 

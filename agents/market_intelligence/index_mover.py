@@ -101,6 +101,84 @@ _contribution_cache: dict[str, dict] = {}
 _CACHE_TTL = 120  # 2 minutes
 
 
+def _fetch_batch_constituent_changes(symbols: list[str]) -> dict[str, float]:
+    """Fetch change % for constituent symbols using fast single-batch requests."""
+    if not symbols:
+        return {}
+    results: dict[str, float] = {}
+
+    # Tier 1: TradingView India Scanner (fastest: 1 HTTP POST, ~1s for 50 tickers)
+    try:
+        clean_to_tv = {s: (f"NSE:{s}" if not s.startswith("NSE:") else s) for s in symbols}
+        payload = {
+            "symbols": {"tickers": list(clean_to_tv.values())},
+            "columns": ["close", "change"],
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        import httpx
+        with httpx.Client(headers=headers, timeout=5.0) as client:
+            resp = client.post("https://scanner.tradingview.com/india/scan", json=payload)
+            if resp.status_code == 200:
+                body = resp.json()
+                for row in body.get("data", []):
+                    s = str(row.get("s", ""))
+                    d = row.get("d", [])
+                    if len(d) >= 2 and d[1] is not None:
+                        clean_sym = s.replace("NSE:", "")
+                        try:
+                            val = float(d[1])
+                            if math.isfinite(val):
+                                results[clean_sym] = val
+                        except Exception:
+                            pass
+    except Exception as exc:
+        logger.debug("[IndexMover] TradingView scanner batch failed: %s", exc)
+
+    # Check which symbols are still missing
+    missing = [s for s in symbols if s not in results]
+    if missing:
+        # Tier 2: yfinance batch download (single vectorized call)
+        try:
+            tickers = [f"{s}{_NSE_SUFFIX}" for s in missing]
+            batch_df = yf.download(tickers, period="2d", interval="1d", group_by="ticker", threads=True, progress=False)
+            if batch_df is not None and not batch_df.empty:
+                for s in missing:
+                    t = f"{s}{_NSE_SUFFIX}"
+                    df_s = None
+                    if isinstance(batch_df.columns, pd.MultiIndex):
+                        if t in batch_df.columns.levels[0]:
+                            df_s = batch_df[t]
+                        elif ("Close", t) in batch_df.columns:
+                            c = batch_df[("Close", t)].dropna()
+                            if len(c) >= 2:
+                                c_curr = float(c.iloc[-1])
+                                c_prev = float(c.iloc[-2])
+                                if c_prev > 0 and math.isfinite(c_curr) and math.isfinite(c_prev):
+                                    results[s] = (c_curr - c_prev) / c_prev * 100
+                    elif len(missing) == 1 and "Close" in batch_df.columns:
+                        c = batch_df["Close"].dropna()
+                        if len(c) >= 2:
+                            c_curr = float(c.iloc[-1])
+                            c_prev = float(c.iloc[-2])
+                            if c_prev > 0 and math.isfinite(c_curr) and math.isfinite(c_prev):
+                                results[s] = (c_curr - c_prev) / c_prev * 100
+                    if df_s is not None and "Close" in df_s.columns:
+                        c = df_s["Close"].dropna()
+                        if len(c) >= 2:
+                            c_curr = float(c.iloc[-1])
+                            c_prev = float(c.iloc[-2])
+                            if c_prev > 0 and math.isfinite(c_curr) and math.isfinite(c_prev):
+                                results[s] = (c_curr - c_prev) / c_prev * 100
+        except Exception as exc:
+            logger.debug("[IndexMover] yf.download batch failed: %s", exc)
+
+    return results
+
+
 def calculate_index_movers(
     index_name: str = "NIFTY 50",
     market_data_cache: dict | None = None,
@@ -111,7 +189,7 @@ def calculate_index_movers(
     Args:
         index_name: "NIFTY 50" or "BANKNIFTY"
         market_data_cache: Optional dict of {symbol: DataFrame} from server cache
-                          to avoid redundant yFinance calls.
+                          to avoid redundant network calls.
 
     Returns:
         dict with:
@@ -155,40 +233,38 @@ def calculate_index_movers(
     movers = []
     total_weight = sum(weights.values())
 
-    for symbol, weight in weights.items():
-        pct_change = None
+    # 1. Resolve cached symbols from server cache
+    resolved_pcts: dict[str, float] = {}
+    missing_symbols: list[str] = []
 
-        # Try server cache first (much faster than yFinance)
+    for symbol in weights.keys():
+        pct_change = None
         if market_data_cache and symbol in market_data_cache:
             df = market_data_cache[symbol]
             if df is not None and not df.empty and len(df) >= 2:
                 try:
                     curr = float(df["close"].iloc[-1])
-                    # For intraday, compare with day open or first bar
                     prev = float(df["close"].iloc[-2])
                     if prev > 0 and math.isfinite(curr) and math.isfinite(prev):
                         pct_change = (curr - prev) / prev * 100
                 except Exception:
                     pass
+        if pct_change is not None and math.isfinite(pct_change):
+            resolved_pcts[symbol] = pct_change
+        else:
+            missing_symbols.append(symbol)
 
-        # Fallback: fetch from yFinance
-        if pct_change is None or not math.isfinite(pct_change):
-            try:
-                yf_ticker = f"{symbol}{_NSE_SUFFIX}"
-                raw = yf.Ticker(yf_ticker).history(period="2d", interval="1d", auto_adjust=True)
-                if raw is not None and len(raw) >= 2:
-                    curr = float(raw["Close"].iloc[-1])
-                    prev = float(raw["Close"].iloc[-2])
-                    if prev > 0 and math.isfinite(curr) and math.isfinite(prev):
-                        pct_change = (curr - prev) / prev * 100
-            except Exception:
-                continue
+    # 2. Vectorized batch fetch for all missing symbols in 1-2 network calls (NOT 50 sequential calls)
+    if missing_symbols:
+        batch_results = _fetch_batch_constituent_changes(missing_symbols)
+        resolved_pcts.update(batch_results)
 
+    # 3. Calculate points contributions
+    for symbol, weight in weights.items():
+        pct_change = resolved_pcts.get(symbol)
         if pct_change is None or not math.isfinite(pct_change):
             continue
 
-        # Points contribution = (weight% / 100) * index_level * (stock_pct_change / 100)
-        # Simplified: points = weight_pct * pct_change / total_weight * index_level / 100
         normalized_weight = weight / total_weight
         points_contribution = normalized_weight * (pct_change / 100) * index_level
 
