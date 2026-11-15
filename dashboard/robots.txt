@@ -1,0 +1,14 @@
+User-agent: *
+Allow: /$
+Allow: /landing
+Allow: /crypto
+Allow: /legal
+Allow: /track-record
+Allow: /static/
+
+# Operator console and machine APIs are not crawl targets.
+Disallow: /admin
+Disallow: /api/
+Disallow: /ws/
+
+Sitemap: https://tradeai-pro.tradingpro.workers.dev/sitemap.xml
