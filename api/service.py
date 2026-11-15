@@ -5442,8 +5442,12 @@ class SnapshotBroadcaster:
             source = str(snapshot.get("source", "WORKER_DB"))
             updated_at = str(snapshot.get("timestamp", updated_at))
         else:
-            # Fallback to local in-memory _market_data (monolithic / local dev mode)
-            for sym, df in _market_data.items():
+            # Fallback to local in-memory _market_data (monolithic / local dev mode).
+            # Snapshot the mapping first: downloads mutate _market_data from worker
+            # threads while this loop iterates every 5s, which raised
+            # "dictionary changed size during iteration" and aborted the whole
+            # broadcast cycle - dropping the tick for every connected client.
+            for sym, df in list(_market_data.items()):
                 if isinstance(df, pd.DataFrame) and not df.empty:
                     last = df.iloc[-1]
                     b_first = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else float(last["close"])
