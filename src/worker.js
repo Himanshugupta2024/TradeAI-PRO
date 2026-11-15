@@ -556,11 +556,14 @@ export default {
     if (url.pathname.startsWith("/ws/")) {
       const upgradeHeader = request.headers.get("Upgrade");
       if (upgradeHeader && upgradeHeader.toLowerCase() === "websocket") {
-        try {
-          const targetWsUrl = new URL(url.pathname + url.search, BACKEND_ORIGIN);
-          return await fetch(targetWsUrl.toString(), request);
-        } catch (wsErr) {
-          return new Response(JSON.stringify({ error: "Origin WebSocket unavailable", detail: String(wsErr) }), {
+        const wsUnavailable = (detail, upstreamStatus) => new Response(
+          JSON.stringify({
+            error: "Origin WebSocket unavailable",
+            detail,
+            upstream_status: upstreamStatus ?? null,
+            degraded: true,
+          }),
+          {
             status: 503,
             headers: {
               "Content-Type": "application/json",
@@ -568,7 +571,27 @@ export default {
               "Retry-After": "5",
               "Cache-Control": "no-store, no-cache, must-revalidate",
             },
-          });
+          }
+        );
+        try {
+          const targetWsUrl = new URL(url.pathname + url.search, BACKEND_ORIGIN);
+          const originResponse = await fetch(targetWsUrl.toString(), request);
+          // A live upgrade is 101 (with .webSocket). Anything else is the origin
+          // refusing us — typically a Cloudflare managed challenge / 429 with an
+          // HTML body. Returning that to a WebSocket client leaks a challenge page
+          // the client cannot use, so collapse it into a retryable JSON 503.
+          if (originResponse.status === 101 || originResponse.webSocket) {
+            return originResponse;
+          }
+          try {
+            if (originResponse.body) await originResponse.body.cancel();
+          } catch (_) {}
+          return wsUnavailable(
+            `Origin refused upgrade (HTTP ${originResponse.status})`,
+            originResponse.status
+          );
+        } catch (wsErr) {
+          return wsUnavailable(String(wsErr), null);
         }
       }
       return new Response("Expected WebSocket Upgrade", { status: 426 });

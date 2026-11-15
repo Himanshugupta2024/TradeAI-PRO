@@ -535,6 +535,63 @@ async function runTests() {
     assert.strictEqual(hasCrossedNseSessionBoundary(cachedAt3, now3), true);
     console.log('✓ Test 13 passed.');
 
+    // ------------------------------------------------------------------------
+    // Test 14: Macro degraded fallback never invents commodity prices
+    // ------------------------------------------------------------------------
+    console.log('Test 14: Macro degraded fallback ships null quotes and status degraded...');
+    const macroFallback = getDegradedFallbackResponse('/api/macro/intelligence');
+    assert.ok(macroFallback, 'Macro fallback must exist');
+    const macroData = await macroFallback.json();
+    assert.strictEqual(macroData.status, 'degraded', 'Degraded macro must not claim status ok');
+    assert.strictEqual(macroData.degraded, true);
+    assert.strictEqual(macroData.macro.feed_source, 'DEGRADED_EDGE_FALLBACK');
+    const macroQuotes = [
+      'brent_crude', 'wti_crude', 'us_10y_yield', 'dxy_dollar_index',
+      'sp500', 'nasdaq', 'gold',
+    ];
+    for (const key of macroQuotes) {
+      assert.strictEqual(
+        macroData.macro[key].price,
+        null,
+        `${key}.price must stay null on the degraded edge, never a placeholder price`
+      );
+    }
+    console.log('✓ Test 14 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 15: WebSocket upgrade failures never leak an origin challenge page
+    // ------------------------------------------------------------------------
+    console.log('Test 15: /ws/* origin refusal is reshaped into a retryable JSON 503...');
+    const wsRequest = () => new Request('https://edge.test/ws/prices', {
+      headers: { Upgrade: 'websocket', Connection: 'Upgrade' },
+    });
+
+    // Origin answers with a Cloudflare challenge / 429 HTML page instead of 101.
+    globalThis.fetch = async () => new Response('<html>challenge</html>', {
+      status: 429,
+      headers: { 'Content-Type': 'text/html' },
+    });
+    const wsRefused = await worker.fetch(wsRequest(), {}, {});
+    assert.strictEqual(wsRefused.status, 503);
+    assert.match(wsRefused.headers.get('Content-Type'), /application\/json/);
+    assert.strictEqual(wsRefused.headers.get('Retry-After'), '5');
+    const wsRefusedBody = await wsRefused.json();
+    assert.strictEqual(wsRefusedBody.upstream_status, 429);
+    assert.strictEqual(wsRefusedBody.degraded, true);
+
+    // A genuine upgrade must be passed through untouched.
+    const upgraded = new Response(null, { status: 200 });
+    Object.defineProperty(upgraded, 'webSocket', { value: {} });
+    globalThis.fetch = async () => upgraded;
+    const wsLive = await worker.fetch(wsRequest(), {}, {});
+    assert.strictEqual(wsLive, upgraded, 'Successful upgrade must be returned as-is');
+
+    // A non-upgrade plain request still gets 426.
+    globalThis.fetch = async () => new Response('nope');
+    const wsPlain = await worker.fetch(new Request('https://edge.test/ws/prices'), {}, {});
+    assert.strictEqual(wsPlain.status, 426);
+    console.log('✓ Test 15 passed.');
+
   } finally {
     // Restore global fetch and caches
     globalThis.fetch = originalGlobalFetch;
