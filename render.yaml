@@ -6,7 +6,11 @@ services:
     name: trading-api
     env: python
     plan: free
-    autoDeploy: true
+    # Manual deploys only. The live service already runs with auto-deploy off;
+    # this file said "true", so any Blueprint sync would have silently re-enabled
+    # auto-deploy and shipped every push to production unreviewed. Deploys are
+    # triggered deliberately (scripts/trigger_deploy.py) inside a safe window.
+    autoDeploy: false
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     # Probe the cheap liveness route, not /api/health. The rich health endpoint
