@@ -959,6 +959,15 @@ function startBackgroundRefresh() {
 
 
 
+// Warm-up storm guard. "Warming up" used to mean simply "no signals loaded yet",
+// which is indistinguishable from a symbol set that legitimately has no qualifying
+// setup - so the dashboard could sit in the 6s retry cadence forever, issuing a
+// full ~17-endpoint refresh every tick. On a 0.1-CPU Render instance that steady
+// stream is what pushes the 5s health check past its timeout. Fast retries are now
+// capped, after which the normal 30s (market open) / 120s (closed) cadence applies.
+const _WARMUP_MAX_ATTEMPTS = 5;
+let _warmupAttempts = 0;
+
 function _scheduleSmartRefresh() {
 
 
@@ -967,7 +976,11 @@ function _scheduleSmartRefresh() {
 
 
 
-    const isWarmingUp = !Array.isArray(allSignals) || allSignals.length === 0;
+    const signalsEmpty = !Array.isArray(allSignals) || allSignals.length === 0;
+
+    if (signalsEmpty) { _warmupAttempts += 1; } else { _warmupAttempts = 0; }
+
+    const isWarmingUp = signalsEmpty && _warmupAttempts <= _WARMUP_MAX_ATTEMPTS;
 
 
 
@@ -22747,7 +22760,10 @@ function initMoodStrip() {
 
 
 async function refreshMoodStrip(force = false) {
-    if (document.hidden && !force && window._authoritativeMoodLoaded) return;
+    // Hidden tabs must not poll: the mood strip is non-critical, and a background
+    // tab refreshing every 60s adds up across users on a 0.1-CPU origin. The
+    // visibilitychange handler runs a full refresh when the tab returns.
+    if (document.hidden && !force) return;
 
 
 
