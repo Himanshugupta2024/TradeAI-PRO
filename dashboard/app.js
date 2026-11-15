@@ -2348,6 +2348,37 @@ function switchTab(tab) {
 
 const _inFlightRequests = new Map();
 
+// Origin fan-out guard.
+// Measured on the live site: a cold dashboard load fires ~11 /api/* calls in
+// parallel, the Worker proxies each one straight to the single Render origin,
+// and every one of them comes back 429 while the exact same endpoints answer
+// 200 when spaced 3s apart. The browser-facing edge is not the limiter -- eight
+// parallel requests to a cached /api path all return 200 -- so the burst is
+// tripping Render's per-IP limit on the Worker's egress. Cap how many /api
+// requests are in flight at once and the burst never forms.
+const _apiGate = { active: 0, max: 4, waiters: [] };
+
+function _acquireApiSlot() {
+    if (_apiGate.active < _apiGate.max) {
+        _apiGate.active += 1;
+        return Promise.resolve();
+    }
+    return new Promise(resolve => _apiGate.waiters.push(resolve));
+}
+
+function _releaseApiSlot() {
+    const next = _apiGate.waiters.shift();
+    if (next) {
+        next(); // hand the slot straight to the next waiter, keep the count
+    } else {
+        _apiGate.active = Math.max(0, _apiGate.active - 1);
+    }
+}
+
+function _needsApiSlot(url, isGet) {
+    return isGet && typeof url === 'string' && url.indexOf('/api/') === 0;
+}
+
 
 
 
@@ -2403,7 +2434,13 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
 
 
 
-            resp = await fetch(url, { ...options, signal: ac.signal });
+            const useSlot = _needsApiSlot(url, isGet);
+            if (useSlot) await _acquireApiSlot();
+            try {
+                resp = await fetch(url, { ...options, signal: ac.signal });
+            } finally {
+                if (useSlot) _releaseApiSlot();
+            }
 
 
 
@@ -2486,8 +2523,10 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
                         delay = Math.min(parsedSeconds * 1000 + Math.floor(Math.random() * 600), 65000);
                     }
                 } else if (resp.status === 429) {
-                    // 429 edge rate limit: wait 1.5s - 3.5s with random jitter to avoid thundering herd
-                    delay = 1500 + Math.floor(Math.random() * 2000);
+                    // 429 = per-IP burst limit on the origin leg, with a measured
+                    // cooldown near 60s. A 1.5-3.5s backoff just re-joins the same
+                    // hot window and adds load, so wait long enough to fall out of it.
+                    delay = 5000 + Math.floor(Math.random() * 4000);
                 } else {
                     // 503 cold boot / wakeup
                     delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
