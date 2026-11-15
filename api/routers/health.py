@@ -47,16 +47,13 @@ import asyncio
 from db.connection import check_db_connectivity
 
 async def _check_db_connectivity_with_retry() -> bool:
-    """Retry the DB probe so a Render cold start is not reported as an outage."""
-    for timeout in (2.5, 6.0):
-        try:
-            if await asyncio.wait_for(
-                asyncio.to_thread(check_db_connectivity), timeout=timeout
-            ):
-                return True
-        except Exception:
-            continue
-    return False
+    """Fast non-blocking DB probe so health endpoints respond within sub-second bounds."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(check_db_connectivity), timeout=1.5
+        )
+    except Exception:
+        return False
 
 
 @router.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
