@@ -104,7 +104,6 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/nse/prediction",
   "/api/tradeflow",
   "/api/performance",
-  "/api/index-mover/movers",
   "/api/learning/stats",
 ]);
 
@@ -120,7 +119,7 @@ function isHealthOrReadinessPath(pathname) {
   );
 }
 
-function isPathCacheable(pathname) {
+export function isPathCacheable(pathname) {
   if (isHealthOrReadinessPath(pathname)) return false;
   if (PUBLIC_CACHEABLE_PATHS.has(pathname)) return true;
   if (
@@ -130,7 +129,8 @@ function isPathCacheable(pathname) {
     pathname.startsWith("/api/swing/symbol/") ||
     pathname.startsWith("/api/forex/ohlcv/") ||
     pathname.startsWith("/api/watchlist/quotes") ||
-    pathname.startsWith("/api/prediction/")
+    pathname.startsWith("/api/prediction/") ||
+    pathname.startsWith("/api/index-mover/")
   ) {
     return true;
   }
@@ -274,14 +274,14 @@ export function getDegradedFallbackResponse(pathname) {
 
   if (normPath === "/api/tradeflow") {
     const payload = {
-      status: "ok",
-      fii_net: 0.0,
-      dii_net: 0.0,
-      retail_net: 0.0,
-      fii_buy: 0.0,
-      fii_sell: 0.0,
-      dii_buy: 0.0,
-      dii_sell: 0.0,
+      status: "degraded",
+      fii_net: null,
+      dii_net: null,
+      retail_net: null,
+      fii_buy: null,
+      fii_sell: null,
+      dii_buy: null,
+      dii_sell: null,
       flows: [],
       source: "EDGE_DEGRADED_FALLBACK",
       degraded: true,
@@ -291,17 +291,17 @@ export function getDegradedFallbackResponse(pathname) {
 
   if (normPath === "/api/performance") {
     const payload = {
-      status: "ok",
-      capital: 100000.0,
-      total_pnl: 0.0,
-      total_return_pct: 0.0,
-      win_rate: 0.0,
-      total_trades: 0,
-      sharpe_ratio: 0.0,
-      max_drawdown: 0.0,
-      profit_factor: 0.0,
-      best_trade: 0.0,
-      worst_trade: 0.0,
+      status: "degraded",
+      capital: null,
+      total_pnl: null,
+      total_return_pct: null,
+      win_rate: null,
+      total_trades: null,
+      sharpe_ratio: null,
+      max_drawdown: null,
+      profit_factor: null,
+      best_trade: null,
+      worst_trade: null,
       equity_curve: [],
       wins: [],
       losses: [],
@@ -310,6 +310,7 @@ export function getDegradedFallbackResponse(pathname) {
       monthly: {},
       by_symbol: {},
       exit_reasons: {},
+      source: "EDGE_DEGRADED_FALLBACK",
       degraded: true,
     };
     return new Response(JSON.stringify(payload), { status: 200, headers });
@@ -369,6 +370,28 @@ export function getNormalizedCacheKey(rawUrl) {
   }
 }
 
+/** Check whether an instant in milliseconds has crossed an NSE session boundary (09:15 open, 15:30 close, or calendar day in IST). */
+export function hasCrossedNseSessionBoundary(cachedAtMs, nowMs = Date.now()) {
+  const cachedIst = new Date(cachedAtMs + 5.5 * 3600 * 1000);
+  const nowIst = new Date(nowMs + 5.5 * 3600 * 1000);
+  if (
+    cachedIst.getUTCFullYear() !== nowIst.getUTCFullYear() ||
+    cachedIst.getUTCMonth() !== nowIst.getUTCMonth() ||
+    cachedIst.getUTCDate() !== nowIst.getUTCDate()
+  ) {
+    return true;
+  }
+  const cachedMin = cachedIst.getUTCHours() * 60 + cachedIst.getUTCMinutes();
+  const nowMin = nowIst.getUTCHours() * 60 + nowIst.getUTCMinutes();
+  const closeMin = 15 * 60 + 30; // 15:30 IST
+  const openMin = 9 * 60 + 15;   // 09:15 IST
+  // Crossed 15:30 close boundary
+  if (cachedMin <= closeMin && nowMin > closeMin) return true;
+  // Crossed 09:15 open boundary
+  if (cachedMin < openMin && nowMin >= openMin) return true;
+  return false;
+}
+
 // Helper to store response in Cloudflare edge cache using exact request.url string
 async function storeInEdgeCache(cache, urlStr, originResponse) {
   if (!originResponse.ok || originResponse.status !== 200) return; // strictly cache only HTTP 200
@@ -378,8 +401,9 @@ async function storeInEdgeCache(cache, urlStr, originResponse) {
     const now = Date.now();
     const cacheHeaders = new Headers(originResponse.headers);
     cacheHeaders.set("X-SWR-Cached-At", String(now));
+    const retentionSec = normUrl.includes("/api/index-mover/") ? 30 : PHYSICAL_EDGE_TTL_SEC;
     // Physical retention for full fresh + SWR window
-    cacheHeaders.set("Cache-Control", `public, max-age=${PHYSICAL_EDGE_TTL_SEC}, s-maxage=${PHYSICAL_EDGE_TTL_SEC}`);
+    cacheHeaders.set("Cache-Control", `public, max-age=${retentionSec}, s-maxage=${retentionSec}`);
     // Delete vary on public JSON so cache matches across all user-agents/headers
     cacheHeaders.delete("vary");
     cacheHeaders.set("Access-Control-Allow-Origin", "*");
@@ -422,9 +446,14 @@ export default {
         const cachedResponse = await cache.match(cacheKey);
         if (cachedResponse) {
           const cachedAt = parseInt(cachedResponse.headers.get("X-SWR-Cached-At") || "0", 10);
-          const ageSec = Math.max(0, Math.floor((Date.now() - cachedAt) / 1000));
+          const nowMs = Date.now();
+          const ageSec = Math.max(0, Math.floor((nowMs - cachedAt) / 1000));
+          const isPredictionPath = url.pathname.startsWith("/api/prediction/") || url.pathname === "/api/nse/prediction";
+          const isIndexMoverPath = url.pathname.startsWith("/api/index-mover/");
+          const sessionCrossed = (isPredictionPath || isIndexMoverPath) && hasCrossedNseSessionBoundary(cachedAt, nowMs);
+          const maxRetentionSec = isIndexMoverPath ? 30 : PHYSICAL_EDGE_TTL_SEC;
 
-          if (ageSec <= EDGE_FRESH_TTL_SEC) {
+          if (!sessionCrossed && ageSec <= EDGE_FRESH_TTL_SEC) {
             // Case A: FRESH HIT (0 - 15s)
             const res = new Response(cachedResponse.body, cachedResponse);
             res.headers.set("CF-Cache-Status", "HIT");
@@ -433,8 +462,8 @@ export default {
             res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
             res.headers.set("Access-Control-Allow-Origin", "*");
             return res;
-          } else if (ageSec <= PHYSICAL_EDGE_TTL_SEC) {
-            // Case B: STALE HIT (16s - 45s) -> True RFC 5861 Stale-While-Revalidate!
+          } else if (!sessionCrossed && ageSec <= maxRetentionSec) {
+            // Case B: STALE HIT (16s - maxRetentionSec) -> True RFC 5861 Stale-While-Revalidate!
             // 1. Spawn asynchronous revalidation in background
             const revalTask = (async () => {
               try {

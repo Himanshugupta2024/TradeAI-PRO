@@ -168,3 +168,43 @@ def test_refresh_cycle_timeout_configured():
     """Verify REFRESH_CYCLE_TIMEOUT_SEC is set to 240 seconds."""
     from config import settings
     assert settings.REFRESH_CYCLE_TIMEOUT_SEC >= 240
+
+
+def test_paper_resolve_eod_single_definition():
+    """Verify paperResolveEOD and swing shortlist helpers exist exactly once in dashboard/app.js."""
+    with open("dashboard/app.js", "r", encoding="utf-8") as f:
+        content = f.read()
+
+    assert content.count("async function paperResolveEOD") == 1
+    assert content.count("function setSwingViewMode") == 1
+    assert content.count("async function loadMorningShortlist") == 1
+    assert content.count("function renderMorningShortlist") == 1
+
+
+def test_data_brain_v3_derivatives_oi_mocked(client, monkeypatch):
+    """Verify /api/context/v3 reports derivatives_oi.status == 'ok' when the OI engine returns data."""
+    mock_oi = {
+        "status": "ok",
+        "index_symbol": "NIFTY",
+        "last": 1.15,
+        "put_call_ratio": 1.15,
+        "pcr": 1.15,
+        "interpretation": "NEUTRAL_BALANCED",
+        "pcr_sentiment": "NEUTRAL_BALANCED",
+        "pcr_score_modifier": 0,
+        "index_price_change_pct": 0.45,
+        "index_oi_change_pct": 1.2,
+        "oi_buildup_classification": "LONG_BUILDUP",
+        "is_short_buildup": False,
+        "is_long_buildup": True,
+        "updated_at": "2026-11-14T00:00:00+00:00",
+    }
+    monkeypatch.setattr(svc, "_derivatives_context", mock_oi)
+
+    res = client.get("/api/context/v3")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["derivatives_oi"]["status"] == "ok"
+    assert data["derivatives_oi"]["put_call_ratio"] == 1.15
+    assert data["derivatives_oi"]["oi_buildup_classification"] == "LONG_BUILDUP"
+

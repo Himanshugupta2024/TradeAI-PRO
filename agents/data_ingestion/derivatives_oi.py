@@ -88,8 +88,12 @@ def _fetch_derivatives_sync(index_symbol: str = "NIFTY") -> dict[str, Any]:
     pcr_interp, pcr_score = interpret_pcr(pcr)
 
     return {
+        "status": "ok",
         "index_symbol": index_symbol,
+        "last": round(pcr, 2),
         "put_call_ratio": round(pcr, 2),
+        "pcr": round(pcr, 2),
+        "interpretation": pcr_interp,
         "pcr_sentiment": pcr_interp,
         "pcr_score_modifier": pcr_score,
         "index_price_change_pct": price_change,
@@ -120,8 +124,13 @@ async def get_derivatives_intelligence(index_symbol: str = "NIFTY", force_refres
             stale["stale"] = True
             return stale
         return {
+            "status": "unavailable",
+            "reason": str(exc)[:100],
             "index_symbol": index_symbol,
+            "last": 1.0,
             "put_call_ratio": 1.0,
+            "pcr": 1.0,
+            "interpretation": "NEUTRAL_BALANCED",
             "pcr_sentiment": "NEUTRAL_BALANCED",
             "pcr_score_modifier": 0,
             "index_price_change_pct": 0.0,

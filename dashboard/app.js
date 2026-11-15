@@ -9096,7 +9096,7 @@ async function paperResolveEOD() {
 
 
 
-            showToast(`❌ Resolve failed: ${data.detail || data.error || 'Server error'}`, 'error');
+            showToast('EOD resolution failed (' + res.status + '): ' + (data.detail || data.error || 'Server error'), 'error');
 
 
 
@@ -9113,6 +9113,7 @@ async function paperResolveEOD() {
 
 
         loadPaperScorecard();
+        loadPortfolio();
 
 
 
@@ -9120,7 +9121,7 @@ async function paperResolveEOD() {
 
 
 
-        showToast(`❌ Resolve failed: ${e.message}`, 'error');
+            showToast('EOD resolution failed (' + res.status + '): ' + (data.detail || data.error || 'Server error'), 'error');
 
 
 
@@ -12552,6 +12553,36 @@ async function loadLearningStats() {
 
 
 
+
+function renderDegradedBanner(panelName) {
+    const bannerHtml = `
+        <div class="degraded-banner" style="grid-column:1/-1;margin-bottom:14px;padding:10px 14px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.8rem;color:#ef4444;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:1.1rem;">⚠️</span>
+                <span><strong>Live data unavailable</strong> — edge fallback active, financial figures withheld to preserve capital rules.</span>
+            </div>
+            <span class="tf-source-badge fake" style="white-space:nowrap;padding:2px 8px;border-radius:4px;background:rgba(239,68,68,0.2);color:#ef4444;font-size:0.75rem;font-weight:600;">EDGE DEGRADED</span>
+        </div>
+    `;
+    if (panelName === 'performance') {
+        const kpiRow = document.getElementById('perfKpiRow') || document.getElementById('performanceTab');
+        if (kpiRow) {
+            let existing = document.getElementById('perfDegradedBanner');
+            if (!existing) {
+                existing = document.createElement('div');
+                existing.id = 'perfDegradedBanner';
+                kpiRow.parentNode.insertBefore(existing, kpiRow);
+            }
+            existing.innerHTML = bannerHtml;
+        }
+    } else if (panelName === 'tradeflow') {
+        const grid = document.getElementById('tradeflowGrid');
+        if (grid) {
+            grid.innerHTML = bannerHtml + '<div class="loading-state"><p style="color:var(--text-muted)">Live data unavailable — edge fallback, not real figures.</p></div>';
+        }
+    }
+}
+
 async function loadPerformance() {
 
 
@@ -12565,6 +12596,24 @@ async function loadPerformance() {
 
 
         const data = await parseJsonResponse(res);
+
+        if (data && (data.status === 'degraded' || data.degraded)) {
+            renderDegradedBanner('performance');
+            _setKpi('pkCapitalVal', '—');
+            _setKpi('pkPnlVal', '—', 'neutral');
+            _setKpi('pkReturnVal', '—', 'neutral');
+            _setKpi('pkWinRateVal', '—', 'neutral');
+            _setKpi('pkTradesVal', '—');
+            _setKpi('pkSharpeVal', '—', 'neutral');
+            _setKpi('pkDrawdownVal', '—', 'neutral');
+            _setKpi('pkPFVal', '—', 'neutral');
+            _setKpi('pkBestVal', '—', 'neutral');
+            _setKpi('pkWorstVal', '—', 'neutral');
+            return;
+        } else {
+            const existing = document.getElementById('perfDegradedBanner');
+            if (existing) existing.innerHTML = '';
+        }
 
 
 
@@ -12916,346 +12965,6 @@ function _renderExitReasons(reasons) {
 
 
 
-// ── Morning Shortlist & View Toggle ──────────────────────
-
-
-
-function setSwingViewMode(mode) {
-
-
-
-    const btnShortlist = document.getElementById('viewToggleShortlist');
-
-
-
-    const btnAll = document.getElementById('viewToggleAll');
-
-
-
-    const panel = document.getElementById('morningShortlistPanel');
-
-
-
-
-
-
-
-    if (mode === 'shortlist') {
-
-
-
-        if (btnShortlist) { btnShortlist.classList.add('active'); btnShortlist.style.background = ''; btnShortlist.style.color = ''; }
-
-
-
-        if (btnAll) { btnAll.classList.remove('active'); btnAll.style.background = 'transparent'; btnAll.style.color = 'var(--text-muted)'; }
-
-
-
-        if (panel) panel.style.display = 'block';
-
-
-
-    } else {
-
-
-
-        if (btnAll) { btnAll.classList.add('active'); btnAll.style.background = ''; btnAll.style.color = ''; }
-
-
-
-        if (btnShortlist) { btnShortlist.classList.remove('active'); btnShortlist.style.background = 'transparent'; btnShortlist.style.color = 'var(--text-muted)'; }
-
-
-
-        if (panel) panel.style.display = 'none';
-
-
-
-    }
-
-
-
-}
-
-
-
-
-
-
-
-async function loadMorningShortlist() {
-
-
-
-    const grid = document.getElementById('shortlistGrid');
-
-
-
-    const tsEl = document.getElementById('shortlistTimestamp');
-
-
-
-    if (!grid) return;
-
-
-
-    grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Loading morning shortlist...</p></div>';
-
-
-
-
-
-
-
-    try {
-
-
-
-        const res = await fetchWithTimeout(`${API}/api/swing/shortlist`, {}, 15000);
-
-
-
-        let data = {};
-
-
-
-        try { data = await res.json(); } catch (_) { data = {}; }
-
-
-
-        const setups = data.setups || [];
-
-
-
-        if (tsEl) {
-
-
-
-            tsEl.textContent = data.generated_at ? `Scan: ${new Date(data.generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : (data.scan_date || '');
-
-
-
-        }
-
-
-
-        if (!setups.length) {
-
-
-
-            grid.innerHTML = `<div class="loading-state" style="padding:1.5rem;"><p style="font-size:0.85rem;color:var(--text-muted);">${data.message || 'No shortlist setups available yet.'}</p></div>`;
-
-
-
-            return;
-
-
-
-        }
-
-
-
-        renderMorningShortlist(setups);
-
-
-
-    } catch (err) {
-
-
-
-        console.error('loadMorningShortlist error:', err);
-
-
-
-        grid.innerHTML = '<div class="loading-state"><p style="color:var(--red);">Failed to load morning shortlist</p></div>';
-
-
-
-    }
-
-
-
-}
-
-
-
-
-
-
-
-function renderMorningShortlist(setups) {
-
-
-
-    const grid = document.getElementById('shortlistGrid');
-
-
-
-    if (!grid) return;
-
-
-
-    grid.innerHTML = setups.map(s => {
-
-
-
-        const dirClass = s.direction === 'LONG' ? 'buy' : 'sell';
-
-
-
-        const dirColor = s.direction === 'LONG' ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
-
-
-
-        const gradeColor = s.grade === 'A' ? '#10b981' : s.grade === 'B' ? '#6366f1' : '#f59e0b';
-
-
-
-        const t1 = s.target_1 || s.target || '—';
-
-
-
-        const t2 = s.target_2 || '—';
-
-
-
-        return `
-
-
-
-        <div class="card" style="padding:1rem;border-top:2px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
-
-
-
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
-
-
-
-                <div>
-
-
-
-                    <div style="display:flex;align-items:center;gap:0.5rem;">
-
-
-
-                        <span style="font-weight:800;font-size:1.05rem;color:var(--text-primary);">${s.symbol}</span>
-
-
-
-                        <span class="signal-badge ${dirClass}" style="font-size: 0.72rem;padding:2px 6px;">${s.direction}</span>
-
-
-
-                        <span style="font-size: 0.70rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
-
-
-
-                    </div>
-
-
-
-                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${s.pattern || 'Swing Setup'}</div>
-
-
-
-                </div>
-
-
-
-                <div style="text-align:right;">
-
-
-
-                    <div style="font-size: 0.70rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
-
-
-
-                    <div style="font-weight:800;font-size:1.1rem;color:${gradeColor};font-family:var(--font-mono);">${s.strength || s.score || 0}</div>
-
-
-
-                </div>
-
-
-
-            </div>
-
-
-
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.4rem;text-align:center;margin:0.5rem 0;background:rgba(0,0,0,0.15);padding:0.4rem;border-radius:6px;">
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">Entry</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;">₹${s.entry_zone || s.entry || 0}</div></div>
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">SL</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--red);">₹${s.stop_loss || 0}</div></div>
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">T1</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t1}</div></div>
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">T2</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t2}</div></div>
-
-
-
-            </div>
-
-
-
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.6rem;">
-
-
-
-                <span style="font-size: 0.72rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
-
-
-
-                <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(s.symbol)}', '${s.direction}', ${Number(s.entry_zone || s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, 'SWING', this)" style="font-size:0.7rem;padding:0.25rem 0.6rem;cursor:pointer;border-radius:4px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;">⚡ Paper Trade</button>
-
-
-
-            </div>
-
-
-
-        </div>`;
-
-
-
-    }).join('');
-
-
-
-}
-
-
-
-
-
-
-
-window.setSwingViewMode = setSwingViewMode;
-
-
-
-window.loadMorningShortlist = loadMorningShortlist;
-
-
-
-
-
-
-
-
-
-
-
 function _renderMonthlyPnl(months) {
 
 
@@ -13340,346 +13049,6 @@ function _renderMonthlyPnl(months) {
 
 
 
-// ── Morning Shortlist & View Toggle ──────────────────────
-
-
-
-function setSwingViewMode(mode) {
-
-
-
-    const btnShortlist = document.getElementById('viewToggleShortlist');
-
-
-
-    const btnAll = document.getElementById('viewToggleAll');
-
-
-
-    const panel = document.getElementById('morningShortlistPanel');
-
-
-
-
-
-
-
-    if (mode === 'shortlist') {
-
-
-
-        if (btnShortlist) { btnShortlist.classList.add('active'); btnShortlist.style.background = ''; btnShortlist.style.color = ''; }
-
-
-
-        if (btnAll) { btnAll.classList.remove('active'); btnAll.style.background = 'transparent'; btnAll.style.color = 'var(--text-muted)'; }
-
-
-
-        if (panel) panel.style.display = 'block';
-
-
-
-    } else {
-
-
-
-        if (btnAll) { btnAll.classList.add('active'); btnAll.style.background = ''; btnAll.style.color = ''; }
-
-
-
-        if (btnShortlist) { btnShortlist.classList.remove('active'); btnShortlist.style.background = 'transparent'; btnShortlist.style.color = 'var(--text-muted)'; }
-
-
-
-        if (panel) panel.style.display = 'none';
-
-
-
-    }
-
-
-
-}
-
-
-
-
-
-
-
-async function loadMorningShortlist() {
-
-
-
-    const grid = document.getElementById('shortlistGrid');
-
-
-
-    const tsEl = document.getElementById('shortlistTimestamp');
-
-
-
-    if (!grid) return;
-
-
-
-    grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Loading morning shortlist...</p></div>';
-
-
-
-
-
-
-
-    try {
-
-
-
-        const res = await fetchWithTimeout(`${API}/api/swing/shortlist`, {}, 15000);
-
-
-
-        let data = {};
-
-
-
-        try { data = await res.json(); } catch (_) { data = {}; }
-
-
-
-        const setups = data.setups || [];
-
-
-
-        if (tsEl) {
-
-
-
-            tsEl.textContent = data.generated_at ? `Scan: ${new Date(data.generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : (data.scan_date || '');
-
-
-
-        }
-
-
-
-        if (!setups.length) {
-
-
-
-            grid.innerHTML = `<div class="loading-state" style="padding:1.5rem;"><p style="font-size:0.85rem;color:var(--text-muted);">${data.message || 'No shortlist setups available yet.'}</p></div>`;
-
-
-
-            return;
-
-
-
-        }
-
-
-
-        renderMorningShortlist(setups);
-
-
-
-    } catch (err) {
-
-
-
-        console.error('loadMorningShortlist error:', err);
-
-
-
-        grid.innerHTML = '<div class="loading-state"><p style="color:var(--red);">Failed to load morning shortlist</p></div>';
-
-
-
-    }
-
-
-
-}
-
-
-
-
-
-
-
-function renderMorningShortlist(setups) {
-
-
-
-    const grid = document.getElementById('shortlistGrid');
-
-
-
-    if (!grid) return;
-
-
-
-    grid.innerHTML = setups.map(s => {
-
-
-
-        const dirClass = s.direction === 'LONG' ? 'buy' : 'sell';
-
-
-
-        const dirColor = s.direction === 'LONG' ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
-
-
-
-        const gradeColor = s.grade === 'A' ? '#10b981' : s.grade === 'B' ? '#6366f1' : '#f59e0b';
-
-
-
-        const t1 = s.target_1 || s.target || '—';
-
-
-
-        const t2 = s.target_2 || '—';
-
-
-
-        return `
-
-
-
-        <div class="card" style="padding:1rem;border-top:2px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
-
-
-
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
-
-
-
-                <div>
-
-
-
-                    <div style="display:flex;align-items:center;gap:0.5rem;">
-
-
-
-                        <span style="font-weight:800;font-size:1.05rem;color:var(--text-primary);">${s.symbol}</span>
-
-
-
-                        <span class="signal-badge ${dirClass}" style="font-size: 0.72rem;padding:2px 6px;">${s.direction}</span>
-
-
-
-                        <span style="font-size: 0.70rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
-
-
-
-                    </div>
-
-
-
-                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${s.pattern || 'Swing Setup'}</div>
-
-
-
-                </div>
-
-
-
-                <div style="text-align:right;">
-
-
-
-                    <div style="font-size: 0.70rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
-
-
-
-                    <div style="font-weight:800;font-size:1.1rem;color:${gradeColor};font-family:var(--font-mono);">${s.strength || s.score || 0}</div>
-
-
-
-                </div>
-
-
-
-            </div>
-
-
-
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.4rem;text-align:center;margin:0.5rem 0;background:rgba(0,0,0,0.15);padding:0.4rem;border-radius:6px;">
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">Entry</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;">₹${s.entry_zone || s.entry || 0}</div></div>
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">SL</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--red);">₹${s.stop_loss || 0}</div></div>
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">T1</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t1}</div></div>
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">T2</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t2}</div></div>
-
-
-
-            </div>
-
-
-
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.6rem;">
-
-
-
-                <span style="font-size: 0.72rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
-
-
-
-                <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(s.symbol)}', '${s.direction}', ${Number(s.entry_zone || s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, 'SWING', this)" style="font-size:0.7rem;padding:0.25rem 0.6rem;cursor:pointer;border-radius:4px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;">⚡ Paper Trade</button>
-
-
-
-            </div>
-
-
-
-        </div>`;
-
-
-
-    }).join('');
-
-
-
-}
-
-
-
-
-
-
-
-window.setSwingViewMode = setSwingViewMode;
-
-
-
-window.loadMorningShortlist = loadMorningShortlist;
-
-
-
-
-
-
-
-
-
-
-
 function _renderSymbolBreakdown(symbols) {
 
 
@@ -13753,346 +13122,6 @@ function _renderSymbolBreakdown(symbols) {
 
 
 }
-
-
-
-
-
-
-
-// ── Morning Shortlist & View Toggle ──────────────────────
-
-
-
-function setSwingViewMode(mode) {
-
-
-
-    const btnShortlist = document.getElementById('viewToggleShortlist');
-
-
-
-    const btnAll = document.getElementById('viewToggleAll');
-
-
-
-    const panel = document.getElementById('morningShortlistPanel');
-
-
-
-
-
-
-
-    if (mode === 'shortlist') {
-
-
-
-        if (btnShortlist) { btnShortlist.classList.add('active'); btnShortlist.style.background = ''; btnShortlist.style.color = ''; }
-
-
-
-        if (btnAll) { btnAll.classList.remove('active'); btnAll.style.background = 'transparent'; btnAll.style.color = 'var(--text-muted)'; }
-
-
-
-        if (panel) panel.style.display = 'block';
-
-
-
-    } else {
-
-
-
-        if (btnAll) { btnAll.classList.add('active'); btnAll.style.background = ''; btnAll.style.color = ''; }
-
-
-
-        if (btnShortlist) { btnShortlist.classList.remove('active'); btnShortlist.style.background = 'transparent'; btnShortlist.style.color = 'var(--text-muted)'; }
-
-
-
-        if (panel) panel.style.display = 'none';
-
-
-
-    }
-
-
-
-}
-
-
-
-
-
-
-
-async function loadMorningShortlist() {
-
-
-
-    const grid = document.getElementById('shortlistGrid');
-
-
-
-    const tsEl = document.getElementById('shortlistTimestamp');
-
-
-
-    if (!grid) return;
-
-
-
-    grid.innerHTML = '<div class="loading-state"><div class="loader"></div><p>Loading morning shortlist...</p></div>';
-
-
-
-
-
-
-
-    try {
-
-
-
-        const res = await fetchWithTimeout(`${API}/api/swing/shortlist`, {}, 15000);
-
-
-
-        let data = {};
-
-
-
-        try { data = await res.json(); } catch (_) { data = {}; }
-
-
-
-        const setups = data.setups || [];
-
-
-
-        if (tsEl) {
-
-
-
-            tsEl.textContent = data.generated_at ? `Scan: ${new Date(data.generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : (data.scan_date || '');
-
-
-
-        }
-
-
-
-        if (!setups.length) {
-
-
-
-            grid.innerHTML = `<div class="loading-state" style="padding:1.5rem;"><p style="font-size:0.85rem;color:var(--text-muted);">${data.message || 'No shortlist setups available yet.'}</p></div>`;
-
-
-
-            return;
-
-
-
-        }
-
-
-
-        renderMorningShortlist(setups);
-
-
-
-    } catch (err) {
-
-
-
-        console.error('loadMorningShortlist error:', err);
-
-
-
-        grid.innerHTML = '<div class="loading-state"><p style="color:var(--red);">Failed to load morning shortlist</p></div>';
-
-
-
-    }
-
-
-
-}
-
-
-
-
-
-
-
-function renderMorningShortlist(setups) {
-
-
-
-    const grid = document.getElementById('shortlistGrid');
-
-
-
-    if (!grid) return;
-
-
-
-    grid.innerHTML = setups.map(s => {
-
-
-
-        const dirClass = s.direction === 'LONG' ? 'buy' : 'sell';
-
-
-
-        const dirColor = s.direction === 'LONG' ? 'var(--green, #10b981)' : 'var(--red, #ef4444)';
-
-
-
-        const gradeColor = s.grade === 'A' ? '#10b981' : s.grade === 'B' ? '#6366f1' : '#f59e0b';
-
-
-
-        const t1 = s.target_1 || s.target || '—';
-
-
-
-        const t2 = s.target_2 || '—';
-
-
-
-        return `
-
-
-
-        <div class="card" style="padding:1rem;border-top:2px solid ${dirColor};background:rgba(255,255,255,0.02);border-radius:8px;">
-
-
-
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.6rem;">
-
-
-
-                <div>
-
-
-
-                    <div style="display:flex;align-items:center;gap:0.5rem;">
-
-
-
-                        <span style="font-weight:800;font-size:1.05rem;color:var(--text-primary);">${s.symbol}</span>
-
-
-
-                        <span class="signal-badge ${dirClass}" style="font-size: 0.72rem;padding:2px 6px;">${s.direction}</span>
-
-
-
-                        <span style="font-size: 0.70rem;font-weight:700;padding:1px 6px;border-radius:4px;background:${gradeColor}20;color:${gradeColor};border:1px solid ${gradeColor}40;">Grade ${s.grade || 'A'}</span>
-
-
-
-                    </div>
-
-
-
-                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${s.pattern || 'Swing Setup'}</div>
-
-
-
-                </div>
-
-
-
-                <div style="text-align:right;">
-
-
-
-                    <div style="font-size: 0.70rem;color:var(--text-muted);" title="Confluence Score (0-100) — not a win guarantee">Setup Strength</div>
-
-
-
-                    <div style="font-weight:800;font-size:1.1rem;color:${gradeColor};font-family:var(--font-mono);">${s.strength || s.score || 0}</div>
-
-
-
-                </div>
-
-
-
-            </div>
-
-
-
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.4rem;text-align:center;margin:0.5rem 0;background:rgba(0,0,0,0.15);padding:0.4rem;border-radius:6px;">
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">Entry</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;">₹${s.entry_zone || s.entry || 0}</div></div>
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">SL</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--red);">₹${s.stop_loss || 0}</div></div>
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">T1</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t1}</div></div>
-
-
-
-                <div><div style="font-size:0.6rem;color:var(--text-muted);">T2</div><div style="font-weight:700;font-family:var(--font-mono);font-size:0.8rem;color:var(--green);">₹${t2}</div></div>
-
-
-
-            </div>
-
-
-
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.6rem;">
-
-
-
-                <span style="font-size: 0.72rem;color:var(--text-muted);">R:R <b style="color:var(--text-primary);">${s.risk_reward || 0}x</b></span>
-
-
-
-                <button type="button" class="btn btn-primary" onclick="event.stopPropagation();takePaperTrade('${_escHtml(s.symbol)}', '${s.direction}', ${Number(s.entry_zone || s.entry || 0)}, ${Number(s.stop_loss || 0)}, ${Number(s.target_1 || s.target || 0)}, ${Number(s.atr || 0)}, 'SWING', this)" style="font-size:0.7rem;padding:0.25rem 0.6rem;cursor:pointer;border-radius:4px;background:linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);color:#fff;border:none;font-weight:600;">⚡ Paper Trade</button>
-
-
-
-            </div>
-
-
-
-        </div>`;
-
-
-
-    }).join('');
-
-
-
-}
-
-
-
-
-
-
-
-window.setSwingViewMode = setSwingViewMode;
-
-
-
-window.loadMorningShortlist = loadMorningShortlist;
-
-
-
-
 
 
 
@@ -18694,6 +17723,11 @@ function _fmtCr(val) {
 
 
 function renderTradeFlow(data) {
+
+    if (data && (data.status === 'degraded' || data.degraded)) {
+        renderDegradedBanner('tradeflow');
+        return;
+    }
 
 
 
@@ -26612,70 +25646,6 @@ function clearAllSwingBookmarks() {
 
 
 }
-
-
-
-
-
-
-
-async function paperResolveEOD() {
-
-
-
-    showToast('Resolving open paper swing trades against EOD bars...', 'info');
-
-
-
-    try {
-
-
-
-        const resp = await fetchWithTimeout(`${API}/api/swing/resolve-eod`, { method: 'POST' });
-
-
-
-        if (resp.ok) {
-
-
-
-            showToast('EOD Paper trades resolved successfully', 'success');
-
-
-
-            loadPortfolio();
-
-
-
-        } else {
-
-
-
-            showToast('EOD resolution processed', 'info');
-
-
-
-        }
-
-
-
-    } catch (e) {
-
-
-
-        showToast('EOD resolution triggered', 'info');
-
-
-
-    }
-
-
-
-}
-
-
-
-
 
 
 

@@ -1,5 +1,6 @@
 """Data Providers package."""
 from data.providers.base import MarketDataProvider, MarketQuote, ProviderHealth
+from data.providers.tradingview import TradingViewProvider
 from data.providers.yahoo import YahooProvider
 from data.providers.twelve_data import TwelveDataProvider
 from data.providers.nse_bhavcopy import NSEBhavcopyProvider
@@ -9,6 +10,7 @@ __all__ = [
     "MarketDataProvider",
     "MarketQuote",
     "ProviderHealth",
+    "TradingViewProvider",
     "YahooProvider",
     "TwelveDataProvider",
     "NSEBhavcopyProvider",

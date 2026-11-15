@@ -4,7 +4,15 @@
  * 2. Edge proxy request routing, SWR edge caching, and cache poisoning prevention (worker.fetch).
  */
 import assert from 'node:assert';
-import worker, { handleScheduled, getNormalizedCacheKey, shouldDispatchCycle, istClock } from '../src/worker.js';
+import worker, {
+  handleScheduled,
+  getNormalizedCacheKey,
+  shouldDispatchCycle,
+  istClock,
+  getDegradedFallbackResponse,
+  isPathCacheable,
+  hasCrossedNseSessionBoundary,
+} from '../src/worker.js';
 
 // In-memory mock Cache implementation adhering to Cloudflare Worker Cache API
 class MockCache {
@@ -472,6 +480,60 @@ async function runTests() {
     assert.strictEqual(cronCall.options.headers['User-Agent'], 'TradeAI-Cloudflare-Cron-Refresh/1.0');
     assert.strictEqual(refreshResult.refresh.ok, true);
     console.log('✓ Test 10 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 11: Degraded fallbacks for /api/performance and /api/tradeflow
+    // ------------------------------------------------------------------------
+    console.log('Test 11: Degraded fallbacks return status: degraded with null financials...');
+    const perfFallback = getDegradedFallbackResponse('/api/performance');
+    assert.ok(perfFallback, 'Performance fallback must exist');
+    assert.strictEqual(perfFallback.status, 200);
+    const perfData = await perfFallback.json();
+    assert.strictEqual(perfData.status, 'degraded');
+    assert.strictEqual(perfData.degraded, true);
+    assert.strictEqual(perfData.capital, null);
+    assert.strictEqual(perfData.total_pnl, null);
+    assert.strictEqual(perfData.source, 'EDGE_DEGRADED_FALLBACK');
+
+    const tfFallback = getDegradedFallbackResponse('/api/tradeflow');
+    assert.ok(tfFallback, 'Tradeflow fallback must exist');
+    assert.strictEqual(tfFallback.status, 200);
+    const tfData = await tfFallback.json();
+    assert.strictEqual(tfData.status, 'degraded');
+    assert.strictEqual(tfData.degraded, true);
+    assert.strictEqual(tfData.fii_net, null);
+    assert.strictEqual(tfData.dii_net, null);
+    assert.strictEqual(tfData.source, 'EDGE_DEGRADED_FALLBACK');
+    console.log('✓ Test 11 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 12: /api/index-mover/ route is edge cacheable
+    // ------------------------------------------------------------------------
+    console.log('Test 12: /api/index-mover/ is dynamically edge cacheable with short TTL...');
+    assert.strictEqual(isPathCacheable('/api/index-mover/NIFTY%2050'), true);
+    assert.strictEqual(isPathCacheable('/api/index-mover/BANKNIFTY'), true);
+    assert.strictEqual(isPathCacheable('/api/health'), false);
+    console.log('✓ Test 12 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 13: hasCrossedNseSessionBoundary detects session boundaries
+    // ------------------------------------------------------------------------
+    console.log('Test 13: hasCrossedNseSessionBoundary detects 15:30 close and date changes...');
+    // Same day, 15:25 IST (09:55 UTC) -> 15:35 IST (10:05 UTC) => crosses 15:30 close
+    const cachedAt1 = new Date('2026-11-13T09:55:00Z').getTime();
+    const now1 = new Date('2026-11-13T10:05:00Z').getTime();
+    assert.strictEqual(hasCrossedNseSessionBoundary(cachedAt1, now1), true);
+
+    // Same day, 10:00 IST (04:30 UTC) -> 10:05 IST (04:35 UTC) => within session
+    const cachedAt2 = new Date('2026-11-13T04:30:00Z').getTime();
+    const now2 = new Date('2026-11-13T04:35:00Z').getTime();
+    assert.strictEqual(hasCrossedNseSessionBoundary(cachedAt2, now2), false);
+
+    // Crosses calendar date in IST
+    const cachedAt3 = new Date('2026-11-13T15:25:00Z').getTime();
+    const now3 = new Date('2026-11-14T04:00:00Z').getTime();
+    assert.strictEqual(hasCrossedNseSessionBoundary(cachedAt3, now3), true);
+    console.log('✓ Test 13 passed.');
 
   } finally {
     // Restore global fetch and caches

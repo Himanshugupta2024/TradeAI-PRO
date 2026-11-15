@@ -2026,6 +2026,19 @@ async def _refresh_market_data_inner():
             logger.debug("FII/DII flow fetch failed: %s", flow_exc)
             _flow_context.update(status="unavailable", reason=str(flow_exc)[:100])
 
+        global _derivatives_context
+        try:
+            from agents.data_ingestion.derivatives_oi import get_derivatives_intelligence
+            oi = await asyncio.wait_for(get_derivatives_intelligence("NIFTY"), timeout=20.0)
+            if isinstance(oi, dict) and oi.get("status") == "ok":
+                _derivatives_context.clear()
+                _derivatives_context.update(oi)
+            else:
+                _derivatives_context.update(status="unavailable", reason=str(oi.get("reason", "oi fetch empty"))[:100])
+        except Exception as oi_exc:
+            logger.debug("Derivatives OI fetch failed: %s", oi_exc)
+            _derivatives_context.update(status="unavailable", reason=str(oi_exc)[:100])
+
         try:
             adv = decl = 0
             for sym_name, df_sym in _market_data.items():
