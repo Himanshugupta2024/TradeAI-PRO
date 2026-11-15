@@ -105,6 +105,12 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/tradeflow",
   "/api/performance",
   "/api/learning/stats",
+  "/api/context/v3",
+  "/api/intraday/latest",
+  "/api/analytics/scorecard",
+  "/api/sectors",
+  "/api/learning/outcomes",
+  "/api/swing-scanner",
 ]);
 
 // Health and readiness routes must NEVER be cached by Cloudflare edge.
@@ -329,6 +335,44 @@ export function getDegradedFallbackResponse(pathname) {
       },
       source: "EDGE_DEGRADED_FALLBACK",
       degraded: true,
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/context/v3") {
+    const payload = {
+      status: "degraded",
+      india_vix: { status: "unavailable", reason: "Edge degraded fallback active" },
+      fii_dii_flow: { status: "unavailable", reason: "Edge degraded fallback active" },
+      market_breadth: { status: "unavailable", reason: "Edge degraded fallback active" },
+      derivatives_oi: { status: "unavailable", reason: "Edge degraded fallback active" },
+      real_data: false,
+      degraded: true,
+      source: "EDGE_DEGRADED_FALLBACK",
+      updated_at: new Date().toISOString(),
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/analytics/scorecard") {
+    const payload = {
+      status: "degraded",
+      win_rate: null,
+      total_trades: 0,
+      breakdown: [],
+      degraded: true,
+      source: "EDGE_DEGRADED_FALLBACK",
+    };
+    return new Response(JSON.stringify(payload), { status: 200, headers });
+  }
+
+  if (normPath === "/api/learning/stats") {
+    const payload = {
+      status: "degraded",
+      insights: {},
+      stats: {},
+      degraded: true,
+      source: "EDGE_DEGRADED_FALLBACK",
     };
     return new Response(JSON.stringify(payload), { status: 200, headers });
   }

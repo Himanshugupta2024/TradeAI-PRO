@@ -533,6 +533,32 @@ async def _hydrate_signals_cache_from_db() -> bool:
     return False
 
 
+async def _hydrate_context_v3_from_db() -> bool:
+    """Hydrate _vix_context, _flow_context, _derivatives_context, and _breadth_context from DB on startup."""
+    global _vix_context, _flow_context, _derivatives_context, _breadth_context
+    try:
+        from db.runtime_state import get_runtime_state
+        snap = await asyncio.to_thread(get_runtime_state, "data_brain_v3_context:v1")
+        if snap and isinstance(snap, dict):
+            if isinstance(snap.get("vix"), dict) and snap["vix"]:
+                _vix_context.clear()
+                _vix_context.update(snap["vix"])
+            if isinstance(snap.get("flow"), dict) and snap["flow"]:
+                _flow_context.clear()
+                _flow_context.update(snap["flow"])
+            if isinstance(snap.get("derivatives"), dict) and snap["derivatives"]:
+                _derivatives_context.clear()
+                _derivatives_context.update(snap["derivatives"])
+            if isinstance(snap.get("breadth"), dict) and snap["breadth"]:
+                _breadth_context.clear()
+                _breadth_context.update(snap["breadth"])
+            logger.info("Restored Data Brain V3 context snapshot from Supabase on startup.")
+            return True
+    except Exception as exc:
+        logger.debug("Data Brain V3 context hydration skipped: %s", exc)
+    return False
+
+
 async def _hydrate_swing_cache_from_db() -> bool:
     """On startup, seed _swing_cache from the best available source.
     Checks both nightly JSON and DB, picks whichever has more setups.
@@ -1823,16 +1849,16 @@ async def _refresh_market_data_inner():
         try:
             async def _bg_swing_update():
                 try:
-                    daily_sem = asyncio.Semaphore(5)
+                    daily_sem = asyncio.Semaphore(2)
                     async def _fetch_daily(name: str):
                         async with daily_sem:
                             try:
                                 df = await asyncio.wait_for(
                                     asyncio.to_thread(fetch_ohlcv, name, "1y", "1d"),
-                                    timeout=20.0,
+                                    timeout=15.0,
                                 )
                                 if df is not None and not df.empty and len(df) >= 30:
-                                    df = calculate_indicators(df)
+                                    df = await asyncio.to_thread(calculate_indicators, df)
                                     _daily_data_cache[name] = df
                             except Exception:
                                 pass
@@ -1856,7 +1882,7 @@ async def _refresh_market_data_inner():
         try:
             _refresh_movers_cache()
             _compute_market_mood()
-            _compute_overview_intelligence(force_refresh=True)
+            await asyncio.to_thread(_compute_overview_intelligence, True)
         except Exception as e:
             logger.debug("Dashboard precompute failed: %s", e)
 
@@ -1981,8 +2007,11 @@ async def _refresh_market_data_inner():
         # ── Data Brain V3 context population ──────────────────────────────
         try:
             import yfinance as yf
-            vix_df = await asyncio.to_thread(
-                yf.download, "^INDIAVIX", period="5d", interval="1d", progress=False
+            vix_df = await asyncio.wait_for(
+                asyncio.to_thread(
+                    yf.download, "^INDIAVIX", period="5d", interval="1d", progress=False
+                ),
+                timeout=8.0,
             )
             if vix_df is not None and not vix_df.empty:
                 # Handle MultiIndex columns returned by modern yfinance
@@ -2016,7 +2045,10 @@ async def _refresh_market_data_inner():
 
         try:
             from agents.market_intelligence.market_data import fetch_fii_dii_flow
-            flow = await asyncio.to_thread(fetch_fii_dii_flow)
+            flow = await asyncio.wait_for(
+                asyncio.to_thread(fetch_fii_dii_flow),
+                timeout=8.0,
+            )
             if flow:
                 _flow_context.update(flow)
                 _flow_context["status"] = "ok"
@@ -2029,7 +2061,7 @@ async def _refresh_market_data_inner():
         global _derivatives_context
         try:
             from agents.data_ingestion.derivatives_oi import get_derivatives_intelligence
-            oi = await asyncio.wait_for(get_derivatives_intelligence("NIFTY"), timeout=20.0)
+            oi = await asyncio.wait_for(get_derivatives_intelligence("NIFTY"), timeout=10.0)
             if isinstance(oi, dict) and oi.get("status") == "ok":
                 _derivatives_context.clear()
                 _derivatives_context.update(oi)
@@ -2061,6 +2093,23 @@ async def _refresh_market_data_inner():
         except Exception as breadth_exc:
             logger.debug("Market breadth calculation failed: %s", breadth_exc)
             _breadth_context.update(status="unavailable", reason=str(breadth_exc)[:100])
+
+        # Persist updated Data Brain V3 context snapshot for instant cold-boot hydration
+        try:
+            from db.runtime_state import set_runtime_state
+            await asyncio.to_thread(
+                set_runtime_state,
+                "data_brain_v3_context:v1",
+                {
+                    "vix": dict(_vix_context),
+                    "flow": dict(_flow_context),
+                    "derivatives": dict(_derivatives_context),
+                    "breadth": dict(_breadth_context),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as persist_exc:
+            logger.debug("Failed to persist data brain v3 context: %s", persist_exc)
 
         _last_refresh = datetime.now()
         refresh_tracker.set_meta("nse_loaded", len(TOP_NSE_SYMBOLS))

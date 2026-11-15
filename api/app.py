@@ -219,6 +219,17 @@ def _lifespan_context():
                 svc.logger.warning("Signals cache hydration raised on startup: %s", exc)
 
             try:
+                await svc._hydrate_context_v3_from_db()
+                if svc._derivatives_context.get("status") != "ok":
+                    from agents.data_ingestion.derivatives_oi import get_derivatives_intelligence
+                    oi = await asyncio.wait_for(get_derivatives_intelligence("NIFTY"), timeout=5.0)
+                    if isinstance(oi, dict) and oi.get("status") == "ok":
+                        svc._derivatives_context.clear()
+                        svc._derivatives_context.update(oi)
+            except Exception as exc:
+                svc.logger.debug("Data Brain V3 startup context hydration skipped: %s", exc)
+
+            try:
                 from agents.market_intelligence.watchlist_analyzer import hydrate_watchlist_cache_from_db
                 hydrated_wl = await asyncio.to_thread(hydrate_watchlist_cache_from_db)
                 if hydrated_wl > 0:

@@ -2932,15 +2932,18 @@ def scan_all_symbols(
         if _cf is not None:
             for sym in symbol_data:
                 try:
-                    snap = _cf.get_snapshot_sync(sym)
-                    news_contexts[sym] = {
-                        "context_score": float(snap.context_score),
-                        "news_sentiment_24hr": float(snap.news_sentiment_24hr),
-                        "news_sentiment_7d": float(snap.news_sentiment_7d),
-                        "weekly_trend_bias": str(snap.weekly_trend_bias),
-                        "news_volume_spike": bool(snap.news_volume_spike),
-                        "event_risk_active": bool(snap.event_risk_active),
-                    }
+                    norm = _cf._normalize_symbol(sym)
+                    cached = _cf._get_cached_snapshot(norm)
+                    if cached:
+                        snap = _cf._snapshot_from_cache(cached)
+                        news_contexts[sym] = {
+                            "context_score": float(snap.context_score),
+                            "news_sentiment_24hr": float(snap.news_sentiment_24hr),
+                            "news_sentiment_7d": float(snap.news_sentiment_7d),
+                            "weekly_trend_bias": str(snap.weekly_trend_bias),
+                            "news_volume_spike": bool(snap.news_volume_spike),
+                            "event_risk_active": bool(snap.event_risk_active),
+                        }
                 except Exception:
                     pass
     except Exception:
