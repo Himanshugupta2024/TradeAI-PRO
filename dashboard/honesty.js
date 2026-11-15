@@ -70,6 +70,20 @@
             }
             if (!timeStr) timeStr = time;
 
+            // A degraded edge payload carries null quotes, so "est. HH:MM IST" would
+            // advertise an estimate that does not exist. The dashboard renders em
+            // dashes for every price in that state, so the label must say the same.
+            var isDegraded = source === 'DEGRADED_EDGE_FALLBACK' ||
+                window._lastMacroData.status === 'degraded';
+            if (isDegraded) {
+                if (timestamp) timestamp.textContent = 'Edge degraded \u2014 no live quotes';
+                if (dot) {
+                    dot.style.background = '#ef4444';
+                    dot.setAttribute('title', 'Origin unreachable \u2014 no live quotes');
+                }
+                return;
+            }
+
             if (timestamp) {
                 if (source === 'LIVE') {
                     timestamp.textContent = 'as of ' + timeStr + ' IST';
