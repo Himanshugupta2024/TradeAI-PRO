@@ -992,6 +992,82 @@ async function dispatchAutonomousCycle(env, fetchFn, now) {
   }
 }
 
+// Public origin of this Worker. The cron must warm the edge cache through THIS
+// origin, not through BACKEND_ORIGIN: only a request that re-enters the Worker's
+// own fetch handler reaches the `caches.default` lookup/store branch. Pinging
+// Render directly keeps the container awake but leaves the shared edge cache
+// empty, so the first dashboard load after an overnight gap still pays a cold
+// origin fetch - which is the window where 429/503 reaches the user.
+const DEFAULT_PUBLIC_ORIGIN = "https://tradeai-pro.tradingpro.workers.dev";
+
+// First-paint endpoints. Every entry must be present in PUBLIC_CACHEABLE_PATHS,
+// otherwise warmEdgeCache() would bypass the cache it is trying to fill.
+export const EDGE_WARM_PATHS = [
+  "/api/stats",
+  "/api/dashboard/overview",
+  "/api/signals/all",
+  "/api/screener/opportunities",
+  "/api/market-control/status",
+  "/api/macro/intelligence",
+  "/api/swing/shortlist",
+  "/api/autonomous/status",
+];
+
+// Pre-open warm window in IST minutes-of-day. Outside this range the cache is
+// kept warm by real traffic and by the 10-minute physical retention, so warming
+// every tick would only add load to a 0.1-CPU free instance.
+const EDGE_WARM_WINDOW_START_MIN = 8 * 60 + 30; // 08:30 IST
+const EDGE_WARM_WINDOW_END_MIN = 9 * 60 + 45; // 09:45 IST
+
+/**
+ * Pre-fill the shared edge cache so the stale-fallback branch stays populated.
+ *
+ * Calls are awaited one at a time on purpose: eight parallel fetches would land
+ * as a burst on a 0.1-CPU Render instance and starve the same health probe this
+ * cron exists to protect.
+ *
+ * Non-fatal by contract - a warm miss only costs the user a cold origin fetch.
+ */
+export async function warmEdgeCache(fetchFn = fetch, options = {}) {
+  const origin = String(options.origin || DEFAULT_PUBLIC_ORIGIN).replace(/\/+$/, "");
+  const paths =
+    Array.isArray(options.paths) && options.paths.length > 0 ? options.paths : EDGE_WARM_PATHS;
+  const warmed = [];
+
+  for (const path of paths) {
+    const target = `${origin}${path}`;
+    try {
+      const res = await fetchFn(target, {
+        method: "GET",
+        headers: {
+          "User-Agent": "TradeAI-Cloudflare-Cron-EdgeWarm/1.0",
+          "Accept": "application/json",
+        },
+      });
+      warmed.push({ path, status: res ? res.status : null, ok: Boolean(res && res.ok) });
+    } catch (err) {
+      warmed.push({ path, status: null, ok: false, error: String(err) });
+    }
+  }
+
+  const filled = warmed.filter((w) => w.ok).length;
+  return { origin, total: warmed.length, filled, warmed };
+}
+
+/** Edge-warm policy: env override wins, otherwise the IST pre-open window applies. */
+export function shouldWarmEdgeCache(env, now = new Date()) {
+  const mode = env && env.EDGE_WARM ? String(env.EDGE_WARM).toLowerCase() : "";
+  if (mode === "off" || mode === "false" || mode === "0") return { warm: false, reason: "disabled" };
+  if (mode === "always" || mode === "true" || mode === "1") return { warm: true, reason: "forced" };
+
+  const { weekday, minutesOfDay } = istClock(now);
+  if (weekday === 0 || weekday === 6) return { warm: false, reason: "weekend" };
+  if (minutesOfDay < EDGE_WARM_WINDOW_START_MIN || minutesOfDay >= EDGE_WARM_WINDOW_END_MIN) {
+    return { warm: false, reason: "outside_window" };
+  }
+  return { warm: true, reason: "pre_open_window" };
+}
+
 export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = new Date()) {
   // Keep-warm ping. Probe the cheap liveness route, not /api/health: the rich
   // health endpoint walks the DB, model registry and feed state, so a 2-minute
@@ -1030,8 +1106,24 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = ne
       );
     }
 
+    // Pre-fill the shared edge cache. Skipped when the liveness probe is not OK:
+    // an origin that is still booting or already rate-limiting must not receive
+    // eight extra requests. Non-fatal - the next tick retries.
+    let warm = null;
+    const warmDecision = shouldWarmEdgeCache(env, now);
+    if (warmDecision.warm) {
+      if (res && res.ok) {
+        const warmResult = await warmEdgeCache(fetchFn, {
+          origin: env && env.PUBLIC_ORIGIN ? env.PUBLIC_ORIGIN : undefined,
+        });
+        warm = { ...warmResult, reason: warmDecision.reason };
+      } else {
+        warm = { skipped: "unhealthy_origin", reason: warmDecision.reason };
+      }
+    }
+
     const cycle = await dispatchAutonomousCycle(env, fetchFn, now);
-    return { ok: res.ok, status: res.status, url: healthUrl, refresh, cycle };
+    return { ok: res.ok, status: res.status, url: healthUrl, refresh, warm, cycle };
   } catch (err) {
     console.error(`[cron] Health ping to ${healthUrl} failed:`, err);
     throw err;

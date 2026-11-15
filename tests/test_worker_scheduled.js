@@ -12,6 +12,9 @@ import worker, {
   getDegradedFallbackResponse,
   isPathCacheable,
   hasCrossedNseSessionBoundary,
+  warmEdgeCache,
+  shouldWarmEdgeCache,
+  EDGE_WARM_PATHS,
 } from '../src/worker.js';
 
 // In-memory mock Cache implementation adhering to Cloudflare Worker Cache API
@@ -63,25 +66,30 @@ async function runTests() {
   );
   console.log('✓ Test 0 passed.');
   console.log('Test 1: handleScheduled sends GET request to backend /api/health...');
-  let calledUrl = null;
-  let calledOptions = null;
+  const t1Calls = [];
 
   const mockFetch = async (url, options) => {
-    calledUrl = url;
-    calledOptions = options;
+    t1Calls.push({ url, options });
     return {
       ok: true,
       status: 200,
     };
   };
 
-  const result = await handleScheduled({ cron: '*/5 * * * *' }, {}, {}, mockFetch);
+  // 12:00 UTC Monday = 17:30 IST -> outside the pre-open edge-warm window, so the
+  // cron must issue exactly one request (the liveness ping) and nothing else.
+  const t1Now = new Date(Date.UTC(2026, 10, 9, 12, 0));
+  const result = await handleScheduled({ cron: '*/5 * * * *' }, {}, {}, mockFetch, t1Now);
+  assert.strictEqual(t1Calls.length, 1, 'outside the warm window the cron is a pure keep-alive');
+  const calledUrl = t1Calls[0].url;
+  const calledOptions = t1Calls[0].options;
   assert.strictEqual(calledUrl, 'https://trading-api-n1wt.onrender.com/api/health/live');
   assert.strictEqual(calledOptions.method, 'GET');
   assert.strictEqual(calledOptions.headers['User-Agent'], 'TradeAI-Cloudflare-Cron-KeepAlive/1.0');
   assert.strictEqual(calledOptions.headers['Accept'], 'application/json');
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.status, 200);
+  assert.strictEqual(result.warm, null, 'no edge warm outside the pre-open window');
   console.log('✓ Test 1 passed.');
 
   console.log('Test 2: handleScheduled propagates network error on fetch failure...');
@@ -591,6 +599,78 @@ async function runTests() {
     const wsPlain = await worker.fetch(new Request('https://edge.test/ws/prices'), {}, {});
     assert.strictEqual(wsPlain.status, 426);
     console.log('✓ Test 15 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 16: pre-open edge warm fills the shared cache through the public origin
+    // ------------------------------------------------------------------------
+    console.log('Test 16: cron warms the edge cache through the public origin before the open...');
+
+    // Every warm path must be edge-cacheable, otherwise the warm request skips
+    // the cache branch it is supposed to populate.
+    for (const path of EDGE_WARM_PATHS) {
+      assert.ok(isPathCacheable(path), `${path} must be edge-cacheable to be worth warming`);
+    }
+
+    // Policy: pre-open window only, env overrides win.
+    assert.deepStrictEqual(shouldWarmEdgeCache({}, at(3, 0)), { warm: true, reason: 'pre_open_window' }); // 08:30 IST
+    assert.deepStrictEqual(shouldWarmEdgeCache({}, at(4, 14)), { warm: true, reason: 'pre_open_window' }); // 09:44 IST
+    assert.deepStrictEqual(shouldWarmEdgeCache({}, at(4, 15)), { warm: false, reason: 'outside_window' }); // 09:45 IST, exclusive end
+    assert.deepStrictEqual(shouldWarmEdgeCache({}, at(2, 59)), { warm: false, reason: 'outside_window' }); // 08:29 IST
+    assert.deepStrictEqual(shouldWarmEdgeCache({}, at(4, 50)), { warm: false, reason: 'outside_window' }); // 10:20 IST
+    assert.deepStrictEqual(shouldWarmEdgeCache({ EDGE_WARM: 'off' }, at(3, 30)), { warm: false, reason: 'disabled' });
+    assert.deepStrictEqual(shouldWarmEdgeCache({ EDGE_WARM: 'always' }, at(12, 0)), { warm: true, reason: 'forced' });
+    assert.deepStrictEqual(shouldWarmEdgeCache({}, at(3, 30, 7)), { warm: false, reason: 'weekend' }); // Saturday
+
+    // warmEdgeCache must hit the PUBLIC worker origin and walk the list serially.
+    const warmCalls = [];
+    const warmFetch = async (url, options = {}) => {
+      warmCalls.push({ url, options });
+      return { ok: true, status: 200 };
+    };
+    const warmResult = await warmEdgeCache(warmFetch);
+    assert.strictEqual(warmCalls.length, EDGE_WARM_PATHS.length);
+    assert.strictEqual(warmResult.total, EDGE_WARM_PATHS.length);
+    assert.strictEqual(warmResult.filled, EDGE_WARM_PATHS.length);
+    assert.strictEqual(warmResult.origin, 'https://tradeai-pro.tradingpro.workers.dev');
+    for (const call of warmCalls) {
+      assert.ok(
+        call.url.startsWith('https://tradeai-pro.tradingpro.workers.dev/api/'),
+        `warm call must use the public origin, got ${call.url}`
+      );
+      assert.strictEqual(call.options.method, 'GET');
+      assert.strictEqual(call.options.headers['User-Agent'], 'TradeAI-Cloudflare-Cron-EdgeWarm/1.0');
+    }
+
+    // A warm failure is non-fatal: the run reports it and moves on.
+    const partialWarm = await warmEdgeCache(async (url) => {
+      if (String(url).includes('/api/stats')) throw new Error('origin cold');
+      return { ok: true, status: 200 };
+    });
+    assert.strictEqual(partialWarm.total, EDGE_WARM_PATHS.length);
+    assert.strictEqual(partialWarm.filled, EDGE_WARM_PATHS.length - 1);
+    assert.strictEqual(partialWarm.warmed[0].ok, false);
+    assert.match(partialWarm.warmed[0].error, /origin cold/);
+
+    // Full cron tick inside the window: health ping -> light refresh -> warm.
+    const tickCalls = [];
+    const tickResult = await handleScheduled(
+      { cron: '*/2 3-10 * * 1-5' },
+      {},
+      {},
+      async (url, options = {}) => {
+        tickCalls.push({ url, options });
+        return { ok: true, status: 200 };
+      },
+      at(3, 30) // 09:00 IST, 15 minutes before the open
+    );
+    const healthCalls = tickCalls.filter((c) => String(c.url).includes('/api/health/live'));
+    const edgeWarmCalls = tickCalls.filter((c) => String(c.url).includes('tradeai-pro.tradingpro.workers.dev'));
+    assert.strictEqual(healthCalls.length, 1, 'liveness ping still comes first and only once');
+    assert.strictEqual(edgeWarmCalls.length, EDGE_WARM_PATHS.length, 'every warm path is requested once');
+    assert.strictEqual(tickResult.warm.reason, 'pre_open_window');
+    assert.strictEqual(tickResult.warm.filled, EDGE_WARM_PATHS.length);
+    assert.strictEqual(tickResult.cycle.dispatched, false, 'no dispatch without GH_PAT');
+    console.log('� Test 16 passed.');
 
   } finally {
     // Restore global fetch and caches
