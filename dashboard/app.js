@@ -26070,7 +26070,9 @@ async function loadMacroIntelligence(force = false) {
         const res = await fetchWithTimeout(`${API}/api/macro/intelligence${force ? '?force_refresh=true' : ''}`, {}, 15000);
         if (!res.ok) return;
         const data = await parseJsonResponse(res);
-        if (data.status === 'ok' && data.macro) {
+        // Accept degraded payloads so the panel can actively blank its numbers.
+        // Ignoring them left previously rendered (now stale) quotes on screen.
+        if ((data.status === 'ok' || data.status === 'degraded') && data.macro) {
             _lastMacroData = data.macro;
             _lastMacroFetchTs = now;
             renderMacroIntelligence(_lastMacroData);
@@ -26089,6 +26091,19 @@ function renderMacroIntelligence(macro) {
     const dxy = macro.dxy_dollar_index;
     const sp = macro.sp500;
     const gold = macro.gold;
+    const isDegraded = macro.feed_source === 'DEGRADED_EDGE_FALLBACK' || macro.status === 'degraded';
+
+    // A quote only counts when it is a real finite number. Degraded edge payloads
+    // ship price:null on purpose; rendering Number(null).toFixed(2) would print a
+    // fabricated $0.00 barrel, so missing quotes get an explicit blank instead.
+    const hasQuote = (q) => !!q && q.price !== null && q.price !== undefined && Number.isFinite(Number(q.price));
+    const blankQuote = (priceEl, subEl, unit) => {
+        if (priceEl) priceEl.textContent = '\u2014';
+        if (subEl) {
+            subEl.textContent = `no data \u2022 ${unit}`;
+            subEl.style.color = 'var(--text-muted, #8b949e)';
+        }
+    };
 
     const fmtPct = (p) => `${p >= 0 ? '+' : ''}${Number(p || 0).toFixed(2)}%`;
     const colorPct = (el, p, inverse = false) => {
@@ -26101,76 +26116,94 @@ function renderMacroIntelligence(macro) {
     // Brent Crude
     const bPrice = document.getElementById('macroBrentPrice');
     const bSub = document.getElementById('macroBrentSub');
-    if (bPrice && brent) {
+    if (bPrice && hasQuote(brent)) {
         bPrice.textContent = `$${Number(brent.price).toFixed(2)}`;
         if (bSub) {
             bSub.textContent = `${fmtPct(brent.change_pct)} • $/bbl`;
             colorPct(bSub, brent.change_pct, false);
         }
+    } else {
+        blankQuote(bPrice, bSub, '$/bbl');
     }
 
     // WTI Crude
     const wPrice = document.getElementById('macroWtiPrice');
     const wSub = document.getElementById('macroWtiSub');
-    if (wPrice && wti) {
+    if (wPrice && hasQuote(wti)) {
         wPrice.textContent = `$${Number(wti.price).toFixed(2)}`;
         if (wSub) {
             wSub.textContent = `${fmtPct(wti.change_pct)} • $/bbl`;
             colorPct(wSub, wti.change_pct, false);
         }
+    } else {
+        blankQuote(wPrice, wSub, '$/bbl');
     }
 
     // US 10Y Yield
     const yPrice = document.getElementById('macroYieldPrice');
     const ySub = document.getElementById('macroYieldSub');
-    if (yPrice && y10) {
+    if (yPrice && hasQuote(y10)) {
         yPrice.textContent = `${Number(y10.price).toFixed(2)}%`;
         if (ySub) {
             ySub.textContent = `${fmtPct(y10.change_pct)} • Treasuries`;
             colorPct(ySub, y10.change_pct, false);
         }
+    } else {
+        blankQuote(yPrice, ySub, 'Treasuries');
     }
 
     // Dollar Index DXY
     const dPrice = document.getElementById('macroDxyPrice');
     const dSub = document.getElementById('macroDxySub');
-    if (dPrice && dxy) {
+    if (dPrice && hasQuote(dxy)) {
         dPrice.textContent = Number(dxy.price).toFixed(2);
         if (dSub) {
             dSub.textContent = `${fmtPct(dxy.change_pct)} • DXY`;
             colorPct(dSub, dxy.change_pct, false);
         }
+    } else {
+        blankQuote(dPrice, dSub, 'DXY');
     }
 
     // S&P 500
     const sPrice = document.getElementById('macroSp500Price');
     const sSub = document.getElementById('macroSp500Sub');
-    if (sPrice && sp) {
+    if (sPrice && hasQuote(sp)) {
         sPrice.textContent = Number(sp.price).toLocaleString('en-US', { maximumFractionDigits: 0 });
         if (sSub) {
             sSub.textContent = `${fmtPct(sp.change_pct)} • Wall St`;
             colorPct(sSub, sp.change_pct, false);
         }
+    } else {
+        blankQuote(sPrice, sSub, 'Wall St');
     }
 
     // Gold
     const gPrice = document.getElementById('macroGoldPrice');
     const gSub = document.getElementById('macroGoldSub');
-    if (gPrice && gold) {
+    if (gPrice && hasQuote(gold)) {
         gPrice.textContent = `$${Number(gold.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
         if (gSub) {
             gSub.textContent = `${fmtPct(gold.change_pct)} • $/oz`;
             colorPct(gSub, gold.change_pct, false);
         }
+    } else {
+        blankQuote(gPrice, gSub, '$/oz');
     }
 
     // Macro Feed Source / Timestamp
+    // A degraded edge payload is not a "Session Close" — labelling stale or absent
+    // quotes that way implied the market had closed with those numbers frozen.
     const tsEl = document.getElementById('macroTimestamp');
     if (tsEl) {
-        const isLive = macro.feed_source === 'LIVE';
-        tsEl.innerHTML = isLive
-            ? `<span style="display:inline-flex;align-items:center;gap:4px;color:#10b981;font-weight:600;"><span style="width:6px;height:6px;background:#10b981;border-radius:50%;display:inline-block;"></span>Live Commodities</span>`
-            : `<span style="display:inline-flex;align-items:center;gap:4px;color:#f59e0b;font-weight:600;"><span style="width:6px;height:6px;background:#f59e0b;border-radius:50%;display:inline-block;"></span>Session Close</span>`;
+        if (isDegraded) {
+            tsEl.innerHTML = `<span style="display:inline-flex;align-items:center;gap:4px;color:#ef4444;font-weight:600;"><span style="width:6px;height:6px;background:#ef4444;border-radius:50%;display:inline-block;"></span>Edge degraded — no live quotes</span>`;
+        } else {
+            const isLive = macro.feed_source === 'LIVE';
+            tsEl.innerHTML = isLive
+                ? `<span style="display:inline-flex;align-items:center;gap:4px;color:#10b981;font-weight:600;"><span style="width:6px;height:6px;background:#10b981;border-radius:50%;display:inline-block;"></span>Live Commodities</span>`
+                : `<span style="display:inline-flex;align-items:center;gap:4px;color:#f59e0b;font-weight:600;"><span style="width:6px;height:6px;background:#f59e0b;border-radius:50%;display:inline-block;"></span>Session Close</span>`;
+        }
     }
 
     // Cue Pill

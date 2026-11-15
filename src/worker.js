@@ -230,19 +230,22 @@ export function getDegradedFallbackResponse(pathname) {
 
   if (normPath === "/api/macro/intelligence") {
     const nowIso = new Date().toISOString();
+    // Honesty contract: when the origin is unreachable we must NOT invent prices.
+    // Every quote is null and the payload is explicitly marked degraded, so the
+    // dashboard can render "no data" instead of a fabricated $82.50 barrel.
     const payload = {
-      status: "ok",
+      status: "degraded",
       macro: {
         timestamp: nowIso,
-        brent_crude: { symbol: "BZ=F", name: "Brent Crude Oil", price: 82.5, change_pct: 0.0, unit: "$/bbl", status: "NEUTRAL" },
-        wti_crude: { symbol: "CL=F", name: "WTI Crude Oil", price: 78.2, change_pct: 0.0, unit: "$/bbl", status: "NEUTRAL" },
-        us_10y_yield: { symbol: "^TNX", name: "US 10-Year Yield", price: 4.25, change_pct: 0.0, unit: "%", status: "NEUTRAL" },
-        dxy_dollar_index: { symbol: "DX-Y.NYB", name: "US Dollar Index", price: 104.1, change_pct: 0.0, unit: "pts", status: "NEUTRAL" },
-        sp500: { symbol: "^GSPC", name: "S&P 500 (US)", price: 5000.0, change_pct: 0.0, unit: "pts", status: "NEUTRAL" },
-        nasdaq: { symbol: "^IXIC", name: "Nasdaq Composite", price: 16000.0, change_pct: 0.0, unit: "pts", status: "NEUTRAL" },
-        gold: { symbol: "GC=F", name: "Gold", price: 2350.0, change_pct: 0.0, unit: "$/oz", status: "NEUTRAL" },
-        macro_regime: "NEUTRAL",
-        macro_cue_summary: "Macro radar on standby. Indicators in neutral posture while origin settles.",
+        brent_crude: { symbol: "BZ=F", name: "Brent Crude Oil", price: null, change_pct: null, unit: "$/bbl", status: "UNKNOWN" },
+        wti_crude: { symbol: "CL=F", name: "WTI Crude Oil", price: null, change_pct: null, unit: "$/bbl", status: "UNKNOWN" },
+        us_10y_yield: { symbol: "^TNX", name: "US 10-Year Yield", price: null, change_pct: null, unit: "%", status: "UNKNOWN" },
+        dxy_dollar_index: { symbol: "DX-Y.NYB", name: "US Dollar Index", price: null, change_pct: null, unit: "pts", status: "UNKNOWN" },
+        sp500: { symbol: "^GSPC", name: "S&P 500 (US)", price: null, change_pct: null, unit: "pts", status: "UNKNOWN" },
+        nasdaq: { symbol: "^IXIC", name: "Nasdaq Composite", price: null, change_pct: null, unit: "pts", status: "UNKNOWN" },
+        gold: { symbol: "GC=F", name: "Gold", price: null, change_pct: null, unit: "$/oz", status: "UNKNOWN" },
+        macro_regime: "UNKNOWN",
+        macro_cue_summary: "Macro radar unreachable. No quotes rendered while the origin settles.",
         active_sector_alerts: [],
         breaking_news: [],
         feed_source: "DEGRADED_EDGE_FALLBACK",

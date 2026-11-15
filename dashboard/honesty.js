@@ -21,7 +21,11 @@
         var el = document.getElementById(id);
         if (!el) return null;
         var value = (el.textContent || '').trim();
-        return value && value !== '\u2014' ? value : null;
+        // The HTML ships "-" placeholders while JS renders "\u2014". Both mean
+        // "no data"; treating "-" as a value lit the green data dot on an empty panel.
+        if (!value) return null;
+        if (value === '\u2014' || value === '-' || value === '--') return null;
+        return value;
     }
 
     function hasMacroData() {

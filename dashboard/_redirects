@@ -6,4 +6,6 @@
 /landing/   /landing.html   200
 /legal      /legal.html     200
 /legal/     /legal.html     200
+/track-record    /track-record.html    200
+/track-record/   /track-record.html    200
 /static/*   /:splat         200
