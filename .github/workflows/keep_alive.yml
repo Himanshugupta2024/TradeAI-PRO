@@ -1,10 +1,9 @@
 name: Production Backend Keep-Alive
 
 on:
-  schedule:
-    # Public Repo: Free unlimited Linux runner minutes
-    # Keep Render Free container 100% warm 24/7 (Render sleeps after 15m idle)
-    - cron: '*/14 * * * *'
+  # Schedule disabled to conserve Render Free pooled instance-hours (Cloudflare Worker cron is the single keep-warm source during market hours)
+  # schedule:
+  #   - cron: '*/14 3-10 * * 1-5'
   workflow_dispatch:
     inputs:
       target_url:

@@ -2,8 +2,8 @@ name: Production Health Probe
 
 on:
   schedule:
-    # Every 30 minutes. The probe itself is read-only.
-    - cron: '*/30 * * * *'
+    # Read-only health probe restricted to NSE market hours (08:30-16:29 IST Mon-Fri) to avoid waking Render off-hours
+    - cron: '*/30 3-10 * * 1-5'
   workflow_dispatch:
 
 concurrency:
