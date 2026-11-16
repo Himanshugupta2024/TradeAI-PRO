@@ -326,35 +326,96 @@ def test_repeated_payload_hydration_is_strictly_idempotent():
         assert engine2.trades[0].quote_currency == "USDT"
 
 
-def test_reconcile_stored_outcomes_vs_eligible_forward_trades():
+def test_backfill_classifies_forward_legacy_and_quarantined():
     """
-    Reconciles the 15 stored records in trade_outcomes_pg:
-    Validates that:
-    - Exactly 9 records are genuine PAPER_FORWARD trades.
-    - Remaining records are tagged LEGACY_INCOMPLETE / backfill.
+    Drives backfill_closed_paper_trades() against the isolated test database.
+
+    This replaces a check that opened the developer's real `trading.db` by
+    relative path and asserted a snapshot of one machine's rows (`>= 9`
+    PAPER_FORWARD, `>= 3` LEGACY_INCOMPLETE). That version skipped silently
+    whenever the file was absent, so CI was green without checking anything,
+    and on the machine that did have data it asserted recorded history rather
+    than the classification contract. Measured history stays in the repo as
+    evidence; the rule belongs in a test.
     """
-    import sqlite3
-    from pathlib import Path
-    db_path = Path("trading.db")
-    if not db_path.exists():
-        pytest.skip("trading.db not found")
+    from agents.analytics.feedback_loop import backfill_closed_paper_trades
+    from db.connection import SessionLocal
+    from db.models import TradeOutcome
 
-    with sqlite3.connect("trading.db") as conn:
-        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-        if "trade_outcomes_pg" not in tables:
-            pytest.skip("trade_outcomes_pg table not in trading.db")
+    prefix = "ZZBACKFILL"
 
-        forward_count = conn.execute(
-            "SELECT count(*) FROM trade_outcomes_pg WHERE environment = 'PAPER_FORWARD'"
-        ).fetchone()[0]
-        if forward_count < 9:
-            pytest.skip(f"Historical PAPER_FORWARD seed data not present in trading.db (found {forward_count})")
-        assert forward_count >= 9, f"Expected at least 9 PAPER_FORWARD trades, found {forward_count}"
+    def _row(trade_pk, symbol, *, regime="TRENDING", confidence=72.0,
+             exit_time="2026-11-13T09:30:00+05:30"):
+        return {
+            "id": trade_pk,
+            "symbol": symbol,
+            "direction": "LONG",
+            "signal_type": "BREAKOUT",
+            "regime": regime,
+            "confidence": confidence,
+            "entry_price": 100.0,
+            "exit_price": 102.0,
+            "pnl_pct": 2.0,
+            "exit_time": exit_time,
+            "status": "CLOSED_TARGET",
+            "total_pnl": 200.0,
+            "quantity": 1.0,
+        }
 
-        legacy_count = conn.execute(
-            "SELECT count(*) FROM trade_outcomes_pg WHERE environment = 'LEGACY_INCOMPLETE'"
-        ).fetchone()[0]
-        assert legacy_count >= 3, f"Expected at least 3 LEGACY_INCOMPLETE trades, found {legacy_count}"
+    complete = _row(990001, f"{prefix}_ONE")
+    duplicate_of_complete = _row(990001, f"{prefix}_ONE")
+    incomplete = _row(990002, f"{prefix}_TWO", regime="UNKNOWN",
+                      confidence=0.0, exit_time=None)
+    mock = _row(990003, f"MOCK_{prefix}")
+
+    try:
+        stats = backfill_closed_paper_trades(
+            [complete, duplicate_of_complete, incomplete, mock]
+        )
+        assert stats["total_evaluated"] == 4, stats
+        assert stats["genuine_forward"] == 1, stats
+        assert stats["legacy_incomplete"] == 1, stats
+        assert stats["quarantined_test"] == 1, stats
+        assert stats["already_exists"] == 1, stats
+
+        session = SessionLocal()
+        try:
+            stored = (
+                session.query(TradeOutcome)
+                .filter(TradeOutcome.symbol.like(f"{prefix}%"))
+                .all()
+            )
+            # The mock symbol never reaches the table.
+            assert len(stored) == 2, [r.symbol for r in stored]
+            assert sorted(r.environment for r in stored) == [
+                "LEGACY_INCOMPLETE",
+                "PAPER_FORWARD",
+            ]
+            assert len({r.trade_id for r in stored}) == len(stored)
+
+            # A re-run is idempotent, and the audit dict says so instead of
+            # reporting every row as a fresh insert.
+            stats_again = backfill_closed_paper_trades([complete, incomplete])
+            assert stats_again["already_exists"] == 2, stats_again
+            assert stats_again["genuine_forward"] == 0, stats_again
+            assert stats_again["legacy_incomplete"] == 0, stats_again
+            assert (
+                session.query(TradeOutcome)
+                .filter(TradeOutcome.symbol.like(f"{prefix}%"))
+                .count()
+                == 2
+            )
+        finally:
+            session.close()
+    finally:
+        session = SessionLocal()
+        try:
+            session.query(TradeOutcome).filter(
+                TradeOutcome.symbol.like(f"{prefix}%")
+            ).delete(synchronize_session=False)
+            session.commit()
+        finally:
+            session.close()
 
 
 

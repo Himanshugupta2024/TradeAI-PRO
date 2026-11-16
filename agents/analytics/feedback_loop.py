@@ -829,6 +829,26 @@ def backfill_closed_paper_trades(trades_list: list[dict[str, Any]]) -> dict[str,
         "already_exists": 0,
     }
 
+    # The audit dict promises an `already_exists` count, so it has to be real:
+    # `log_closed_trade` silently returns the existing id for a duplicate
+    # trade_id, which used to make a re-run report every row as a fresh insert.
+    existing_ids: set[str] = set()
+    try:
+        from db.models import TradeOutcome
+
+        session = _get_pg_session()
+        try:
+            existing_ids = {
+                row[0]
+                for row in session.query(TradeOutcome.trade_id)
+                .filter(TradeOutcome.trade_id.isnot(None))
+                .all()
+            }
+        finally:
+            session.close()
+    except Exception as exc:
+        log.debug("Backfill duplicate pre-check unavailable: %s", exc)
+
     for td in trades_list:
         status = td.get("status") or td.get("exit_reason", "")
         if status == "OPEN":
@@ -842,6 +862,10 @@ def backfill_closed_paper_trades(trades_list: list[dict[str, Any]]) -> dict[str,
         trade_id = f"pt-{td.get('id')}"
         regime = str(td.get("regime") or "UNKNOWN").upper()
         confidence = float(td.get("confidence") or 0.0)
+
+        if trade_id in existing_ids:
+            stats["already_exists"] += 1
+            continue
 
         # Check if complete
         is_complete = (
@@ -880,6 +904,8 @@ def backfill_closed_paper_trades(trades_list: list[dict[str, Any]]) -> dict[str,
             quantity=td.get("quantity"),
             environment=env,
         )
+        if out_id is not None:
+            existing_ids.add(trade_id)
 
     return stats
 
