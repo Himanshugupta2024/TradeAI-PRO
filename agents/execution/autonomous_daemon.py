@@ -379,6 +379,11 @@ class AutonomousExecutionDaemon:
                 "regime": cand_regime,
                 "rsi": sig.get("rsi_at_entry", sig.get("rsi", 50.0)),
                 "volume_above_avg": bool(sig.get("volume_above_avg", False)),
+                # Calibrated probability provenance; never inferred from the
+                # 0-100 `confidence` heuristic.
+                "p_calibrated": sig.get("p_calibrated"),
+                "p_source": sig.get("p_source"),
+                "calibration_active": sig.get("calibration_active"),
             })
 
         # Rank candidates by QS Score descending, then AI confidence
@@ -387,6 +392,11 @@ class AutonomousExecutionDaemon:
         executed_trades = []
 
         for cand in selected:
+            try:
+                from agents.ai_engine.calibrator import probability_from_signal
+                _p_cal, _p_src = probability_from_signal(cand)
+            except Exception:
+                _p_cal, _p_src = None, "calibrator_unavailable"
             try:
                 trade = engine.execute(
                     symbol=cand["symbol"],
@@ -401,6 +411,8 @@ class AutonomousExecutionDaemon:
                     rsi_at_entry=cand["rsi"],
                     volume_above_avg=cand["volume_above_avg"],
                     confidence=cand["ai_confidence"],
+                    p_calibrated=_p_cal,
+                    p_source=_p_src,
                 )
                 if trade:
                     executed_trades.append(trade)

@@ -123,6 +123,11 @@ class PaperTrade:
     rsi_at_entry: float = 0.0       # RSI value at signal bar
     volume_above_avg: bool = False   # was volume > 1.5x avg at entry?
     confidence: float = 0.0         # AI confidence score at signal time
+    # Calibrated win probability at entry (0-1). None when the ensemble ran
+    # without a fitted calibrator. Kept separate from `confidence` so a 0-100
+    # heuristic can never be reinterpreted as a probability downstream.
+    p_calibrated: float | None = None
+    p_source: str = ""              # e.g. ensemble_calibrator / unavailable
     # ── Raw vs Final Geometry Audit ───────────────────────────────────────
     entry_raw: float = 0.0
     stop_raw: float = 0.0
@@ -240,6 +245,8 @@ class PaperTradingEngine:
         rsi_at_entry: float = 0.0,
         volume_above_avg: bool = False,
         confidence: float = 0.0,
+        p_calibrated: float | None = None,
+        p_source: str = "",
         min_rr: float | None = None,
         allow_duplicate_symbol: bool = False,
     ) -> PaperTrade | None:
@@ -247,8 +254,10 @@ class PaperTradingEngine:
         Execute a paper trade if risk rules allow it.
 
         Extra keyword params (signal_type, regime, rsi_at_entry, volume_above_avg,
-        confidence) are stored on the trade and later forwarded to the feedback
-        logger when the trade closes.
+        confidence, p_calibrated, p_source) are stored on the trade and later
+        forwarded to the feedback logger when the trade closes. `p_calibrated`
+        stays None when no fitted calibrator produced a probability — it is not
+        derived from the 0-100 `confidence` heuristic.
 
         Returns:
             PaperTrade if executed, None if blocked by risk rules.
@@ -583,6 +592,8 @@ class PaperTradingEngine:
             rsi_at_entry=rsi_at_entry,
             volume_above_avg=volume_above_avg,
             confidence=confidence,
+            p_calibrated=p_calibrated,
+            p_source=p_source,
             entry_raw=entry_raw,
             stop_raw=sl_raw,
             target_raw=tp_raw,
@@ -1738,6 +1749,8 @@ class PaperTradingEngine:
                 pnl_pct=trade.pnl_pct,
                 exit_reason=status,
                 confidence=getattr(trade, "confidence", 0.0),
+                p_calibrated=getattr(trade, "p_calibrated", None),
+                p_source=getattr(trade, "p_source", ""),
                 asset_class=asset_class,
                 entry_time=trade.entry_time,
                 exit_time=trade.exit_time,

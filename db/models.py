@@ -577,6 +577,11 @@ class TradeOutcome(Base):
     target = Column(Float, nullable=True)
     pnl = Column(Float, nullable=True)
     quantity = Column(Float, nullable=True)
+    # Calibrated win probability captured at entry, 0-1. NULL is the honest
+    # state when no fitted calibrator was loaded. `confidence` is a separate
+    # 0-100 heuristic score and must never be read as a probability.
+    p_calibrated = Column(Float, nullable=True)
+    p_source = Column(String(32), nullable=True)
 
     __table_args__ = (
         Index("idx_trade_outcomes_pg_signal_type", "signal_type"),

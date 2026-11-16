@@ -79,49 +79,70 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
 
+def _add_missing_columns(conn, table: str, cols_to_add: list[tuple[str, str]]) -> None:
+    """Add columns that exist on the ORM model but not yet in the live table."""
+    existing: set[str] = set()
+    try:
+        if "sqlite" in str(engine.url):
+            res = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            existing = {r[1] for r in res}
+        else:
+            res = conn.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = :t"),
+                {"t": table},
+            ).fetchall()
+            existing = {r[0] for r in res}
+    except Exception:
+        return
+
+    # A table that does not exist yet is created by Base.metadata.create_all,
+    # so there is nothing to migrate.
+    if not existing:
+        return
+
+    for col_name, col_type in cols_to_add:
+        if col_name in existing:
+            continue
+        try:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}"))
+            conn.commit()
+            logger.info("Migrated %s: added column %s", table, col_name)
+        except Exception as e:
+            logger.debug("Could not add column %s.%s: %s", table, col_name, e)
+
+
 def _migrate_schema():
     """Add any missing columns to existing tables for backwards compatibility."""
     try:
         with engine.connect() as conn:
-            # Check intraday_scans columns
-            cols_to_add = [
-                ("scan_id", "VARCHAR(64)"),
-                ("started_at", "TIMESTAMP"),
-                ("completed_at", "TIMESTAMP"),
-                ("source_last_candle_at", "TIMESTAMP"),
-                ("market_session_date", "DATE"),
-                ("provider", "VARCHAR(32) DEFAULT 'yfinance'"),
-                ("provider_freshness", "VARCHAR(32) DEFAULT '15m Delayed'"),
-                ("symbols_attempted", "INTEGER DEFAULT 0"),
-                ("symbols_successful", "INTEGER DEFAULT 0"),
-                ("symbols_failed", "INTEGER DEFAULT 0"),
-                ("scanner_version", "VARCHAR(16) DEFAULT '2.0.0'"),
-                ("scan_duration_ms", "INTEGER DEFAULT 0"),
-                ("meta_json", "TEXT"),
-            ]
-            
-            # Check existing columns
-            existing = set()
-            try:
-                if "sqlite" in str(engine.url):
-                    res = conn.execute(text("PRAGMA table_info(intraday_scans)")).fetchall()
-                    existing = {r[1] for r in res}
-                else:
-                    res = conn.execute(text(
-                        "SELECT column_name FROM information_schema.columns WHERE table_name = 'intraday_scans'"
-                    )).fetchall()
-                    existing = {r[0] for r in res}
-            except Exception:
-                pass
-
-            for col_name, col_type in cols_to_add:
-                if existing and col_name not in existing:
-                    try:
-                        conn.execute(text(f"ALTER TABLE intraday_scans ADD COLUMN {col_name} {col_type}"))
-                        conn.commit()
-                        logger.info("Migrated intraday_scans: added column %s", col_name)
-                    except Exception as e:
-                        logger.debug("Could not add column %s: %s", col_name, e)
+            _add_missing_columns(
+                conn,
+                "intraday_scans",
+                [
+                    ("scan_id", "VARCHAR(64)"),
+                    ("started_at", "TIMESTAMP"),
+                    ("completed_at", "TIMESTAMP"),
+                    ("source_last_candle_at", "TIMESTAMP"),
+                    ("market_session_date", "DATE"),
+                    ("provider", "VARCHAR(32) DEFAULT 'yfinance'"),
+                    ("provider_freshness", "VARCHAR(32) DEFAULT '15m Delayed'"),
+                    ("symbols_attempted", "INTEGER DEFAULT 0"),
+                    ("symbols_successful", "INTEGER DEFAULT 0"),
+                    ("symbols_failed", "INTEGER DEFAULT 0"),
+                    ("scanner_version", "VARCHAR(16) DEFAULT '2.0.0'"),
+                    ("scan_duration_ms", "INTEGER DEFAULT 0"),
+                    ("meta_json", "TEXT"),
+                ],
+            )
+            # Calibrated probability provenance (drift monitoring needs it).
+            _add_missing_columns(
+                conn,
+                "trade_outcomes_pg",
+                [
+                    ("p_calibrated", "FLOAT"),
+                    ("p_source", "VARCHAR(32)"),
+                ],
+            )
     except Exception as exc:
         logger.debug("Schema migration check skipped: %s", exc)
 

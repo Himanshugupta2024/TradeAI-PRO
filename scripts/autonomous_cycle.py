@@ -468,6 +468,12 @@ async def run_single_autonomous_cycle(
                             "candle_time": c_time,
                             "timestamp": c_time,
                             "data_status": freshness,
+                            # Calibrated probability provenance, when the signal
+                            # pipeline actually carries one. Never derived from
+                            # the 0-100 `confidence` heuristic.
+                            "p_calibrated": sig_last.get("p_calibrated"),
+                            "p_source": sig_last.get("p_source"),
+                            "calibration_active": sig_last.get("calibration_active"),
                         }
                         candidate_signals.append(sig_dict)
                         all_scanned_signals.append(sig_dict)
@@ -559,6 +565,11 @@ async def run_single_autonomous_cycle(
 
                 for cand in selected:
                     try:
+                        from agents.ai_engine.calibrator import probability_from_signal
+                        _p_cal, _p_src = probability_from_signal(cand)
+                    except Exception:
+                        _p_cal, _p_src = None, "calibrator_unavailable"
+                    try:
                         trade = engine_inst.execute(
                             symbol=cand["symbol"],
                             direction=cand["direction"],
@@ -570,6 +581,8 @@ async def run_single_autonomous_cycle(
                             regime=cand["regime"],
                             rsi_at_entry=cand["rsi"],
                             confidence=cand["confidence"],
+                            p_calibrated=_p_cal,
+                            p_source=_p_src,
                             min_rr=1.5,
                         )
                         if trade:

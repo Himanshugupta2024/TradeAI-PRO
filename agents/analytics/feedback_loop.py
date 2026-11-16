@@ -218,6 +218,8 @@ class TradeOutcomeLogger:
         environment: str = "PAPER_FORWARD",
         mfe_r: Optional[float] = None,
         mae_r: Optional[float] = None,
+        p_calibrated: Optional[float] = None,
+        p_source: Optional[str] = None,
     ) -> Optional[int]:
         """
         Log one closed trade outcome to PostgreSQL trade_outcomes_pg table.
@@ -228,6 +230,25 @@ class TradeOutcomeLogger:
 
         # Normalise signal_type
         signal_type = _normalise_signal_type(signal_type)
+
+        # Calibrated probability provenance. Only a value inside (0, 1] is a
+        # probability; 0-100 percentages are converted, anything else is dropped
+        # rather than clipped, so a garbage value cannot look like a real one.
+        prob: Optional[float] = None
+        prob_source: Optional[str] = (p_source or "").strip() or None
+        if p_calibrated is not None:
+            try:
+                candidate: Optional[float] = float(p_calibrated)
+            except (TypeError, ValueError):
+                candidate = None
+            if candidate is not None and 1.0 < candidate <= 100.0:
+                candidate = candidate / 100.0
+            if candidate is not None and 0.0 < candidate <= 1.0:
+                prob = candidate
+                prob_source = prob_source or "unspecified"
+            else:
+                prob = None
+                prob_source = f"{prob_source or 'unspecified'}_rejected"
 
         # Quarantine test / mock / demo trades from adaptive learning
         sym_upper = (symbol or "").upper()
@@ -285,6 +306,8 @@ class TradeOutcomeLogger:
                     target=target,
                     pnl=pnl,
                     quantity=quantity,
+                    p_calibrated=prob,
+                    p_source=prob_source,
                 )
                 session.add(outcome)
                 session.commit()
@@ -914,6 +937,105 @@ def backfill_closed_paper_trades(trades_list: list[dict[str, Any]]) -> dict[str,
 # Public API helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def check_probability_drift(lookback: int = 500) -> dict:
+    """
+    Run the live calibration-drift monitor over genuine PAPER_FORWARD outcomes.
+
+    Only rows carrying a real calibrated probability (`p_calibrated`) can
+    contribute. Rows that only have the 0-100 `confidence` heuristic are
+    reported under `heuristic_only` instead of being treated as predictions,
+    so a report built entirely on them stays INSUFFICIENT_SAMPLE rather than
+    looking healthy. The report is persisted to runtime_state under
+    `calibration_drift:v1` so the operator can tell "monitor is blind" apart
+    from "calibration is fine".
+    """
+    report: dict = {
+        "status": "UNAVAILABLE",
+        "sample_size": 0,
+        "drift_detected": False,
+        "recommendation": "Calibration drift monitor could not read trade outcomes.",
+    }
+    try:
+        from db.models import TradeOutcome
+
+        session = _get_pg_session()
+        try:
+            query = session.query(TradeOutcome).filter(
+                TradeOutcome.environment == "PAPER_FORWARD",
+                ~TradeOutcome.symbol.like("TEST%"),
+                ~TradeOutcome.symbol.like("MOCK%"),
+                ~TradeOutcome.symbol.like("DEMO%"),
+                ~TradeOutcome.symbol.like("SIM_%"),
+            )
+            trades_total = int(query.count())
+            rows = query.order_by(TradeOutcome.id.desc()).limit(lookback).all()
+            payload = [
+                {
+                    "p_calibrated": r.p_calibrated,
+                    "confidence": r.confidence,
+                    "exit_reason": r.exit_reason,
+                    "pnl": r.pnl,
+                    "pnl_pct": r.pnl_pct,
+                }
+                for r in rows
+            ]
+        finally:
+            session.close()
+
+        from agents.ai_engine.calibrator import check_live_calibration_drift
+
+        report = {**report, **check_live_calibration_drift(payload)}
+        report["probability_coverage"] = {
+            "genuine_trades_scanned": len(payload),
+            "genuine_trades_total": trades_total,
+            "with_calibrated_probability": sum(
+                1 for p in payload if p["p_calibrated"] is not None
+            ),
+            "heuristic_only": int(report.get("heuristic_only", 0)),
+        }
+    except Exception as exc:
+        log.error("check_probability_drift failed: %s", exc)
+        report["recommendation"] = f"Calibration drift monitor failed: {exc}"
+
+    report["generated_at"] = datetime.now(tz=timezone.utc).isoformat()
+    try:
+        from db.runtime_state import set_runtime_state
+
+        set_runtime_state("calibration_drift:v1", report)
+    except Exception as exc:
+        log.debug("Could not persist calibration drift report: %s", exc)
+    return report
+
+
+def _cached_calibration_drift(max_age_seconds: int = 900) -> dict:
+    """Return the persisted drift report, recomputing only when it is stale.
+
+    `get_learning_stats` is a GET handler. Recomputing on every call would add
+    a COUNT plus a SELECT and then write `calibration_drift:v1` back, so a read
+    endpoint would mutate state on each poll. The report is refreshed at most
+    once per `max_age_seconds`.
+    """
+    try:
+        from db.runtime_state import get_runtime_state
+
+        cached = get_runtime_state("calibration_drift:v1")
+    except Exception:
+        cached = None
+
+    if isinstance(cached, dict) and cached.get("generated_at"):
+        try:
+            generated = datetime.fromisoformat(str(cached["generated_at"]))
+            if generated.tzinfo is None:
+                generated = generated.replace(tzinfo=timezone.utc)
+            age = (datetime.now(tz=timezone.utc) - generated).total_seconds()
+        except (TypeError, ValueError):
+            age = None
+        if age is not None and 0 <= age < max_age_seconds:
+            return cached
+
+    return check_probability_drift()
+
+
 def get_learning_stats() -> dict:
     """
     Primary read API for /api/learning/stats FastAPI endpoint.
@@ -964,6 +1086,7 @@ def get_learning_stats() -> dict:
         "regime_matrix_stats": insights.get("regime_matrix_stats", {}),
         "session_phase_stats": insights.get("session_phase_stats", {}),
         "expectancy_metrics": insights.get("expectancy_metrics", {}),
+        "calibration_drift": _cached_calibration_drift(),
         "health":    health,
         "storage":   "postgresql" if _is_using_postgres() else "sqlite",
     }
