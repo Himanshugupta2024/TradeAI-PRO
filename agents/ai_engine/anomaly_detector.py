@@ -71,13 +71,20 @@ def compute_anomaly_features(
     volume = df["volume"]
 
     # 1. Overnight / bar-to-bar gap percentage
-    prev_close = close.shift(1).bfill()
+    # No bfill: the first bar has no previous close, so the gap is unknown (0.0
+    # after the fillna below). Back-filling it would have used this bar's own
+    # close -- a value that only exists after the bar is over.
+    prev_close = close.shift(1)
     features["overnight_gap_pct"] = ((open_p - prev_close) / prev_close.replace(0, np.nan)).fillna(0.0)
 
     # 2. Bar range to ATR ratio
     atr_col = f"ATR_{settings.ATR_PERIOD}"
     if atr_col in df.columns:
-        atr = df[atr_col].replace(0, np.nan).bfill().fillna(1.0)
+        # Forward-fill only: a zero/NaN ATR row inherits the last ATR that was
+        # actually known at that point in time. bfill handed such a row the ATR
+        # of a later bar, so the ratio at bar t was partly computed from price
+        # action after t.
+        atr = df[atr_col].replace(0, np.nan).ffill().fillna(1.0)
     else:
         # Fallback approximation: simple rolling high-low spread
         atr = (high - low).rolling(14, min_periods=1).mean().replace(0, np.nan).fillna(1.0)

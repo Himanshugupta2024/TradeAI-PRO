@@ -424,6 +424,8 @@ def prepare_sequences(
     use_outcome_labels: bool = True,
     normalize: bool = True,
     scaler_fit_end=None,
+    keep_timeouts: bool = False,
+    round_trip_cost_pct: float = 0.0,
 ) -> tuple:
     """
     Convert a DataFrame into input/target sequences for LSTM.
@@ -432,7 +434,7 @@ def prepare_sequences(
         use_outcome_labels: When True (default), uses label_1r2r_outcome() as
             the training target — i.e., did this bar produce a profitable
             1:2 risk-reward trade within OUTCOME_FORWARD_BARS candles?
-            (1=WIN → maps to 1, -1=LOSS → maps to 0; 0=TIMEOUT is dropped.)
+            (1=WIN → maps to 1, -1=LOSS → maps to 0; 0=TIMEOUT is dropped unless keep_timeouts=True.)
             When False, falls back to next-candle direction classification
             (1=UP, 0=DOWN) filtered by target_threshold.
         normalize: When False the raw (scale-free) values are returned and the
@@ -440,6 +442,9 @@ def prepare_sequences(
         scaler_fit_end: Row boundary used to fit the scaler. `None` means the
             first 80% of rows — the validation tail never touches mean/std.
             Pass an absolute row count (>1) or a fraction (<=1) to control it.
+        keep_timeouts: When True, vertical barrier timeouts (outcome=0) are
+            retained as label 0 (non-win) to eliminate survivor bias from the training set.
+        round_trip_cost_pct: Execution fee drag hurdle passed to label_1r2r_outcome.
 
     Returns:
         X: np.array of shape (n_samples, seq_length, n_features)
@@ -472,10 +477,10 @@ def prepare_sequences(
     if use_outcome_labels:
         from agents.feature_engine.label_generator import label_1r2r_outcome
 
-        outcome = label_1r2r_outcome(clean).to_numpy()
+        outcome = label_1r2r_outcome(clean, round_trip_cost_pct=round_trip_cost_pct).to_numpy()
         for k, i in enumerate(end_idx):
             value = int(outcome[i])
-            if value == 0:
+            if value == 0 and not keep_timeouts:
                 continue  # timeout / no signal — not informative
             keep[k] = True
             labels.append(1 if value == 1 else 0)

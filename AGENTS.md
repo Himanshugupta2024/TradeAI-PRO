@@ -84,5 +84,11 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
   - Operator key authentication must probe authenticated endpoints (`/api/admin/runtime-controls` with `X-Admin-Key`) to enforce fail-closed gate behavior.
 - Local Autonomous Dispatch Contract:
   - `/api/autonomous/run-cycle` requires `allow_local=True` (or header `X-Allow-Local-Autonomous: true`, or env `ALLOW_LOCAL_AUTONOMOUS_CYCLE=true`) when triggering on-demand cycles on single-process/render instances without Celery/Redis queue workers (`CYCLE_DISPATCH_UNAVAILABLE`).
+- Multi-Account Render Microservice Contract:
+  - Box A (FastAPI Gateway / Core): `https://trading-api-n1wt.onrender.com` on primary Render account (`srv-d7bsr8juibrs739ujdj0`).
+  - Box B (Dedicated ML Inference Sidecar): `https://trading-ml-8umr.onrender.com` on a dedicated secondary Render account to keep each service on its own 750 free-hour monthly allowance.
+  - Secret token `ML_INTERNAL_TOKEN` is `tradeai-secret-ml-2026`.
+  - Box A connects to Box B via env var `ML_SIDECAR_URL=https://trading-ml-8umr.onrender.com`.
+
 
 

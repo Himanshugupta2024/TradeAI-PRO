@@ -4,7 +4,10 @@
   "main": "src/worker.js",
   "compatibility_date": "2026-11-03",
   "triggers": {
-    "crons": ["*/2 3-10 * * 1-5"]
+    "crons": [
+      "*/2 3-10 * * 1-5",
+      "*/10 * * * *"
+    ]
   },
   "vars": {
     "ML_BACKEND_ORIGIN": "https://trading-ml-8umr.onrender.com"

@@ -670,7 +670,28 @@ async function runTests() {
     assert.strictEqual(tickResult.warm.reason, 'pre_open_window');
     assert.strictEqual(tickResult.warm.filled, EDGE_WARM_PATHS.length);
     assert.strictEqual(tickResult.cycle.dispatched, false, 'no dispatch without GH_PAT');
-    console.log('� Test 16 passed.');
+    console.log('✓ Test 16 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 17: handleScheduled pings ML sidecar when ML_BACKEND_ORIGIN is set
+    // ------------------------------------------------------------------------
+    console.log('Test 17: cron pings ML sidecar /health/live when ML_BACKEND_ORIGIN is set...');
+    const mlCalls = [];
+    const mlMockFetch = async (url, options = {}) => {
+      mlCalls.push({ url, options });
+      return { ok: true, status: 200 };
+    };
+    await handleScheduled(
+      { cron: '*/10 * * * *' },
+      { ML_BACKEND_ORIGIN: 'https://trading-ml-8umr.onrender.com' },
+      {},
+      mlMockFetch,
+      at(12, 0) // off-hours
+    );
+    const mlHealthCalls = mlCalls.filter((c) => c.url === 'https://trading-ml-8umr.onrender.com/health/live');
+    assert.strictEqual(mlHealthCalls.length, 1, 'ML sidecar /health/live must be pinged exactly once');
+    assert.strictEqual(mlHealthCalls[0].options.headers['User-Agent'], 'TradeAI-Cloudflare-Cron-KeepAlive/1.0');
+    console.log('✓ Test 17 passed.');
 
   } finally {
     // Restore global fetch and caches

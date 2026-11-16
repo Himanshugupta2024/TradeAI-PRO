@@ -32,6 +32,7 @@ def label_1r2r_outcome(
     forward_bars: int = 5,
     rr_ratio: float = 2.0,
     atr_sl_multiplier: float | None = None,
+    round_trip_cost_pct: float = 0.0,
 ) -> pd.Series:
     """
     Compute 1:RR outcome labels for every bar in df that has a LONG or SHORT
@@ -48,6 +49,10 @@ def label_1r2r_outcome(
         Risk-Reward ratio. TP = entry ± rr_ratio × SL_distance.
     atr_sl_multiplier : float | None
         ATR multiplier for SL distance. Defaults to settings.ATR_SL_MULTIPLIER.
+    round_trip_cost_pct : float
+        Round-trip transaction cost fraction (e.g. 0.0006 for 0.06% NSE round trip + slippage).
+        When > 0, widens the TP distance and brings SL closer by the cost hurdle,
+        so that a WIN label represents a profitable trade net of execution costs.
 
     Returns
     -------
@@ -90,13 +95,14 @@ def label_1r2r_outcome(
 
         sl_dist = atr * sl_mult
         tp_dist = sl_dist * rr_ratio
+        cost_drag = entry * max(0.0, float(round_trip_cost_pct))
 
         if is_long:
-            tp = entry + tp_dist
-            sl = entry - sl_dist
+            tp = entry + tp_dist + cost_drag
+            sl = entry - sl_dist + cost_drag
         else:
-            tp = entry - tp_dist
-            sl = entry + sl_dist
+            tp = entry - tp_dist - cost_drag
+            sl = entry + sl_dist - cost_drag
 
         outcome = 0  # default: timeout
 

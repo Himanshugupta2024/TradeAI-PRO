@@ -81,5 +81,7 @@ class TestTrendClassifier:
         })
         result = propagate_trend_to_ltf(ltf, htf)
         assert "htf_trend" in result.columns
-        assert result["htf_trend"].iloc[0] == TrendDirection.BULLISH.value
         assert len(result) == 50
+        # Every LTF row sits inside the first daily bar, whose trend is only
+        # known once that session closes, so the point-in-time answer is NEUTRAL.
+        assert set(result["htf_trend"]) == {TrendDirection.NEUTRAL.value}

@@ -131,34 +131,25 @@ def _spawn_task(coro, name: str) -> asyncio.Task:
 
 
 async def _keep_alive_task():
-
-    """Periodically ping public URL or localhost fallback to prevent Render free-tier spin-down."""
-
+    """Periodically ping public URL and ML sidecar to prevent Render free-tier spin-down."""
     public_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://trading-api-n1wt.onrender.com"
     url = f"{public_url.rstrip('/')}/api/health/live"
-
-
+    ml_url = os.environ.get("ML_SIDECAR_URL", "https://trading-ml-8umr.onrender.com").rstrip("/")
+    ml_health_url = f"{ml_url}/health/live" if ml_url else None
 
     try:
-
         await asyncio.sleep(30)  # Wait for startup to settle before first ping
-
         while True:
-
             try:
-
                 async with httpx.AsyncClient(timeout=10) as client:
-
                     await client.get(url)
-
+                    if ml_health_url:
+                        await client.get(ml_health_url)
             except Exception as exc:
-
                 logger.debug("Keep-alive ping failed (non-critical): %s", exc)
 
             await asyncio.sleep(_KEEP_ALIVE_INTERVAL)
-
     except asyncio.CancelledError:
-
         logger.debug("Keep-alive ping task cancelled.")
 
 

@@ -103,7 +103,13 @@ def propagate_trend_to_ltf(
     """
     Map higher timeframe trend values down to lower timeframe rows.
 
-    Uses merge_asof to align HTF trend to LTF timestamps (forward-fill).
+    The join is `merge_asof(direction="backward")` on each HTF bar's *close*
+    time, not on its label. A trend value is computed from that bar's own close,
+    so it does not exist before the bar is over. `classify_trend()` is fed
+    open-labelled frames here -- a daily bar's timestamp is the session date
+    while its close prints at 15:30 IST -- so joining on the label would give a
+    09:20 intraday row a trend derived from the 15:30 close. Point-in-time
+    correct instead: the value becomes visible at the next bar boundary.
 
     Args:
         ltf_df: Lower timeframe DataFrame with 'timestamp' column
@@ -138,6 +144,21 @@ def propagate_trend_to_ltf(
     # "incompatible merge keys [0] dtype('<M8[us]') and dtype('<M8[s]'), must be the same type"
     ltf["timestamp"] = pd.to_datetime(ltf["timestamp"]).astype("datetime64[ns]")
     htf["timestamp"] = pd.to_datetime(htf["timestamp"]).astype("datetime64[ns]")
+
+    # ── Move each trend value to the moment it becomes knowable ───────────
+    # `classify_trend()` reads the bar's own close, so the value for the bar
+    # labelled T is only true from the end of that bar. The bar length is not an
+    # argument, so it is inferred from the smallest positive spacing in the
+    # series: a daily grid gives 1 day, an hourly grid 1 hour. Exchange gaps
+    # (weekends, holidays) only ever stretch the spacing, so the minimum is the
+    # bar length -- a median would read a short series with a weekend in it as a
+    # multi-day grid and shift the value too far forward. Fewer than two rows
+    # means there is no spacing to infer, and the frame is joined as-is rather
+    # than shifted by a guessed amount.
+    diffs = htf["timestamp"].diff().dropna()
+    diffs = diffs[diffs > pd.Timedelta(0)]
+    if not diffs.empty:
+        htf["timestamp"] = htf["timestamp"] + diffs.min()
 
     merged = pd.merge_asof(
         ltf,

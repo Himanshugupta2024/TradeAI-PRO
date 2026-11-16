@@ -191,6 +191,101 @@ class TestWalkForwardFoldScaling:
             assert np.allclose(X_va[:, -1], 0.0)
 
 
+class TestPointInTimeFeatureAvailability:
+    """Features must only use information that existed at the bar they describe.
+
+    Two surfaces are covered:
+      1. `propagate_trend_to_ltf` -- the HTF trend was joined on the bar's own
+         label, so an intraday row received a trend derived from the close of
+         the session it belonged to.
+      2. `compute_anomaly_features` -- two series were back-filled, which handed
+         early rows values from later bars.
+    """
+
+    def test_same_session_htf_trend_is_not_visible_intraday(self):
+        from agents.feature_engine.trend import propagate_trend_to_ltf
+
+        htf = pd.DataFrame({
+            "timestamp": pd.to_datetime([
+                "2026-01-01", "2026-01-02", "2026-01-05", "2026-01-06",
+            ]),
+            "htf_trend": ["BULLISH", "BEARISH", "BULLISH", "BEARISH"],
+        })
+        # Intraday rows for 2026-01-02 only: every one of them must still see the
+        # trend of 2026-01-01, because 2026-01-02 has not closed yet.
+        ltf = pd.DataFrame({
+            "timestamp": pd.date_range("2026-01-02 09:15", "2026-01-02 15:15", freq="5min"),
+            "close": 100.0,
+        })
+
+        result = propagate_trend_to_ltf(ltf, htf)
+
+        assert len(result) == len(ltf)
+        assert set(result["htf_trend"]) == {"BULLISH"}
+
+    def test_htf_trend_becomes_visible_at_the_next_bar_boundary(self):
+        from agents.feature_engine.trend import propagate_trend_to_ltf
+
+        htf = pd.DataFrame({
+            "timestamp": pd.to_datetime(["2026-01-01", "2026-01-02", "2026-01-05"]),
+            "htf_trend": ["BULLISH", "BEARISH", "BULLISH"],
+        })
+        ltf = pd.DataFrame({
+            "timestamp": pd.to_datetime([
+                "2026-01-02 00:00",   # exactly when the 01-01 bar became known
+                "2026-01-03 00:00",   # exactly when the 01-02 bar became known
+                "2026-01-04 12:00",   # between bars, still 01-02's value
+            ]),
+            "close": 100.0,
+        })
+
+        result = propagate_trend_to_ltf(ltf, htf).set_index("timestamp")
+
+        assert result.loc["2026-01-02 00:00", "htf_trend"] == "BULLISH"
+        assert result.loc["2026-01-03 00:00", "htf_trend"] == "BEARISH"
+        assert result.loc["2026-01-04 12:00", "htf_trend"] == "BEARISH"
+
+    def _anomaly_frame(self, atr_values: list[float]) -> pd.DataFrame:
+        n = len(atr_values)
+        return pd.DataFrame({
+            "open": [100.0] * n,
+            "high": [101.0] * n,
+            "low": [99.0] * n,
+            "close": [100.0] * n,
+            "volume": [1000.0] * n,
+            "ATR_14": atr_values,
+        })
+
+    def test_first_bar_gap_does_not_borrow_its_own_close(self):
+        from agents.ai_engine.anomaly_detector import compute_anomaly_features
+
+        # Bar 0 opens 10% above its own close. Without a previous close the gap
+        # is unknowable, so the honest value is 0.0 -- the old back-fill turned
+        # this into a synthetic -9.09% "overnight gap" made from bar 0's own
+        # close, which only exists after the bar completes.
+        df = self._anomaly_frame([2.0, 2.0, 2.0])
+        df.loc[0, "open"] = 110.0
+        df.loc[1, "open"] = 105.0   # +5% versus bar 0's close, a real gap
+
+        feats = compute_anomaly_features(df)
+
+        assert feats["overnight_gap_pct"].iloc[0] == 0.0
+        # The second bar does have a previous close and must still report the gap.
+        assert feats["overnight_gap_pct"].iloc[1] == pytest.approx(0.05)
+
+    def test_zero_atr_row_uses_the_last_known_atr(self):
+        from agents.ai_engine.anomaly_detector import compute_anomaly_features
+
+        df = self._anomaly_frame([5.0, 5.0, 0.0, 50.0, 50.0])
+
+        feats = compute_anomaly_features(df)
+
+        # Bar 2 has a zero ATR. Forward-fill gives it bar 1's 5.0, so the ratio
+        # is 2.0/5.0. Back-filling would have used bar 3's ATR of 50.0 and
+        # printed 0.04 -- a value derived from a bar that had not happened yet.
+        assert feats["range_to_atr"].iloc[2] == pytest.approx(2.0 / 5.0)
+
+
 class TestTradeOutcomeTargetContract:
     """Test suite ensuring Option C 1R:2R targets align correctly."""
 
