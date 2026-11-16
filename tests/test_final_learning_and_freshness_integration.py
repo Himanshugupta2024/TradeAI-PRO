@@ -211,7 +211,16 @@ def test_cold_start_below_threshold():
 
 
 # ── Test 6: Learned weights persist to PostgreSQL runtime_state ───────────────
-def test_learned_weights_persist_supabase():
+def test_learned_weights_persist_supabase(tmp_path, monkeypatch):
+    # WeightAdapter.update_weights() writes config/learned_weights.json, which is
+    # the file production reads on boot. Redirecting it keeps a dummy-insight
+    # fixture from overwriting live learned weights.
+    import agents.analytics.feedback_loop as feedback_loop_module
+
+    monkeypatch.setattr(
+        feedback_loop_module, "_WEIGHTS_PATH", tmp_path / "learned_weights.json"
+    )
+
     adapter = WeightAdapter()
     dummy_insights = {
         "signal_type_stats": {

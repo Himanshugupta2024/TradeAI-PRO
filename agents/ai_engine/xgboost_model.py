@@ -251,32 +251,82 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     # Fill any remaining NaN with 0
     feat = feat.fillna(0.0)
 
-    # ── LSTM Embeddings ──────────────────────────────────────────────────
-    # Try to load LSTM model and generate 128 embedding features
+    # ── LSTM Embeddings ────────────────────────────────────────────────────
+    # Try to load LSTM model and generate 128 embedding features.
+    #
+    # Two hard requirements, both violated by the previous implementation:
+    #   1. The scaler must be the one persisted at training time. Re-fitting
+    #      mean/std on the live frame is train/serve skew, and it is worse than
+    #      no embeddings at all because the values look plausible.
+    #   2. Embeddings must be placed on the exact rows they were computed from.
+    #      `prepare_sequences` drops warm-up rows, so a `len(df) - len(embeddings)`
+    #      zero pad shifts every embedding by the number of dropped rows.
     lstm_df = pd.DataFrame(0.0, index=feat.index, columns=FEATURE_COLS_LSTM_EMBED)
 
     try:
         import torch
-        from agents.ai_engine.lstm_model import TradingLSTM
-        from agents.ai_engine.trainer import prepare_sequences, FEATURE_COLS
+        from agents.ai_engine.lstm_model import get_lstm_model
+        from agents.ai_engine.trainer import (
+            FEATURE_COLS,
+            FEATURE_SET_VERSION,
+            add_scale_free_features,
+            build_sequence_windows,
+            load_persisted_scaler,
+        )
 
         if os.path.exists("models/best_model.pt"):
-            available_cols = [c for c in FEATURE_COLS if c in df.columns]
-            from agents.ai_engine.lstm_model import get_lstm_model
-            model = get_lstm_model(input_size=len(available_cols), model_path="models/best_model.pt")
-            if model is not None:
-                # Use use_outcome_labels=False so we don't need label_generator during inference
-                X_seq, _, _ = prepare_sequences(df, seq_length=60, use_outcome_labels=False)
-                if len(X_seq) > 0:
-                    with torch.inference_mode():
-                        embeddings = model.get_embeddings(torch.FloatTensor(X_seq)).numpy()
+            enriched = add_scale_free_features(df)
+            available_cols = [c for c in FEATURE_COLS if c in enriched.columns]
+            scaler = load_persisted_scaler("models/scaler_params.json", FEATURE_COLS)
 
-                # embeddings has shape (len(df) - 60, 128)
-                # Pad the first 60 rows with zeros
-                pad = np.zeros((len(df) - len(embeddings), 128))
-                full_embeddings = np.vstack([pad, embeddings])
-
-                lstm_df[FEATURE_COLS_LSTM_EMBED] = full_embeddings
+            if available_cols != list(FEATURE_COLS):
+                log.debug(
+                    "LSTM embeddings skipped: frame only produced %d/%d %s features",
+                    len(available_cols), len(FEATURE_COLS), FEATURE_SET_VERSION,
+                )
+            elif scaler is None:
+                log.debug(
+                    "LSTM embeddings skipped: no scaler artifact matching %s",
+                    FEATURE_SET_VERSION,
+                )
+            else:
+                seq_length = int(scaler.get("seq_length") or 60)
+                model = get_lstm_model(
+                    input_size=len(FEATURE_COLS), model_path="models/best_model.pt"
+                )
+                if model is not None:
+                    X_seq, end_index, _ = build_sequence_windows(
+                        enriched,
+                        seq_length=seq_length,
+                        feature_cols=FEATURE_COLS,
+                        scaler_params=scaler,
+                        normalize=True,
+                    )
+                    if len(X_seq) > 0:
+                        with torch.inference_mode():
+                            embeddings = model.get_embeddings(
+                                torch.FloatTensor(X_seq)
+                            ).numpy()
+                        if embeddings.shape[1] != len(FEATURE_COLS_LSTM_EMBED):
+                            log.debug(
+                                "LSTM embeddings skipped: model produced %d dims, expected %d",
+                                embeddings.shape[1], len(FEATURE_COLS_LSTM_EMBED),
+                            )
+                        else:
+                            positions = df.index.get_indexer(end_index)
+                            keep = positions >= 0
+                            if keep.any():
+                                block = np.zeros(
+                                    (len(lstm_df), embeddings.shape[1]), dtype=np.float64
+                                )
+                                block[positions[keep]] = embeddings[keep]
+                                lstm_df.iloc[:, :] = block
+                            else:
+                                log.debug(
+                                    "LSTM embeddings skipped: window index did not "
+                                    "align with the feature frame (%d windows)",
+                                    len(end_index),
+                                )
     except Exception as e:
         log.debug("Could not generate LSTM embeddings for XGBoost: %s", e)
 

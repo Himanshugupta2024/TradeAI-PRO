@@ -1,12 +1,69 @@
-"""Pytest global configuration and cleanup fixtures."""
+"""Pytest global configuration and cleanup fixtures.
 
+Test isolation contract
+-----------------------
+``config.settings`` resolves ``DATABASE_URL`` from the environment at *import*
+time, and ``db.connection`` builds its engine from that value at import time
+too. Import order therefore decides which database a test writes to. Before
+this module did the rewrite below, ``pytest`` imported the project against
+whatever ``.env`` contained (``sqlite:///./trading.db``), so the suite wrote
+into the developer's real database: learned weights, ``runtime_state`` rows and
+seeded ``trade_outcomes_pg`` fixtures all landed in production-shaped data. The
+tests still passed, which is exactly why it went unnoticed.
+
+This module now points ``DATABASE_URL`` at a throwaway SQLite file *before*
+anything from the project is imported, then creates the schema there.
+
+Opt out with ``PYTEST_ALLOW_REAL_DB=1`` to run against the configured database
+(useful when debugging against a copy of production data). Even then the
+runtime-state purge fixture below still runs.
+"""
+
+import atexit
 import os
+import shutil
 import sys
+import tempfile
 import threading
 
 import pytest
-from db.connection import SessionLocal
-from db.models import RuntimeState
+
+_TEMP_DB_DIR = None
+
+if os.getenv("PYTEST_ALLOW_REAL_DB") != "1":
+    _TEMP_DB_DIR = tempfile.mkdtemp(prefix="trading-pytest-db-")
+    _TEMP_DB_PATH = os.path.join(_TEMP_DB_DIR, "test_trading.db")
+    os.environ["DATABASE_URL"] = "sqlite:///" + _TEMP_DB_PATH.replace("\\", "/")
+    # ENVIRONMENT=test keeps the SQLite-in-production guard in db.connection
+    # quiet and tells api.security that an admin key is not mandatory.
+    os.environ["ENVIRONMENT"] = "test"
+
+from db.connection import SessionLocal, engine, init_db  # noqa: E402
+from db.models import RuntimeState  # noqa: E402
+
+
+def _create_test_schema() -> None:
+    """Create every table in the throwaway database (or the real one on opt-out)."""
+    try:
+        init_db()
+    except Exception as exc:  # pragma: no cover - surfaces as test errors instead
+        print(f"[conftest] init_db() failed: {exc}", file=sys.stderr)
+        raise
+
+
+def _drop_temp_db() -> None:
+    """Dispose the engine before deleting the file (Windows keeps it locked)."""
+    if not _TEMP_DB_DIR:
+        return
+    try:
+        engine.dispose()
+    except Exception:
+        pass
+    shutil.rmtree(_TEMP_DB_DIR, ignore_errors=True)
+
+
+_create_test_schema()
+atexit.register(_drop_temp_db)
 
 
 def _purge_runtime_state() -> None:

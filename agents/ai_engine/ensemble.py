@@ -509,35 +509,61 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
     except Exception as exc:
         log.debug("[Ensemble] LightGBM failed: %s", exc)
 
-    # ── 4. LSTM predictor ──────────────────────────────────────────────────
+    # 4. LSTM predictor
+    #
+    # The scaler comes from the training artifact, never from the live frame.
+    # The old code z-scored the last window with `feat_mat.mean/std` computed
+    # over the whole live frame, which is a second train/serve skew on top of
+    # the absolute-price feature set, and it was gated on `>= 5` available
+    # columns so a half-populated frame silently produced a garbage prediction.
     lstm_result = {"direction": "NEUTRAL", "confidence": 0.0, "prob_up": 50.0}
     lstm_fitted = False
     enable_torch = os.environ.get("ENABLE_PYTORCH_MODELS", "false").lower() in ("1", "true", "yes", "on")
     if enable_torch:
         try:
             import torch
-            from agents.ai_engine.lstm_model import TradingLSTM
-            from agents.ai_engine.trainer import FEATURE_COLS
+            from agents.ai_engine.lstm_model import get_lstm_model
+            from agents.ai_engine.trainer import (
+                FEATURE_COLS,
+                FEATURE_SET_VERSION,
+                add_scale_free_features,
+                build_sequence_windows,
+                load_persisted_scaler,
+            )
             model_path = "models/best_model.pt"
             if os.path.exists(model_path):
-                seq_length = 60
-                available_cols = [c for c in FEATURE_COLS if c in df.columns]
-                if len(available_cols) >= 5 and len(df) >= seq_length:
-                    feat_mat = df[available_cols].dropna().values.astype("float64")
-                    if len(feat_mat) >= seq_length:
-                        # z-score normalise using last seq_length rows
-                        window = feat_mat[-seq_length:]
-                        mean = feat_mat.mean(axis=0)
-                        std  = feat_mat.std(axis=0)
-                        std[std == 0] = 1.0
-                        norm = (window - mean) / std
-                        # Shape: (1, seq_length, n_features)
-                        x_tensor = torch.FloatTensor(norm[np.newaxis])
-                        from agents.ai_engine.lstm_model import get_lstm_model
-                        model = get_lstm_model(input_size=len(available_cols), model_path=model_path)
-                        if model is not None:
-                            lstm_result = model.predict(x_tensor)
-                            lstm_fitted = True
+                scaler = load_persisted_scaler("models/scaler_params.json", FEATURE_COLS)
+                if scaler is None:
+                    log.debug(
+                        "[Ensemble] LSTM skipped: no scaler artifact matching %s",
+                        FEATURE_SET_VERSION,
+                    )
+                else:
+                    seq_length = int(scaler.get("seq_length") or 60)
+                    enriched = add_scale_free_features(df)
+                    available_cols = [c for c in FEATURE_COLS if c in enriched.columns]
+                    if available_cols != list(FEATURE_COLS):
+                        log.debug(
+                            "[Ensemble] LSTM skipped: frame produced %d/%d %s features",
+                            len(available_cols), len(FEATURE_COLS), FEATURE_SET_VERSION,
+                        )
+                    elif len(enriched) >= seq_length + 1:
+                        X_seq, _, _ = build_sequence_windows(
+                            enriched,
+                            seq_length=seq_length,
+                            feature_cols=FEATURE_COLS,
+                            scaler_params=scaler,
+                            normalize=True,
+                        )
+                        if len(X_seq) > 0:
+                            model = get_lstm_model(
+                                input_size=len(FEATURE_COLS), model_path=model_path
+                            )
+                            if model is not None:
+                                lstm_result = model.predict(
+                                    torch.FloatTensor(X_seq[-1:])
+                                )
+                                lstm_fitted = True
         except Exception as exc:
             log.debug("[Ensemble] LSTM failed: %s", exc)
 

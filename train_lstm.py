@@ -80,11 +80,16 @@ def train_on_symbol(
         return {"symbol": symbol, "error": "no data"}
 
     # Use next-candle direction (not 1R:2R) for LSTM — faster + more samples
+    #
+    # scaler_fit_end=0.8 keeps the z-score normalization inside the train
+    # portion: mean/std must never see the validation tail, otherwise the
+    # validation score is computed on data that informed the scaling.
     X, y, scaler_params = prepare_sequences(
         df,
         seq_length=seq_length,
         use_outcome_labels=False,   # next-candle direction (simpler, more data)
         target_threshold=0.001,
+        scaler_fit_end=0.8,
     )
 
     if len(X) < 100:
@@ -92,10 +97,22 @@ def train_on_symbol(
 
     log.info("LSTM sequences: %d | Shape: %s", len(X), X.shape)
 
-    # Walk-forward split: train on 80%, validate on last 20%
+    # Walk-forward split: train on first 80%, validate on the tail.
+    #
+    # Purge gap: consecutive windows overlap by seq_length-1 bars, so the first
+    # validation window would share raw bars with the last training window.
+    # Dropping `seq_length` samples at the boundary removes that overlap.
     split = int(len(X) * 0.8)
-    X_train, X_val = X[:split], X[split:]
-    y_train, y_val = y[:split], y[split:]
+    purge = min(seq_length, max(0, split - 10))
+    train_end = max(10, split - purge)
+    X_train, X_val = X[:train_end], X[split:]
+    y_train, y_val = y[:train_end], y[split:]
+    if len(X_val) < 5 or len(y_train) == 0:
+        return {"symbol": symbol, "error": f"empty split (train={len(X_train)}, val={len(X_val)})"}
+    log.info(
+        "LSTM split: train=%d (purged %d) | val=%d",
+        len(X_train), purge, len(X_val),
+    )
 
     os.makedirs("models", exist_ok=True)
     metrics = train_model(

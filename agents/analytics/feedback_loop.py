@@ -619,6 +619,13 @@ class WeightAdapter:
             new_weights["_updated_at"] = datetime.now(tz=_IST).isoformat()
             new_weights["_total_trades"] = total_sample
             new_weights["_learning_state"] = "COLD_START"
+            new_weights["_bounds"] = [1.0, 1.0]
+            # Persist the cold-start decision too. The previous code returned
+            # here without writing anything, so a fresh deployment kept showing
+            # whatever weights it loaded from disk with no record of when they
+            # were last evaluated, and `learned_weights:v1` never existed in
+            # runtime_state until the 30th trade landed.
+            self._persist(new_weights, new_weights["regime_weights"], total_sample)
             return new_weights
 
         # Determine conservative bounds by sample size
@@ -720,11 +727,26 @@ class WeightAdapter:
         new_weights["_learning_version"] = 2
         new_weights["_bounds"] = [bound_lo, bound_hi]
 
+        self._persist(new_weights, new_2d, total_sample)
+        return new_weights
+
+    def _persist(self, new_weights: dict, two_d: dict, total_sample: int) -> None:
+        """Write weights to runtime_state and to the JSON sidecar.
+
+        Both destinations are best-effort: a failure here must not break the
+        caller, but it must be visible in logs because an artifact that silently
+        stops updating looks exactly like a healthy one.
+        """
         try:
             from db.runtime_state import set_runtime_state
             set_runtime_state("learned_weights:v1", new_weights)
-            set_runtime_state("learned_weights_2d:v1", new_2d)
-            log.info("Persisted learned weights & 2D matrix to DB runtime_state (bounds: [%.2f, %.2f])", bound_lo, bound_hi)
+            set_runtime_state("learned_weights_2d:v1", two_d)
+            log.info(
+                "Persisted learned weights & 2D matrix to DB runtime_state "
+                "(state=%s, trades=%d)",
+                new_weights.get("_learning_state", "LEARNING"),
+                total_sample,
+            )
         except Exception as exc:
             log.debug("WeightAdapter DB backup failed: %s", exc)
 
@@ -734,8 +756,6 @@ class WeightAdapter:
             log.info("Learned weights updated -> %s", _WEIGHTS_PATH)
         except Exception as exc:
             log.error("WeightAdapter.update_weights write failed: %s", exc)
-
-        return new_weights
 
     def get_regime_weights(self, regime: str = "UNKNOWN") -> dict[str, float]:
         """

@@ -117,12 +117,16 @@ if TORCH_AVAILABLE:
                 probs = torch.softmax(logits, dim=1)
                 confidence, predicted = torch.max(probs, dim=1)
 
-                direction = "UP" if predicted.item() == 0 else "DOWN"
+                # Training labels are 1 = UP / WIN, 0 = DOWN / LOSS
+                # (see trainer.prepare_sequences). Index 0 is therefore the
+                # DOWN class: the previous mapping reported index 0 as "UP"
+                # and prob_up as P(DOWN), i.e. the direction was inverted.
+                direction = "UP" if predicted.item() == 1 else "DOWN"
                 return {
                     "direction": direction,
                     "confidence": round(confidence.item() * 100, 1),
-                    "prob_up": round(probs[0, 0].item() * 100, 1),
-                    "prob_down": round(probs[0, 1].item() * 100, 1),
+                    "prob_up": round(probs[0, 1].item() * 100, 1),
+                    "prob_down": round(probs[0, 0].item() * 100, 1),
                 }
 else:
     TradingLSTM = None

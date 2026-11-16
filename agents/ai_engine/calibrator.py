@@ -146,6 +146,65 @@ def get_calibrator() -> ProbabilityCalibrator:
     return _CALIBRATOR
 
 
+_PROBABILITY_KEYS = (
+    "p_calibrated",
+    "calibrated_prob",
+    "prob",
+    "prob_up",
+    "win_probability",
+)
+
+
+def _trade_probability(trade: dict[str, Any]) -> tuple[float | None, str]:
+    """Extract the model's predicted win probability from one closed trade.
+
+    Only explicitly named probability fields are trusted as probabilities.
+    `confidence` is a separate 0-100 heuristic score, and the previous
+    implementation conflated the two: it divided by 100 only when the value was
+    above 1, so `confidence == 1.0` (1%, the weakest possible signal) was read
+    as a 100% win probability and dragged the ECE up by itself.
+
+    Returns (probability in (0, 1], source field name).
+    """
+    for key in _PROBABILITY_KEYS:
+        if trade.get(key) is None:
+            continue
+        try:
+            value = float(trade[key])
+        except (TypeError, ValueError):
+            continue
+        # Probability fields are written either as 0-1 or as 0-100 percentages.
+        if value > 1.0:
+            value = value / 100.0
+        if 0.0 < value <= 1.0:
+            return value, key
+        return None, key
+
+    # Fallback: the heuristic confidence score is always 0-100.
+    raw_conf = trade.get("confidence")
+    if raw_conf is None:
+        return None, "confidence"
+    try:
+        value = float(raw_conf) / 100.0
+    except (TypeError, ValueError):
+        return None, "confidence"
+    if 0.0 < value <= 1.0:
+        return value, "confidence"
+    return None, "confidence"
+
+
+def _trade_pnl(trade: dict[str, Any]) -> float | None:
+    """Return the trade P&L, accepting the column names actually stored."""
+    for key in ("pnl", "pnl_pct", "total_pnl", "realized_pnl"):
+        if trade.get(key) is None:
+            continue
+        try:
+            return float(trade[key])
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def check_live_calibration_drift(
     closed_trades: list[dict[str, Any]],
     threshold_ece: float = 0.10,
@@ -154,22 +213,53 @@ def check_live_calibration_drift(
     """
     Check for live intra-week probability calibration drift on closed trades.
     Compares predicted win probability against empirical binary outcomes.
+
+    Trades without a usable probability or without a resolved outcome are
+    counted and reported instead of being dropped silently -- a drift monitor
+    that quietly ignores most of its input can look healthy forever.
+
+    Note: no production caller wires this up yet; only tests exercise it. The
+    report is only as meaningful as the probability it reads, so callers must
+    pass rows that carry `p_calibrated` (or an equivalent probability field).
     """
-    valid = []
+    valid: list[tuple[float, int]] = []
+    probability_sources: dict[str, int] = {}
+    invalid_probability = 0
+    breakeven_excluded = 0
+    unresolved = 0
+
     for t in closed_trades:
-        conf = float(t.get("confidence", 0.0) or 0.0)
-        prob = conf / 100.0 if conf > 1.0 else conf
-        pnl = float(t.get("pnl", t.get("total_pnl", 0.0)) or 0.0)
+        prob, source = _trade_probability(t)
+        pnl = _trade_pnl(t)
         status = str(t.get("status", t.get("exit_reason", ""))).upper()
-        if "TP" in status or pnl > 0:
-            outcome = 1
-        elif "SL" in status or "TRAIL" in status or pnl < 0:
-            outcome = 0
-        else:
+
+        if prob is None:
+            invalid_probability += 1
             continue
 
-        if 0.0 < prob <= 1.0:
-            valid.append((prob, outcome))
+        if "TP" in status or (pnl is not None and pnl > 0):
+            outcome = 1
+        elif "SL" in status or "TRAIL" in status or (pnl is not None and pnl < 0):
+            outcome = 0
+        elif pnl is not None:
+            # Exactly flat: neither win nor loss, so it carries no calibration
+            # signal. Counted separately because a growing pile of zero-P&L
+            # exits is itself worth noticing.
+            breakeven_excluded += 1
+            continue
+        else:
+            unresolved += 1
+            continue
+
+        valid.append((prob, outcome))
+        probability_sources[source] = probability_sources.get(source, 0) + 1
+
+    diagnostics = {
+        "invalid_probability": invalid_probability,
+        "breakeven_excluded": breakeven_excluded,
+        "unresolved_outcome": unresolved,
+        "probability_sources": probability_sources,
+    }
 
     if len(valid) < min_sample_size:
         return {
@@ -178,6 +268,7 @@ def check_live_calibration_drift(
             "drift_detected": False,
             "ece": 0.0,
             "recommendation": f"Awaiting minimum {min_sample_size} closed trades (current: {len(valid)})",
+            **diagnostics,
         }
 
     probs = np.array([v[0] for v in valid], dtype=float)
@@ -212,5 +303,6 @@ def check_live_calibration_drift(
         "ece": round(ece, 4),
         "drift_detected": drift_detected,
         "recommendation": rec,
+        **diagnostics,
     }
 
