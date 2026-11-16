@@ -25717,7 +25717,11 @@ function applyAiBadgeState(ai) {
             : (ai.fitted_count > 0 ? `Hybrid (${ai.fitted_count}/4 Models)` : 'Rule-Based Engine')));
         badgeHeader.title = ai.badge_text || 'AI Engine Status';
         badgeHeader.dataset.hydrated = 'true';
-        if (ai.lightweight_mode) {
+        if (ai.sidecar_active || (!ai.lightweight_mode && ai.fitted_count >= 3)) {
+            badgeHeader.style.background = 'rgba(16,185,129,0.15)';
+            badgeHeader.style.color = '#10b981';
+            badgeHeader.style.borderColor = 'rgba(16,185,129,0.3)';
+        } else if (ai.lightweight_mode) {
             badgeHeader.style.background = 'rgba(56,189,248,0.15)';
             badgeHeader.style.color = '#38bdf8';
             badgeHeader.style.borderColor = 'rgba(56,189,248,0.3)';
@@ -25739,7 +25743,11 @@ function applyAiBadgeState(ai) {
     const badgeCockpit = document.getElementById('aiModelBadgeCockpit');
     if (badgeCockpit) {
         badgeCockpit.textContent = ai.badge_text || `AI Engine: ${ai.mode}`;
-        if (ai.lightweight_mode) {
+        if (ai.sidecar_active || (!ai.lightweight_mode && ai.fitted_count >= 3)) {
+            badgeCockpit.style.background = 'rgba(16,185,129,0.15)';
+            badgeCockpit.style.color = '#10b981';
+            badgeCockpit.style.borderColor = 'rgba(16,185,129,0.3)';
+        } else if (ai.lightweight_mode) {
             badgeCockpit.style.background = 'rgba(56,189,248,0.15)';
             badgeCockpit.style.color = '#38bdf8';
             badgeCockpit.style.borderColor = 'rgba(56,189,248,0.3)';
