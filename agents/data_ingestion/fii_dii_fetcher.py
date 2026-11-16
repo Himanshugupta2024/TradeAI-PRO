@@ -19,6 +19,43 @@ _cache_timestamp: float = 0.0
 _CACHE_TTL_SECONDS: float = 300.0  # 5 minutes cache during daytime, updates EOD
 
 
+def compute_as_of_timestamp(trade_date_str: str | None, hour: int = 18, minute: int = 0) -> str:
+    """Compute official publication as_of timestamp in ISO format (Asia/Kolkata timezone)."""
+    try:
+        from zoneinfo import ZoneInfo
+        ist = ZoneInfo("Asia/Kolkata")
+    except Exception:
+        ist = timezone.utc
+
+    if not trade_date_str:
+        return datetime.now(timezone.utc).isoformat()
+
+    for fmt in ("%d-%b-%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            dt = datetime.strptime(str(trade_date_str).strip(), fmt)
+            return dt.replace(hour=hour, minute=minute, second=0, tzinfo=ist).isoformat()
+        except Exception:
+            continue
+    return datetime.now(timezone.utc).isoformat()
+
+
+def is_published_as_of(as_of_iso: str | None, current_time: datetime | None = None) -> bool:
+    """Return False if current_time is strictly before the publication timestamp (prevents look-ahead)."""
+    if not as_of_iso:
+        return True
+    try:
+        as_of_dt = datetime.fromisoformat(as_of_iso)
+        if current_time is None:
+            current_time = datetime.now(timezone.utc)
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
+        if as_of_dt.tzinfo is None:
+            as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
+        return current_time >= as_of_dt
+    except Exception:
+        return True
+
+
 def _compute_flow_score(fii_5d: float, dii_5d: float, fii_1d: float, dii_1d: float) -> int:
     """
     Compute normalized institutional flow score between -10 and +10.
@@ -64,6 +101,7 @@ def _fetch_fii_dii_sync() -> dict[str, Any]:
             dii_5d = sum(float(h.get("dii_net_cr", 0.0) or 0.0) for h in recent)
 
         flow_score = _compute_flow_score(fii_5d, dii_5d, fii_1d, dii_1d)
+        as_of_iso = compute_as_of_timestamp(flow_data.get("trade_date") or flow_data.get("date"))
 
         return {
             "fii_net_1d": round(fii_1d, 2),
@@ -73,6 +111,7 @@ def _fetch_fii_dii_sync() -> dict[str, Any]:
             "institutional_flow_score": flow_score,
             "sentiment": flow_data.get("sentiment", "NEUTRAL"),
             "trade_date": flow_data.get("trade_date"),
+            "as_of": as_of_iso,
             "source": flow_data.get("source", "NSE_Official"),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -85,6 +124,7 @@ def _fetch_fii_dii_sync() -> dict[str, Any]:
             "dii_5d_sum": 0.0,
             "institutional_flow_score": 0,
             "sentiment": "NEUTRAL",
+            "as_of": datetime.now(timezone.utc).isoformat(),
             "source": "fallback",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }

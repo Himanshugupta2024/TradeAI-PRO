@@ -95,15 +95,15 @@ def _tune_lightgbm(X: np.ndarray, y: np.ndarray, n_trials: int = 30) -> dict:
 
     def objective(trial):
         params = {
-            "n_estimators":      trial.suggest_int("n_estimators", 100, 600),
-            "max_depth":         trial.suggest_int("max_depth", 3, 9),
+            "n_estimators":      trial.suggest_int("n_estimators", 100, 400),
+            "max_depth":         trial.suggest_int("max_depth", 3, 5),
             "learning_rate":     trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
-            "num_leaves":        trial.suggest_int("num_leaves", 15, 127),
+            "num_leaves":        trial.suggest_int("num_leaves", 7, 31),
             "subsample":         trial.suggest_float("subsample", 0.6, 1.0),
             "colsample_bytree":  trial.suggest_float("colsample_bytree", 0.5, 1.0),
             "min_child_samples": trial.suggest_int("min_child_samples", 5, 50),
             "reg_alpha":         trial.suggest_float("reg_alpha", 0.0, 2.0),
-            "reg_lambda":        trial.suggest_float("reg_lambda", 0.0, 3.0),
+            "reg_lambda":        trial.suggest_float("reg_lambda", 1.0, 5.0),
             "verbose":           -1,
             "random_state":      42,
             "n_jobs":            -1,
@@ -197,15 +197,21 @@ class LightGBMPredictor:
         use_optuna: bool = True,
         n_optuna_trials: int = 30,
         test_size: float = 0.2,
+        round_trip_cost_pct: float = 0.0006,
+        keep_timeouts: bool = False,
+        embargo_bars: int = 20,
     ) -> dict:
         """
         Train the LightGBM model on a labeled DataFrame.
 
         Args:
-            df:               DataFrame with signal column and all indicator columns.
-            use_optuna:       Whether to run Optuna hyperparameter tuning.
-            n_optuna_trials:  Number of Optuna trials.
-            test_size:        Fraction of data to hold out for validation.
+            df:                   DataFrame with signal column and all indicator columns.
+            use_optuna:           Whether to run Optuna hyperparameter tuning.
+            n_optuna_trials:      Number of Optuna trials.
+            test_size:            Fraction of data to hold out for validation.
+            round_trip_cost_pct:  Execution cost drag hurdle (0.0006 for 0.06% round trip).
+            keep_timeouts:        Whether to keep vertical barrier timeouts as class 0 non-wins.
+            embargo_bars:         Purged embargo gap to avoid look-ahead leakage across folds.
 
         Returns:
             dict with val_accuracy, val_auc, n_samples, feature_importance, etc.
@@ -229,10 +235,14 @@ class LightGBMPredictor:
             y = up_mask[keep_mask].astype(int)
         else:
             from agents.feature_engine.label_generator import label_1r2r_outcome
-            labels = label_1r2r_outcome(df)
-            mask = labels != 0
-            df_filtered = df[mask].copy()
-            y = (labels[mask] == 1).astype(int).values  # 1=WIN, 0=LOSS
+            labels = label_1r2r_outcome(df, round_trip_cost_pct=round_trip_cost_pct)
+            if keep_timeouts:
+                df_filtered = df.copy()
+                y = (labels == 1).astype(int).values  # 1=WIN, 0=LOSS or TIMEOUT
+            else:
+                mask = labels != 0
+                df_filtered = df[mask].copy()
+                y = (labels[mask] == 1).astype(int).values  # 1=WIN, 0=LOSS
 
         if len(df_filtered) < 50:
             return {"error": f"Insufficient labeled samples: {len(df_filtered)} (need >=50)"}
@@ -251,10 +261,11 @@ class LightGBMPredictor:
         if nan_mask.any():
             X[nan_mask] = np.take(col_medians, np.where(nan_mask)[1])
 
-        # ── Train/validation split (time-series: no shuffle) ──────────────
+        # ── Train/validation split with embargo (purged walk-forward) ─────
         split_idx = int(len(X) * (1 - test_size))
-        X_train, X_val = X[:split_idx], X[split_idx:]
-        y_train, y_val = y[:split_idx], y[split_idx:]
+        train_end = max(0, split_idx - embargo_bars) if embargo_bars > 0 else split_idx
+        X_train, y_train = X[:train_end], y[:train_end]
+        X_val, y_val = X[split_idx:], y[split_idx:]
 
         if len(np.unique(y_train)) < 2:
             return {"error": "Training set has only one class — need more data"}
@@ -265,15 +276,15 @@ class LightGBMPredictor:
             best_params = _tune_lightgbm(X_train, y_train, n_trials=n_optuna_trials)
         else:
             best_params = {
-                "n_estimators":      400,
-                "max_depth":         6,
+                "n_estimators":      300,
+                "max_depth":         4,
                 "learning_rate":     0.05,
-                "num_leaves":        63,
+                "num_leaves":        15,
                 "subsample":         0.8,
                 "colsample_bytree":  0.8,
                 "min_child_samples": 20,
                 "reg_alpha":         0.1,
-                "reg_lambda":        1.0,
+                "reg_lambda":        3.0,
             }
 
         # ── Train final model ──────────────────────────────────────────────

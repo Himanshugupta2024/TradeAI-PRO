@@ -305,3 +305,113 @@ class TestTradeOutcomeTargetContract:
         assert set(target.unique()).issubset({0, 1})
         assert mask.dtype == bool
 
+
+class TestPointInTimePublicationGuards:
+    """Ensure EOD macro and delivery metrics cannot be used before their exchange publication time."""
+
+    def test_fii_dii_publication_guard(self):
+        from agents.data_ingestion.fii_dii_fetcher import compute_as_of_timestamp, is_published_as_of
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+
+        ist = ZoneInfo("Asia/Kolkata")
+        as_of_iso = compute_as_of_timestamp("12-Nov-2026", hour=18, minute=0)
+
+        # Before 18:00 IST (e.g. 11:30 IST during trading hours)
+        dt_intraday = datetime(2026, 11, 12, 11, 30, tzinfo=ist)
+        assert is_published_as_of(as_of_iso, dt_intraday) is False
+
+        # Exactly at 18:00 IST
+        dt_published = datetime(2026, 11, 12, 18, 0, tzinfo=ist)
+        assert is_published_as_of(as_of_iso, dt_published) is True
+
+        # Next morning (e.g. 09:15 IST next day)
+        dt_next_day = datetime(2026, 11, 13, 9, 15, tzinfo=ist)
+        assert is_published_as_of(as_of_iso, dt_next_day) is True
+
+    def test_delivery_breadth_publication_guard(self):
+        from agents.data_ingestion.delivery_breadth import is_published_as_of
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+
+        ist = ZoneInfo("Asia/Kolkata")
+        as_of_iso = datetime(2026, 11, 12, 17, 30, tzinfo=ist).isoformat()
+
+        # At 15:15 IST before market close
+        assert is_published_as_of(as_of_iso, datetime(2026, 11, 12, 15, 15, tzinfo=ist)) is False
+
+        # At 17:35 IST after EOD delivery report is published
+        assert is_published_as_of(as_of_iso, datetime(2026, 11, 12, 17, 35, tzinfo=ist)) is True
+
+
+class TestTabularModelAntiLeakageGuards:
+    """Ensure tabular XGBoost and LightGBM models enforce embargo bars and cost hurdles."""
+
+    def test_xgboost_train_embargo(self, tmp_path):
+        from agents.ai_engine.xgboost_model import XGBoostPredictor
+
+        df = _generate_synthetic_ohlcv(250)
+        df["signal"] = "LONG"
+
+        model_file = str(tmp_path / "test_xgb.pkl")
+        pred = XGBoostPredictor(model_path=model_file)
+        metrics = pred.train(df, use_optuna=False, test_size=0.2, embargo_bars=15)
+
+        assert "error" not in metrics
+        n_samples = metrics["n_samples"]
+        expected_val = int(n_samples * 0.2)
+        expected_train = max(0, (n_samples - expected_val) - 15)
+        assert metrics["n_val"] == expected_val
+        assert metrics["n_train"] == expected_train
+
+
+class TestNightlyScanParallelExecution:
+    """Ensure nightly swing scan supports concurrent worker threads."""
+
+    def test_run_scan_parallel_dispatch(self, monkeypatch):
+        from scripts import nightly_swing_scan
+
+        # Mock symbols to 3 fast symbols
+        monkeypatch.setattr(nightly_swing_scan, "_symbol_list", lambda universe: ["RELIANCE", "TCS", "INFY"])
+        # Mock _fetch_and_prepare to return empty DataFrame quickly
+        monkeypatch.setattr(nightly_swing_scan, "_fetch_and_prepare", lambda sym: None)
+
+        results, payload = nightly_swing_scan.run_scan(universe="local", workers=2)
+        assert isinstance(results, list)
+        assert payload["symbols_scanned"] == 3
+        assert payload["symbols_skipped"] == 3
+
+    def test_lightgbm_train_embargo(self, tmp_path):
+        from agents.ai_engine.lightgbm_model import LightGBMPredictor
+
+        df = _generate_synthetic_ohlcv(250)
+        df["signal"] = "LONG"
+
+        model_file = str(tmp_path / "test_lgbm.pkl")
+        pred = LightGBMPredictor(model_path=model_file)
+        metrics = pred.train(df, use_optuna=False, test_size=0.2, embargo_bars=15)
+
+        assert "error" not in metrics
+        n_samples = metrics["n_samples"]
+        expected_val = int(n_samples * 0.2)
+        expected_train = max(0, (n_samples - expected_val) - 15)
+        assert metrics["n_val"] == expected_val
+        assert metrics["n_train"] == expected_train
+
+
+class TestNightlyScanParallelExecution:
+    """Ensure nightly swing scan supports concurrent worker threads."""
+
+    def test_run_scan_parallel_dispatch(self, monkeypatch):
+        from scripts import nightly_swing_scan
+
+        # Mock symbols to 3 fast symbols
+        monkeypatch.setattr(nightly_swing_scan, "_symbol_list", lambda universe: ["RELIANCE", "TCS", "INFY"])
+        # Mock _fetch_and_prepare to return empty DataFrame quickly
+        monkeypatch.setattr(nightly_swing_scan, "_fetch_and_prepare", lambda sym: None)
+
+        results, payload = nightly_swing_scan.run_scan(universe="local", workers=2)
+        assert isinstance(results, list)
+        assert payload["symbols_scanned"] == 3
+        assert payload["symbols_skipped"] == 3
+

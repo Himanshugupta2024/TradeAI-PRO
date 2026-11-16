@@ -236,11 +236,54 @@ def _print_shortlist(results: list[dict], top_n: int = 15) -> None:
 
 # ── Main scan logic ───────────────────────────────────────────────────────────
 
+def _scan_single_symbol(
+    symbol: str,
+    ctx_fetcher: ContextFetcher | None = None,
+) -> tuple[str, list[dict], dict, str, bool, bool]:
+    """Scan one symbol. Returns (symbol, setups_list, stages, news_display, was_skipped, was_error)."""
+    df = _fetch_and_prepare(symbol)
+    if df is None:
+        return symbol, [], {}, "N/A", True, False
+
+    news_context: dict | None = None
+    news_score_display = "N/A"
+    if ctx_fetcher is not None:
+        try:
+            snapshot = ctx_fetcher.get_snapshot_sync(symbol)
+            news_context = {"context_score": snapshot.context_score}
+            news_score_display = f"{snapshot.context_score:+.2f}"
+        except Exception as exc:
+            logger.debug("  [NEWS] %s — context fetch failed: %s", symbol, exc)
+
+    stages: dict = {}
+    try:
+        setups = scan_swing_setups(
+            df=df,
+            symbol=symbol,
+            stages_out=stages,
+            allow_fallback=False,
+            news_context=news_context,
+        )
+    except Exception as exc:
+        logger.warning("  [SCAN ERR] %s: %s", symbol, exc)
+        return symbol, [], {}, "N/A", False, True
+
+    extracted = []
+    if setups:
+        for setup in setups:
+            d = asdict(setup)
+            d["scan_stages"] = stages
+            d["news_score"] = float(news_context["context_score"]) if news_context else 0.0
+            extracted.append(d)
+    return symbol, extracted, stages, news_score_display, False, False
+
+
 def run_scan(
     grade_filter: str | None = None,
     top_n: int = 15,
     output_path: str | None = None,
     universe: str = "nifty500",
+    workers: int = 8,
 ) -> list[dict]:
     """
     Full nightly scan run karo.
@@ -250,13 +293,14 @@ def run_scan(
         top_n        : kitne results print karein
         output_path  : custom JSON output file path
         universe     : 'nifty500', 'nifty200', 'nifty100', or 'local'
+        workers      : number of concurrent worker threads (default: 8)
 
     Returns:
         List of setup dicts sorted by (grade, strength).
     """
     symbols = _symbol_list(universe=universe)
     total = len(symbols)
-    logger.info("Scan shuru -- %d symbols scan honge", total)
+    logger.info("Scan shuru -- %d symbols scan honge (concurrency: %d threads)", total, workers)
     logger.info("   Period: %s | Interval: %s", OHLCV_PERIOD, OHLCV_INTERVAL)
 
     # ── News Context Engine ──────────────────────────────────────────────────
@@ -274,71 +318,49 @@ def run_scan(
     skipped = 0
     news_fetched = 0
 
-    for idx, symbol in enumerate(symbols, 1):
-        logger.info("[%d/%d] Scanning %s ...", idx, total, symbol)
-
-        df = _fetch_and_prepare(symbol)
-        if df is None:
-            skipped += 1
-            time.sleep(RATE_LIMIT_SLEEP * 0.5)
-            continue
-
-        # ── Fetch news context for this symbol ────────────────────────────────
-        news_context: dict | None = None
-        news_score_display = "N/A"
-        if ctx_fetcher is not None:
-            try:
-                snapshot = ctx_fetcher.get_snapshot_sync(symbol)
-                news_context = {"context_score": snapshot.context_score}
-                news_score_display = f"{snapshot.context_score:+.2f}"
+    if workers > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_sym = {
+                executor.submit(_scan_single_symbol, sym, ctx_fetcher): sym
+                for sym in symbols
+            }
+            for idx, future in enumerate(as_completed(future_to_sym), 1):
+                sym, sym_setups, stages, news_display, was_skipped, was_error = future.result()
+                if was_skipped:
+                    skipped += 1
+                    continue
+                if was_error:
+                    errors += 1
+                    continue
+                if news_display != "N/A":
+                    news_fetched += 1
+                if sym_setups:
+                    all_setups.extend(sym_setups)
+                    logger.info("  [%d/%d] >> %s -- %d setup(s) | News: %s", idx, total, sym, len(sym_setups), news_display)
+                else:
+                    logger.debug("  [%d/%d] -- %s -- No setup", idx, total, sym)
+    else:
+        for idx, symbol in enumerate(symbols, 1):
+            logger.info("[%d/%d] Scanning %s ...", idx, total, symbol)
+            sym, sym_setups, stages, news_display, was_skipped, was_error = _scan_single_symbol(symbol, ctx_fetcher)
+            if was_skipped:
+                skipped += 1
+                time.sleep(RATE_LIMIT_SLEEP * 0.5)
+                continue
+            if was_error:
+                errors += 1
+                time.sleep(RATE_LIMIT_SLEEP)
+                continue
+            if news_display != "N/A":
                 news_fetched += 1
-            except Exception as exc:
-                logger.debug("  [NEWS] %s — context fetch failed: %s", symbol, exc)
-
-        stages: dict = {}
-        try:
-            setups = scan_swing_setups(
-                df=df,
-                symbol=symbol,
-                stages_out=stages,
-                allow_fallback=False,   # Batch scan mein strict mode — no fallback
-                news_context=news_context,
-            )
-        except Exception as exc:
-            logger.warning("  [SCAN ERR] %s: %s", symbol, exc)
-            errors += 1
+            if sym_setups:
+                all_setups.extend(sym_setups)
+                logger.info(
+                    "  >> %s -- %d setup(s) | News: %s",
+                    sym, len(sym_setups), news_display
+                )
             time.sleep(RATE_LIMIT_SLEEP)
-            continue
-
-        if setups:
-            for setup in setups:
-                d = asdict(setup)
-                d["scan_stages"] = stages
-                d["news_score"] = float(news_context["context_score"]) if news_context else 0.0
-                all_setups.append(d)
-            logger.info(
-                "  >> %s -- %d setup(s) | Best: %s (%s) R:R %.1f | News: %s",
-                symbol,
-                len(setups),
-                setups[0].pattern,
-                setups[0].grade,
-                setups[0].risk_reward,
-                news_score_display,
-            )
-        else:
-            blocked = stages.get("blocked")
-            raw_count = stages.get("raw_pattern_count", 0)
-            logger.debug(
-                "  -- %s -- No setup | blocked=%s raw=%s rr=%s regime=%s",
-                symbol,
-                blocked or "-",
-                raw_count,
-                stages.get("after_rr_count", 0),
-                stages.get("after_regime_count", 0),
-            )
-
-        # yFinance rate limit se bachne ke liye thoda wait
-        time.sleep(RATE_LIMIT_SLEEP)
 
     # ── Multi-Factor Ranking (Step 2) ────────────────────────────────────────
     logger.info("Ranking %d setups with multi-factor engine...", len(all_setups))
@@ -528,6 +550,10 @@ def main() -> None:
         help="Stock universe: nifty500 (default, ~500 stocks), nifty200, nifty100, or local (115 hardcoded)"
     )
     parser.add_argument(
+        "--workers", type=int, default=8,
+        help="Number of concurrent worker threads for scanning (default: 8)"
+    )
+    parser.add_argument(
         "--ignore-holiday", action="store_true",
         help="Bypass NSE weekend/holiday check and execute scan immediately"
     )
@@ -545,6 +571,7 @@ def main() -> None:
         top_n=args.top,
         output_path=args.output,
         universe=args.universe,
+        workers=args.workers,
     )
     _print_shortlist(results, top_n=args.top)
 

@@ -23,6 +23,23 @@ _breadth_cache: dict[str, Any] = {}
 _last_breadth_ts: float = 0.0
 
 
+def is_published_as_of(as_of_iso: str | None, current_time: datetime | None = None) -> bool:
+    """Return False if current_time is strictly before the publication timestamp (prevents look-ahead)."""
+    if not as_of_iso:
+        return True
+    try:
+        as_of_dt = datetime.fromisoformat(as_of_iso)
+        if current_time is None:
+            current_time = datetime.now(timezone.utc)
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
+        if as_of_dt.tzinfo is None:
+            as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
+        return current_time >= as_of_dt
+    except Exception:
+        return True
+
+
 def calculate_delivery_strength(
     delivery_pct: float,
     avg_delivery_20d: float,
@@ -97,6 +114,32 @@ def get_symbol_delivery_metrics(
         except Exception as exc:
             log.debug("[DeliveryBreadth] Computation fallback for %s: %s", clean_sym, exc)
 
+    as_of_iso = None
+    if df is not None and not df.empty:
+        try:
+            from zoneinfo import ZoneInfo
+            ist = ZoneInfo("Asia/Kolkata")
+        except Exception:
+            ist = timezone.utc
+
+        last_ts = None
+        if "timestamp" in df.columns:
+            last_ts = df["timestamp"].iloc[-1]
+        elif "date" in df.columns:
+            last_ts = df["date"].iloc[-1]
+        elif hasattr(df.index, "dtype") and pd.api.types.is_datetime64_any_dtype(df.index):
+            last_ts = df.index[-1]
+
+        if last_ts is not None:
+            try:
+                dt_bar = pd.Timestamp(last_ts).to_pydatetime()
+                as_of_iso = dt_bar.replace(hour=17, minute=30, second=0, tzinfo=ist).isoformat()
+            except Exception:
+                pass
+
+    if not as_of_iso:
+        as_of_iso = datetime.now(timezone.utc).isoformat()
+
     result = {
         "symbol": clean_sym,
         "delivery_pct": delivery_pct,
@@ -104,6 +147,7 @@ def get_symbol_delivery_metrics(
         "delivery_zscore": zscore,
         "delivery_strength_bonus": bonus,
         "interpretation": interp,
+        "as_of": as_of_iso,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     _delivery_stats[clean_sym] = result

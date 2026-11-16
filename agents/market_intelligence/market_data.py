@@ -499,10 +499,22 @@ def fetch_fii_dii_flow() -> dict:
         fetched_iso = datetime.now(timezone.utc).isoformat()
         official_date_str = f"Data Date: {trade_date} EOD Official"
 
+        as_of_dt = _parse_trade_date(trade_date)
+        try:
+            from zoneinfo import ZoneInfo
+            ist = ZoneInfo("Asia/Kolkata")
+        except Exception:
+            ist = timezone.utc
+        if as_of_dt != datetime.min:
+            as_of_iso = as_of_dt.replace(hour=18, minute=0, second=0, tzinfo=ist).isoformat()
+        else:
+            as_of_iso = fetched_iso
+
         result = {
             "flows": flows,
             "date": trade_date,
             "display_date": official_date_str,
+            "as_of": as_of_iso,
             "units": "₹ Crores (1 Cr = ₹10,000,000)",
             "residual_explanation": "Estimated Other / Residual is the mathematical balancing residual -(FII Net + DII Net), accounting for retail investors, HNIs, and proprietary desks. It is not a direct exchange-polled client category.",
             "sentiment": sentiment,
