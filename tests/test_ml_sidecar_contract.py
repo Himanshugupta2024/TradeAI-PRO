@@ -176,3 +176,26 @@ def test_pytorch_guard_prevents_torch_import(monkeypatch):
 
     votes = result.get("model_votes", {})
     assert votes.get("lstm") is None
+
+
+def test_get_model_status_sidecar_awareness(monkeypatch):
+    from agents.ai_engine.ensemble import get_model_status
+    monkeypatch.setenv("LIGHTWEIGHT_API_MODE", "true")
+
+    # 1. With ML_SIDECAR_URL set -> reports active sidecar models
+    monkeypatch.setenv("ML_SIDECAR_URL", "https://trading-ml-8umr.onrender.com")
+    status_with_sidecar = get_model_status()
+    assert status_with_sidecar["sidecar_active"] is True
+    assert status_with_sidecar["active_inference_mode"] == "ML_SIDECAR_ENSEMBLE"
+    assert "ML Sidecar" in status_with_sidecar["badge_short"]
+    assert "XGBoost" in status_with_sidecar["badge_short"]
+    assert status_with_sidecar["models_executing"]["xgboost"] is True
+    assert status_with_sidecar["models_executing"]["lightgbm"] is True
+
+    # 2. Without ML_SIDECAR_URL set -> honest fallback to lightweight heuristic
+    monkeypatch.delenv("ML_SIDECAR_URL", raising=False)
+    status_fallback = get_model_status()
+    assert status_fallback.get("sidecar_active") is not True
+    assert "Lightweight" in status_fallback["mode"]
+    assert "⚡" in status_fallback["badge_short"]
+
