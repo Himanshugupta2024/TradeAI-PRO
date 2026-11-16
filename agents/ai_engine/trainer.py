@@ -509,6 +509,7 @@ def walk_forward_split(
     n_splits: int = 5,
     train_ratio: float = 0.7,
     embargo_bars: int | None = None,
+    scale_per_fold: bool = False,
 ) -> list[tuple]:
     """
     Walk-forward cross-validation splits for time-series data.
@@ -523,6 +524,8 @@ def walk_forward_split(
             using prices inside the validation slice -- that is look-ahead
             leakage. Dropping the last `embargo_bars` training samples removes
             it. `None` lazily reads `config.settings.OUTCOME_FORWARD_BARS`.
+        scale_per_fold: When True, normalizes X_train and X_val using ONLY the
+            training fold's mean and std (zero leakage across fold boundaries).
 
     Returns:
         List of (X_train, y_train, X_val, y_val) tuples
@@ -549,12 +552,21 @@ def walk_forward_split(
         if train_end - train_start < 10 or val_end - val_start < 5:
             continue
 
-        splits.append((
-            X[train_start:train_end],
-            y[train_start:train_end],
-            X[val_start:val_end],
-            y[val_start:val_end],
-        ))
+        X_tr = X[train_start:train_end]
+        y_tr = y[train_start:train_end]
+        X_va = X[val_start:val_end]
+        y_va = y[val_start:val_end]
+
+        if scale_per_fold and len(X_tr) > 0 and len(X_va) > 0:
+            axes = tuple(range(X_tr.ndim - 1))
+            mu = np.nanmean(X_tr, axis=axes, keepdims=True)
+            sd = np.nanstd(X_tr, axis=axes, keepdims=True)
+            sd = np.where(np.isfinite(sd) & (np.abs(sd) > _EPS), sd, 1.0)
+            mu = np.where(np.isfinite(mu), mu, 0.0)
+            X_tr = (X_tr - mu) / sd
+            X_va = (X_va - mu) / sd
+
+        splits.append((X_tr, y_tr, X_va, y_va))
 
     return splits
 

@@ -119,6 +119,78 @@ class TestChronologicalFourWaySplit:
         assert total_retained + discarded == len(df)
 
 
+class TestWalkForwardFoldScaling:
+    """`walk_forward_split(scale_per_fold=True)` must scale with train-only stats.
+
+    The point of the flag is that a validation fold is never normalised with its
+    own mean/std: that is the classic "scaled on the full series" leak, where the
+    model implicitly sees where the future distribution sits.
+    """
+
+    def _ramp(self, n: int = 300, n_features: int = 3) -> np.ndarray:
+        # Strictly increasing per column, so every validation fold sits at a
+        # different level than its training fold. Scaling a fold with its own
+        # statistics would re-centre it back to 0 and erase that difference.
+        idx = np.arange(n, dtype=float)[:, None]
+        return np.tile(idx, (1, n_features))
+
+    def test_validation_fold_is_scaled_with_train_statistics(self):
+        from agents.ai_engine.trainer import walk_forward_split
+
+        X = self._ramp()
+        y = (np.arange(len(X)) % 2).astype(np.int64)
+
+        scaled = walk_forward_split(
+            X, y, n_splits=3, train_ratio=0.7, embargo_bars=0, scale_per_fold=True
+        )
+        assert scaled, "walk-forward split produced no folds"
+
+        for X_tr, _, X_va, _ in scaled:
+            # Training fold is standardised to mean 0 / std 1 per feature.
+            assert np.allclose(np.nanmean(X_tr, axis=0), 0.0, atol=1e-9)
+            assert np.allclose(np.nanstd(X_tr, axis=0), 1.0, atol=1e-9)
+            # Validation fold must not be centred on itself, otherwise the
+            # level shift between folds disappears.
+            assert np.nanmean(X_va, axis=0).min() > 1.0
+
+    def test_validation_fold_matches_manual_train_statistics(self):
+        from agents.ai_engine.trainer import walk_forward_split
+
+        X = self._ramp()
+        y = (np.arange(len(X)) % 2).astype(np.int64)
+
+        unscaled = walk_forward_split(
+            X, y, n_splits=3, train_ratio=0.7, embargo_bars=0, scale_per_fold=False
+        )
+        scaled = walk_forward_split(
+            X, y, n_splits=3, train_ratio=0.7, embargo_bars=0, scale_per_fold=True
+        )
+        assert len(unscaled) == len(scaled) > 0
+
+        for (raw_tr, _, raw_va, _), (sc_tr, _, sc_va, _) in zip(unscaled, scaled):
+            # Flag off: the raw level is preserved (train mean is not 0).
+            assert np.nanmean(raw_tr, axis=0).min() > 0.0
+            assert np.nanmean(raw_va, axis=0).min() > 0.0
+            mu = np.nanmean(raw_tr, axis=0)
+            sd = np.nanstd(raw_tr, axis=0)
+            sd = np.where(np.abs(sd) > 1e-12, sd, 1.0)
+            assert np.allclose(sc_tr, (raw_tr - mu) / sd)
+            assert np.allclose(sc_va, (raw_va - mu) / sd)
+
+    def test_constant_feature_does_not_divide_by_zero(self):
+        from agents.ai_engine.trainer import walk_forward_split
+
+        X = self._ramp()
+        X[:, -1] = 5.0  # zero variance everywhere
+        y = (np.arange(len(X)) % 2).astype(np.int64)
+
+        for _, _, X_va, _ in walk_forward_split(
+            X, y, n_splits=3, train_ratio=0.7, embargo_bars=0, scale_per_fold=True
+        ):
+            assert np.all(np.isfinite(X_va)), "constant feature produced inf/nan"
+            assert np.allclose(X_va[:, -1], 0.0)
+
+
 class TestTradeOutcomeTargetContract:
     """Test suite ensuring Option C 1R:2R targets align correctly."""
 
