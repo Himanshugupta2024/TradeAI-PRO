@@ -79,10 +79,13 @@ def fetch_and_prepare(
 def train_single_asset(
     symbol: str,
     asset_type: str = "nse",
-    timeframe: str = "1h",
-    days: int = 365,
+    timeframe: str = "1d",
+    days: int = 730,
     use_optuna: bool = False,
     n_trials: int = 15,
+    embargo_bars: int = 20,
+    round_trip_cost_pct: float = 0.0006,
+    keep_timeouts: bool = True,
 ) -> Dict[str, Any]:
     """Train XGBoost and LightGBM models on a single asset."""
     import agents.ai_engine.xgboost_model as xm
@@ -102,7 +105,14 @@ def train_single_asset(
     t0 = time.time()
     try:
         xgb_predictor = xm.get_xgb_predictor()
-        xgb_metrics = xgb_predictor.train(df, use_optuna=use_optuna, n_optuna_trials=n_trials)
+        xgb_metrics = xgb_predictor.train(
+            df,
+            use_optuna=use_optuna,
+            n_optuna_trials=n_trials,
+            embargo_bars=embargo_bars,
+            round_trip_cost_pct=round_trip_cost_pct,
+            keep_timeouts=keep_timeouts,
+        )
         xgb_metrics["time_sec"] = round(time.time() - t0, 1)
         res["xgboost"] = xgb_metrics
         log.info("XGBoost %s: Val Acc: %.2f%%, AUC: %.4f", symbol, xgb_metrics.get("val_accuracy", 0), xgb_metrics.get("val_auc", 0))
@@ -115,7 +125,14 @@ def train_single_asset(
     t0 = time.time()
     try:
         lgbm_predictor = lm.get_lgbm_predictor()
-        lgbm_metrics = lgbm_predictor.train(df, use_optuna=use_optuna, n_optuna_trials=n_trials)
+        lgbm_metrics = lgbm_predictor.train(
+            df,
+            use_optuna=use_optuna,
+            n_optuna_trials=n_trials,
+            embargo_bars=embargo_bars,
+            round_trip_cost_pct=round_trip_cost_pct,
+            keep_timeouts=keep_timeouts,
+        )
         lgbm_metrics["time_sec"] = round(time.time() - t0, 1)
         res["lightgbm"] = lgbm_metrics
         log.info("LightGBM %s: Val Acc: %.2f%%, AUC: %.4f", symbol, lgbm_metrics.get("val_accuracy", 0), lgbm_metrics.get("val_auc", 0))
@@ -130,8 +147,11 @@ def main():
     parser = argparse.ArgumentParser(description="TradeAI PRO — Train & Publish ML Models")
     parser.add_argument("--asset-type", choices=["nse", "crypto"], default="nse", help="Asset class (default: nse)")
     parser.add_argument("--symbols", type=str, default="", help="Comma-separated symbols")
-    parser.add_argument("--timeframe", type=str, default="1h", help="Candle timeframe (default: 1h)")
-    parser.add_argument("--days", type=int, default=365, help="Lookback days (default: 365)")
+    parser.add_argument("--timeframe", type=str, default="1d", help="Candle timeframe (default: 1d for NSE EOD)")
+    parser.add_argument("--days", type=int, default=730, help="Lookback days (default: 730 for 2 years)")
+    parser.add_argument("--embargo-bars", type=int, default=20, help="Purged embargo gap candles (default: 20)")
+    parser.add_argument("--cost-pct", type=float, default=0.0006, help="Round trip fee drag hurdle (default: 0.0006)")
+    parser.add_argument("--keep-timeouts", action="store_true", default=True, help="Retain horizontal timeouts as class 0 (default: True)")
     parser.add_argument("--quick", action="store_true", default=True, help="Skip heavy Optuna trials (default: True)")
     parser.add_argument("--optuna", dest="quick", action="store_false", help="Enable Optuna hyperparameter search")
     parser.add_argument("--trials", type=int, default=15, help="Optuna trials if enabled (default: 15)")
@@ -158,6 +178,9 @@ def main():
             days=args.days,
             use_optuna=not args.quick,
             n_trials=args.trials,
+            embargo_bars=args.embargo_bars,
+            round_trip_cost_pct=args.cost_pct,
+            keep_timeouts=args.keep_timeouts,
         )
         all_metrics.append(res)
         xgb_acc = res.get("xgboost", {}).get("val_accuracy")
