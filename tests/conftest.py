@@ -25,10 +25,12 @@ import shutil
 import sys
 import tempfile
 import threading
+from pathlib import Path
 
 import pytest
 
 _TEMP_DB_DIR = None
+_ARTIFACT_DIR = None
 
 if os.getenv("PYTEST_ALLOW_REAL_DB") != "1":
     _TEMP_DB_DIR = tempfile.mkdtemp(prefix="trading-pytest-db-")
@@ -64,6 +66,35 @@ def _drop_temp_db() -> None:
 
 _create_test_schema()
 atexit.register(_drop_temp_db)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolate_runtime_artifacts():
+    """Point runtime artifacts at a temp dir for the whole session.
+
+    The database rewrite above stops tests writing *rows* to the real database,
+    but `agents.analytics.feedback_loop._WEIGHTS_PATH` is a plain module global
+    pointing at `config/learned_weights.json`. Any test that drives
+    `FeedbackAnalyser.run_daily_eod_review()` therefore stamps the repository's
+    learned-weights sidecar with its own synthetic insights (observed: a
+    COLD_START / zero-trade snapshot replacing the trained one). Patching once
+    here covers tests that never knew they touched it.
+    """
+    global _ARTIFACT_DIR
+    if os.getenv("PYTEST_ALLOW_REAL_DB") == "1":
+        yield
+        return
+
+    import agents.analytics.feedback_loop as feedback_loop
+
+    _ARTIFACT_DIR = tempfile.mkdtemp(prefix="trading-pytest-artifacts-")
+    original_path = feedback_loop._WEIGHTS_PATH
+    feedback_loop._WEIGHTS_PATH = Path(_ARTIFACT_DIR) / "learned_weights.json"
+    try:
+        yield
+    finally:
+        feedback_loop._WEIGHTS_PATH = original_path
+        shutil.rmtree(_ARTIFACT_DIR, ignore_errors=True)
 
 
 def _purge_runtime_state() -> None:
