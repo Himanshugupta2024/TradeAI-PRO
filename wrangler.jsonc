@@ -6,6 +6,9 @@
   "triggers": {
     "crons": ["*/2 3-10 * * 1-5"]
   },
+  "vars": {
+    "ML_BACKEND_ORIGIN": "https://trading-ml-8umr.onrender.com"
+  },
   "assets": {
     "directory": "./dashboard",
     "binding": "ASSETS",

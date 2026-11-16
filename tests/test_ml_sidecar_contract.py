@@ -1,7 +1,7 @@
 """
 Unit tests for the ML Inference Sidecar (Box B) and ML Client (Box A) Contract.
 Verifies DataFrame serialization, naive-IST datetime preservation, authentication,
-fail-open fallback behavior, and PyTorch isolation.
+fail-closed security, cheap liveness, fail-open fallback behavior, and PyTorch isolation.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from api.ml_client import serialize_df, deserialize_df
 from ml_server import app
 
 
-def _create_sample_df(n_bars: int = 70) -> pd.DataFrame:
+def _create_sample_df(n_bars: int = 260) -> pd.DataFrame:
     base_time = datetime(2026, 11, 16, 9, 15)
     dates = [base_time + timedelta(minutes=5 * i) for i in range(n_bars)]
     data = {
@@ -33,15 +33,37 @@ def _create_sample_df(n_bars: int = 70) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
-def test_df_serialization_roundtrip_equality():
-    df = _create_sample_df(65)
-    serialized = serialize_df(df, max_rows=60)
+def test_df_serialization_roundtrip_equality_250_bars():
+    df = _create_sample_df(260)
+    serialized = serialize_df(df, max_rows=250)
     recovered = deserialize_df(serialized)
 
-    assert len(recovered) == 60
+    assert len(recovered) == 250
     assert list(recovered.columns) == list(df.columns)
-    assert (recovered["close"].values == df["close"].tail(60).values).all()
-    assert recovered["timestamp"].iloc[0] == df["timestamp"].iloc[-60]
+    assert (recovered["close"].values == df["close"].tail(250).values).all()
+    assert recovered["timestamp"].iloc[0] == df["timestamp"].iloc[-250]
+
+
+def test_df_serialization_datetime_index_roundtrip():
+    base_time = datetime(2026, 11, 16, 9, 15)
+    dates = [base_time + timedelta(minutes=5 * i) for i in range(30)]
+    df = pd.DataFrame(
+        {"close": [100.0 + i for i in range(30)], "volume": [1000 for _ in range(30)]},
+        index=pd.DatetimeIndex(dates),
+    )
+    serialized = serialize_df(df, max_rows=25)
+    recovered = deserialize_df(serialized)
+
+    assert len(recovered) == 25
+    assert (recovered.index == df.index[-25:]).all()
+
+
+def test_ml_server_cheap_liveness():
+    """Verify /health/live is ultra-lightweight and returns in microseconds."""
+    client = TestClient(app)
+    resp = client.get("/health/live")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "alive"}
 
 
 def test_ml_server_health_endpoint():
@@ -55,18 +77,23 @@ def test_ml_server_health_endpoint():
     assert "models" in data
 
 
-def test_ml_server_infer_auth_guard(monkeypatch):
-    monkeypatch.setenv("ML_INTERNAL_TOKEN", "super-secret-pass-123")
+def test_ml_server_infer_fail_closed_auth(monkeypatch):
     client = TestClient(app)
     df = _create_sample_df(60)
     df_json = serialize_df(df)
 
-    # 1. Missing header -> 403 Forbidden
-    resp = client.post("/infer", json={"symbol": "RELIANCE", "df_json": df_json})
-    assert resp.status_code == 403
-    assert "Invalid internal authorization token" in resp.json()["detail"]
+    # 1. When ML_INTERNAL_TOKEN is NOT set on server -> 503 Service Unavailable (Fail closed!)
+    monkeypatch.delenv("ML_INTERNAL_TOKEN", raising=False)
+    resp = client.post(
+        "/infer",
+        json={"symbol": "RELIANCE", "df_json": df_json},
+        headers={"X-Internal-Token": "some-token"},
+    )
+    assert resp.status_code == 503
+    assert "Sidecar auth misconfigured" in resp.json()["detail"]
 
-    # 2. Wrong header -> 403 Forbidden
+    # 2. When ML_INTERNAL_TOKEN is set, but caller provides wrong token -> 403 Forbidden
+    monkeypatch.setenv("ML_INTERNAL_TOKEN", "super-secret-pass-123")
     resp = client.post(
         "/infer",
         json={"symbol": "RELIANCE", "df_json": df_json},
@@ -74,7 +101,11 @@ def test_ml_server_infer_auth_guard(monkeypatch):
     )
     assert resp.status_code == 403
 
-    # 3. Valid header -> 200 OK
+    # 3. When caller provides missing token -> 403 Forbidden
+    resp = client.post("/infer", json={"symbol": "RELIANCE", "df_json": df_json})
+    assert resp.status_code == 403
+
+    # 4. Valid token -> 200 OK
     resp = client.post(
         "/infer",
         json={"symbol": "RELIANCE", "df_json": df_json},
@@ -87,9 +118,14 @@ def test_ml_server_infer_auth_guard(monkeypatch):
     assert "confidence" in res_data
 
 
-def test_ml_server_infer_empty_payload():
+def test_ml_server_infer_empty_payload(monkeypatch):
+    monkeypatch.setenv("ML_INTERNAL_TOKEN", "test-token")
     client = TestClient(app)
-    resp = client.post("/infer", json={"symbol": "RELIANCE", "df_json": ""})
+    resp = client.post(
+        "/infer",
+        json={"symbol": "RELIANCE", "df_json": ""},
+        headers={"X-Internal-Token": "test-token"},
+    )
     assert resp.status_code == 400
 
 
@@ -118,7 +154,6 @@ def test_ensemble_remote_sidecar_routing(monkeypatch):
         "source": "ML_SIDECAR",
     }
 
-    # Mock infer_remote_sync
     import api.ml_client as mlc
     monkeypatch.setattr(mlc, "infer_remote_sync", lambda symbol, df, timeout=None: mock_response)
 
@@ -139,6 +174,5 @@ def test_pytorch_guard_prevents_torch_import(monkeypatch):
     df = _create_sample_df(60)
     result = predict_advanced(df, symbol="TEST_TORCH_GUARD", force_refresh=True)
 
-    # With ENABLE_PYTORCH_MODELS=false, lstm vote should remain None / unexecuted
     votes = result.get("model_votes", {})
     assert votes.get("lstm") is None

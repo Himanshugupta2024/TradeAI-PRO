@@ -55,8 +55,17 @@ class InferRequest(BaseModel):
 
 
 @app.get("/health/live")
+def health_live() -> Dict[str, str]:
+    """
+    Ultra-lightweight liveness probe for Render health check (< 1ms, zero CPU).
+    Never touches model registry, psutil, or database.
+    """
+    return {"status": "alive"}
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
+    """Rich telemetry endpoint reporting memory and model status."""
     rss_mb = 0.0
     try:
         import psutil
@@ -86,8 +95,14 @@ def infer(
     req: InferRequest,
     x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
 ) -> Dict[str, Any]:
+    # Fail-closed auth contract: sidecar MUST be configured with a token
     expected_token = os.environ.get("ML_INTERNAL_TOKEN", "").strip()
-    if expected_token and x_internal_token != expected_token:
+    if not expected_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sidecar auth misconfigured: ML_INTERNAL_TOKEN environment variable is not set",
+        )
+    if x_internal_token != expected_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid internal authorization token",

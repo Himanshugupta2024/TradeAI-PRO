@@ -60,7 +60,7 @@ services:
       - key: BACKGROUND_REFRESH_ENABLED
         value: "true"
       - key: REFRESH_INTERVAL_SEC
-        value: "240"
+        value: "300"
       - key: REFRESH_CYCLE_TIMEOUT_SEC
         value: "240"
       - key: INTRADAY_RVOL_GATE_ENABLED
@@ -115,5 +115,7 @@ services:
         value: "false"
       - key: ENABLE_PYTORCH_MODELS
         value: "false"
+      - key: DATABASE_URL
+        sync: false
       - key: ML_INTERNAL_TOKEN
         sync: false
