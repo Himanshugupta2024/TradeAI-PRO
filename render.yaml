@@ -83,3 +83,37 @@ services:
         value: 20
       - key: CRON_SECRET
         sync: false
+      # ML Inference Sidecar (Box B) connection
+      - key: ML_SIDECAR_URL
+        sync: false
+      - key: ML_INTERNAL_TOKEN
+        sync: false
+
+  # ── Box B: Dedicated ML Inference Sidecar (Render Free ~420MB) ──
+  - type: web
+    name: trading-ml
+    env: python
+    plan: free
+    autoDeploy: false
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn ml_server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health/live
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: NUMEXPR_NUM_THREADS
+        value: "1"
+      - key: LIGHTWEIGHT_API_MODE
+        value: "false"
+      - key: ENABLE_PYTORCH_MODELS
+        value: "false"
+      - key: ML_INTERNAL_TOKEN
+        sync: false

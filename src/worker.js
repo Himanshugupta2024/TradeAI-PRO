@@ -1082,6 +1082,21 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = ne
       },
     });
 
+    // Keep-warm ping for Box B (ML Sidecar) if configured in worker environment
+    if (env && env.ML_BACKEND_ORIGIN) {
+      try {
+        await fetchFn(`${env.ML_BACKEND_ORIGIN.replace(/\/+$/, "")}/health/live`, {
+          method: "GET",
+          headers: {
+            "User-Agent": "TradeAI-Cloudflare-Cron-KeepAlive/1.0",
+            "Accept": "application/json",
+          },
+        });
+      } catch (mlErr) {
+        console.warn("[cron] ML sidecar ping non-fatal error:", mlErr);
+      }
+    }
+
     // Trigger single-flight live market refresh on Render backend during market hours
     let refresh = null;
     if (env && env.CRON_SECRET) {

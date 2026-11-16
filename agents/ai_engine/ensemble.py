@@ -416,6 +416,23 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
         log.debug("[Ensemble] Statistical failed: %s", exc)
 
     if _is_lightweight_mode():
+        # Check if remote ML sidecar (Box B) is configured and reachable
+        ml_sidecar_url = os.environ.get("ML_SIDECAR_URL", "").strip()
+        if ml_sidecar_url:
+            try:
+                from api.ml_client import infer_remote_sync
+                sidecar_pred = infer_remote_sync(symbol=symbol, df=df)
+                if sidecar_pred and isinstance(sidecar_pred, dict) and "confidence" in sidecar_pred:
+                    sidecar_pred["source"] = "ML_SIDECAR"
+                    if cache_key is not None:
+                        with _ENSEMBLE_CACHE_LOCK:
+                            if len(_ENSEMBLE_PRED_CACHE) >= _ENSEMBLE_CACHE_MAX_ENTRIES:
+                                _ENSEMBLE_PRED_CACHE.pop(next(iter(_ENSEMBLE_PRED_CACHE)))
+                            _ENSEMBLE_PRED_CACHE[cache_key] = dict(sidecar_pred)
+                    return sidecar_pred
+            except Exception as sc_err:
+                log.debug("[Ensemble] Remote ML sidecar fallback: %s", sc_err)
+
         # Render Free 512MB RAM cap: Bypass heavy ML model loading and inference in web mode
         direction = stat_result.get("direction", "NEUTRAL")
         conf = float(stat_result.get("confidence", 50.0))
@@ -448,6 +465,7 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
             "agreement_count": 1,
             "meta_learner_active": False,
             "lightweight_mode": True,
+            "source": "LOCAL_HEURISTIC",
             "trend_regime": "NEUTRAL",
             "volatility_regime": "NORMAL",
             "trend_score": 0.0,
@@ -494,32 +512,34 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
     # ── 4. LSTM predictor ──────────────────────────────────────────────────
     lstm_result = {"direction": "NEUTRAL", "confidence": 0.0, "prob_up": 50.0}
     lstm_fitted = False
-    try:
-        import torch
-        from agents.ai_engine.lstm_model import TradingLSTM
-        from agents.ai_engine.trainer import FEATURE_COLS
-        model_path = "models/best_model.pt"
-        if os.path.exists(model_path):
-            seq_length = 60
-            available_cols = [c for c in FEATURE_COLS if c in df.columns]
-            if len(available_cols) >= 5 and len(df) >= seq_length:
-                feat_mat = df[available_cols].dropna().values.astype("float64")
-                if len(feat_mat) >= seq_length:
-                    # z-score normalise using last seq_length rows
-                    window = feat_mat[-seq_length:]
-                    mean = feat_mat.mean(axis=0)
-                    std  = feat_mat.std(axis=0)
-                    std[std == 0] = 1.0
-                    norm = (window - mean) / std
-                    # Shape: (1, seq_length, n_features)
-                    x_tensor = torch.FloatTensor(norm[np.newaxis])
-                    from agents.ai_engine.lstm_model import get_lstm_model
-                    model = get_lstm_model(input_size=len(available_cols), model_path=model_path)
-                    if model is not None:
-                        lstm_result = model.predict(x_tensor)
-                        lstm_fitted = True
-    except Exception as exc:
-        log.debug("[Ensemble] LSTM failed: %s", exc)
+    enable_torch = os.environ.get("ENABLE_PYTORCH_MODELS", "false").lower() in ("1", "true", "yes", "on")
+    if enable_torch:
+        try:
+            import torch
+            from agents.ai_engine.lstm_model import TradingLSTM
+            from agents.ai_engine.trainer import FEATURE_COLS
+            model_path = "models/best_model.pt"
+            if os.path.exists(model_path):
+                seq_length = 60
+                available_cols = [c for c in FEATURE_COLS if c in df.columns]
+                if len(available_cols) >= 5 and len(df) >= seq_length:
+                    feat_mat = df[available_cols].dropna().values.astype("float64")
+                    if len(feat_mat) >= seq_length:
+                        # z-score normalise using last seq_length rows
+                        window = feat_mat[-seq_length:]
+                        mean = feat_mat.mean(axis=0)
+                        std  = feat_mat.std(axis=0)
+                        std[std == 0] = 1.0
+                        norm = (window - mean) / std
+                        # Shape: (1, seq_length, n_features)
+                        x_tensor = torch.FloatTensor(norm[np.newaxis])
+                        from agents.ai_engine.lstm_model import get_lstm_model
+                        model = get_lstm_model(input_size=len(available_cols), model_path=model_path)
+                        if model is not None:
+                            lstm_result = model.predict(x_tensor)
+                            lstm_fitted = True
+        except Exception as exc:
+            log.debug("[Ensemble] LSTM failed: %s", exc)
 
     # ── 4b. Logistic Regression Baseline (Linear Anchor) ───────────────────
     logit_result = {"direction": "NEUTRAL", "confidence": 0.0, "prob_up": 50.0}
@@ -764,6 +784,7 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
         "signed_scores":                    {k: round(v, 1) for k, v in signed_scores.items()},
         "sentiment_adj":                    round(sentiment_adj, 1),
         "model_accuracy":                   _tracker.get_accuracy_summary(),
+        "source":                           "ML_ENSEMBLE",
     }
 
     # ── 12. Shadow Mode Logging (Phase 5) ──────────────────────────────────
