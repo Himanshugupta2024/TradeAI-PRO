@@ -72,6 +72,14 @@ except Exception as exc:
             "message": "Primary app failed to boot. Check server logs for details.",
         }
 
+    @app.get("/api/health/live")
+    async def degraded_liveness_check():
+        return {
+            "status": "alive",
+            "degraded": True,
+            "message": "Primary app in degraded fallback mode",
+        }
+
     @app.get("/api/ready")
     async def degraded_ready_check():
         return JSONResponse(

@@ -348,7 +348,7 @@ def _lifespan_context():
 
 
 
-        if _env_flag("SELF_PING_ENABLED", True):
+        if _env_flag("SELF_PING_ENABLED", False):
 
             _spawn_task(_keep_alive_task(), name="keep_alive_task")
 

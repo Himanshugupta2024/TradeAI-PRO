@@ -52,19 +52,20 @@ _BUILD_SHA_CACHE: str | None = None
 _CONFIG_HASH_CACHE: str | None = None
 _BOOT_TIME_CACHE: str | None = None
 
+try:
+    _commit = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT")
+    if _commit:
+        _BUILD_SHA_CACHE = _commit[:8]
+    else:
+        _BUILD_SHA_CACHE = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, timeout=1).strip()
+except Exception:
+    _BUILD_SHA_CACHE = "prod"
+
 def _get_build_sha() -> str:
     global _BUILD_SHA_CACHE
     if _BUILD_SHA_CACHE is not None:
         return _BUILD_SHA_CACHE
-    commit = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT")
-    if commit:
-        _BUILD_SHA_CACHE = commit[:8]
-        return _BUILD_SHA_CACHE
-    try:
-        _BUILD_SHA_CACHE = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, timeout=1).strip()
-    except Exception:
-        _BUILD_SHA_CACHE = "dev"
-    return _BUILD_SHA_CACHE
+    return "prod"
 
 def _get_boot_time() -> str:
     """Return ISO UTC timestamp of server startup (cached after first resolution)."""

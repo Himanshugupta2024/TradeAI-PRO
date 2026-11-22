@@ -1290,8 +1290,17 @@ async def _run_swing_outcome_eval_if_due() -> dict | None:
     if not getattr(settings, "SWING_OUTCOME_EVAL_ENABLED", True):
         return None
 
+    # Check market hours: swing outcomes resolve on daily bars which freeze at 15:35 IST
+    try:
+        from zoneinfo import ZoneInfo
+        _now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+        is_weekend = _now_ist.weekday() >= 5
+        min_interval = 21600 if is_weekend else 3600  # 6h on weekends, 1h during trading days
+    except Exception:
+        min_interval = 3600
+
     interval = max(
-        300, int(getattr(settings, "SWING_OUTCOME_EVAL_INTERVAL_SEC", 3600) or 3600)
+        min_interval, int(getattr(settings, "SWING_OUTCOME_EVAL_INTERVAL_SEC", 3600) or 3600)
     )
     now_m = time.monotonic()
     if now_m - _last_swing_outcome_eval_monotonic < interval:
@@ -1313,6 +1322,8 @@ async def _background_refresh():
     If initial load was skipped, immediately triggers a first refresh cycle.
     """
     initial_load_enabled = os.environ.get("INITIAL_LOAD_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    is_lightweight = os.environ.get("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes", "on")
+
     if initial_load_enabled:
         await _wait_until_ready_or_timeout(
             BACKGROUND_READY_WAIT_SECONDS,
@@ -1324,21 +1335,27 @@ async def _background_refresh():
         # starting the first refresh cycle. Prevents concurrent memory spikes.
         logger.info("INITIAL_LOAD_ENABLED=false: waiting 45s for server warmup before first refresh cycle")
         await asyncio.sleep(45)
-        lock = _get_refresh_lock()
-        if not lock.locked():
-            try:
-                await asyncio.wait_for(
-                    _refresh_market_data(),
-                    timeout=REFRESH_CYCLE_TIMEOUT_SECONDS,
-                )
-                logger.info("First background refresh complete. %d symbols loaded.", len(_market_data))
-            except Exception as exc:
-                logger.error("First background refresh failed: %s", exc)
+        if not is_lightweight:
+            lock = _get_refresh_lock()
+            if not lock.locked():
+                try:
+                    await asyncio.wait_for(
+                        _refresh_market_data(),
+                        timeout=REFRESH_CYCLE_TIMEOUT_SECONDS,
+                    )
+                    logger.info("First background refresh complete. %d symbols loaded.", len(_market_data))
+                except Exception as exc:
+                    logger.error("First background refresh failed: %s", exc)
+        else:
+            logger.info("LIGHTWEIGHT_API_MODE=true: skipping heavy initial web-tier refresh cycle.")
 
     try:
         while True:
             # Smart cadence: during NSE off-hours or weekends, back off to avoid redundant allocations on Render free tier
             sleep_time = REFRESH_INTERVAL_SECONDS
+            is_lightweight = os.environ.get("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes", "on")
+            is_off_hours = False
+            is_weekend = False
             try:
                 from zoneinfo import ZoneInfo
                 _now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
@@ -1348,7 +1365,20 @@ async def _background_refresh():
                     sleep_time = max(REFRESH_INTERVAL_SECONDS * 3, 300)
             except Exception:
                 sleep_time = REFRESH_INTERVAL_SECONDS
+
             await asyncio.sleep(sleep_time)
+
+            # In lightweight mode on Render free tier, web container serves from DB snapshots;
+            # background data scraping runs via GitHub Actions cron / worker workflows.
+            if is_lightweight:
+                logger.debug("LIGHTWEIGHT_API_MODE=true: skipping web-tier background scraping.")
+                continue
+
+            # During weekends and off-hours, NSE cash market is closed; skip compute entirely
+            if is_weekend or is_off_hours:
+                logger.debug("Background refresh skipped: NSE market is closed (weekend/off-hours).")
+                continue
+
             lock = _get_refresh_lock()
             if lock.locked():
                 logger.debug("Background refresh skipped — previous refresh still running")
