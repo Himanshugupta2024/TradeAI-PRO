@@ -3892,7 +3892,18 @@ async def get_fno_symbol_analytics(symbol: str, spot: float = 0.0, atr: float = 
     """Fetch F&O analytics for symbol with 30s TTL and graceful ATR fallback."""
     from api.fno_client import fetch_fno_analytics
     sym = symbol.strip().upper().replace(".NS", "")
-    return await fetch_fno_analytics(sym, spot=spot, atr=atr)
+    resolved_spot = spot
+    resolved_atr = atr
+    if resolved_spot <= 0:
+        try:
+            from db.runtime_state import get_runtime_state
+            snap = get_runtime_state("latest_market_snapshot")
+            if snap and isinstance(snap, dict) and "prices" in snap and sym in snap["prices"]:
+                resolved_spot = float(snap["prices"][sym].get("close", 0.0))
+                resolved_atr = float(snap["prices"][sym].get("atr", 0.0))
+        except Exception:
+            pass
+    return await fetch_fno_analytics(sym, spot=resolved_spot, atr=resolved_atr)
 
 
 @router.get("/api/fno/overview")
@@ -3900,7 +3911,23 @@ async def get_fno_overview():
     """Fetch F&O telemetry across high-weight benchmark and equity underlyings."""
     from api.fno_client import fetch_fno_analytics
     symbols = ["NIFTY 50", "NIFTY BANK", "RELIANCE", "HDFCBANK", "TCS", "INFY", "ICICIBANK", "SBIN"]
-    tasks = [fetch_fno_analytics(s, spot=0.0, atr=0.0) for s in symbols]
+    
+    # Try resolving spots from latest snapshot & index sync
+    spots_map: Dict[str, Tuple[float, float]] = {}
+    try:
+        from db.runtime_state import get_runtime_state
+        snap = get_runtime_state("latest_market_snapshot")
+        if snap and isinstance(snap, dict) and "prices" in snap:
+            for s, p_data in snap["prices"].items():
+                if isinstance(p_data, dict):
+                    spots_map[s] = (float(p_data.get("close", 0.0)), float(p_data.get("atr", 0.0)))
+    except Exception:
+        pass
+
+    tasks = [
+        fetch_fno_analytics(s, spot=spots_map.get(s, (0.0, 0.0))[0], atr=spots_map.get(s, (0.0, 0.0))[1])
+        for s in symbols
+    ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     out = {}
     for sym, res in zip(symbols, results):

@@ -43,15 +43,33 @@ def _get_sync_client(timeout: float) -> httpx.Client:
     return _sync_client
 
 
+# Fallback spot price anchors for major index & stock underlyings when spot is unprovided
+_DEFAULT_SPOT_ANCHORS: Dict[str, float] = {
+    "NIFTY 50": 24200.0,
+    "NIFTY BANK": 51500.0,
+    "RELIANCE": 1335.0,
+    "TCS": 4120.0,
+    "INFY": 1820.0,
+    "HDFCBANK": 1740.0,
+    "ICICIBANK": 1260.0,
+    "SBIN": 810.0,
+    "BHARTIARTL": 1580.0,
+    "ITC": 475.0,
+    "KOTAKBANK": 1780.0,
+    "LT": 3650.0,
+}
+
+
 def _build_atr_fallback(symbol: str, spot: float, atr: float) -> Dict[str, Any]:
     """Graceful fallback when Box C derivatives feed is unavailable."""
-    clean_spot = float(spot) if spot > 0 else 100.0
+    sym_clean = symbol.strip().upper().replace(".NS", "")
+    clean_spot = float(spot) if spot > 0 else _DEFAULT_SPOT_ANCHORS.get(sym_clean, 100.0)
     clean_atr = float(atr) if atr > 0 else (clean_spot * 0.015)
     move_1d = round((clean_atr / clean_spot) * 100.0, 2)
     move_5d = round(move_1d * math.sqrt(5.0), 2)
 
     return {
-        "symbol": symbol.strip().upper().replace(".NS", ""),
+        "symbol": sym_clean,
         "spot_price": round(clean_spot, 2),
         "ce_wall": None,
         "pe_wall": None,

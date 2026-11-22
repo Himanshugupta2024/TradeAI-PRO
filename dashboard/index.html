@@ -3888,6 +3888,13 @@
                 <span class="sidebar-label">Next-Day Picks</span>
                 <span class="status-pill status-pill-active" style="font-size:11px;margin-left:auto;padding:2px 6px;">RESEARCH</span>
             </button>
+            <button class="sidebar-item tab-btn" data-tab="fno" id="tabFno" title="F&O Derivatives Intelligence">
+                <span class="sidebar-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M16 8l-4 4-4-4"></path><path d="M12 12v6"></path></svg>
+                </span>
+                <span class="sidebar-label">F&O Derivatives</span>
+                <span class="status-pill status-pill-active" style="font-size:10px;margin-left:auto;padding:2px 5px;background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);">OI WALLS</span>
+            </button>
 
         </div>
 
@@ -7536,6 +7543,138 @@
             </div>
         </section>
         
+        <!-- ── F&O Derivatives Intelligence Tab ────────────────────────────── -->
+        <section class="tab-content" id="fnoTab">
+            <div class="ee-workspace">
+                <!-- Header -->
+                <div class="ee-header" style="flex-wrap: wrap; gap: 1rem;">
+                    <div class="ee-title-group">
+                        <div class="ee-badge-row">
+                            <h2 class="ee-main-title">F&O DERIVATIVES INTELLIGENCE</h2>
+                            <span class="ee-pro-pill" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border-color: rgba(99, 102, 241, 0.3);">INSTITUTIONAL GEOMETRY</span>
+                            <div class="ee-telemetry-pill live" id="fnoFeedPill">
+                                <span class="status-dot live" style="width:6px;height:6px;"></span>
+                                <span id="fnoFeedStatusText">Box C Derivatives: Online</span>
+                            </div>
+                        </div>
+                        <p class="ee-subtitle">Real-time Open Interest structure, Black-76 implied volatility, market-priced reachability envelopes, and institutional option walls.</p>
+                    </div>
+                    <div class="ee-header-actions" style="display: flex; gap: 0.75rem; align-items: center; margin-left: auto;">
+                        <select id="fnoUnderlyingSelect" class="form-select" aria-label="Select underlying instrument for F&O analytics" style="min-width: 180px; font-size: 0.82rem; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.45rem 0.75rem;">
+                            <option value="NIFTY 50">NIFTY 50</option>
+                            <option value="NIFTY BANK">NIFTY BANK</option>
+                            <option value="RELIANCE">RELIANCE</option>
+                            <option value="HDFCBANK">HDFCBANK</option>
+                            <option value="TCS">TCS</option>
+                            <option value="INFY">INFY</option>
+                            <option value="ICICIBANK">ICICIBANK</option>
+                            <option value="SBIN">SBIN</option>
+                        </select>
+                        <button id="fnoRefreshBtn" class="btn btn-secondary" style="font-size: 0.82rem; display: inline-flex; align-items: center; gap: 6px; padding: 0.45rem 0.85rem; border-radius: 8px;">
+                            <span>⚡</span> Refresh F&O
+                        </button>
+                    </div>
+                </div>
+
+                <!-- KPI Ribbon -->
+                <div class="ee-kpi-ribbon" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 1rem;">
+                    <div class="ee-kpi-card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 1rem;">
+                        <span class="ee-kpi-label" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Put-Call Ratio (PCR)</span>
+                        <div class="ee-kpi-val" id="fnoPcrVal" style="font-size: 1.4rem; font-weight: 700; color: #10b981; margin-top: 4px;">--</div>
+                        <span class="ee-kpi-sub" id="fnoPcrSub" style="font-size: 0.75rem; color: var(--text-muted);">Resolving OI & Volume...</span>
+                    </div>
+                    <div class="ee-kpi-card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 1rem;">
+                        <span class="ee-kpi-label" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Implied Move (Reachability)</span>
+                        <div class="ee-kpi-val" id="fnoImpliedMoveVal" style="font-size: 1.4rem; font-weight: 700; color: #38bdf8; margin-top: 4px;">--</div>
+                        <span class="ee-kpi-sub" id="fnoStraddleSub" style="font-size: 0.75rem; color: var(--text-muted);">ATM Straddle & Black-76 IV</span>
+                    </div>
+                    <div class="ee-kpi-card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 1rem;">
+                        <span class="ee-kpi-label" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Institutional OI Walls</span>
+                        <div class="ee-kpi-val" id="fnoWallsVal" style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin-top: 4px;">PE: -- | CE: --</div>
+                        <span class="ee-kpi-sub" id="fnoWallsSub" style="font-size: 0.75rem; color: var(--text-muted);">Max Put Support ↔ Max Call Resistance</span>
+                    </div>
+                    <div class="ee-kpi-card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 1rem;">
+                        <span class="ee-kpi-label" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Max Pain Strike</span>
+                        <div class="ee-kpi-val" id="fnoMaxPainVal" style="font-size: 1.4rem; font-weight: 700; color: #f59e0b; margin-top: 4px;">--</div>
+                        <span class="ee-kpi-sub" id="fnoMaxPainSub" style="font-size: 0.75rem; color: var(--text-muted);">Expiry Magnet Level</span>
+                    </div>
+                </div>
+
+                <!-- Strike Ladder Corridor Visualizer -->
+                <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 1.25rem; margin-top: 1.25rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem;">
+                        <div>
+                            <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); letter-spacing: 0.03em;">INSTITUTIONAL STRIKE CORRIDOR & REACHABILITY</span>
+                            <span style="font-size: 0.72rem; color: var(--text-muted); margin-left: 8px;" id="fnoCorridorSymbol">NIFTY 50</span>
+                        </div>
+                        <span class="badge" id="fnoEnvelopeSourceBadge" style="background: rgba(14, 165, 233, 0.15); color: #0284c7; border: 1px solid rgba(14, 165, 233, 0.3); font-size: 0.72rem; padding: 2px 8px; border-radius: 4px;">BOX_C_STREAM</span>
+                    </div>
+                    
+                    <div id="fnoLadderVisualizer" style="display: flex; align-items: center; justify-content: space-between; gap: 8px; background: rgba(15, 23, 42, 0.6); padding: 1rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+                        <!-- Left: PE Wall (Support Floor) -->
+                        <div style="text-align: center; flex: 1; padding: 0.75rem; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px;">
+                            <div style="font-size: 0.7rem; color: #10b981; font-weight: 700; text-transform: uppercase;">Max PE Wall (Support)</div>
+                            <div id="fnoLadderPeVal" style="font-size: 1.2rem; font-weight: 700; color: #10b981; margin: 4px 0;">₹--</div>
+                            <div id="fnoLadderPeDist" style="font-size: 0.72rem; color: #94a3b8;">--% below Spot</div>
+                        </div>
+
+                        <!-- Mid-Left Arrow / Reach -->
+                        <div style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 0 4px;">
+                            <span>◄ 1D Cone</span>
+                        </div>
+
+                        <!-- Center: Spot LTP -->
+                        <div style="text-align: center; flex: 1.2; padding: 0.85rem; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 6px;">
+                            <div style="font-size: 0.7rem; color: #38bdf8; font-weight: 700; text-transform: uppercase;">Underlying Spot LTP</div>
+                            <div id="fnoLadderSpotVal" style="font-size: 1.35rem; font-weight: 800; color: #38bdf8; margin: 4px 0;">₹--</div>
+                            <div id="fnoLadderStraddleVal" style="font-size: 0.72rem; color: #94a3b8;">ATM Strike: ₹-- · Straddle: ₹--</div>
+                        </div>
+
+                        <!-- Mid-Right Arrow / Reach -->
+                        <div style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 0 4px;">
+                            <span>1D Cone ►</span>
+                        </div>
+
+                        <!-- Right: CE Wall (Resistance Ceiling) -->
+                        <div style="text-align: center; flex: 1; padding: 0.75rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px;">
+                            <div style="font-size: 0.7rem; color: #ef4444; font-weight: 700; text-transform: uppercase;">Max CE Wall (Resistance)</div>
+                            <div id="fnoLadderCeVal" style="font-size: 1.2rem; font-weight: 700; color: #ef4444; margin: 4px 0;">₹--</div>
+                            <div id="fnoLadderCeDist" style="font-size: 0.72rem; color: #94a3b8;">--% above Spot</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Derivatives Overview Table -->
+                <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 1.25rem; margin-top: 1.25rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem;">
+                        <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); letter-spacing: 0.03em;">HIGH-WEIGHT DERIVATIVES TELEMETRY OVERVIEW</span>
+                        <span style="font-size: 0.72rem; color: var(--text-muted);" id="fnoOverviewAsOf">As of: Loading...</span>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: left;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--border-color); color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase;">
+                                    <th style="padding: 0.6rem 0.75rem;">Underlying</th>
+                                    <th style="padding: 0.6rem 0.75rem;">Spot LTP</th>
+                                    <th style="padding: 0.6rem 0.75rem;">PCR (OI)</th>
+                                    <th style="padding: 0.6rem 0.75rem;">Max PE Wall (Support)</th>
+                                    <th style="padding: 0.6rem 0.75rem;">Max CE Wall (Resistance)</th>
+                                    <th style="padding: 0.6rem 0.75rem;">ATM Straddle</th>
+                                    <th style="padding: 0.6rem 0.75rem;">Implied Move (1D / 5D)</th>
+                                    <th style="padding: 0.6rem 0.75rem;">Max Pain</th>
+                                    <th style="padding: 0.6rem 0.75rem;">Source</th>
+                                </tr>
+                            </thead>
+                            <tbody id="fnoOverviewTableBody">
+                                <tr>
+                                    <td colspan="9" style="padding: 1.5rem; text-align: center; color: var(--text-muted);">Streaming institutional derivatives telemetry from Box C...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
 
         <!-- ── Symbol Detail Modal ────────────── -->
 
@@ -8056,6 +8195,17 @@
                                 <span class="more-card-pill pill-teal">RESEARCH</span>
                             </div>
                             <span class="more-card-desc">Ranked Tier-1 watchlist & bounded post-close plans</span>
+                        </div>
+                        <span class="more-card-arrow">›</span>
+                    </button>
+                    <button class="more-menu-card more-menu-item" data-tab="fno">
+                        <div class="more-card-icon" style="color: #818cf8;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M16 8l-4 4-4-4"></path><path d="M12 12v6"></path></svg></div>
+                        <div class="more-card-body">
+                            <div class="more-card-header-row">
+                                <span class="more-card-title">F&O Derivatives</span>
+                                <span class="more-card-pill" style="background: rgba(99, 102, 241, 0.15); color: #818cf8;">OI WALLS</span>
+                            </div>
+                            <span class="more-card-desc">Option OI walls, PCR, ATM straddle implied moves</span>
                         </div>
                         <span class="more-card-arrow">›</span>
                     </button>

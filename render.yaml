@@ -91,14 +91,14 @@ services:
         sync: false
       # ML Inference Sidecar (Box B) connection
       - key: ML_SIDECAR_URL
-        sync: false
+        value: "https://trading-ml-8umr.onrender.com"
       - key: ML_INTERNAL_TOKEN
-        sync: false
+        value: "tradeai-secret-ml-2026"
       # Market Data Feed Service (Box C) connection
       - key: FEED_SERVICE_URL
-        sync: false
+        value: "https://trading-feed.onrender.com"
       - key: FEED_INTERNAL_TOKEN
-        sync: false
+        value: "tradeai-secret-feed-2026"
 
   # ── Box B: Dedicated ML Inference Sidecar (Render Free ~420MB) ──
   - type: web
@@ -131,7 +131,7 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: ML_INTERNAL_TOKEN
-        sync: false
+        value: "tradeai-secret-ml-2026"
 
   # ── Box C: Dedicated Market Data Feed Service (Shoonya WebSocket ~150MB) ──
   - type: web
@@ -150,7 +150,7 @@ services:
       - key: MALLOC_ARENA_MAX
         value: "2"
       - key: FEED_INTERNAL_TOKEN
-        sync: false
+        value: "tradeai-secret-feed-2026"
       - key: SHOONYA_USERID
         sync: false
       - key: SHOONYA_PASSWORD

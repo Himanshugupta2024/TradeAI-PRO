@@ -2329,6 +2329,7 @@ function switchTab(tab) {
         if (tab === 'edge-macro-heatmap') loadEdgeMacroHeatmap();
         if (tab === 'edge-risk-gauge') loadEdgeRiskGauge();
         if (tab === 'next-day-picks') loadNextDayPicks();
+        if (tab === 'fno') loadFnoAnalyticsTab();
     }
 
 
@@ -26900,7 +26901,6 @@ function renderNextDayPickCard(pick, index) {
         </div>
     </div>`;
 }
-}
 
 async function loadNextDayPicksHistory() {
     const select = document.getElementById('ndpHistorySelect');
@@ -28047,5 +28047,235 @@ async function openAiPredictionModal(sym) {
             </div>
         `;
     }
+}
+
+// ── F&O Derivatives Intelligence Tab Loader ─────────────────────────
+let _fnoOverviewCache = null;
+let _fnoSelectedSymbol = "NIFTY 50";
+
+async function loadFnoAnalyticsTab(symbolOverride = null) {
+    if (symbolOverride) {
+        _fnoSelectedSymbol = symbolOverride;
+    }
+    const selectEl = document.getElementById("fnoUnderlyingSelect");
+    if (selectEl && !selectEl._hasChangeListener) {
+        selectEl.value = _fnoSelectedSymbol;
+        selectEl.addEventListener("change", (e) => {
+            _fnoSelectedSymbol = e.target.value;
+            loadFnoSymbolDetail(_fnoSelectedSymbol);
+        });
+        selectEl._hasChangeListener = true;
+    }
+
+    const refreshBtn = document.getElementById("fnoRefreshBtn");
+    if (refreshBtn && !refreshBtn._hasClickListener) {
+        refreshBtn.addEventListener("click", () => {
+            _fnoOverviewCache = null;
+            loadFnoAnalyticsTab(_fnoSelectedSymbol);
+        });
+        refreshBtn._hasClickListener = true;
+    }
+
+    // 1. Fetch F&O Overview
+    try {
+        const res = await fetchWithTimeout("/api/fno/overview", { timeout: 8000 });
+        if (res && res.ok) {
+            const data = await res.json();
+            _fnoOverviewCache = data;
+            renderFnoOverviewTable(data);
+            const asOfEl = document.getElementById("fnoOverviewAsOf");
+            if (asOfEl && data.as_of) {
+                asOfEl.textContent = `As of: ${new Date(data.as_of).toLocaleTimeString()} · ${data.count || 0} Underlyings`;
+            }
+        }
+    } catch (err) {
+        console.warn("[FNO] Overview fetch failed:", err);
+    }
+
+    // 2. Fetch Selected Underlying Detail
+    await loadFnoSymbolDetail(_fnoSelectedSymbol);
+}
+
+async function loadFnoSymbolDetail(symbol) {
+    const cleanSym = (symbol || "NIFTY 50").trim().toUpperCase();
+    const corridorSymEl = document.getElementById("fnoCorridorSymbol");
+    if (corridorSymEl) corridorSymEl.textContent = cleanSym;
+
+    const selectEl = document.getElementById("fnoUnderlyingSelect");
+    if (selectEl) selectEl.value = cleanSym;
+
+    try {
+        const res = await fetchWithTimeout(`/api/fno/symbol/${encodeURIComponent(cleanSym)}`, { timeout: 8000 });
+        if (!res || !res.ok) throw new Error(`HTTP ${res ? res.status : 'offline'}`);
+        const d = await res.json();
+        renderFnoSymbolKPIs(d);
+    } catch (err) {
+        console.warn(`[FNO] Detail fetch failed for ${cleanSym}:`, err);
+        // Fall back to overview cache row if present
+        if (_fnoOverviewCache && _fnoOverviewCache.data && _fnoOverviewCache.data[cleanSym]) {
+            renderFnoSymbolKPIs(_fnoOverviewCache.data[cleanSym]);
+        }
+    }
+}
+
+function renderFnoSymbolKPIs(d) {
+    if (!d) return;
+
+    // Source badge
+    const srcBadge = document.getElementById("fnoEnvelopeSourceBadge");
+    if (srcBadge) {
+        const isBoxC = d.envelope_source === "BOX_C_STREAM" || (d.ce_wall !== null && d.pe_wall !== null);
+        srcBadge.textContent = isBoxC ? "BOX_C_STREAM (Institutional)" : "ATR_FALLBACK (Options Envelope)";
+        srcBadge.style.color = isBoxC ? "#0284c7" : "#f59e0b";
+        srcBadge.style.borderColor = isBoxC ? "rgba(14,165,233,0.3)" : "rgba(245,158,11,0.3)";
+    }
+
+    // 1. PCR
+    const pcrValEl = document.getElementById("fnoPcrVal");
+    const pcrSubEl = document.getElementById("fnoPcrSub");
+    if (pcrValEl) {
+        if (d.pcr_oi !== null && d.pcr_oi !== undefined) {
+            const pcrNum = Number(d.pcr_oi);
+            pcrValEl.textContent = pcrNum.toFixed(2);
+            if (pcrNum >= 1.05) {
+                pcrValEl.style.color = "#10b981";
+                if (pcrSubEl) pcrSubEl.textContent = `BULLISH BIAS (Put Writing Base) · Vol PCR: ${d.pcr_volume != null ? Number(d.pcr_volume).toFixed(2) : '--'}`;
+            } else if (pcrNum <= 0.8) {
+                pcrValEl.style.color = "#ef4444";
+                if (pcrSubEl) pcrSubEl.textContent = `BEARISH BIAS (Call Overhead) · Vol PCR: ${d.pcr_volume != null ? Number(d.pcr_volume).toFixed(2) : '--'}`;
+            } else {
+                pcrValEl.style.color = "#fbbf24";
+                if (pcrSubEl) pcrSubEl.textContent = `NEUTRAL BALANCED · Vol PCR: ${d.pcr_volume != null ? Number(d.pcr_volume).toFixed(2) : '--'}`;
+            }
+        } else {
+            pcrValEl.textContent = "--";
+            if (pcrSubEl) pcrSubEl.textContent = "Derivatives feed neutral";
+        }
+    }
+
+    // 2. Implied Move
+    const moveEl = document.getElementById("fnoImpliedMoveVal");
+    const straddleSubEl = document.getElementById("fnoStraddleSub");
+    if (moveEl) {
+        const m1 = d.implied_move_1d_pct != null ? `±${Number(d.implied_move_1d_pct).toFixed(2)}% (1D)` : '--';
+        const m5 = d.implied_move_5d_pct != null ? `±${Number(d.implied_move_5d_pct).toFixed(2)}% (5D)` : '--';
+        moveEl.textContent = `${m1} · ${m5}`;
+    }
+    if (straddleSubEl) {
+        const strPrice = d.straddle_price != null ? `₹${Number(d.straddle_price).toFixed(1)}` : '--';
+        const iv = d.straddle_iv != null ? `${(Number(d.straddle_iv) * 100).toFixed(1)}%` : '--';
+        straddleSubEl.textContent = `ATM Straddle: ${strPrice} · Black-76 IV: ${iv}`;
+    }
+
+    // 3. Walls
+    const wallsValEl = document.getElementById("fnoWallsVal");
+    const wallsSubEl = document.getElementById("fnoWallsSub");
+    if (wallsValEl) {
+        const peStr = d.pe_wall != null ? `₹${Number(d.pe_wall).toLocaleString('en-IN')}` : '--';
+        const ceStr = d.ce_wall != null ? `₹${Number(d.ce_wall).toLocaleString('en-IN')}` : '--';
+        wallsValEl.textContent = `PE: ${peStr} | CE: ${ceStr}`;
+    }
+    if (wallsSubEl) {
+        wallsSubEl.textContent = "Max Put Support Floor ↔ Max Call Resistance Ceiling";
+    }
+
+    // 4. Max Pain
+    const maxPainEl = document.getElementById("fnoMaxPainVal");
+    const maxPainSubEl = document.getElementById("fnoMaxPainSub");
+    if (maxPainEl) {
+        maxPainEl.textContent = d.max_pain != null ? `₹${Number(d.max_pain).toLocaleString('en-IN')}` : '--';
+    }
+    if (maxPainSubEl) {
+        const dte = d.days_to_expiry != null ? `${Number(d.days_to_expiry).toFixed(0)} Days to Expiry` : 'Weekly Expiry';
+        maxPainSubEl.textContent = `${dte} · Expiry Magnet Strike`;
+    }
+
+    // 5. Strike Ladder Corridor Visualizer
+    const spot = Number(d.spot_price || 0);
+    const pe = d.pe_wall != null ? Number(d.pe_wall) : null;
+    const ce = d.ce_wall != null ? Number(d.ce_wall) : null;
+
+    const ladderSpotVal = document.getElementById("fnoLadderSpotVal");
+    const ladderStraddleVal = document.getElementById("fnoLadderStraddleVal");
+    if (ladderSpotVal) ladderSpotVal.textContent = spot > 0 ? `₹${spot.toLocaleString('en-IN', {minimumFractionDigits: 1, maximumFractionDigits: 2})}` : '₹--';
+    if (ladderStraddleVal) {
+        const atm = d.atm_strike != null ? `₹${Number(d.atm_strike).toLocaleString('en-IN')}` : '₹--';
+        const str = d.straddle_price != null ? `₹${Number(d.straddle_price).toFixed(1)}` : '₹--';
+        ladderStraddleVal.textContent = `ATM Strike: ${atm} · Straddle: ${str}`;
+    }
+
+    const ladderPeVal = document.getElementById("fnoLadderPeVal");
+    const ladderPeDist = document.getElementById("fnoLadderPeDist");
+    if (ladderPeVal) ladderPeVal.textContent = pe ? `₹${pe.toLocaleString('en-IN')}` : '₹--';
+    if (ladderPeDist) {
+        if (pe && spot > 0) {
+            const dist = ((spot - pe) / spot) * 100;
+            ladderPeDist.textContent = `+${dist.toFixed(2)}% buffer above Support`;
+        } else {
+            ladderPeDist.textContent = "--";
+        }
+    }
+
+    const ladderCeVal = document.getElementById("fnoLadderCeVal");
+    const ladderCeDist = document.getElementById("fnoLadderCeDist");
+    if (ladderCeVal) ladderCeVal.textContent = ce ? `₹${ce.toLocaleString('en-IN')}` : '₹--';
+    if (ladderCeDist) {
+        if (ce && spot > 0) {
+            const dist = ((ce - spot) / spot) * 100;
+            ladderCeDist.textContent = `${dist.toFixed(2)}% buffer below Resistance`;
+        } else {
+            ladderCeDist.textContent = "--";
+        }
+    }
+}
+
+function renderFnoOverviewTable(data) {
+    const tbody = document.getElementById("fnoOverviewTableBody");
+    if (!tbody || !data || !data.data) return;
+
+    const underlyings = Object.keys(data.data);
+    if (underlyings.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" style="padding:1.5rem;text-align:center;color:var(--text-muted);">No derivative underlyings returned.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = underlyings.map(sym => {
+        const row = data.data[sym];
+        const spot = row.spot_price ? `₹${Number(row.spot_price).toLocaleString('en-IN', {minimumFractionDigits: 1, maximumFractionDigits: 2})}` : '--';
+        
+        let pcrBadge = '--';
+        if (row.pcr_oi != null) {
+            const p = Number(row.pcr_oi);
+            const color = p >= 1.05 ? '#10b981' : (p <= 0.8 ? '#ef4444' : '#fbbf24');
+            pcrBadge = `<span style="font-weight:700;color:${color}">${p.toFixed(2)}</span>`;
+        }
+
+        const peWall = row.pe_wall ? `<span style="color:#10b981;font-weight:600">₹${Number(row.pe_wall).toLocaleString('en-IN')}</span>` : '<span style="color:#64748b">--</span>';
+        const ceWall = row.ce_wall ? `<span style="color:#ef4444;font-weight:600">₹${Number(row.ce_wall).toLocaleString('en-IN')}</span>` : '<span style="color:#64748b">--</span>';
+        const straddle = row.straddle_price ? `₹${Number(row.straddle_price).toFixed(1)}` : '--';
+        
+        const m1 = row.implied_move_1d_pct != null ? `±${Number(row.implied_move_1d_pct).toFixed(1)}%` : '--';
+        const m5 = row.implied_move_5d_pct != null ? `±${Number(row.implied_move_5d_pct).toFixed(1)}%` : '--';
+        const moves = `${m1} / ${m5}`;
+
+        const maxPain = row.max_pain ? `₹${Number(row.max_pain).toLocaleString('en-IN')}` : '--';
+        const src = row.envelope_source === 'BOX_C_STREAM' || (row.ce_wall && row.pe_wall) ? 
+            `<span style="color:#0284c7;background:rgba(14,165,233,0.1);padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600">BOX_C</span>` :
+            `<span style="color:#f59e0b;background:rgba(245,158,11,0.1);padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600">ATR_FALLBACK</span>`;
+
+        return `
+            <tr style="border-bottom: 1px solid var(--border-color); cursor: pointer;" onclick="loadFnoAnalyticsTab('${_escHtml(sym)}')">
+                <td style="padding: 0.65rem 0.75rem; font-weight: 700; color: var(--text-primary);">${_escHtml(sym)}</td>
+                <td style="padding: 0.65rem 0.75rem; font-family: var(--font-mono);">${spot}</td>
+                <td style="padding: 0.65rem 0.75rem;">${pcrBadge}</td>
+                <td style="padding: 0.65rem 0.75rem; font-family: var(--font-mono);">${peWall}</td>
+                <td style="padding: 0.65rem 0.75rem; font-family: var(--font-mono);">${ceWall}</td>
+                <td style="padding: 0.65rem 0.75rem; font-family: var(--font-mono);">${straddle}</td>
+                <td style="padding: 0.65rem 0.75rem; font-family: var(--font-mono); color: #38bdf8;">${moves}</td>
+                <td style="padding: 0.65rem 0.75rem; font-family: var(--font-mono); color: #f59e0b;">${maxPain}</td>
+                <td style="padding: 0.65rem 0.75rem;">${src}</td>
+            </tr>
+        `;
+    }).join("");
 }
 

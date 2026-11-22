@@ -98,6 +98,17 @@ def train_single_asset(
     if df.empty:
         return {"symbol": symbol, "error": "No data"}
 
+    # Phase 3: Enrich with scale-free F&O derivative features if available
+    try:
+        from agents.ai_engine.fno_features import extract_scale_free_fno_features
+        last_close = float(df["close"].iloc[-1])
+        last_atr = float(df["atr14"].iloc[-1]) if "atr14" in df.columns else (last_close * 0.015)
+        fno_dict = extract_scale_free_fno_features(symbol=symbol, spot=last_close, atr=last_atr)
+        for feat_name, feat_val in fno_dict.items():
+            df[feat_name] = feat_val
+    except Exception as fno_e:
+        log.debug("Scale-free F&O feature enrichment skipped for %s: %s", symbol, fno_e)
+
     res: Dict[str, Any] = {"symbol": symbol, "rows": len(df)}
 
     # 1. XGBoost
