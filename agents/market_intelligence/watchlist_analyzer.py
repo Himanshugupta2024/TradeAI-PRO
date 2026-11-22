@@ -572,13 +572,7 @@ def calculate_trade_levels(
     """
     key_supp = supports[0] if supports else round(close * 0.95, 2)
     key_res = resistances[0] if resistances else round(close * 1.05, 2)
-
-    # Invalidation level: break of nearest structural support or resistance
-    invalidation = key_supp if trend_bias != "BEARISH" else key_res
-
-    # India VIX Regime Gate logic
-    vix = float(vix_val) if (vix_val is not None and not np.isnan(vix_val) and vix_val > 0) else 13.5
-    vix_spike = bool(vix_chg_pct is not None and not np.isnan(vix_chg_pct) and vix_chg_pct >= 8.0)
+    breakout_trigger = round(max(high_last, key_res) * 1.001, 2)
 
     # Invalidation level: break of nearest structural support or resistance
     invalidation = key_supp if trend_bias != "BEARISH" else key_res
@@ -668,6 +662,7 @@ def calculate_trade_levels(
                 "target_2": tp2,
                 "key_support": key_supp,
                 "key_resistance": key_res,
+                "breakout_trigger": breakout_trigger,
                 "invalidation_level": invalidation,
                 "rr_ratio": rr,
                 "vix_regime": vix_regime,
@@ -689,6 +684,7 @@ def calculate_trade_levels(
                 "target_2": None,
                 "key_support": key_supp,
                 "key_resistance": key_res,
+                "breakout_trigger": breakout_trigger,
                 "invalidation_level": invalidation,
                 "rr_ratio": None,
                 "vix_regime": vix_regime,
@@ -731,6 +727,7 @@ def calculate_trade_levels(
                 "target_2": tp2,
                 "key_support": key_supp,
                 "key_resistance": key_res,
+                "breakout_trigger": breakout_trigger,
                 "invalidation_level": invalidation,
                 "rr_ratio": rr,
                 "vix_regime": vix_regime,
@@ -747,6 +744,7 @@ def calculate_trade_levels(
         "target_2": None,
         "key_support": key_supp,
         "key_resistance": key_res,
+        "breakout_trigger": breakout_trigger,
         "invalidation_level": invalidation,
         "rr_ratio": None,
         "edge_gated": edge_gated,
@@ -1169,6 +1167,7 @@ async def analyze_watchlist_symbols(
                 "levels_source": "ENGINE" if levels["is_actionable"] else "UNAVAILABLE",
                 "key_support": levels["key_support"],
                 "key_resistance": levels["key_resistance"],
+                "breakout_trigger": levels.get("breakout_trigger"),
                 "invalidation_level": levels["invalidation_level"],
                 "rr_ratio": levels["rr_ratio"],
                 "horizon": horizon,

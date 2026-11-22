@@ -1091,6 +1091,7 @@ async def get_watchlist_quotes(
                 "target_2": sig.get("target_2"),
                 "key_support": sig.get("key_support", round(ltp * 0.96, 2)),
                 "key_resistance": sig.get("key_resistance", round(ltp * 1.04, 2)),
+                "breakout_trigger": sig.get("breakout_trigger"),
                 "invalidation_level": sig.get("invalidation_level", round(ltp * 0.95, 2)),
                 "rr_ratio": sig.get("rr_ratio"),
                 "horizon": sig.get("horizon", {
@@ -3883,5 +3884,30 @@ async def get_context_snapshot(symbol: str):
     except Exception as exc:
 
         logger.error("Context snapshot failed for %s: %s", symbol, exc)
-
         return {"error": str(exc), "symbol": symbol}
+
+
+@router.get("/api/fno/symbol/{symbol}")
+async def get_fno_symbol_analytics(symbol: str, spot: float = 0.0, atr: float = 0.0):
+    """Fetch F&O analytics for symbol with 30s TTL and graceful ATR fallback."""
+    from api.fno_client import fetch_fno_analytics
+    sym = symbol.strip().upper().replace(".NS", "")
+    return await fetch_fno_analytics(sym, spot=spot, atr=atr)
+
+
+@router.get("/api/fno/overview")
+async def get_fno_overview():
+    """Fetch F&O telemetry across high-weight benchmark and equity underlyings."""
+    from api.fno_client import fetch_fno_analytics
+    symbols = ["NIFTY 50", "NIFTY BANK", "RELIANCE", "HDFCBANK", "TCS", "INFY", "ICICIBANK", "SBIN"]
+    tasks = [fetch_fno_analytics(s, spot=0.0, atr=0.0) for s in symbols]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    out = {}
+    for sym, res in zip(symbols, results):
+        if isinstance(res, dict):
+            out[sym] = res
+    return {
+        "count": len(out),
+        "data": out,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }

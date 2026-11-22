@@ -252,3 +252,90 @@ async def test_fno_client_async_fallback(monkeypatch):
     assert res["envelope_source"] == "ATR_FALLBACK"
     assert res["symbol"] == "TCS"
     assert res["spot_price"] == 3500.0
+
+
+# ── 6. Scale-Free F&O Feature Extraction Tests ──────────────────────────────
+
+def test_extract_scale_free_fno_features_invariance():
+    from agents.ai_engine.fno_features import FNO_FEATURE_NAMES, extract_scale_free_fno_features
+
+    telemetry = {
+        "ce_wall": 2600.0,
+        "pe_wall": 2400.0,
+        "pcr_oi": 1.25,
+        "pcr_change_5d": 0.10,
+        "implied_move_5d_pct": 5.2,
+        "iv_rank": 0.65,
+        "iv_skew": -0.05,
+        "oi_quadrant": "LONG_BUILDUP",
+        "rollover_pct": 0.78,
+    }
+
+    # Base price 2500, ATR 50 -> ce_wall distance is (2600 - 2500)/50 = 2.0 ATR
+    feats = extract_scale_free_fno_features(
+        symbol="RELIANCE",
+        spot=2500.0,
+        atr=50.0,
+        fno_telemetry=telemetry,
+        future_price=2505.0,
+        vix=15.0,
+    )
+
+    # Verify all 12 canonical names present
+    assert set(feats.keys()) == set(FNO_FEATURE_NAMES)
+    assert feats["fno_dist_to_ce_wall_atr"] == 2.0
+    assert feats["fno_dist_to_pe_wall_atr"] == 2.0
+    assert feats["fno_pcr_oi"] == 1.25
+    assert feats["fno_oi_quadrant"] == 1.0  # LONG_BUILDUP
+    assert feats["fno_vix_regime"] == 0.5  # 15.0 is normal vol
+    assert feats["fno_basis_pct"] == pytest.approx(0.2, abs=0.01)
+
+    # Scale invariance: Double spot and ATR and walls -> ATR-distance remains strictly 2.0!
+    scaled_telemetry = dict(telemetry)
+    scaled_telemetry["ce_wall"] = 5200.0
+    scaled_telemetry["pe_wall"] = 4800.0
+    scaled_feats = extract_scale_free_fno_features(
+        symbol="RELIANCE",
+        spot=5000.0,
+        atr=100.0,
+        fno_telemetry=scaled_telemetry,
+        future_price=5010.0,
+        vix=15.0,
+    )
+    assert scaled_feats["fno_dist_to_ce_wall_atr"] == 2.0
+    assert scaled_feats["fno_dist_to_pe_wall_atr"] == 2.0
+    assert scaled_feats["fno_basis_pct"] == pytest.approx(0.2, abs=0.01)
+
+
+def test_extract_scale_free_fno_features_safe_defaults_when_empty():
+    from agents.ai_engine.fno_features import extract_scale_free_fno_features
+
+    feats = extract_scale_free_fno_features(symbol="NEWSTOCK", spot=1000.0, atr=15.0)
+    for k, v in feats.items():
+        assert not math.isnan(v), f"Feature {k} was NaN"
+        assert not math.isinf(v), f"Feature {k} was inf"
+    assert feats["fno_pcr_oi"] == 1.0
+    assert feats["fno_iv_rank"] == 0.50
+
+
+# ── 7. Box A Gateway F&O Endpoints Test ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_box_a_fno_gateway_endpoints():
+    from server import app as box_a_app
+    client = TestClient(box_a_app)
+
+    # Test single symbol
+    resp = client.get("/api/fno/symbol/RELIANCE?spot=2500&atr=30")
+    assert resp.status_code == 200
+    d = resp.json()
+    assert d["symbol"] == "RELIANCE"
+    assert "implied_move_5d_pct" in d
+
+    # Test overview
+    resp2 = client.get("/api/fno/overview")
+    assert resp2.status_code == 200
+    d2 = resp2.json()
+    assert d2["count"] > 0
+    assert "RELIANCE" in d2["data"]
+

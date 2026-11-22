@@ -26772,6 +26772,36 @@ function renderNextDayPickCard(pick, index) {
     const rankScore = Number(pick.rank_score || 0);
     const isTier1 = rankScore >= 80 || (pick.rank && pick.rank <= 3);
 
+    const ltp = Number(pick.completed_prices?.close || entryPrice || 0);
+    let triggerDistHtml = '';
+    if (ltp > 0 && entryPrice > 0) {
+        const distPct = ((entryPrice - ltp) / ltp) * 100;
+        const absDist = Math.abs(distPct);
+        if (absDist < 0.1) {
+            triggerDistHtml = '<span style="background:rgba(14,165,233,0.1);color:#0284c7;font-size:0.68rem;padding:2px 6px;border-radius:4px;">At Market</span>';
+        } else if (distPct > 0) {
+            const isWide = distPct > 1.8;
+            triggerDistHtml = `<span style="background:${isWide ? 'rgba(245,158,11,0.12)' : 'rgba(14,165,233,0.1)'};color:${isWide ? '#f59e0b' : '#38bdf8'};font-size:0.68rem;padding:2px 6px;border-radius:4px;border:1px solid ${isWide ? 'rgba(245,158,11,0.3)' : 'rgba(14,165,233,0.2)'};" title="Entry trigger distance from last close">${isWide ? '⚠ ' : ''}+${distPct.toFixed(2)}% vs Close</span>`;
+        } else {
+            triggerDistHtml = `<span style="background:rgba(239,68,68,0.1);color:#ef4444;font-size:0.68rem;padding:2px 6px;border-radius:4px;">${distPct.toFixed(2)}% vs Close</span>`;
+        }
+    }
+
+    const fno = setup.fno_derivatives || {};
+    const ceWall = fno.ce_wall ? `₹${Number(fno.ce_wall).toLocaleString('en-IN')}` : null;
+    const peWall = fno.pe_wall ? `₹${Number(fno.pe_wall).toLocaleString('en-IN')}` : null;
+    const implied5d = fno.implied_move_5d_pct ? `±${Number(fno.implied_move_5d_pct).toFixed(1)}%` : null;
+    const fnoSource = fno.envelope_source === 'SHOONYA_OPTIONS_CHAIN' ? 'Options' : 'ATR';
+
+    let fnoStripHtml = '';
+    if (ceWall || peWall || implied5d) {
+        fnoStripHtml = `
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.22);border-radius:6px;padding:4px 8px;font-size:0.70rem;font-family:var(--font-mono, monospace);">
+            <div>${ceWall ? `<span style="color:var(--text-muted);">CE Wall:</span> <strong style="color:#d8b4fe;">${ceWall}</strong>` : ''}${peWall ? ` · <span style="color:var(--text-muted);">PE Wall:</span> <strong style="color:#a7f3d0;">${peWall}</strong>` : ''}</div>
+            <div>${implied5d ? `<span style="color:var(--text-muted);">Exp 5D:</span> <strong style="color:#fde047;">${implied5d}</strong> <span style="font-size:0.65rem;color:var(--text-muted);">(${fnoSource})</span>` : ''}</div>
+        </div>`;
+    }
+
     const scenarios = pick.scenarios || {};
     const bullScenario = scenarios.bull || scenarios.bull_case || '— (Scenario not provided)';
     const baseScenario = scenarios.base || scenarios.base_case || '— (Plan not provided)';
@@ -26798,6 +26828,7 @@ function renderNextDayPickCard(pick, index) {
                     <span style="background: rgba(14, 165, 233, 0.1); color: #0284c7; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px;">RANK #${pick.rank || (index + 1)}</span>
                     ${isTier1 ? '<span style="background: rgba(16, 185, 129, 0.12); color: #10b981; font-size: 0.68rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.3);">★ TIER 1</span>' : ''}
                     <span style="background: ${isLong ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)'}; color: ${isLong ? '#10b981' : '#f87171'}; font-size: 0.68rem; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px solid ${isLong ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'};">${escapeHtml(segment)}</span>
+                    ${triggerDistHtml}
                 </div>
                 <span style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(pick.company_name || pick.sector || 'NSE Tier-1')}</span>
             </div>
@@ -26831,6 +26862,7 @@ function renderNextDayPickCard(pick, index) {
             <div><span style="color:var(--text-muted);">Stop:</span> <strong style="color:#a5b4fc;">${atrMultiple} ATR</strong> · <span style="color:var(--text-muted);">Friction:</span> <strong style="color:#fca5a5;">${costInR}R</strong> (0.25%) · <span style="color:var(--text-muted);">Net:</span> <strong style="color:#86efac;">${netRR}</strong></div>
             ${qty ? `<div><span style="color:var(--text-muted);">Size:</span> <strong>${qty} shs</strong> · <span style="color:var(--text-muted);">Risk:</span> <strong>₹${rupeeRisk.toLocaleString('en-IN')}</strong></div>` : ''}
         </div>
+        ${fnoStripHtml}
 
         <!-- 3-Way Scenarios -->
         <div style="font-size: 0.78rem; display: flex; flex-direction: column; gap: 4px;">
@@ -27215,15 +27247,17 @@ function _renderWatchlistCard(sym, q, compName) {
             </div>
         `;
     } else {
-        // HOLD or MONITOR - Duality: Key Support, Key Resistance, Invalidation (Real Verified Levels)
+        // HOLD or MONITOR - Duality: Key Support, Key Resistance, Breakout Trigger (Real Non-Duplicate Levels)
         const nLtp = Number(ltp) || 0;
         const suppNum = (q.keySupport && !isNaN(q.keySupport)) ? Number(q.keySupport) : (nLtp > 0 ? Number((nLtp * 0.96).toFixed(1)) : null);
         const resNum = (q.keyResistance && !isNaN(q.keyResistance)) ? Number(q.keyResistance) : (nLtp > 0 ? Number((nLtp * 1.04).toFixed(1)) : null);
-        const invalNum = (q.invalidationLevel && !isNaN(q.invalidationLevel)) ? Number(q.invalidationLevel) : (nLtp > 0 ? Number((nLtp * 0.95).toFixed(1)) : null);
+        const triggerNum = (q.breakoutTrigger && !isNaN(q.breakoutTrigger))
+            ? Number(q.breakoutTrigger)
+            : (resNum ? Number((resNum * 1.001).toFixed(1)) : (nLtp > 0 ? Number((nLtp * 1.05).toFixed(1)) : null));
 
         const suppVal = suppNum ? '₹' + suppNum.toFixed(1) : '—';
         const resVal = resNum ? '₹' + resNum.toFixed(1) : '—';
-        const invalVal = invalNum ? '₹' + invalNum.toFixed(1) : '—';
+        const triggerVal = triggerNum ? '₹' + triggerNum.toFixed(1) : '—';
 
         levelsHtml = `
             <div class="watchlist-levels">
@@ -27236,8 +27270,50 @@ function _renderWatchlistCard(sym, q, compName) {
                     <div class="watchlist-lvl-val" style="color:#fbcfe8;">${resVal}</div>
                 </div>
                 <div>
-                    <div class="watchlist-lvl-label" style="color:#fbbf24;" title="Structural invalidation level">Invalidation</div>
-                    <div class="watchlist-lvl-val" style="color:#fde68a;">${invalVal}</div>
+                    <div class="watchlist-lvl-label" style="color:#fbbf24;" title="Price level required to trigger an actionable Long breakout">Breakout Trigger</div>
+                    <div class="watchlist-lvl-val" style="color:#fde68a;">${triggerVal}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Dynamic State-Aware Horizon
+    let horizonHtml = '';
+    if (isInsufficient) {
+        horizonHtml = `
+            <div class="watchlist-horizon" style="margin: 6px 0 6px; padding: 5px 8px; background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.2); border-radius: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 0.70rem;">
+                <div style="display:flex; align-items:center; gap:5px;">
+                    <span style="color:#f87171; font-weight:700;">⚠️ Inactive:</span>
+                    <span style="color:var(--text-muted);">History &lt; 200 daily bars for scoring</span>
+                </div>
+                <div style="color:#f87171; font-family:var(--font-mono); font-size:0.67rem;">
+                    NO TRADE
+                </div>
+            </div>
+        `;
+    } else if (!isActionable) {
+        horizonHtml = `
+            <div class="watchlist-horizon" style="margin: 6px 0 6px; padding: 5px 8px; background: rgba(56,189,248,0.06); border: 1px solid rgba(56,189,248,0.2); border-radius: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 0.70rem;">
+                <div style="display:flex; align-items:center; gap:5px;">
+                    <span style="font-size:0.8rem;">🔍</span>
+                    <span style="color:var(--text-muted); font-weight:600;">Regime:</span>
+                    <span style="color:#7dd3fc; font-weight:700;">Observation · Range Bound</span>
+                </div>
+                <div style="color:#94a3b8; font-family:var(--font-mono); font-size:0.67rem;" title="Awaiting technical breakout or breakdown">
+                    Awaiting Trigger
+                </div>
+            </div>
+        `;
+    } else {
+        horizonHtml = `
+            <div class="watchlist-horizon" style="margin: 6px 0 6px; padding: 5px 8px; background: rgba(59,130,246,0.07); border: 1px solid rgba(59,130,246,0.22); border-radius: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 0.70rem;">
+                <div style="display:flex; align-items:center; gap:5px;">
+                    <span style="font-size:0.8rem;">⏱️</span>
+                    <span style="color:var(--text-muted); font-weight:600;">Est. Horizon:</span>
+                    <span style="color:#93c5fd; font-weight:700;">${wlHorizonMeta.short}</span>
+                </div>
+                <div style="color:#94a3b8; font-family:var(--font-mono); font-size:0.67rem;" title="${wlHorizonMeta.rule}">
+                    ${wlHorizonMeta.barrierShort}
                 </div>
             </div>
         `;
@@ -27280,18 +27356,7 @@ function _renderWatchlistCard(sym, q, compName) {
             </div>
 
             ${levelsHtml}
-
-            <div class="watchlist-horizon" style="margin: 6px 0 6px; padding: 5px 8px; background: rgba(59,130,246,0.07); border: 1px solid rgba(59,130,246,0.22); border-radius: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 0.70rem;">
-                <div style="display:flex; align-items:center; gap:5px;">
-                    <span style="font-size:0.8rem;">⏱️</span>
-                    <span style="color:var(--text-muted); font-weight:600;">Est. Horizon:</span>
-                    <span style="color:#93c5fd; font-weight:700;">${wlHorizonMeta.short}</span>
-                </div>
-                <div style="color:#94a3b8; font-family:var(--font-mono); font-size:0.67rem;" title="${wlHorizonMeta.rule}">
-                    ${wlHorizonMeta.barrierShort}
-                </div>
-            </div>
-
+            ${horizonHtml}
             ${rationaleHtml}
 
             <div class="watchlist-actions" style="display:flex;align-items:center;gap:6px;">
