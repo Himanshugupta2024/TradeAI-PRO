@@ -178,15 +178,15 @@ def overnight_risk_check(
         max_capital_per_trade,
         _to_float(getattr(settings, "SWING_MAX_CAPITAL_PER_TRADE", 0.25), 0.25),
     )
-    max_positions = int(max_open_positions or getattr(settings, "SWING_MAX_OPEN_POSITIONS", 5) or 5)
+    max_positions = int(max_open_positions or getattr(settings, "SWING_MAX_OPEN_POSITIONS", 3) or 3)
     max_sector = int(
         max_sector_concentration
-        or getattr(settings, "SWING_MAX_SECTOR_CONCENTRATION", 2)
-        or 2
+        or getattr(settings, "SWING_MAX_SECTOR_CONCENTRATION", 1)
+        or 1
     )
     max_port_risk = _to_float(
         max_portfolio_risk_pct,
-        _to_float(getattr(settings, "SWING_MAX_PORTFOLIO_RISK_PCT", 0.06), 0.06),
+        _to_float(getattr(settings, "SWING_MAX_PORTFOLIO_RISK_PCT", 0.03), 0.03),
     )
 
     open_list = list(open_trades or [])

@@ -354,9 +354,10 @@ class PaperTradingEngine:
                 1 for t in self.open_trades
                 if _SECTOR_MAP.get(self._normalize_symbol(t.symbol).replace(".NS", "").replace("/", "")) == sector
             )
-            if sec_count >= 2:
+            max_sec_allowed = int(getattr(settings, "SWING_MAX_SECTOR_CONCENTRATION", 1))
+            if sec_count >= max_sec_allowed:
                 self.last_rejection_reason = (
-                    f"Sector concentration limit reached for {sector} ({sec_count}/2 positions open)"
+                    f"Sector concentration limit reached for {sector} ({sec_count}/{max_sec_allowed} positions open)"
                 )
                 log.warning("BLOCKED: %s", self.last_rejection_reason)
                 return None

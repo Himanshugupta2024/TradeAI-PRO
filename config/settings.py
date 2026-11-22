@@ -521,7 +521,7 @@ ENSEMBLE_WEIGHTS = {
 }
 
 # Risk management and sizing
-MAX_PORTFOLIO_HEAT_PCT = float(os.getenv("MAX_PORTFOLIO_HEAT_PCT", "0.06"))
+MAX_PORTFOLIO_HEAT_PCT = float(os.getenv("MAX_PORTFOLIO_HEAT_PCT", "0.03"))
 CIRCUIT_BREAKER_THRESHOLD = float(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "0.12"))
 # Dynamic sizing: regime scaling + ATR vol-targeting + fractional-Kelly guard.
 # FRACTIONAL_KELLY is the fraction of full Kelly applied (0.5 = half-Kelly).
@@ -628,9 +628,9 @@ SWING_ATR_SL_MULTIPLIER = float(os.getenv("SWING_ATR_SL_MULTIPLIER", "2.0"))
 SWING_ATR_TARGET_MULTIPLIER = float(os.getenv("SWING_ATR_TARGET_MULTIPLIER", "3.0"))
 # Overnight/portfolio guardrails.
 SWING_MAX_CAPITAL_PER_TRADE = float(os.getenv("SWING_MAX_CAPITAL_PER_TRADE", "0.25"))
-SWING_MAX_OPEN_POSITIONS = int(os.getenv("SWING_MAX_OPEN_POSITIONS", "8"))
-SWING_MAX_SECTOR_CONCENTRATION = int(os.getenv("SWING_MAX_SECTOR_CONCENTRATION", "2"))
-SWING_MAX_PORTFOLIO_RISK_PCT = float(os.getenv("SWING_MAX_PORTFOLIO_RISK_PCT", "0.06"))
+SWING_MAX_OPEN_POSITIONS = int(os.getenv("SWING_MAX_OPEN_POSITIONS", "3"))
+SWING_MAX_SECTOR_CONCENTRATION = int(os.getenv("SWING_MAX_SECTOR_CONCENTRATION", "1"))
+SWING_MAX_PORTFOLIO_RISK_PCT = float(os.getenv("SWING_MAX_PORTFOLIO_RISK_PCT", "0.03"))
 
 # Reference index for swing regime gate (must match NSE_SYMBOLS display name).
 SWING_INDEX_SYMBOL = os.getenv("SWING_INDEX_SYMBOL", "NIFTY 50").strip() or "NIFTY 50"
@@ -1420,7 +1420,7 @@ PAPER_TRADING_UNLOCK_MIN_WR_PCT = float(os.getenv("PAPER_TRADING_UNLOCK_MIN_WR_P
 PAPER_TRADING_FORWARD_DAYS = int(os.getenv("PAPER_TRADING_FORWARD_DAYS", "5"))
 
 # Max open paper trades at once (prevents over-crowding)
-PAPER_TRADING_MAX_OPEN = int(os.getenv("PAPER_TRADING_MAX_OPEN", "8"))
+PAPER_TRADING_MAX_OPEN = int(os.getenv("PAPER_TRADING_MAX_OPEN", "3"))
 
 # ── Autonomous Self-Learning Execution Daemon ─────────────────────────────────
 AUTONOMOUS_TRADING_ENABLED = os.getenv("AUTONOMOUS_TRADING_ENABLED", "true").lower() in ("1", "true", "yes")

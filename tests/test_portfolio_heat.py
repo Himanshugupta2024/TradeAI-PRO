@@ -79,3 +79,27 @@ def test_circuit_breaker_blocks_and_can_be_rebased(monkeypatch):
         assert trade is not None
     finally:
         os.unlink(path)
+
+
+def test_blocks_second_trade_in_same_sector(monkeypatch):
+    monkeypatch.setattr(settings, "SWING_MAX_SECTOR_CONCENTRATION", 1)
+    monkeypatch.setattr(settings, "MAX_PORTFOLIO_HEAT_PCT", 0.10)
+    monkeypatch.setattr(settings, "MAX_POSITION_LEVERAGE", 5.0)
+    monkeypatch.setattr(settings, "MAX_PORTFOLIO_LEVERAGE", 5.0)
+
+    engine, path = _engine()
+    try:
+        # First banking trade (HDFCBANK) should execute
+        t1 = engine.execute("HDFCBANK", "LONG", 100, 99, 103)
+        assert t1 is not None
+
+        # Second banking trade (ICICIBANK) must be blocked by sector limit
+        t2 = engine.execute("ICICIBANK", "LONG", 100, 99, 103)
+        assert t2 is None
+        assert "Sector concentration limit reached for BANKING" in engine.last_rejection_reason
+
+        # Trade from another sector (TCS -> IT) should pass
+        t3 = engine.execute("TCS", "LONG", 100, 99, 103)
+        assert t3 is not None
+    finally:
+        os.unlink(path)

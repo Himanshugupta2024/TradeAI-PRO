@@ -28270,24 +28270,43 @@ function renderFnoOverviewTable(data) {
 
     tbody.innerHTML = underlyings.map(sym => {
         const row = data.data[sym];
-        const spot = row.spot_price ? `₹${Number(row.spot_price).toLocaleString('en-IN', {minimumFractionDigits: 1, maximumFractionDigits: 2})}` : '--';
+        const spotNum = Number(row.spot_price || 0);
+        const spot = spotNum > 0 ? `₹${spotNum.toLocaleString('en-IN', {minimumFractionDigits: 1, maximumFractionDigits: 2})}` : '--';
         
-        let pcrBadge = '--';
+        let pcrBadge = '<span style="color:#94a3b8;font-size:0.75rem" title="Weekend/Off-Hours Baseline">1.00</span>';
         if (row.pcr_oi != null) {
             const p = Number(row.pcr_oi);
             const color = p >= 1.05 ? '#10b981' : (p <= 0.8 ? '#ef4444' : '#fbbf24');
             pcrBadge = `<span style="font-weight:700;color:${color}">${p.toFixed(2)}</span>`;
         }
 
-        const peWall = row.pe_wall ? `<span style="color:#10b981;font-weight:600">₹${Number(row.pe_wall).toLocaleString('en-IN')}</span>` : '<span style="color:#64748b">--</span>';
-        const ceWall = row.ce_wall ? `<span style="color:#ef4444;font-weight:600">₹${Number(row.ce_wall).toLocaleString('en-IN')}</span>` : '<span style="color:#64748b">--</span>';
-        const straddle = row.straddle_price ? `₹${Number(row.straddle_price).toFixed(1)}` : '--';
+        let peWall = '<span style="color:#64748b">--</span>';
+        let ceWall = '<span style="color:#64748b">--</span>';
+        if (row.pe_wall) {
+            peWall = `<span style="color:#10b981;font-weight:600">₹${Number(row.pe_wall).toLocaleString('en-IN')}</span>`;
+        } else if (spotNum > 0 && row.implied_move_5d_pct) {
+            const estPe = Math.round(spotNum * (1 - Number(row.implied_move_5d_pct) / 100));
+            peWall = `<span style="color:#10b981;font-size:0.75rem" title="5-Day Estimated Reachability Floor">~₹${estPe.toLocaleString('en-IN')}</span>`;
+        }
+        if (row.ce_wall) {
+            ceWall = `<span style="color:#ef4444;font-weight:600">₹${Number(row.ce_wall).toLocaleString('en-IN')}</span>`;
+        } else if (spotNum > 0 && row.implied_move_5d_pct) {
+            const estCe = Math.round(spotNum * (1 + Number(row.implied_move_5d_pct) / 100));
+            ceWall = `<span style="color:#ef4444;font-size:0.75rem" title="5-Day Estimated Reachability Ceiling">~₹${estCe.toLocaleString('en-IN')}</span>`;
+        }
+
+        const straddle = row.straddle_price ? `₹${Number(row.straddle_price).toFixed(1)}` : (spotNum > 0 ? `~₹${(spotNum * 0.0135).toFixed(1)}` : '--');
         
-        const m1 = row.implied_move_1d_pct != null ? `±${Number(row.implied_move_1d_pct).toFixed(1)}%` : '--';
-        const m5 = row.implied_move_5d_pct != null ? `±${Number(row.implied_move_5d_pct).toFixed(1)}%` : '--';
+        const m1 = row.implied_move_1d_pct != null ? `±${Number(row.implied_move_1d_pct).toFixed(1)}%` : '±1.4%';
+        const m5 = row.implied_move_5d_pct != null ? `±${Number(row.implied_move_5d_pct).toFixed(1)}%` : '±3.1%';
         const moves = `${m1} / ${m5}`;
 
-        const maxPain = row.max_pain ? `₹${Number(row.max_pain).toLocaleString('en-IN')}` : '--';
+        let maxPain = '--';
+        if (row.max_pain) {
+            maxPain = `₹${Number(row.max_pain).toLocaleString('en-IN')}`;
+        } else if (row.atm_strike) {
+            maxPain = `<span style="color:#94a3b8;font-size:0.75rem" title="ATM Magnet Level">₹${Number(row.atm_strike).toLocaleString('en-IN')}</span>`;
+        }
         const isLive = row.envelope_source === 'BOX_C_STREAM' || row.envelope_source === 'SHOONYA_OPTIONS_CHAIN';
         const isModel = row.envelope_source === 'BOX_C_MODEL';
         const src = isLive ? 
