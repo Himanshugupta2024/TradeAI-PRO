@@ -201,8 +201,17 @@ class MarketDataRouter:
         for p in self.providers:
             h = p.health
             in_cooldown = not h.is_healthy and now < h.cooldown_until
+            role = (
+                "PRIMARY_OHLCV"
+                if p.name == "yahoo"
+                else "FALLBACK_QUOTES"
+                if p.name == "tradingview"
+                else "SPECIALIST_FOREX"
+            )
             status[p.name] = {
                 "healthy": h.is_healthy,
+                "role": role,
+                "state": "ACTIVE" if h.total_calls > 0 else "STANDBY_READY",
                 "in_cooldown": in_cooldown,
                 "cooldown_remaining_sec": max(0.0, round(h.cooldown_until - now, 1)) if in_cooldown else 0.0,
                 "consecutive_errors": h.consecutive_errors,

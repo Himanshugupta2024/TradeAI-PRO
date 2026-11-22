@@ -199,7 +199,10 @@ async def health_check(response: Response = None):
         "market_snapshot_health": feed_status.get("market_snapshot_health", "UNAVAILABLE"),
         "worker_health": feed_status.get("worker_health", "NO_RECENT_RUN"),
         "database": {"connected": db_ok},
-        "loading": svc._loading_status,
+        "loading": {
+            **getattr(svc, "_loading_status", {}),
+            "loaded": symbols_loaded,
+        },
         "feed": feed_status,
         "symbols_loaded": symbols_loaded,
         "signals_cached": signals_count,

@@ -3610,6 +3610,10 @@ def _confluence_for_setup(sig: dict, mood: dict, for_display: bool = False) -> t
         for flag in pens:
             factors.append(f"Conflict: {flag}")
 
+    base_qs = float(sig.get("quality_score") or 0.0)
+    if base_qs > 0:
+        score = int(round(base_qs * 0.35 + score * 0.65))
+
     score = max(0, min(100, score))
     return score, factors[:6]
 
