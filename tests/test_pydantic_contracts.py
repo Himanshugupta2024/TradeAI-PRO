@@ -48,14 +48,27 @@ def test_watchlist_quotes_response_model_validation():
                 "key_resistance": 1320.0,
                 "breakout_trigger": 1315.0,
                 "status": "OK",
+            },
+            "JPL": {
+                "symbol": "JPL",
+                "company_name": "JPL",
+                "ltp": 0.0,
+                "change_pct": 0.0,
+                "signal": "INSUFFICIENT_DATA",
+                "confidence": None,
+                "is_actionable": False,
+                "status": "INSUFFICIENT_DATA",
             }
         },
-        "count": 1,
+        "count": 2,
     }
     validated = WatchlistQuotesResponse.model_validate(raw)
-    assert validated.count == 1
+    assert validated.count == 2
     assert "RELIANCE" in validated.quotes
     assert validated.quotes["RELIANCE"].breakout_trigger == 1315.0
+    assert "JPL" in validated.quotes
+    assert validated.quotes["JPL"].confidence is None
+    assert validated.quotes["JPL"].status == "INSUFFICIENT_DATA"
 
 
 def test_risk_state_response_model_validation():

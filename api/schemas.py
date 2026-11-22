@@ -95,11 +95,11 @@ class ClosePaperTradeRequest(BaseModel):
 class WatchlistQuoteItem(BaseModel):
     """Strongly-typed contract for an analyzed watchlist quote card."""
     symbol: str
-    company_name: str = ""
-    ltp: float = 0.0
-    change_pct: float = 0.0
-    signal: str = "HOLD"
-    confidence: int = 0
+    company_name: str | None = ""
+    ltp: float | None = 0.0
+    change_pct: float | None = 0.0
+    signal: str | None = "HOLD"
+    confidence: int | None = None
     factor_breakdown: dict[str, Any] | None = None
     is_actionable: bool = False
     entry: float | None = None
@@ -120,7 +120,7 @@ class WatchlistQuoteItem(BaseModel):
     as_of: str | None = None
     data_delay_minutes: int | None = 15
     timeframe: str | None = "1d"
-    status: str = "OK"
+    status: str | None = "OK"
 
 
 class WatchlistQuotesResponse(BaseModel):
