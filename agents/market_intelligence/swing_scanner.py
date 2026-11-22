@@ -341,14 +341,16 @@ def _structural_sl(df: pd.DataFrame, direction: str, entry: float, atr: float) -
             swing_high = float(lookback["high"].max())
             struct_sl = round(swing_high * 1.003, 2)
 
-        # Validate: structural SL must be within 0.5%–8% of entry
+        # Validate: structural SL must clear daily noise floor (>= 1.30x ATR)
         if entry <= 0:
             return 0.0
-        dist_pct = abs(entry - struct_sl) / entry
-        if 0.005 <= dist_pct <= 0.08:
+        dist = abs(entry - struct_sl)
+        min_dist = max(atr * 1.30, entry * 0.015)
+        max_dist = max(atr * 2.50, entry * 0.08)
+        if min_dist <= dist <= max_dist:
             return struct_sl
-        # Too wide or too tight — blend with ATR-based fallback
-        atr_sl = (entry - atr * 1.8) if direction == "LONG" else (entry + atr * 1.8)
+        # Too wide or too tight — blend with ATR-based fallback (1.50x ATR)
+        atr_sl = (entry - atr * 1.50) if direction == "LONG" else (entry + atr * 1.50)
         return round(atr_sl, 2)
     except Exception:
         return 0.0
@@ -1275,18 +1277,18 @@ def scan_swing_setups(
         e = setup.entry_zone
         if setup.direction == "LONG":
             if setup.stop_loss >= e:
-                setup.stop_loss = round(e - atr * 2, 2)
+                setup.stop_loss = round(e - atr * 1.50, 2)
             if setup.target_1 <= e:
-                setup.target_1 = round(e + atr * 4, 2)
+                setup.target_1 = round(e + atr * 2.50, 2)
             if setup.target_2 <= e:
-                setup.target_2 = round(e + atr * 6, 2)
+                setup.target_2 = round(e + atr * 4.0, 2)
         else:
             if setup.stop_loss <= e:
-                setup.stop_loss = round(e + atr * 2, 2)
+                setup.stop_loss = round(e + atr * 1.50, 2)
             if setup.target_1 >= e:
-                setup.target_1 = round(e - atr * 4, 2)
+                setup.target_1 = round(e - atr * 2.50, 2)
             if setup.target_2 >= e:
-                setup.target_2 = round(e - atr * 6, 2)
+                setup.target_2 = round(e - atr * 4.0, 2)
 
         _finalize_swing_targets(setup, e)
 
@@ -1824,7 +1826,7 @@ def _check_range_breakout(
 
         # ── Quick Win: Retest Entry instead of Direct Breakout ──
         entry_zone = range_high
-        sl = entry_zone - atr * 0.5  # SL just below breakout level
+        sl = entry_zone - atr * 1.30  # Stop width >= 1.30x ATR to clear daily noise band
         tp1 = entry_zone + range_width  # Measured move = range width
         tp2 = entry_zone + range_width * 1.5
 
@@ -1890,7 +1892,7 @@ def _check_range_breakout(
 
         # ── Quick Win: Retest Entry ──
         entry_zone = range_low
-        sl = entry_zone + atr * 0.5
+        sl = entry_zone + atr * 1.30  # Stop width >= 1.30x ATR to clear daily noise band
         tp1 = entry_zone - range_width
         tp2 = entry_zone - range_width * 1.5
 
