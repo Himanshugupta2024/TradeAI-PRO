@@ -2393,7 +2393,7 @@ function _releaseApiSlot() {
 
 function _needsApiSlot(url, isGet) {
     if (typeof url === 'string' && (url.includes('/api/health') || url.includes('/health/live'))) return false;
-    return isGet && typeof url === 'string' && url.indexOf('/api/') === 0;
+    return isGet && typeof url === 'string' && (url.indexOf('/api/') === 0 || url.includes('/api/'));
 }
 
 
@@ -27923,7 +27923,7 @@ async function openAiPredictionModal(sym) {
         // and has measured ~48s on the free tier. The edge kills it around 43-48s with a
         // 502, so the client budget sits just above that to surface the real reason.
         // 429 / 503 are retried inside fetchWithTimeout (Retry-After aware).
-        const resp = await fetchWithTimeout(`/api/prediction/${cleanSym}`, {}, 55000, 2, 3000);
+        const resp = await fetchWithTimeout(`/api/prediction/${cleanSym}`, {}, 55000, 3, 4000);
         if (!resp.ok) {
             const httpErr = new Error(_predictionErrorText(resp.status));
             httpErr.status = resp.status;
