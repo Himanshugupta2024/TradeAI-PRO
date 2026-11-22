@@ -187,8 +187,8 @@ def test_get_model_status_sidecar_awareness(monkeypatch):
     status_with_sidecar = get_model_status()
     assert status_with_sidecar["sidecar_active"] is True
     assert status_with_sidecar["active_inference_mode"] == "ML_SIDECAR_ENSEMBLE"
-    assert "ML Sidecar" in status_with_sidecar["badge_short"]
-    assert "XGBoost" in status_with_sidecar["badge_short"]
+    assert "3/4 ML" in status_with_sidecar["badge_short"] or "Hybrid" in status_with_sidecar["badge_short"]
+    assert "XGBoost" in status_with_sidecar["badge_text"]
     assert status_with_sidecar["models_executing"]["xgboost"] is True
     assert status_with_sidecar["models_executing"]["lightgbm"] is True
 

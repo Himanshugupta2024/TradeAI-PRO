@@ -48,6 +48,16 @@ def _normalize_yahoo_symbol(symbol: str) -> str:
     if "/" in sym:  # Crypto or Forex like BTC/USDT or EUR/USD
         base, quote = sym.split("/", 1)
         return f"{base}-{quote}"
+    # Check known symbol aliases (corporate renames, demergers)
+    try:
+        from config.symbol_aliases import SYMBOL_ALIASES
+        if sym in SYMBOL_ALIASES and SYMBOL_ALIASES[sym]:
+            preferred = SYMBOL_ALIASES[sym][0]
+            if preferred.endswith(".NS") or preferred.endswith(".BO") or preferred.startswith("^"):
+                return preferred
+            return f"{preferred}.NS"
+    except Exception:
+        pass
     # Standard NSE equity
     return f"{sym}.NS"
 

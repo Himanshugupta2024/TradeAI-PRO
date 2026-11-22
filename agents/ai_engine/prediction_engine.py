@@ -392,8 +392,42 @@ async def predict_stock_price(
     df = ohlcv_map.get(clean_sym)
     comp_name = get_company_name(clean_sym)
 
-    # Layer 1 Data Validation Contract: reject if < 200 bars
-    if df is None or df.empty or len(df) < 200:
+    # ── Fallback 1: Symbol Aliases (e.g. Demergers like TATAMOTORS -> TMPV.NS, ZOMATO -> ETERNAL.NS) ──
+    if df is None or df.empty:
+        try:
+            from config.symbol_aliases import SYMBOL_ALIASES
+            aliases = SYMBOL_ALIASES.get(clean_sym, [])
+            for alias in aliases:
+                # Check if alias was already returned in ohlcv_map
+                alias_clean = alias.replace(".NS", "").replace(".BO", "")
+                candidate = ohlcv_map.get(alias) or ohlcv_map.get(alias_clean)
+                if candidate is not None and not candidate.empty and len(candidate) >= 60:
+                    df = candidate
+                    logger.info("[PredictionEngine] Resolved %s via alias %s (%d bars)", clean_sym, alias, len(df))
+                    break
+                # Try fetching alias via arbitrary symbol fetcher
+                from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
+                candidate = await asyncio.to_thread(fetch_arbitrary_symbol, alias, "1y", "1d")
+                if candidate is not None and not candidate.empty and len(candidate) >= 60:
+                    df = candidate
+                    logger.info("[PredictionEngine] Fetched alias %s for %s (%d bars)", alias, clean_sym, len(df))
+                    break
+        except Exception as exc:
+            logger.debug("[PredictionEngine] Alias resolution failed for %s: %s", clean_sym, exc)
+
+    # ── Fallback 2: Multi-source arbitrary symbol fetcher (when primary returned nothing) ──
+    if df is None or df.empty:
+        try:
+            from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
+            fallback_df = await asyncio.to_thread(fetch_arbitrary_symbol, clean_sym, "1y", "1d")
+            if fallback_df is not None and not fallback_df.empty and len(fallback_df) >= 60:
+                df = fallback_df
+                logger.info("[PredictionEngine] Fallback fetch succeeded for %s with %d bars", clean_sym, len(df))
+        except Exception as exc:
+            logger.debug("[PredictionEngine] Fallback fetch failed for %s: %s", clean_sym, exc)
+
+    # Layer 1 Data Validation Contract: reject if < 60 bars (minimum 60 required for EMA50, MACD, RSI, ATR)
+    if df is None or df.empty or len(df) < 60:
         available_bars = len(df) if df is not None else 0
         last_bar_iso = None
         if df is not None and not df.empty:
@@ -423,17 +457,29 @@ async def predict_stock_price(
             "brier_score_historical": None,
             "price_levels": None,
             "market_context": None,
-            "rationale": f"Insufficient historical data ({available_bars} daily bars available, minimum 200 required).",
+            "rationale": f"Insufficient historical data ({available_bars} daily bars available, minimum 60 required).",
             "_cached_at": now_ts,
         }
         _PREDICTION_CACHE[clean_sym] = res
         return res
 
-    # Extract NIFTY 50 and India VIX data
+    # Extract NIFTY 50 and India VIX data with robust fallback
     nifty_df = ohlcv_map.get(_BENCHMARK_SYMBOL)
+    if nifty_df is None or nifty_df.empty:
+        try:
+            from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
+            nifty_df = await asyncio.to_thread(fetch_arbitrary_symbol, _BENCHMARK_SYMBOL, "1y", "1d")
+        except Exception:
+            pass
     nifty_close = nifty_df["close"] if nifty_df is not None and "close" in nifty_df.columns else pd.Series(dtype=float)
 
     vix_df = ohlcv_map.get(_VIX_SYMBOL)
+    if vix_df is None or vix_df.empty:
+        try:
+            from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
+            vix_df = await asyncio.to_thread(fetch_arbitrary_symbol, _VIX_SYMBOL, "1y", "1d")
+        except Exception:
+            pass
     latest_vix = float(vix_df["close"].iloc[-1]) if (vix_df is not None and not vix_df.empty and "close" in vix_df.columns) else 14.5
 
     # ── As-Of Timestamp: Stamped from the last received candle bar, NOT request clock time ──

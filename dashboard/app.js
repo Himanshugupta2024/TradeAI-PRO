@@ -27893,8 +27893,8 @@ async function openAiPredictionModal(sym) {
             delayEl.style.color = '#f87171';
             contentEl.innerHTML = `
                 <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:16px;text-align:center;">
-                    <div style="font-size:1.1rem;color:#f87171;font-weight:700;">Data Insufficient (< 200 Daily Bars)</div>
-                    <div style="margin-top:6px;font-size:0.8rem;color:#cbd5e1;line-height:1.4;">${_escHtml(data.rationale || 'Minimum 200 trading sessions required to reliably fit indicators and regime filters.')}</div>
+                    <div style="font-size:1.1rem;color:#f87171;font-weight:700;">Data Insufficient (< 60 Daily Bars)</div>
+                    <div style="margin-top:6px;font-size:0.8rem;color:#cbd5e1;line-height:1.4;">${_escHtml(data.rationale || 'Minimum 60 trading sessions required to reliably fit indicators and regime filters.')}</div>
                 </div>
             `;
             return;
