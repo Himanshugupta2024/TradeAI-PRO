@@ -709,6 +709,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     hydrateFromLocalStorageCache();
     hydrateAutonomousFromStorage();
+    updateAiModelHealthBadge();
 
     loadOverviewFast();
     // Stagger peripheral requests across 300-2500ms to stay within Render free-tier concurrent connection caps
@@ -718,6 +719,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => loadPortfolio(), 1400);
     }
     setTimeout(() => updateAiModelHealthBadge(), 1800);
+    setInterval(() => { if (!document.hidden) updateAiModelHealthBadge(); }, 30000);
     setTimeout(() => loadNsePredictionTab(), 2000);
     setInterval(() => { if (!document.hidden && currentTab === 'overview') loadNsePredictionTab(); }, 60000);
     setInterval(() => { if (!document.hidden) { fetchMarketFocusConfig(); } }, 90000);
@@ -2389,6 +2391,7 @@ function _releaseApiSlot() {
 }
 
 function _needsApiSlot(url, isGet) {
+    if (typeof url === 'string' && (url.includes('/api/health') || url.includes('/health/live'))) return false;
     return isGet && typeof url === 'string' && url.indexOf('/api/') === 0;
 }
 

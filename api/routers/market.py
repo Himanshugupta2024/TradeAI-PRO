@@ -534,6 +534,7 @@ async def get_dashboard_overview():
                 "fitted_count": ai_status.get("fitted_count", 0),
                 "ready": True,
                 "badge_short": ai_status.get("badge_short", "🧠 AI: Heuristic"),
+                "sidecar_active": bool(ai_status.get("sidecar_active", False)),
             },
             "risk_state": {
                 "circuit_breaker_active": getattr(engine, "circuit_breaker_active", False) if engine else False,
@@ -569,6 +570,7 @@ async def get_dashboard_overview():
             "badge_short": ai_status.get("badge_short", "🧠 AI: Heuristic"),
             "badge_text": ai_status.get("badge_text", f"AI Engine: {ai_status.get('mode', 'Statistical Heuristic')}"),
             "lightweight_mode": bool(ai_status.get("lightweight_mode", False)),
+            "sidecar_active": bool(ai_status.get("sidecar_active", False)),
             "active_inference_mode": ai_status.get("active_inference_mode"),
         },
 
