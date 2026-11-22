@@ -54,4 +54,4 @@ def test_feature_drift_detected_on_recent_shift(monkeypatch):
 
     assert score > 3.0
     assert detected is True
-    assert feature in {"close", "RSI_14", "MACD_hist", "ATR_14", "volume"}
+    assert feature in {"ret_5", "RSI_14", "MACD_hist", "MACD_norm", "ATR_14", "ATR_pct", "vol_ratio", "volume", "close"}
