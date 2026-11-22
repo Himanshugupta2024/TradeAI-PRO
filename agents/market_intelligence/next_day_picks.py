@@ -520,13 +520,17 @@ def analyze_candidate(
         risk = round(max(1.0 * atr, min(2.0 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price - risk, 2)
 
-        # Dynamic technical target based on real resistance levels (R1 / R2 / ATR expansion)
-        if r1 > trigger_price and (r1 - trigger_price) >= (1.5 * risk):
+        # Dynamic technical target based on real resistance levels (20d High, R1, R2, or dynamic ATR expansion)
+        h20 = metrics.get("high_20d", 0.0)
+        if h20 > trigger_price and (h20 - trigger_price) >= (1.5 * risk):
+            target_1 = round(h20, 2)
+        elif r1 > trigger_price and (r1 - trigger_price) >= (1.5 * risk):
             target_1 = round(r1, 2)
         elif r2 > trigger_price and (r2 - trigger_price) >= (1.5 * risk):
             target_1 = round(r2, 2)
         else:
-            target_1 = round(trigger_price + max(1.8 * risk, 2.0 * atr), 2)
+            atr_mult = 2.2 if metrics["rsi14"] >= 60.0 else (2.0 if metrics["rsi14"] >= 50.0 else 1.8)
+            target_1 = round(trigger_price + max(1.5 * risk, atr_mult * atr), 2)
 
         reward = round(target_1 - trigger_price, 2)
         rr_ratio = round(reward / risk, 2)
@@ -542,12 +546,16 @@ def analyze_candidate(
         risk = round(max(1.0 * atr, min(2.0 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price + risk, 2)
 
-        if s1 < trigger_price and (trigger_price - s1) >= (1.5 * risk):
+        l20 = metrics.get("low_20d", 0.0)
+        if l20 > 0 and l20 < trigger_price and (trigger_price - l20) >= (1.5 * risk):
+            target_1 = round(l20, 2)
+        elif s1 < trigger_price and (trigger_price - s1) >= (1.5 * risk):
             target_1 = round(s1, 2)
         elif s2 < trigger_price and (trigger_price - s2) >= (1.5 * risk):
             target_1 = round(s2, 2)
         else:
-            target_1 = round(trigger_price - max(1.8 * risk, 2.0 * atr), 2)
+            atr_mult = 2.2 if metrics["rsi14"] <= 40.0 else (2.0 if metrics["rsi14"] <= 50.0 else 1.8)
+            target_1 = round(trigger_price - max(1.5 * risk, atr_mult * atr), 2)
 
         reward = round(trigger_price - target_1, 2)
         rr_ratio = round(reward / risk, 2)

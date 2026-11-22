@@ -725,7 +725,7 @@ async def get_all_signals(response: Response):
 
     return {
         "signals": [apply_signal_freshness(s) for s in results],
-        "updated_at": getattr(svc, "_persisted_signals_updated_at", None) or datetime.now().isoformat(),
+        "updated_at": getattr(svc, "_persisted_signals_updated_at", None) or datetime.now(timezone.utc).isoformat(),
         "source": source,
     }
 

@@ -144,17 +144,38 @@ def _compute_feature_drift(
     lookback_bars: int = 120,
     recent_bars: int = 20,
 ) -> tuple[float, bool, str]:
-    """Compute simple distribution-shift score using recent-vs-baseline z-delta."""
+    """
+    Compute distribution-shift score using scale-free returns and ratios.
+    Evaluates stationary features (returns, ATR%, volume ratio, RSI) instead
+    of raw nominal price levels or absolute share counts.
+    """
     if df is None or df.empty or len(df) < max(lookback_bars, recent_bars * 2):
         return 0.0, False, ""
 
-    candidate_cols = ["RSI_14", "MACD_hist", "ATR_14", "volume", "close"]
+    # Derive stationary, scale-free series for distribution drift evaluation
+    eval_series: dict[str, pd.Series] = {}
+
+    if "RSI_14" in df.columns:
+        eval_series["RSI_14"] = pd.to_numeric(df["RSI_14"], errors="coerce").dropna()
+
+    if "close" in df.columns:
+        c = pd.to_numeric(df["close"], errors="coerce")
+        eval_series["ret_5"] = c.pct_change(5).dropna()
+        if "ATR_14" in df.columns:
+            atr = pd.to_numeric(df["ATR_14"], errors="coerce")
+            eval_series["ATR_pct"] = (atr / c.replace(0, np.nan)).dropna()
+        if "MACD_hist" in df.columns:
+            macd_h = pd.to_numeric(df["MACD_hist"], errors="coerce")
+            eval_series["MACD_norm"] = (macd_h / c.replace(0, np.nan)).dropna()
+
+    if "volume" in df.columns:
+        v = pd.to_numeric(df["volume"], errors="coerce")
+        v_mean = v.rolling(20, min_periods=5).mean().replace(0, np.nan)
+        eval_series["vol_ratio"] = (v / v_mean).dropna()
+
     scores: dict[str, float] = {}
 
-    for col in candidate_cols:
-        if col not in df.columns:
-            continue
-        series = pd.to_numeric(df[col], errors="coerce").dropna()
+    for col, series in eval_series.items():
         if len(series) < recent_bars * 2:
             continue
 

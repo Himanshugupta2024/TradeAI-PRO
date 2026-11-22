@@ -188,6 +188,17 @@ class ContextFetcher:
         events = self.get_upcoming_events()
         days_to_next, event_active = self._derive_event_risk(events, now)
 
+        # Check symbol-specific corporate announcements (earnings, board meetings, CFO exit)
+        if not is_crypto:
+            try:
+                from agents.data_ingestion.corporate_events import check_symbol_event_risk
+                corp_risk = check_symbol_event_risk(symbol)
+                if corp_risk.get("has_event_risk"):
+                    event_active = True
+                    days_to_next = min(days_to_next, 1)
+            except Exception:
+                pass
+
         snapshot = ContextSnapshotData(
             symbol=symbol,
             timestamp_utc=now,
@@ -210,15 +221,17 @@ class ContextFetcher:
         return snapshot
 
     def _compute_context_score(self, snapshot: ContextSnapshotData) -> float:
-        """Compute composite context score with the required formula."""
+        """Compute composite context score with symmetrical bounds and market-aware gates."""
         score = 0.0
         w24 = float(getattr(settings, "CONTEXT_NEWS_WEIGHT_24HR", 0.15))
         w7 = float(getattr(settings, "CONTEXT_NEWS_WEIGHT_7D", 0.15))
         score += snapshot.news_sentiment_24hr * w24 + snapshot.news_sentiment_7d * w7
         score += 0.20 if snapshot.weekly_trend_bias == "BULLISH" else -0.20 if snapshot.weekly_trend_bias == "BEARISH" else 0.0
-        score += min(snapshot.volume_change_24hr_pct / 100.0, 0.15)
+        score += max(-0.15, min(0.15, snapshot.volume_change_24hr_pct / 100.0))
         score -= 0.25 if snapshot.event_risk_active else 0.0
-        score -= 0.10 if snapshot.btc_dominance_7d_trend == "RISING" and snapshot.symbol != "BTCUSDT" else 0.0
+        is_crypto = snapshot.symbol.endswith("USDT") or "/" in snapshot.symbol
+        if is_crypto and snapshot.btc_dominance_7d_trend == "RISING" and not snapshot.symbol.startswith("BTC"):
+            score -= 0.10
         return max(-1.0, min(1.0, score))
 
     def _persist_snapshot(self, snapshot: ContextSnapshotData) -> None:
@@ -959,6 +972,29 @@ class ContextFetcher:
             events.extend(self._normalize_event_rows(rows, now, default_impact="HIGH"))
         except Exception as exc:
             logger.warning("NSE event-calendar fetch failed: %s", exc)
+
+        # Fallback high-impact schedule: Monthly NSE F&O Expiry (last Thursday of month)
+        import calendar
+        curr_d = now.date()
+        cal = calendar.monthcalendar(curr_d.year, curr_d.month)
+        thursdays = [week[calendar.THURSDAY] for week in cal if week[calendar.THURSDAY] != 0]
+        expiry_day = thursdays[-1]
+        expiry_date = date(curr_d.year, curr_d.month, expiry_day)
+        if curr_d > expiry_date:
+            next_year = curr_d.year if curr_d.month < 12 else curr_d.year + 1
+            next_month = curr_d.month + 1 if curr_d.month < 12 else 1
+            cal_next = calendar.monthcalendar(next_year, next_month)
+            next_thursdays = [week[calendar.THURSDAY] for week in cal_next if week[calendar.THURSDAY] != 0]
+            expiry_date = date(next_year, next_month, next_thursdays[-1])
+
+        days_to_expiry = max(0, (expiry_date - curr_d).days)
+        events.append({
+            "event_name": f"NSE Monthly F&O Expiry ({expiry_date.strftime('%B %Y')})",
+            "date": expiry_date.isoformat(),
+            "impact": "HIGH",
+            "days_away": days_to_expiry,
+            "relevant_markets": "NSE_EQUITIES",
+        })
 
         deduped: dict[str, dict[str, Any]] = {}
         for event in events:

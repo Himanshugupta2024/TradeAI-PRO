@@ -395,10 +395,24 @@ async def predict_stock_price(
     # Layer 1 Data Validation Contract: reject if < 200 bars
     if df is None or df.empty or len(df) < 200:
         available_bars = len(df) if df is not None else 0
+        last_bar_iso = None
+        if df is not None and not df.empty:
+            try:
+                lts = df["timestamp"].iloc[-1] if "timestamp" in df.columns else df.index[-1]
+                bdt = pd.to_datetime(lts)
+                last_bar_iso = bdt.tz_localize(_IST).astimezone(timezone.utc).isoformat() if bdt.tzinfo is None else bdt.astimezone(timezone.utc).isoformat()
+            except Exception:
+                pass
+        now_utc = datetime.now(timezone.utc)
+        now_iso = now_utc.isoformat()
         res = {
             "symbol": clean_sym,
             "company_name": comp_name,
-            "as_of": datetime.now(timezone.utc).isoformat(),
+            "as_of": last_bar_iso or now_iso,
+            "as_of_iso": last_bar_iso or now_iso,
+            "prediction_timestamp": now_iso,
+            "source": "LOCAL_HEURISTIC",
+            "model_version": "v1.2.0-ensemble-6layer",
             "data_delay_minutes": 15,
             "feed_source": "YAHOO_NSE_DELAYED",
             "horizon": "5–8 Trading Days (Swing)",
@@ -422,9 +436,30 @@ async def predict_stock_price(
     vix_df = ohlcv_map.get(_VIX_SYMBOL)
     latest_vix = float(vix_df["close"].iloc[-1]) if (vix_df is not None and not vix_df.empty and "close" in vix_df.columns) else 14.5
 
+    # ── As-Of Timestamp: Stamped from the last received candle bar, NOT request clock time ──
+    last_bar_ts = None
+    if "timestamp" in df.columns and not df["timestamp"].empty:
+        last_bar_ts = df["timestamp"].iloc[-1]
+    elif isinstance(df.index, pd.DatetimeIndex) and len(df.index) > 0:
+        last_bar_ts = df.index[-1]
+
+    if last_bar_ts is not None:
+        try:
+            bdt = pd.to_datetime(last_bar_ts)
+            bdt_ist = bdt.tz_localize(_IST) if bdt.tzinfo is None else bdt.tz_convert(_IST)
+            as_of_str = bdt_ist.strftime("%Y-%m-%d %I:%M:%S %p IST")
+            as_of_iso = bdt_ist.astimezone(timezone.utc).isoformat()
+        except Exception:
+            now_dt_ist = datetime.now(_IST)
+            as_of_str = now_dt_ist.strftime("%Y-%m-%d %I:%M:%S %p IST")
+            as_of_iso = now_dt_ist.astimezone(timezone.utc).isoformat()
+    else:
+        now_dt_ist = datetime.now(_IST)
+        as_of_str = now_dt_ist.strftime("%Y-%m-%d %I:%M:%S %p IST")
+        as_of_iso = now_dt_ist.astimezone(timezone.utc).isoformat()
+
     now_utc = datetime.now(timezone.utc)
-    now_ist = now_utc.astimezone(_IST)
-    as_of_str = now_ist.strftime("%Y-%m-%d %I:%M:%S %p IST")
+    prediction_timestamp = now_utc.isoformat()
 
     # ── Layer 2: Technical Feature Engine ────────────────────────────────────
     close_s = df["close"]
@@ -506,6 +541,53 @@ async def predict_stock_price(
         vix_level=latest_vix,
     )
 
+    # Query ML Ensemble (Remote Sidecar Box B if configured, local calibrated baseline)
+    prediction_source = "LOCAL_HEURISTIC"
+    ml_res = None
+    try:
+        from agents.ai_engine.ensemble import predict_advanced
+        df_for_ml = df.copy()
+        if "open" not in df_for_ml.columns and "close" in df_for_ml.columns:
+            df_for_ml["open"] = df_for_ml["close"]
+        if "rsi" not in df_for_ml.columns:
+            from agents.feature_engine.indicators import calculate_indicators
+            df_for_ml = calculate_indicators(df_for_ml)
+        ml_res = await asyncio.to_thread(
+            predict_advanced,
+            df_for_ml,
+            symbol=clean_sym,
+            offline=True,
+            force_refresh=force_refresh,
+        )
+        if ml_res and isinstance(ml_res, dict):
+            prediction_source = ml_res.get("source", "LOCAL_HEURISTIC")
+    except Exception as exc:
+        logger.debug("[PredictionEngine] ML ensemble query failed for %s: %s", clean_sym, exc)
+        prediction_source = "LOCAL_HEURISTIC"
+
+    if ml_res and prediction_source == "ML_SIDECAR":
+        # Synthesize ML probabilities with 3-class distribution
+        ml_p_up = max(1.0, min(99.0, float(ml_res.get("prob_up", 50.0))))
+        ml_p_down = max(1.0, min(99.0, float(ml_res.get("prob_down", 50.0))))
+
+        ml_logit_up = (ml_p_up - 50.0) / 20.0
+        ml_logit_down = (ml_p_down - 50.0) / 20.0
+        ml_conviction = abs(ml_p_up - ml_p_down)
+        sideways_dampener = max(0.2, 1.0 - (ml_conviction / 60.0))
+        ml_logit_side = 0.5 * sideways_dampener
+
+        raw_l_up = np.log(max(prob_up, 0.1)) + ml_logit_up
+        raw_l_down = np.log(max(prob_down, 0.1)) + ml_logit_down
+        raw_l_side = np.log(max(prob_sideways, 0.1)) + ml_logit_side
+
+        blended_exp = np.exp(np.array([raw_l_up, raw_l_down, raw_l_side]) - max(raw_l_up, raw_l_down, raw_l_side))
+        blended_probs = (blended_exp / np.sum(blended_exp)) * 100.0
+
+        prob_up = round(float(blended_probs[0]), 1)
+        prob_down = round(float(blended_probs[1]), 1)
+        prob_sideways = round(max(0.0, 100.0 - prob_up - prob_down), 1)
+        confidence_score = round(float(ml_res.get("confidence", confidence_score)), 1)
+
     # Direction Classification
     if prob_up >= 50.0 and prob_up > prob_down:
         direction = "UP"
@@ -557,14 +639,15 @@ async def predict_stock_price(
         "symbol": clean_sym,
         "company_name": comp_name,
         "as_of": as_of_str,
-        "as_of_iso": now_utc.isoformat(),
+        "as_of_iso": as_of_iso,
         "data_delay_minutes": 15,
         "feed_source": "YAHOO_NSE_DELAYED",
         "horizon": dynamic_horizon,
         "prediction_horizon": dynamic_horizon,
         "horizon_details": horizon_meta,
-        "model_version": "v1.2.0-ensemble-6layer",
-        "prediction_timestamp": now_utc.isoformat(),
+        "model_version": "v1.2.0-ml-sidecar" if prediction_source == "ML_SIDECAR" else "v1.2.0-ensemble-6layer",
+        "prediction_timestamp": prediction_timestamp,
+        "source": prediction_source,
         "status": "PREDICTION_ACTIVE",
         "direction": direction,
         "probabilities": {

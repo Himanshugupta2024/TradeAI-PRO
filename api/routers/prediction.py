@@ -67,6 +67,8 @@ async def get_single_stock_prediction(
         raise HTTPException(status_code=400, detail="Stock symbol must be specified")
 
     res = await predict_stock_price(clean_sym, force_refresh=force)
+    if "source" not in res and res.get("status") == "PREDICTION_ACTIVE":
+        res["source"] = "LOCAL_HEURISTIC"
     return res
 
 

@@ -1683,7 +1683,7 @@ async def _refresh_market_data_inner():
     Protected by _refresh_lock so that concurrent callers (background task +
     manual /api/refresh) never produce a partial/interleaved cache snapshot.
     """
-    global _last_refresh, _last_feed_update
+    global _last_refresh, _last_feed_update, _persisted_signals_snapshot, _persisted_signals_updated_at
     async with _get_refresh_lock():
         from utils.profiler import PerfTracker
         refresh_tracker = PerfTracker("market_refresh", slow_threshold_ms=3000.0)
@@ -1905,7 +1905,7 @@ async def _refresh_market_data_inner():
                 else:
                     _persisted_signals_snapshot = current_signals
 
-                _persisted_signals_updated_at = datetime.now().isoformat()
+                _persisted_signals_updated_at = datetime.now(timezone.utc).isoformat()
                 if len(_persisted_signals_snapshot) >= 10:
                     from db.runtime_state import set_runtime_state
                     await asyncio.to_thread(
@@ -2391,19 +2391,6 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
     else:
         local_trend = current_trend
 
-    # Determine trade status relative to current price
-    signal_status = "ACTIVE"
-    if tp is not None and effective_dir == "LONG" and current_close >= tp:
-        signal_status = "TARGET_HIT"
-    elif tp is not None and effective_dir == "SHORT" and current_close <= tp:
-        signal_status = "TARGET_HIT"
-    elif sl is not None and effective_dir == "LONG" and current_close <= sl:
-        signal_status = "STOPPED_OUT"
-    elif sl is not None and effective_dir == "SHORT" and current_close >= sl:
-        signal_status = "STOPPED_OUT"
-    elif stale:
-        signal_status = "STALE"
-
     from api.data_honesty import entry_distance_pct, confluence_penalties
     entry_dist = entry_distance_pct(entry_price, current_close)
     is_long_dir = effective_dir in ("LONG", "BUY")
@@ -2411,17 +2398,24 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
     entry_crossed = (is_long_dir and entry_dist > 0.25) or (is_short_dir and entry_dist < -0.25)
     chase_risk = entry_crossed
 
+    # Determine trade status relative to current price.
+    # Note: If entry was never crossed/triggered, price breaching SL or TP is INVALIDATED, not STOPPED_OUT.
+    signal_status = "ACTIVE"
+    if tp is not None and effective_dir == "LONG" and current_close >= tp:
+        signal_status = "TARGET_HIT" if entry_crossed else "INVALIDATED"
+    elif tp is not None and effective_dir == "SHORT" and current_close <= tp:
+        signal_status = "TARGET_HIT" if entry_crossed else "INVALIDATED"
+    elif sl is not None and effective_dir == "LONG" and current_close <= sl:
+        signal_status = "STOPPED_OUT" if entry_crossed else "INVALIDATED"
+    elif sl is not None and effective_dir == "SHORT" and current_close >= sl:
+        signal_status = "STOPPED_OUT" if entry_crossed else "INVALIDATED"
+    elif stale:
+        signal_status = "STALE"
+
+    is_terminal = signal_status in ("STOPPED_OUT", "TARGET_HIT", "INVALIDATED", "CANCELLED", "STALE")
+
     vwap_val = _safe_float(last, "VWAP")
     atr_val = _safe_float(last, f"ATR_{settings.ATR_PERIOD}")
-    pens = confluence_penalties(
-        signal=effective_dir,
-        rsi=current_rsi,
-        daily_trend=current_trend,
-        close=current_close,
-        entry=entry_price,
-        vwap=vwap_val,
-        atr=atr_val,
-    )
 
     actionable = bool(
         not stale
@@ -2432,30 +2426,64 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
         and levels_source != "UNAVAILABLE"
     )
 
-    try:
-        current_mood_dict = mood if mood is not None else _compute_market_mood()
-    except Exception:
-        current_mood_dict = {}
+    if not actionable:
+        if signal_status in ("STOPPED_OUT", "TARGET_HIT", "INVALIDATED", "CANCELLED"):
+            skip_reason = f"Lifecycle terminal ({signal_status})"
+        elif stale:
+            skip_reason = f"Signal stale ({round(signal_age_min, 1)}m > {stale_threshold_min}m threshold)"
+        elif quality_hard_gate:
+            skip_reason = quality_hard_gate
+        elif entry_crossed:
+            skip_reason = "Entry price already crossed (chase risk)"
+        elif levels_source == "UNAVAILABLE":
+            skip_reason = "Invalid or unavailable level geometry"
+        else:
+            skip_reason = quality_hard_gate if sig_label == "SKIP" else "Gated"
+    else:
+        skip_reason = ""
 
-    display_conf, display_factors = _confluence_for_setup(
-        {
-            "signal": sig_label,
-            "direction": effective_dir,
-            "trend": current_trend,
-            "regime": current_regime,
-            "context_score": _safe_float(last_signal, "context_score") or 0.0,
-            "drift_detected": bool(last_signal.get("drift_detected", False)),
-            "event_risk_active": bool(last_signal.get("event_risk_active", False)),
-            "conflict": conflict_payload,
-            "rsi": current_rsi,
-            "close": current_close,
-            "entry": entry_price,
-            "vwap": vwap_val,
-            "atr": atr_val,
-        },
-        mood=current_mood_dict,
-        for_display=True,
-    )
+    # For terminal states, freeze confidence, quality, and confluence from issuance snapshot.
+    # Do not recompute with live indicators.
+    if is_terminal:
+        display_conf = int(_cap_confidence(last_signal.get("confluence_score", last_signal.get("confidence", 50))))
+        display_factors = [f"Lifecycle terminal ({signal_status})"]
+        pens = []
+    else:
+        pens = confluence_penalties(
+            signal=effective_dir,
+            rsi=current_rsi,
+            daily_trend=current_trend,
+            close=current_close,
+            entry=entry_price,
+            vwap=vwap_val,
+            atr=atr_val,
+        )
+
+        try:
+            current_mood_dict = mood if mood is not None else _compute_market_mood()
+        except Exception:
+            current_mood_dict = {}
+
+        display_conf, display_factors = _confluence_for_setup(
+            {
+                "signal": sig_label,
+                "direction": effective_dir,
+                "trend": current_trend,
+                "regime": current_regime,
+                "context_score": _safe_float(last_signal, "context_score") or 0.0,
+                "news_sentiment_24hr": _safe_float(last_signal, "news_sentiment_24hr") or 0.0,
+                "drift_detected": bool(last_signal.get("drift_detected", False)),
+                "event_risk_active": bool(last_signal.get("event_risk_active", False)),
+                "conflict": conflict_payload,
+                "rsi": current_rsi,
+                "close": current_close,
+                "entry": entry_price,
+                "vwap": vwap_val,
+                "atr": atr_val,
+            },
+            mood=current_mood_dict,
+            for_display=True,
+        )
 
     return {
         "symbol": symbol,
@@ -2497,7 +2525,7 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
         "quality_grade": quality_grade,
         "quality_breakdown": quality_breakdown,
         "quality_hard_gate": quality_hard_gate,
-        "skip_reason": quality_hard_gate if sig_label == "SKIP" else "",
+        "skip_reason": skip_reason,
         "signal_conflict": signal_conflict,
         "conflict": conflict_payload,
         # Data quality
@@ -2521,6 +2549,44 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
         "drift_detected": bool(last_signal.get("drift_detected", False)),
         "drift_feature": str(last_signal.get("drift_feature") or ""),
         "drift_adjusted": bool(last_signal.get("drift_adjusted", False)),
+        # Segregated issuance, live, and lifecycle snapshots
+        "signal_snapshot": {
+            "direction": effective_dir,
+            "entry": entry_price,
+            "stop_loss": sl,
+            "target": tp,
+            "issued_at": (
+                last_signal["timestamp"].isoformat()
+                if hasattr(last_signal.get("timestamp"), "isoformat")
+                else str(last_signal.get("timestamp") or datetime.now(timezone.utc).isoformat())
+            ),
+            "confidence": _cap_confidence(
+                last_signal.get("confidence", last_signal.get("ai_confidence", 0))
+            ),
+            "quality_score": quality_score,
+            "quality_grade": quality_grade,
+            "signal_conflict": signal_conflict,
+            "levels_source": levels_source,
+        },
+        "live": {
+            "close": current_close,
+            "rsi": current_rsi,
+            "macd_hist": _safe_float(last, "MACD_hist"),
+            "trend": current_trend,
+            "local_trend": local_trend,
+            "regime": current_regime,
+            "vwap": vwap_val,
+            "atr": atr_val,
+            "as_of": current_ts,
+        },
+        "lifecycle": {
+            "status": signal_status,
+            "actionable": actionable,
+            "terminal": is_terminal,
+            "entry_crossed": entry_crossed,
+            "exit_price": current_close if is_terminal else None,
+            "stopped_at": current_ts if is_terminal else None,
+        },
     }
 
 
@@ -3485,12 +3551,19 @@ def _confluence_for_setup(sig: dict, mood: dict, for_display: bool = False) -> t
         score += 5
         factors.append("Neutral market bias")
 
-    if ctx > 0.1:
+    news_sent = float(sig.get("news_sentiment_24hr") or 0.0)
+    if news_sent > 0.05:
         score += 10
         factors.append("News context tailwind")
-    elif ctx < -0.1:
+    elif news_sent < -0.05:
         score -= 8
         factors.append("News context headwind")
+    elif abs(news_sent) <= 0.05 and ctx > 0.15:
+        score += 5
+        factors.append("Market context supportive")
+    elif abs(news_sent) <= 0.05 and ctx < -0.15:
+        score -= 5
+        factors.append("Market context drag")
 
     drift = bool(sig.get("drift_detected"))
     event = bool(sig.get("event_risk_active"))

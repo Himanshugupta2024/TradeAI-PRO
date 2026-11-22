@@ -202,6 +202,11 @@ async def test_predict_stock_price_mocked(monkeypatch):
     assert res["data_delay_minutes"] == 15
     assert res["feed_source"] == "YAHOO_NSE_DELAYED"
     assert res["direction"] in {"UP", "DOWN", "SIDEWAYS"}
+    assert "source" in res
+    assert res["source"] in {"LOCAL_HEURISTIC", "ML_SIDECAR", "ML_ENSEMBLE"}
+    # Verify as_of is stamped from the candle bar, NOT request clock time!
+    assert res["as_of_iso"] != res["prediction_timestamp"]
+    assert "2025" in res["as_of_iso"]
     assert "probabilities" in res
     probs = res["probabilities"]
     assert round(probs["up"] + probs["down"] + probs["sideways"], 1) == 100.0
@@ -211,6 +216,42 @@ async def test_predict_stock_price_mocked(monkeypatch):
     assert "rationale" in res and len(res["rationale"]) > 20
     assert "market_context" in res
     assert res["market_context"]["vix_regime"] == "NORMAL_SWING"
+
+
+@pytest.mark.asyncio
+async def test_predict_stock_sidecar_source_propagation(monkeypatch):
+    """Verify that when ML Sidecar responds, prediction_engine stamps source: ML_SIDECAR."""
+    from data.providers.yahoo import YahooProvider
+
+    n = 250
+    dates = pd.date_range("2026-01-01", periods=n, freq="B")
+    close = np.linspace(100, 150, n)
+    mock_df = pd.DataFrame({"open": close, "high": close + 1, "low": close - 1, "close": close, "volume": np.full(n, 1000)}, index=dates)
+
+    async def mock_get_batch_ohlcv(self, symbols, period="1y", interval="1d"):
+        return {"RELIANCE": mock_df, "^NSEI": mock_df, "^INDIAVIX": pd.DataFrame({"close": np.full(n, 14.5)}, index=dates)}
+
+    monkeypatch.setattr(YahooProvider, "get_batch_ohlcv", mock_get_batch_ohlcv)
+
+    # Mock predict_advanced returning ML_SIDECAR
+    import agents.ai_engine.ensemble as ens
+    def mock_predict_adv(df, symbol="", offline=True, force_refresh=False):
+        return {
+            "source": "ML_SIDECAR",
+            "direction": "UP",
+            "confidence": 88.0,
+            "prob_up": 85.0,
+            "prob_down": 10.0,
+            "calibrated_trade_win_probability": 88.0,
+        }
+    monkeypatch.setattr(ens, "predict_advanced", mock_predict_adv)
+
+    res = await predict_stock_price("RELIANCE", force_refresh=True)
+    assert res["source"] == "ML_SIDECAR"
+    assert res["model_version"] == "v1.2.0-ml-sidecar"
+    assert res["probabilities"]["bullish"] > 60.0
+    assert res["confidence_score"] == 88.0
+    assert res["as_of_iso"] != res["prediction_timestamp"]
 
 
 @pytest.mark.asyncio
