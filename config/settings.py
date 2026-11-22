@@ -629,7 +629,7 @@ SWING_ATR_TARGET_MULTIPLIER = float(os.getenv("SWING_ATR_TARGET_MULTIPLIER", "3.
 # Overnight/portfolio guardrails.
 SWING_MAX_CAPITAL_PER_TRADE = float(os.getenv("SWING_MAX_CAPITAL_PER_TRADE", "0.25"))
 SWING_MAX_OPEN_POSITIONS = int(os.getenv("SWING_MAX_OPEN_POSITIONS", "3"))
-SWING_MAX_SECTOR_CONCENTRATION = int(os.getenv("SWING_MAX_SECTOR_CONCENTRATION", "1"))
+SWING_MAX_SECTOR_CONCENTRATION = int(os.getenv("SWING_MAX_SECTOR_CONCENTRATION", "2"))
 SWING_MAX_PORTFOLIO_RISK_PCT = float(os.getenv("SWING_MAX_PORTFOLIO_RISK_PCT", "0.03"))
 
 # Reference index for swing regime gate (must match NSE_SYMBOLS display name).
