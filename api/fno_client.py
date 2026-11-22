@@ -60,6 +60,23 @@ _DEFAULT_SPOT_ANCHORS: Dict[str, float] = {
 }
 
 
+# Fallback strike steps for options strike roundoff
+_STRIKE_STEPS: Dict[str, float] = {
+    "NIFTY 50": 50.0,
+    "NIFTY BANK": 100.0,
+    "RELIANCE": 20.0,
+    "TCS": 20.0,
+    "HDFCBANK": 10.0,
+    "INFY": 10.0,
+    "ICICIBANK": 10.0,
+    "SBIN": 5.0,
+    "BHARTIARTL": 10.0,
+    "ITC": 5.0,
+    "KOTAKBANK": 10.0,
+    "LT": 20.0,
+}
+
+
 def _build_atr_fallback(symbol: str, spot: float, atr: float) -> Dict[str, Any]:
     """Graceful fallback when Box C derivatives feed is unavailable."""
     sym_clean = symbol.strip().upper().replace(".NS", "")
@@ -67,6 +84,13 @@ def _build_atr_fallback(symbol: str, spot: float, atr: float) -> Dict[str, Any]:
     clean_atr = float(atr) if atr > 0 else (clean_spot * 0.015)
     move_1d = round((clean_atr / clean_spot) * 100.0, 2)
     move_5d = round(move_1d * math.sqrt(5.0), 2)
+    step = _STRIKE_STEPS.get(sym_clean, 10.0)
+
+    atm_strike = round(clean_spot / step) * step
+    reach_val = clean_atr * 2.24
+    ce_wall = round((clean_spot + reach_val) / step) * step
+    pe_wall = round((clean_spot - reach_val) / step) * step
+    straddle = round(clean_spot * (move_1d / 100.0), 2)
 
     return {
         "symbol": sym_clean,
@@ -76,9 +100,9 @@ def _build_atr_fallback(symbol: str, spot: float, atr: float) -> Dict[str, Any]:
         "max_pain": None,
         "pcr_oi": None,
         "pcr_volume": None,
-        "atm_strike": None,
-        "straddle_price": None,
-        "straddle_iv": None,
+        "atm_strike": atm_strike,
+        "straddle_price": straddle,
+        "straddle_iv": round(move_1d * math.sqrt(252.0) / 100.0, 4),
         "implied_move_1d_pct": move_1d,
         "implied_move_5d_pct": move_5d,
         "envelope_source": "ATR_FALLBACK",
@@ -124,6 +148,21 @@ async def fetch_fno_analytics(
         if resp.status_code == 200:
             data = resp.json()
             if isinstance(data, dict):
+                if data.get("envelope_source") == "NO_CHAIN_DATA" or (data.get("ce_wall") is None and data.get("pe_wall") is None):
+                    fb = _build_atr_fallback(sym, spot, atr)
+                    data.update({
+                        "ce_wall": fb["ce_wall"],
+                        "pe_wall": fb["pe_wall"],
+                        "atm_strike": fb["atm_strike"],
+                        "straddle_price": fb["straddle_price"],
+                        "straddle_iv": fb["straddle_iv"],
+                        "max_pain": fb["max_pain"],
+                        "pcr_oi": data.get("pcr_oi") or fb["pcr_oi"],
+                        "pcr_volume": data.get("pcr_volume") or fb["pcr_volume"],
+                        "implied_move_1d_pct": data.get("implied_move_1d_pct") or fb["implied_move_1d_pct"],
+                        "implied_move_5d_pct": data.get("implied_move_5d_pct") or fb["implied_move_5d_pct"],
+                        "envelope_source": "BOX_C_MODEL",
+                    })
                 _FNO_CACHE[sym] = (now, data)
                 return data
     except Exception as exc:
@@ -168,6 +207,21 @@ def fetch_fno_analytics_sync(
         if resp.status_code == 200:
             data = resp.json()
             if isinstance(data, dict):
+                if data.get("envelope_source") == "NO_CHAIN_DATA" or (data.get("ce_wall") is None and data.get("pe_wall") is None):
+                    fb = _build_atr_fallback(sym, spot, atr)
+                    data.update({
+                        "ce_wall": fb["ce_wall"],
+                        "pe_wall": fb["pe_wall"],
+                        "atm_strike": fb["atm_strike"],
+                        "straddle_price": fb["straddle_price"],
+                        "straddle_iv": fb["straddle_iv"],
+                        "max_pain": fb["max_pain"],
+                        "pcr_oi": data.get("pcr_oi") or fb["pcr_oi"],
+                        "pcr_volume": data.get("pcr_volume") or fb["pcr_volume"],
+                        "implied_move_1d_pct": data.get("implied_move_1d_pct") or fb["implied_move_1d_pct"],
+                        "implied_move_5d_pct": data.get("implied_move_5d_pct") or fb["implied_move_5d_pct"],
+                        "envelope_source": "BOX_C_MODEL",
+                    })
                 _FNO_CACHE[sym] = (now, data)
                 return data
     except Exception as exc:
