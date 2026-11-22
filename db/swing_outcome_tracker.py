@@ -10,7 +10,7 @@ Resolution order per bar (conservative): SL before targets for LONG/SHORT.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
@@ -83,7 +83,7 @@ def _resolve_one(
         ts = bar["timestamp"]
         hi = float(bar["high"])
         lo = float(bar["low"])
-        hit_ts = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else datetime.utcnow()
+        hit_ts = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else datetime.now(timezone.utc)
         bar_n = j + 1
 
         if not is_filled:
@@ -131,7 +131,7 @@ def _resolve_one(
         if is_filled:
             cl = float(fwd.iloc[-1]["close"])
             pnl = (cl - entry) / entry * 100.0 if direction == "LONG" else (entry - cl) / entry * 100.0
-            hit_ts = last_ts.to_pydatetime() if hasattr(last_ts, "to_pydatetime") else datetime.utcnow()
+            hit_ts = last_ts.to_pydatetime() if hasattr(last_ts, "to_pydatetime") else datetime.now(timezone.utc)
             return "EXPIRED", "expired", cl, hit_ts, n, round(pnl, 2)
         else:
             return "CANCELLED", "expired_unfilled", entry, hit_ts, n, 0.0

@@ -257,18 +257,18 @@ def _score_trend_alignment(row: pd.Series, is_long: bool) -> int:
         if "NEUTRAL" in htf:
             return 10   # Neutral — no penalty but no bonus
         # Counter-trend LONG in BEARISH market
-        if rsi_val < 28:    # Must be deeply oversold for mean reversion credit
+        if rsi_val < settings.RSI_EXTREME_OVERSOLD:    # Deeply oversold for mean reversion credit
             return 6
-        return 0            # RSI 28-100 in bearish = no counter-trend credit
+        return 0            # RSI above extreme oversold in bearish = no counter-trend credit
     else:
         if "BEAR" in htf:
             return 20   # Perfect alignment
         if "NEUTRAL" in htf:
             return 10   # Neutral
         # Counter-trend SHORT in BULLISH market
-        if rsi_val > 72:    # Must be deeply overbought for mean reversion credit
+        if rsi_val > settings.RSI_EXTREME_OVERBOUGHT:   # Deeply overbought for mean reversion credit
             return 6
-        return 0            # RSI 0-72 in bullish = no counter-trend credit (RSI 64 = 0!)
+        return 0            # RSI below extreme overbought in bullish = no counter-trend credit
 
 
 def _score_volume(df: pd.DataFrame, idx: int) -> int:

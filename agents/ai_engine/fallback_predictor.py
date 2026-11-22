@@ -225,15 +225,15 @@ def predict_direction(df: pd.DataFrame, lookback: int = 20) -> dict:
     # a clear BULLISH momentum zone — shorts should be heavily penalised.
     rsi = last.get("RSI_14", 50)
     if pd.notna(rsi):
-        if rsi < 30:
+        if rsi < settings.RSI_OVERSOLD:
             score += 1.5;  breakdown["rsi"] = "+1.5 (deeply oversold — strong buy signal)"
-        elif rsi < 40:
+        elif rsi < settings.RSI_MILD_OVERSOLD:
             score += 1.0;  breakdown["rsi"] = "+1.0 (oversold)"
         elif rsi < 48:
             score += 0.5;  breakdown["rsi"] = "+0.5 (mild oversold)"
-        elif rsi > 70:
+        elif rsi > settings.RSI_OVERBOUGHT:
             score -= 1.5;  breakdown["rsi"] = "-1.5 (deeply overbought — strong sell signal)"
-        elif rsi > 60:
+        elif rsi > settings.RSI_MILD_OVERBOUGHT:
             score -= 1.0;  breakdown["rsi"] = "-1.0 (overbought zone — SHORT unfavoured)"
         elif rsi > 52:
             score -= 0.5;  breakdown["rsi"] = "-0.5 (mild overbought)"

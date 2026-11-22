@@ -19,10 +19,27 @@ import urllib.request
 import urllib.parse
 import json
 from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 
 from config.logger import get_logger
 
 log = get_logger(__name__)
+
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def _ist_now() -> datetime:
+    """Return the current aware datetime in Asia/Kolkata timezone."""
+    return datetime.now(_IST)
+
+
+def _ist_now_str(fmt: str = "%d %b %Y, %I:%M %p IST") -> str:
+    """Return current timestamp formatted in Asia/Kolkata timezone."""
+    return _ist_now().strftime(fmt)
+
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -102,7 +119,7 @@ def send_signal_alert(
 ) -> bool:
     """Send a formatted trading signal alert."""
     emoji = "🟢" if direction in ("LONG", "BUY") else "🔴"
-    now = datetime.now().strftime("%d %b %Y, %I:%M %p IST")
+    now = _ist_now_str()
 
     rr = 0
     if direction in ("LONG", "BUY") and entry > stop_loss:
@@ -155,7 +172,7 @@ def send_trade_closed_alert(
     """Send alert when a trade is closed."""
     emoji = "🎯" if pnl > 0 else "❌"
     pnl_emoji = "📈" if pnl > 0 else "📉"
-    now = datetime.now().strftime("%d %b %Y, %I:%M %p IST")
+    now = _ist_now_str()
 
     # Friendly exit reason
     reason_map = {
@@ -182,7 +199,7 @@ def send_trade_closed_alert(
 
 def send_daily_summary(stats: dict) -> bool:
     """Send end-of-day performance summary."""
-    now = datetime.now().strftime("%d %b %Y")
+    now = _ist_now_str("%d %b %Y")
 
     _wr = stats.get("win_rate")
     _wr_text = f"{_wr:.1f}%" if isinstance(_wr, (int, float)) else "n/a"
@@ -205,7 +222,7 @@ def send_daily_summary(stats: dict) -> bool:
 
 def send_weekly_digest(weekly_stats: list[dict]) -> bool:
     """Send weekly performance digest — list of daily stats."""
-    now = datetime.now().strftime("%d %b %Y")
+    now = _ist_now_str("%d %b %Y")
 
     total_pnl = sum(s.get("daily_pnl", 0) for s in weekly_stats)
     total_trades = sum(s.get("total_trades", 0) for s in weekly_stats)
@@ -244,7 +261,7 @@ def send_regime_change_alert(symbol: str, old_regime: str, new_regime: str) -> b
         f"📤 Was: <b>{old_regime}</b>\n"
         f"📥 Now: <b>{new_regime}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+        f"⏰ {_ist_now_str()}"
     )
 
     return _send_message(text)
@@ -259,7 +276,7 @@ def send_health_alert(message: str, level: str = "INFO") -> bool:
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"{message}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+        f"⏰ {_ist_now_str()}"
     )
 
     return _send_message(text)
@@ -274,7 +291,7 @@ def send_data_feed_alert(symbol: str, source: str, error: str) -> bool:
         f"🔌 Source: <b>{source}</b>\n"
         f"❌ Error: <code>{error[:200]}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+        f"⏰ {_ist_now_str()}"
     )
     return _send_message(text)
 
@@ -289,7 +306,7 @@ def send_stale_data_alert(symbol: str, staleness_seconds: float, expected_second
         f"⚠️ Expected interval: <b>{expected_seconds:.0f}s</b>\n"
         f"🔄 Signal generation paused for this symbol\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+        f"⏰ {_ist_now_str()}"
     )
     return _send_message(text)
 
@@ -303,7 +320,7 @@ def send_websocket_alert(status: str, reconnect_count: int = 0) -> bool:
             f"Reconnection attempt #{reconnect_count}\n"
             f"Switching to CCXT polling fallback\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+            f"⏰ {_ist_now_str()}"
         )
     elif status == "reconnected":
         text = (
@@ -311,7 +328,7 @@ def send_websocket_alert(status: str, reconnect_count: int = 0) -> bool:
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"Real-time streaming resumed\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+            f"⏰ {_ist_now_str()}"
         )
     else:
         return False
@@ -368,7 +385,7 @@ def send_forex_signal_alert(setup: dict) -> bool:
         f"Trend      : Daily {daily_trend} {trend_icon}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚠️ Paper trade only. Not financial advice.\n"
-        f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+        f"⏰ {_ist_now_str()}"
     )
     return _send_message(text)
 
@@ -382,7 +399,7 @@ def send_consecutive_loss_alert(count: int, paused: bool = True) -> bool:
             f"❌ {count} consecutive losses\n"
             f"Trading paused until next day\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+            f"⏰ {_ist_now_str()}"
         )
     else:
         text = (
@@ -390,7 +407,7 @@ def send_consecutive_loss_alert(count: int, paused: bool = True) -> bool:
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"Approaching pause threshold ({settings.MAX_CONSECUTIVE_LOSSES})\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+            f"⏰ {_ist_now_str()}"
         )
     return _send_message(text)
 
@@ -418,11 +435,11 @@ def send_swing_shortlist_alert(
             "⚠️ Aaj koi qualifying setup nahi mila.\n"
             "Possible: market choppy, or all setups failed R:R / regime gate.\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}"
+            f"⏰ {_ist_now_str()}"
         )
 
     meta = scan_meta or {}
-    scan_date = meta.get("scan_date", datetime.now().strftime("%Y-%m-%d"))
+    scan_date = meta.get("scan_date", _ist_now_str("%Y-%m-%d"))
     scanned = meta.get("symbols_scanned", "?")
     grade_summary = meta.get("grade_summary", {})
     news_on = "✅" if meta.get("news_enriched") else "❌"
@@ -480,7 +497,7 @@ def send_swing_shortlist_alert(
         lines.append(f"... +{len(shortlist) - max_setups} more setups in full report")
 
     lines.append("⚠️ Paper only. Not financial advice. Always use SL.")
-    lines.append(f"⏰ {datetime.now().strftime('%d %b %Y, %I:%M %p IST')}")
+    lines.append(f"⏰ {_ist_now_str()}")
 
     text = "\n".join(lines)
 

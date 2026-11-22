@@ -1747,7 +1747,7 @@ async def get_scorecard(
     return scorecard
 
 
-@router.post("/api/analytics/scorecard/bootstrap")
+@router.post("/api/analytics/scorecard/bootstrap", dependencies=[Depends(require_admin)])
 async def trigger_scorecard_bootstrap(
     force: bool = Query(False, description="Force re-running historical bar replay"),
     min_trades: int = Query(50, description="Minimum target sample size"),

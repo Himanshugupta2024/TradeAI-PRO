@@ -73,10 +73,15 @@ def fetch_historical(
     max_retries: int = 2,
 ) -> pd.DataFrame:
     """
-    Fetch historical OHLCV candles from NSE via yfinance with retries.
+    Fetch historical OHLCV candles from NSE via the authoritative market intelligence fetcher.
+
+    DEPRECATION & ADAPTER NOTICE:
+    This function delegates to ``agents.market_intelligence.nse_fetcher`` to leverage
+    multi-tier SQLite caching, automatic session reset, and rate-limiting resilience.
+    If the canonical fetcher cannot resolve the symbol, it falls back to direct yfinance fetch.
 
     Args:
-        symbol: Internal name, e.g. "NIFTY 50", "BANKNIFTY"
+        symbol: Internal name, e.g. "NIFTY 50", "BANKNIFTY", "RELIANCE"
         timeframe: Candle interval, e.g. "1d", "1h", "15m", "5m"
         since_days: How many days of history to fetch
         max_retries: Number of retry attempts on network errors
@@ -85,6 +90,40 @@ def fetch_historical(
         DataFrame with columns: timestamp, open, high, low, close, volume
         Empty DataFrame on failure (caller must handle gracefully).
     """
+    # ── Path 1: Canonical Market Intelligence Pipeline (Cached & Resilient) ───
+    try:
+        from agents.market_intelligence.nse_fetcher import fetch_ohlcv, fetch_arbitrary_symbol
+
+        # Translate since_days to standard yfinance period string
+        if since_days <= 5:
+            period = "5d"
+        elif since_days <= 30:
+            period = "1mo"
+        elif since_days <= 60:
+            period = "60d"
+        elif since_days <= 90:
+            period = "3mo"
+        elif since_days <= 180:
+            period = "6mo"
+        elif since_days <= 365:
+            period = "1y"
+        elif since_days <= 730:
+            period = "2y"
+        else:
+            period = f"{since_days}d"
+
+        cached_df = fetch_ohlcv(symbol, period=period, interval=timeframe)
+        if cached_df is None or cached_df.empty:
+            cached_df = fetch_arbitrary_symbol(symbol, period=period, interval=timeframe)
+
+        if cached_df is not None and not cached_df.empty:
+            req_cols = ["timestamp", "open", "high", "low", "close", "volume"]
+            if all(c in cached_df.columns for c in req_cols):
+                return cached_df[req_cols].copy()
+    except Exception as exc:
+        log.warning("[NSE Ingestion Adapter] Delegation to market_intelligence failed: %s; falling back", exc)
+
+    # ── Path 2: Direct yFinance Fallback with Retries ─────────────────────────
     ticker = settings.NSE_TICKER_MAP.get(symbol)
     if not ticker:
         log.error("Unknown symbol: %s", symbol)

@@ -350,12 +350,25 @@ TRADEFLOW_SIGNAL_IGNORE_STALE = os.getenv("TRADEFLOW_SIGNAL_IGNORE_STALE", "true
 )
 TRADEFLOW_SIGNAL_STALE_DISABLE_HOURS = int(os.getenv("TRADEFLOW_SIGNAL_STALE_DISABLE_HOURS", "24"))
 
-RSI_OVERSOLD = 30
-RSI_OVERBOUGHT = 70
+# ── Centralized RSI Thresholds ──────────────────────────────────────────────
+# Standard RSI overbought/oversold boundaries
+RSI_OVERSOLD = int(os.getenv("RSI_OVERSOLD", "30"))
+RSI_OVERBOUGHT = int(os.getenv("RSI_OVERBOUGHT", "70"))
 
 # Regime-adaptive RSI thresholds
-RSI_OVERSOLD_RANGING = 25   # Stricter in ranging markets
-RSI_OVERBOUGHT_RANGING = 75
+RSI_OVERSOLD_RANGING = int(os.getenv("RSI_OVERSOLD_RANGING", "25"))       # Stricter in ranging markets
+RSI_OVERBOUGHT_RANGING = int(os.getenv("RSI_OVERBOUGHT_RANGING", "75"))
+RSI_OVERSOLD_TRENDING = int(os.getenv("RSI_OVERSOLD_TRENDING", "35"))     # Relaxed in trending markets
+RSI_OVERBOUGHT_TRENDING = int(os.getenv("RSI_OVERBOUGHT_TRENDING", "65"))
+
+# Deep counter-trend & extreme mean-reversion boundaries (Quality Scorer)
+RSI_EXTREME_OVERSOLD = int(os.getenv("RSI_EXTREME_OVERSOLD", "28"))       # Deep oversold for counter-trend
+RSI_EXTREME_OVERBOUGHT = int(os.getenv("RSI_EXTREME_OVERBOUGHT", "72"))   # Deep overbought for counter-trend
+
+# Mild momentum gradient boundaries (MTF Scorer & Fallback Predictor)
+RSI_MILD_OVERSOLD = int(os.getenv("RSI_MILD_OVERSOLD", "40"))
+RSI_MILD_OVERBOUGHT = int(os.getenv("RSI_MILD_OVERBOUGHT", "60"))
+
 ATR_SL_MULTIPLIER_HIGHVOL = 2.0  # Wider SL in high volatility
 
 # ── Adaptive per-regime quality & confidence thresholds ──────────────────────

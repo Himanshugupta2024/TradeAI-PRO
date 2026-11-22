@@ -59,13 +59,13 @@ def _score_timeframe(df: pd.DataFrame) -> float:
     # 2. RSI Position (±33)
     rsi = last.get(f"RSI_{settings.RSI_PERIOD}")
     if pd.notna(rsi):
-        if rsi < 30:
+        if rsi < settings.RSI_OVERSOLD:
             score += 33.0  # Oversold → bullish potential
-        elif rsi < 40:
+        elif rsi < settings.RSI_MILD_OVERSOLD:
             score += 15.0
-        elif rsi > 70:
+        elif rsi > settings.RSI_OVERBOUGHT:
             score -= 33.0  # Overbought → bearish potential
-        elif rsi > 60:
+        elif rsi > settings.RSI_MILD_OVERBOUGHT:
             score -= 15.0
 
     # 3. MACD Momentum (±34)

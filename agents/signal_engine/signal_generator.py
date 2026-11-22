@@ -546,8 +546,8 @@ def generate_signals(
         rsi_overbought = settings.RSI_OVERBOUGHT
         atr_sl_mult   = settings.ATR_SL_MULTIPLIER_HIGHVOL  # Wider: 2.0
     elif regime == MarketRegime.TRENDING:
-        rsi_oversold  = 35   # Relaxed for trending markets
-        rsi_overbought = 65
+        rsi_oversold  = settings.RSI_OVERSOLD_TRENDING      # Relaxed for trending markets: 35
+        rsi_overbought = settings.RSI_OVERBOUGHT_TRENDING   # Relaxed for trending markets: 65
         atr_sl_mult   = settings.ATR_SL_MULTIPLIER
     else:
         rsi_oversold  = settings.RSI_OVERSOLD

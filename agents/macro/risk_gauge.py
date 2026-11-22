@@ -68,7 +68,10 @@ class RiskIndicators:
     def from_dict(cls, data: dict) -> "RiskIndicators":
         """Create from dict (JSON deserialization with field filtering)"""
         d = dict(data)
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
+        ts = datetime.fromisoformat(d["timestamp"])
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        d["timestamp"] = ts
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
@@ -922,5 +925,8 @@ class RiskGauge:
 
     def _is_cache_fresh(self, indicators: RiskIndicators) -> bool:
         """Check if cached indicators are still fresh"""
-        age_seconds = (datetime.now(timezone.utc) - indicators.timestamp).total_seconds()
+        ts = indicators.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age_seconds = (datetime.now(timezone.utc) - ts).total_seconds()
         return age_seconds < self.cache_ttl_seconds
