@@ -46,6 +46,25 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["portfolio", "paper"])
 
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None:
+            return float(default)
+        return float(v)
+    except Exception:
+        return float(default)
+
+
+def _safe_div(num: float, den: float) -> float:
+    if den == 0 or den is None:
+        return 0.0
+    try:
+        return float(num) / float(den)
+    except Exception:
+        return 0.0
+
+
 @router.get("/api/trades")
 async def get_trades(limit: int = Query(50, le=100), account_id: str = Depends(get_authenticated_account)):
     """Get recent trade history from real paper trading engine (newest first)."""
