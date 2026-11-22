@@ -221,6 +221,14 @@ def _compute_eod_technical_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     high_20d = float(np.max(highs[-20:]))
     low_20d = float(np.min(lows[-20:]))
 
+    # Candlestick anatomy (wick vs body)
+    candle_range = max(last_high - last_low, 0.001)
+    body = abs(last_close - last_open)
+    upper_wick = last_high - max(last_close, last_open)
+    lower_wick = min(last_close, last_open) - last_low
+    upper_wick_ratio = upper_wick / candle_range
+    lower_wick_ratio = lower_wick / candle_range
+
     change_pct = ((last_close - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
 
     return {
@@ -230,6 +238,11 @@ def _compute_eod_technical_metrics(df: pd.DataFrame) -> Dict[str, Any]:
         "close": round(last_close, 2),
         "volume": int(vols[-1]),
         "change_pct": round(change_pct, 2),
+        "body": round(body, 2),
+        "upper_wick": round(upper_wick, 2),
+        "lower_wick": round(lower_wick, 2),
+        "upper_wick_ratio": round(upper_wick_ratio, 3),
+        "lower_wick_ratio": round(lower_wick_ratio, 3),
         "ema20": round(ema20, 2),
         "ema50": round(ema50, 2),
         "ema200": round(ema200, 2),
@@ -275,21 +288,33 @@ def _discover_catalysts_for_symbol(symbol: str, cutoff_date: date) -> List[Dict[
         with urllib.request.urlopen(req, timeout=3.0) as resp:
             content = resp.read()
             root = ET.fromstring(content)
-            for item in root.findall(".//item")[:2]:
+            SEO_PATTERNS = ["share price today", "stock price and chart", "share price", "stock price today (nse)", "share price target"]
+            for item in root.findall(".//item")[:5]:
                 title = item.findtext("title", "")
                 pub_date = item.findtext("pubDate", "")
                 link = item.findtext("link", f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}")
                 if title:
                     headline = title.split(" - ")[0].strip()
                     source = title.split(" - ")[-1].strip() if " - " in title else "Financial Media"
+                    h_lower = headline.lower()
+                    # Skip generic auto-generated programmatic SEO stock updates unless it mentions real corporate actions
+                    is_catalyst = any(k in h_lower for k in ["q1", "q2", "q3", "q4", "earnings", "order", "acquisition", "merger", "dividend", "approval", "launches", "expansion", "secures", "wins", "deal", "profit"])
+                    if any(p in h_lower for p in SEO_PATTERNS) and not is_catalyst:
+                        continue
+
+                    category = "CONFIRMED_DISCLOSURE" if is_catalyst else "FINANCIAL_NEWS"
+                    impact = "BULLISH" if any(w in h_lower for w in ["gain", "surge", "record", "jump", "high", "rally", "win", "secures", "profit", "beats", "growth"]) else ("BEARISH" if any(w in h_lower for w in ["fall", "drop", "plunge", "loss", "probe", "down", "miss"]) else "NEUTRAL")
+
                     real_catalysts.append({
                         "headline": headline,
                         "source": source,
                         "published_at": pub_date or filing_time,
-                        "category": "CONFIRMED_DISCLOSURE",
+                        "category": category,
                         "url": link,
-                        "impact": "BULLISH",
+                        "impact": impact,
                     })
+                    if len(real_catalysts) >= 2:
+                        break
     except Exception as exc:
         logger.debug("Live RSS catalyst discovery skipped for %s: %s", symbol, exc)
 
@@ -486,6 +511,32 @@ def analyze_candidate(
         # Ambiguous chop: neither clean breakout nor breakdown
         return None
 
+    # Candlestick anatomy gate: filter severe upper-wick rejection for LONG, lower-wick absorption for SHORT
+    candle_range = max(metrics["high"] - metrics["low"], 0.001)
+    close_pos = (close - metrics["low"]) / candle_range
+    upper_wick_ratio = metrics.get("upper_wick_ratio", 0.0)
+    lower_wick_ratio = metrics.get("lower_wick_ratio", 0.0)
+    is_red = close < metrics["open"]
+
+    if bias == "LONG":
+        # Disqualify long breakout candidates if sellers rejected the highs:
+        # 1) Red candle with prominent upper wick (>35% of range)
+        # 2) Close trapped in bottom 35% of range with upper wick > 45%
+        # 3) Extreme upper wick >= 65% of entire candle range
+        if (is_red and upper_wick_ratio > 0.35) or (close_pos < 0.35 and upper_wick_ratio > 0.45) or (upper_wick_ratio >= 0.65):
+            logger.debug("%s disqualified: upper wick rejection (is_red=%s, close_pos=%.2f, upper_wick_ratio=%.2f)",
+                         symbol, is_red, close_pos, upper_wick_ratio)
+            return None
+    elif bias == "SHORT":
+        # Disqualify short breakdown candidates if buyers absorbed the lows:
+        # 1) Green candle with prominent lower shadow (>35% of range)
+        # 2) Close trapped in upper 65% of range with lower wick > 45%
+        # 3) Extreme lower shadow >= 65% of entire candle range
+        if ((not is_red) and lower_wick_ratio > 0.35) or (close_pos > 0.65 and lower_wick_ratio > 0.45) or (lower_wick_ratio >= 0.65):
+            logger.debug("%s disqualified: lower wick absorption (is_red=%s, close_pos=%.2f, lower_wick_ratio=%.2f)",
+                         symbol, is_red, close_pos, lower_wick_ratio)
+            return None
+
     # 2. Catalysts
     catalysts = _discover_catalysts_for_symbol(symbol, source_date)
     has_confirmed = any(c["category"] == "CONFIRMED_DISCLOSURE" for c in catalysts)
@@ -508,58 +559,66 @@ def analyze_candidate(
         1
     )
 
-    # 4. Construct Planned Trade Setup (Dynamic R:R >= 1.5x based on real technical pivot & resistance levels)
+    # 4. Construct Planned Trade Setup with Volatility-Scaled Reachability Gate
+    # Horizon is single-session (Open-to-Close 15:30 IST).
+    # Maximum allowable reward within expected session volatility expansion envelope is bounded by 1.6x ATR.
+    max_reach_reward = round(1.6 * atr, 2)
+    h20 = metrics.get("high_20d", 0.0)
+    l20 = metrics.get("low_20d", 0.0)
+
     if bias == "LONG":
         last_h = metrics["high"]
         # Breakout trigger MUST exceed the last session's High
         trigger_price = round(max(last_h * 1.001, r1 if (r1 > last_h and r1 <= last_h * 1.008) else last_h * 1.001), 2)
         trigger_zone = f"₹{round(trigger_price, 2)} – ₹{round(trigger_price + 0.25 * atr, 2)}"
 
-        # Structural stop: place below S1 or pivot with minimum 1.0x ATR buffer
-        raw_risk = max(1.0 * atr, trigger_price - min(s1, metrics["pivot"]))
-        risk = round(max(1.0 * atr, min(2.0 * atr, raw_risk)), 2)
+        # Structural stop: place below pivot or previous session midpoint with 0.65x–1.4x ATR buffer
+        raw_risk = max(0.65 * atr, trigger_price - metrics["pivot"])
+        risk = round(max(0.65 * atr, min(1.4 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price - risk, 2)
 
-        # Dynamic technical target based on real resistance levels (20d High, R1, R2, or dynamic ATR expansion)
-        h20 = metrics.get("high_20d", 0.0)
-        if h20 > trigger_price and (h20 - trigger_price) >= (1.5 * risk):
-            target_1 = round(h20, 2)
-        elif r1 > trigger_price and (r1 - trigger_price) >= (1.5 * risk):
-            target_1 = round(r1, 2)
-        elif r2 > trigger_price and (r2 - trigger_price) >= (1.5 * risk):
-            target_1 = round(r2, 2)
+        # Candidate structural resistance targets >= 1.5x risk
+        candidate_targets = [t for t in [h20, r1, r2] if t > trigger_price and (t - trigger_price) >= (1.5 * risk)]
+        if candidate_targets:
+            raw_target = min(candidate_targets)  # nearest valid structural target
+            target_1 = round(min(raw_target, trigger_price + max_reach_reward), 2)
         else:
-            atr_mult = 2.2 if metrics["rsi14"] >= 60.0 else (2.0 if metrics["rsi14"] >= 50.0 else 1.8)
-            target_1 = round(trigger_price + max(1.5 * risk, atr_mult * atr), 2)
+            target_1 = round(trigger_price + min(max_reach_reward, max(1.5 * risk, 1.1 * atr)), 2)
 
         reward = round(target_1 - trigger_price, 2)
         rr_ratio = round(reward / risk, 2)
+
+        # Minimum Risk:Reward Gate: If capped target does not deliver >= 1.5x R:R, reject candidate
+        if rr_ratio < 1.5:
+            return None
+
         target_2 = round(r2 if r2 > target_1 else target_1 + (0.8 * atr), 2)
-        invalidation = f"Avoid if gap down opens below ₹{stop_loss} (risk buffer breached) or NIFTY plunges >1% at 09:15 open."
+        invalidation = f"Avoid if gap down opens below ₹{stop_loss} (risk buffer breached) or NIFTY plunges >0.5% at 09:15 open."
     else:
         last_l = metrics["low"]
         # Breakdown trigger MUST break below the last session's Low
         trigger_price = round(min(last_l * 0.999, s1 if (s1 < last_l and s1 >= last_l * 0.992) else last_l * 0.999), 2)
         trigger_zone = f"₹{round(trigger_price - 0.25 * atr, 2)} – ₹{round(trigger_price, 2)}"
 
-        raw_risk = max(1.0 * atr, max(r1, metrics["pivot"]) - trigger_price)
-        risk = round(max(1.0 * atr, min(2.0 * atr, raw_risk)), 2)
+        raw_risk = max(0.65 * atr, metrics["pivot"] - trigger_price)
+        risk = round(max(0.65 * atr, min(1.4 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price + risk, 2)
 
-        l20 = metrics.get("low_20d", 0.0)
-        if l20 > 0 and l20 < trigger_price and (trigger_price - l20) >= (1.5 * risk):
-            target_1 = round(l20, 2)
-        elif s1 < trigger_price and (trigger_price - s1) >= (1.5 * risk):
-            target_1 = round(s1, 2)
-        elif s2 < trigger_price and (trigger_price - s2) >= (1.5 * risk):
-            target_1 = round(s2, 2)
+        candidate_targets = [t for t in [l20, s1, s2] if t > 0 and t < trigger_price and (trigger_price - t) >= (1.5 * risk)]
+        if candidate_targets:
+            raw_target = max(candidate_targets)
+            target_1 = round(max(raw_target, trigger_price - max_reach_reward), 2)
         else:
-            atr_mult = 2.2 if metrics["rsi14"] <= 40.0 else (2.0 if metrics["rsi14"] <= 50.0 else 1.8)
-            target_1 = round(trigger_price - max(1.5 * risk, atr_mult * atr), 2)
+            target_1 = round(trigger_price - min(max_reach_reward, max(1.5 * risk, 1.1 * atr)), 2)
 
         reward = round(trigger_price - target_1, 2)
         rr_ratio = round(reward / risk, 2)
+
+        if rr_ratio < 1.5:
+            return None
+
         target_2 = round(s2 if s2 < target_1 else target_1 - (0.8 * atr), 2)
+        invalidation = f"Avoid if gap up opens above ₹{stop_loss} (risk buffer breached) or strong morning sector surge."
         invalidation = f"Avoid if gap up opens above ₹{stop_loss} (risk buffer breached) or strong morning sector surge."
 
     # Minimum Risk:Reward Gate Enforcement

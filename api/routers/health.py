@@ -177,15 +177,31 @@ async def health_check(response: Response = None):
                     pass
 
     memory_rss_mb = None
+    memory_tier = "OK"
     try:
         from utils.memory_profiler import get_process_rss_mb
         memory_rss_mb = get_process_rss_mb(collect_gc=False)
+        if memory_rss_mb is not None:
+            if memory_rss_mb >= 500.0:
+                memory_tier = "CRITICAL"
+            elif memory_rss_mb >= 470.0:
+                memory_tier = "HIGH"
+            elif memory_rss_mb >= 430.0:
+                memory_tier = "WARN"
+            else:
+                memory_tier = "OK"
     except Exception:
         pass
 
+    is_critically_oom = memory_tier == "CRITICAL"
+    final_healthy = False if is_critically_oom else h2.get("healthy", db_ok)
+    if is_critically_oom and status_str == "ok":
+        status_str = "degraded"
+
     res_payload = {
         "status": status_str,
-        "healthy": h2.get("healthy", db_ok),
+        "healthy": final_healthy,
+        "memory_tier": memory_tier,
         "api_health": api_health,
         "health_tier": h2.get("health_tier", {}),
         "health_reasons": h2.get("health_reasons", {}),

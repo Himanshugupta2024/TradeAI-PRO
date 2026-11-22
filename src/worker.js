@@ -1097,6 +1097,21 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = ne
       }
     }
 
+    // Keep-warm ping for Box C (Market Data Feed) if configured in worker environment
+    if (env && env.FEED_BACKEND_ORIGIN) {
+      try {
+        await fetchFn(`${env.FEED_BACKEND_ORIGIN.replace(/\/+$/, "")}/health/live`, {
+          method: "GET",
+          headers: {
+            "User-Agent": "TradeAI-Cloudflare-Cron-KeepAlive/1.0",
+            "Accept": "application/json",
+          },
+        });
+      } catch (feedErr) {
+        console.warn("[cron] Feed service ping non-fatal error:", feedErr);
+      }
+    }
+
     // Trigger single-flight live market refresh on Render backend during market hours
     let refresh = null;
     if (env && env.CRON_SECRET) {

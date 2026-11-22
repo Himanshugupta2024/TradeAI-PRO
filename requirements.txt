@@ -10,6 +10,9 @@ ccxt>=4.0.0
 yfinance>=0.2.30
 nsepython>=2.0.0
 websockets>=12.0
+websocket-client>=1.8.0
+pyotp>=2.9.0
+NorenRestApiPy>=0.0.22
 pandas-ta>=0.3.14b0
 cot-reports>=0.1.3
 

@@ -95,3 +95,5 @@ scripts/clean_supabase_state.py
 .coverage.*
 htmlcov/
 coverage.xml
+
+data/cache/

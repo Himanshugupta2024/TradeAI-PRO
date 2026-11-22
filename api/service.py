@@ -162,9 +162,9 @@ _ws_clients: list[WebSocket] = []
 # ── Symbols to track ─────────────────────────────────────
 # Priority symbols loaded first (indices + top stocks), rest loaded progressively
 _ALL_NSE_SYMBOLS = list(NSE_SYMBOLS.keys())
-NSE_SYMBOL_LIMIT = max(1, int(os.getenv("NSE_SYMBOL_LIMIT", "20")))
+NSE_SYMBOL_LIMIT = max(1, int(os.getenv("NSE_SYMBOL_LIMIT", "8")))
 _TRACKED_NSE_SYMBOLS = _ALL_NSE_SYMBOLS[:NSE_SYMBOL_LIMIT]
-_PRIORITY_COUNT = min(15, len(_TRACKED_NSE_SYMBOLS))
+_PRIORITY_COUNT = min(8, len(_TRACKED_NSE_SYMBOLS))
 _PRIORITY_SYMBOLS = _TRACKED_NSE_SYMBOLS[:_PRIORITY_COUNT]  # Fast initial load
 _REMAINING_SYMBOLS = _TRACKED_NSE_SYMBOLS[
     _PRIORITY_COUNT:
@@ -947,8 +947,9 @@ def _get_feed_status() -> dict[str, object]:
         "last_bar_at": bar_dt.isoformat() if bar_dt else None,
         "bar_age_seconds": round(bar_age_seconds, 1) if bar_age_seconds is not None else None,
         "bar_date_label": bar_dt.astimezone(_IST).strftime("%d %b %H:%M") if bar_dt else None,
-        "source": source,
-        "mode": "15m Delayed Public Feed (NSE / Yahoo)",
+        "source": "SHOONYA_LIVE" if os.environ.get("FEED_SERVICE_URL") else source,
+        "mode": "Real-Time Direct Feed (Shoonya Live)" if os.environ.get("FEED_SERVICE_URL") else "15m Delayed Public Feed (NSE / Yahoo)",
+        "data_delay_minutes": 0 if os.environ.get("FEED_SERVICE_URL") else 15,
         "is_market_open": is_mkt_open,
     }
 
@@ -2303,6 +2304,9 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
         v = row.get(col)
         return int(v) if v is not None and pd.notna(v) else default
 
+    issuance_rsi = _safe_float(last_signal, "RSI_14") or current_rsi
+    issuance_macd = _safe_float(last_signal, "MACD_hist")
+
     # Quality info from the signal bar
     quality_score = _safe_int(last_signal, "quality_score", 0)
     quality_grade = str(last_signal.get("quality_grade", "D") or "D")
@@ -2509,7 +2513,8 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
         "stop_loss": sl,
         "target": tp,
         "levels_source": levels_source,
-        "rsi": current_rsi,  # always current RSI
+        "rsi": issuance_rsi if (is_terminal or bool(signal_conflict)) else current_rsi,
+        "live_rsi": current_rsi,
         "trend": current_trend,  # always current trend
         "regime": current_regime,
         "timestamp": (
@@ -2530,8 +2535,10 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
         "conflict": conflict_payload,
         # Data quality
         "data_quality": round(_data_quality_cache.get(symbol, 100.0), 1),
-        # Live indicator values for signal card display
-        "macd_hist": _safe_float(last, "MACD_hist"),
+        # Indicator values for signal card display (issuance-consistent when conflict/terminal exists)
+        "macd_hist": issuance_macd if (is_terminal or bool(signal_conflict)) else _safe_float(last, "MACD_hist"),
+        "live_macd_hist": _safe_float(last, "MACD_hist"),
+        "live_close": current_close,
         "ema_20": _safe_float(last, "EMA_20"),
         "ema_50": _safe_float(last, "EMA_50"),
         "vwap": vwap_val,

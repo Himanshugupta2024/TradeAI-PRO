@@ -224,14 +224,22 @@ class MarketDataRouter:
 
 # Factory helper to construct standard default router
 def create_default_router() -> MarketDataRouter:
+    import os
     from data.providers.tradingview import TradingViewProvider
     from data.providers.yahoo import YahooProvider
     from data.providers.twelve_data import TwelveDataProvider
 
+    providers = []
+    feed_url = os.environ.get("FEED_SERVICE_URL", "").strip()
+    if feed_url:
+        from data.providers.shoonya_feed import ShoonyaFeedProvider
+        providers.append(ShoonyaFeedProvider(feed_url=feed_url, timeout=3.0))
+
     tv = TradingViewProvider(timeout=6.0)
     yahoo = YahooProvider(timeout=8.0)
     twelve = TwelveDataProvider()
-    return MarketDataRouter(providers=[tv, yahoo, twelve])
+    providers.extend([tv, yahoo, twelve])
+    return MarketDataRouter(providers=providers)
 
 
 _default_router: MarketDataRouter | None = None

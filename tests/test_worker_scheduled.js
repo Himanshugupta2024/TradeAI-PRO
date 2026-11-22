@@ -693,6 +693,27 @@ async function runTests() {
     assert.strictEqual(mlHealthCalls[0].options.headers['User-Agent'], 'TradeAI-Cloudflare-Cron-KeepAlive/1.0');
     console.log('✓ Test 17 passed.');
 
+    // ------------------------------------------------------------------------
+    // Test 18: handleScheduled pings Feed service when FEED_BACKEND_ORIGIN is set
+    // ------------------------------------------------------------------------
+    console.log('Test 18: cron pings Feed service /health/live when FEED_BACKEND_ORIGIN is set...');
+    const feedCalls = [];
+    const feedMockFetch = async (url, options = {}) => {
+      feedCalls.push({ url, options });
+      return { ok: true, status: 200 };
+    };
+    await handleScheduled(
+      { cron: '*/10 * * * *' },
+      { FEED_BACKEND_ORIGIN: 'https://trading-feed.onrender.com' },
+      {},
+      feedMockFetch,
+      at(12, 0)
+    );
+    const feedHealthCalls = feedCalls.filter((c) => c.url === 'https://trading-feed.onrender.com/health/live');
+    assert.strictEqual(feedHealthCalls.length, 1, 'Feed service /health/live must be pinged exactly once');
+    assert.strictEqual(feedHealthCalls[0].options.headers['User-Agent'], 'TradeAI-Cloudflare-Cron-KeepAlive/1.0');
+    console.log('✓ Test 18 passed.');
+
   } finally {
     // Restore global fetch and caches
     globalThis.fetch = originalGlobalFetch;
