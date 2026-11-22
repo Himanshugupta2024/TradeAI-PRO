@@ -146,7 +146,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: SERVICE_ROLE
-        value: ml_sidecar
+        value: feed_service
       - key: MALLOC_ARENA_MAX
         value: "2"
       - key: FEED_INTERNAL_TOKEN

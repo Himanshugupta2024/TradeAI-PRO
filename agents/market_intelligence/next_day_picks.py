@@ -562,8 +562,18 @@ def analyze_candidate(
     # 4. Construct Planned Trade Setup with Volatility-Scaled Reachability Gate
     # Horizon is multi-session positional swing (3-4 sessions).
     horizon_sessions = 3
-    volatility_envelope = round(atr * 2.2, 2)  # Multi-session swing reachability envelope
-    max_reach_reward = volatility_envelope
+    from api.fno_client import fetch_fno_analytics_sync
+    fno_data = fetch_fno_analytics_sync(symbol=symbol, spot=close, atr=atr, days_to_expiry=float(horizon_sessions))
+    ce_wall = fno_data.get("ce_wall")
+    pe_wall = fno_data.get("pe_wall")
+    implied_5d = fno_data.get("implied_move_5d_pct")
+    envelope_source = fno_data.get("envelope_source", "ATR_FALLBACK")
+
+    if envelope_source != "ATR_FALLBACK" and implied_5d and implied_5d > 0:
+        volatility_envelope = round(close * (implied_5d / 100.0), 2)
+    else:
+        volatility_envelope = round(atr * 2.2, 2)  # Multi-session swing reachability envelope
+    max_reach_reward = max(volatility_envelope, atr * 2.2)
     min_stop_distance = round(1.30 * atr, 2)  # Strictly >= 1.30x ATR to clear daily noise floor
     h20 = metrics.get("high_20d", 0.0)
     l20 = metrics.get("low_20d", 0.0)
@@ -581,11 +591,18 @@ def analyze_candidate(
 
         # Candidate structural resistance targets >= 1.25x risk
         candidate_targets = [t for t in [h20, r1, r2] if t > trigger_price and (t - trigger_price) >= (1.25 * risk)]
+        if ce_wall and ce_wall > trigger_price and (ce_wall - trigger_price) >= (1.25 * risk):
+            candidate_targets.append(ce_wall)
+
         if candidate_targets:
             raw_target = min(candidate_targets)  # nearest valid structural target
             target_1 = round(min(raw_target, trigger_price + max_reach_reward), 2)
         else:
             target_1 = round(trigger_price + min(max_reach_reward, max(1.5 * risk, 1.8 * atr)), 2)
+
+        # Respect options market CE wall resistance ceiling
+        if ce_wall and ce_wall > trigger_price and target_1 > ce_wall:
+            target_1 = round(ce_wall, 2)
 
         reward = round(target_1 - trigger_price, 2)
         rr_ratio = round(reward / risk, 2)
@@ -603,11 +620,18 @@ def analyze_candidate(
         stop_loss = round(trigger_price + risk, 2)
 
         candidate_targets = [t for t in [l20, s1, s2] if t > 0 and t < trigger_price and (trigger_price - t) >= (1.25 * risk)]
+        if pe_wall and pe_wall < trigger_price and (trigger_price - pe_wall) >= (1.25 * risk):
+            candidate_targets.append(pe_wall)
+
         if candidate_targets:
             raw_target = max(candidate_targets)
             target_1 = round(max(raw_target, trigger_price - max_reach_reward), 2)
         else:
             target_1 = round(trigger_price - min(max_reach_reward, max(1.5 * risk, 1.8 * atr)), 2)
+
+        # Respect options market PE wall support floor
+        if pe_wall and pe_wall < trigger_price and target_1 < pe_wall:
+            target_1 = round(pe_wall, 2)
 
         reward = round(trigger_price - target_1, 2)
         rr_ratio = round(reward / risk, 2)
@@ -736,6 +760,12 @@ def analyze_candidate(
                 "total_risk_rupees": total_rupee_risk,
                 "notional_position_rupees": position_notional,
                 "sizing_formula": "qty = rupee_risk / stop_distance",
+            },
+            "fno_derivatives": {
+                "ce_wall": ce_wall,
+                "pe_wall": pe_wall,
+                "envelope_source": envelope_source,
+                "implied_move_5d_pct": implied_5d,
             },
             "horizon": "Next eligible regular session (Open-to-Close 15:30 IST)",
             "planned_condition_note": "Short setups require F&O (Futures/PE) — Indian cash markets disallow overnight shorting. Planned for research only.",

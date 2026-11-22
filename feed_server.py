@@ -17,6 +17,8 @@ from fastapi import FastAPI, Header, HTTPException, Query, status
 load_dotenv()
 
 from feed.bar_builder import BarBuilder
+from feed.fno_analytics import FNOAnalyticsEngine
+from feed.nfo_master import NFOMaster
 from feed.shoonya_client import ShoonyaFeedManager
 from feed.token_master import TokenMaster
 
@@ -26,6 +28,8 @@ logger = logging.getLogger("feed_server")
 # Global feed components
 bar_builder = BarBuilder()
 token_master = TokenMaster()
+nfo_master = NFOMaster()
+fno_engine = FNOAnalyticsEngine()
 feed_manager: Optional[ShoonyaFeedManager] = None
 
 
@@ -158,6 +162,69 @@ def get_bars(
         "count": len(bars),
         "bars": bars,
     }
+
+
+@app.get("/fno/analytics")
+def get_fno_analytics(
+    symbol: str = Query(..., description="Underlying symbol, e.g. RELIANCE, NIFTY 50"),
+    spot: float = Query(0.0, description="Current spot price"),
+    days_to_expiry: float = Query(5.0, ge=0.5, le=90.0),
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """
+    Return real-time options analytics: OI walls, PCR, ATM straddle implied move,
+    and options reachability envelope.
+    """
+    _verify_auth(x_internal_token)
+    sym = symbol.strip().upper().replace(".NS", "")
+    resolved_spot = spot
+    if resolved_spot <= 0:
+        quote = bar_builder.get_snapshot([sym])
+        if quote and "quotes" in quote and sym in quote["quotes"]:
+            resolved_spot = float(quote["quotes"][sym].get("lp", 0.0))
+
+    return fno_engine.compute_symbol_analytics(
+        symbol=sym,
+        spot=resolved_spot,
+        days_to_expiry=days_to_expiry,
+    )
+
+
+@app.post("/fno/update-chain")
+def update_fno_chain(
+    symbol: str = Query(..., description="Underlying symbol"),
+    strikes_data: List[Dict[str, Any]] = ...,
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """Update strike-indexed option quotes in memory on Box C."""
+    _verify_auth(x_internal_token)
+    sym = symbol.strip().upper().replace(".NS", "")
+    chain = fno_engine.get_or_create_chain(sym)
+    updated = 0
+    for row in strikes_data:
+        strike = float(row.get("strike", 0.0))
+        if strike <= 0:
+            continue
+        if "ce" in row and isinstance(row["ce"], dict):
+            ce = row["ce"]
+            chain.update_by_strike(
+                strike=strike,
+                opt_type="ce",
+                ltp=ce.get("ltp"),
+                oi=ce.get("oi"),
+                volume=ce.get("volume"),
+            )
+        if "pe" in row and isinstance(row["pe"], dict):
+            pe = row["pe"]
+            chain.update_by_strike(
+                strike=strike,
+                opt_type="pe",
+                ltp=pe.get("ltp"),
+                oi=pe.get("oi"),
+                volume=pe.get("volume"),
+            )
+        updated += 1
+    return {"status": "ok", "symbol": sym, "strikes_updated": updated}
 
 
 @app.get("/oauth/callback")

@@ -970,6 +970,47 @@ async def get_market_data(
     return _build_market_response(clean_sym, df, interval)
 
 
+def _generate_technical_rationale(sig: dict, signal_val: str, sym: str) -> str:
+    """Generate professional, indicator-backed technical rationale instead of generic placeholder."""
+    rat = sig.get("rationale")
+    if rat and "authoritative engine" not in str(rat):
+        return str(rat)
+
+    parts = []
+    trend = sig.get("trend")
+    if trend:
+        clean_trend = str(trend).replace("TrendDirection.", "").capitalize()
+        parts.append(f"{clean_trend} flow")
+
+    rsi = sig.get("rsi")
+    if rsi is not None and pd.notna(rsi):
+        try:
+            parts.append(f"RSI {round(float(rsi), 1)}")
+        except Exception:
+            pass
+
+    strat = sig.get("strategy")
+    if strat and strat not in ("SIGNAL", "None", ""):
+        parts.append(f"{strat} setup")
+
+    regime = sig.get("regime") or sig.get("market_regime")
+    if regime:
+        parts.append(f"{regime} regime")
+
+    vol_ratio = sig.get("vol_ratio") or sig.get("volume_ratio")
+    if vol_ratio is not None and pd.notna(vol_ratio):
+        try:
+            vr = float(vol_ratio)
+            if vr > 1.1:
+                parts.append(f"{round(vr, 1)}x vol expansion")
+        except Exception:
+            pass
+
+    if parts:
+        return f"{signal_val} structure: " + ", ".join(parts)
+    return f"{signal_val} confluence aligned with trend and momentum levels"
+
+
 @router.get("/api/watchlist/quotes")
 async def get_watchlist_quotes(
     symbols: str = Query(..., description="Comma-separated symbols, e.g. RELIANCE,HDFCBANK"),
@@ -1058,11 +1099,11 @@ async def get_watchlist_quotes(
                     "est_bars": 5,
                     "time_stop_bars": 10,
                 }),
-                "rationale": sig.get("rationale", f"Signal {signal_val} from authoritative engine"),
+                "rationale": _generate_technical_rationale(sig, signal_val, sym),
                 "levels_source": levels_source,
                 "delivery_pct": sig.get("delivery_pct"),
                 "delivery_qty": sig.get("delivery_qty"),
-                "source": sig.get("source", "authoritative_engine"),
+                "source": sig.get("source", "MARKET_QUANT_ENGINE"),
                 "as_of": sig.get("as_of", datetime.now(timezone.utc).isoformat()),
                 "data_delay_minutes": sig.get("data_delay_minutes", 15),
                 "timeframe": sig.get("timeframe", "1d"),
@@ -3512,13 +3553,24 @@ def _get_major_indices_sync() -> dict[str, tuple[float | None, float | None]]:
             for k in missing:
                 t = tickers.tickers.get(yf_map[k])
                 if t:
-                    hist = t.history(period="1d", interval="5m")
+                    prev_close = None
+                    try:
+                        fi_close = getattr(t.fast_info, "previous_close", None)
+                        if fi_close is not None and float(fi_close) > 0:
+                            prev_close = float(fi_close)
+                    except Exception:
+                        pass
+                    hist = t.history(period="5d", interval="1d")
                     if hist is None or hist.empty:
-                        hist = t.history(period="5d", interval="1d")
+                        hist = t.history(period="1d", interval="5m")
                     if hist is not None and not hist.empty:
                         close = float(hist["Close"].iloc[-1])
-                        first = float(hist["Open"].iloc[0]) if float(hist["Open"].iloc[0]) != 0 else close
-                        chg = ((close - first) / first) * 100.0 if first else 0.0
+                        if prev_close is None or prev_close <= 0:
+                            if len(hist) >= 2:
+                                prev_close = float(hist["Close"].iloc[-2])
+                            else:
+                                prev_close = float(hist["Open"].iloc[0]) if float(hist["Open"].iloc[0]) != 0 else close
+                        chg = ((close - prev_close) / prev_close) * 100.0 if prev_close else 0.0
                         res[k] = (round(close, 2), round(chg, 2))
         except Exception as exc:
             logger.debug("Indices yfinance fallback error: %s", exc)

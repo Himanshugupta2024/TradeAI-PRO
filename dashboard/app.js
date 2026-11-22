@@ -26701,8 +26701,8 @@ async function loadNextDayPicks(reportId = null) {
                 emptyCard.style.display = 'block';
                 const emptyTitle = document.getElementById('ndpEmptyTitle');
                 const emptyDesc = document.getElementById('ndpEmptyDesc');
-                if (emptyTitle) emptyTitle.textContent = 'No Qualified Setups Passed Risk/Reward Gates';
-                if (emptyDesc) emptyDesc.textContent = report.empty_reason || 'All screened Tier-1 equities failed the minimum 1.5x Risk-Reward threshold or lacked confirming trend regime alignment. TradeAI PRO preserves capital rather than forcing low-edge trades.';
+                if (emptyTitle) emptyTitle.textContent = '🛡️ Capital Preservation Mode: NO QUALIFIED TRADES TODAY';
+                if (emptyDesc) emptyDesc.textContent = report.empty_reason || 'All screened Tier-1 equities failed strict noise-floor gates (≥ 1.30x ATR), statutory delivery friction (0.25%), or structural target reachability. TradeAI PRO preserves capital rather than forcing low-edge trades.';
             }
         } else {
             if (emptyCard) emptyCard.style.display = 'none';
@@ -26757,6 +26757,21 @@ function renderNextDayPickCard(pick, index) {
     const riskPct = (hasValidLevels && entryPrice > 0) ? `${((Math.abs(entryPrice - stopLoss) / entryPrice) * 100).toFixed(1)}%` : '—';
     const rewardPct = (hasValidLevels && entryPrice > 0) ? `${((Math.abs(targetPrice - entryPrice) / entryPrice) * 100).toFixed(1)}%` : '—';
 
+    const techLevels = pick.technical_levels || pick.technical_alignment || {};
+    const rsiVal = techLevels.rsi14 ?? techLevels.rsi ?? null;
+    const rsiDisplay = (rsiVal != null && Number.isFinite(Number(rsiVal))) ? Number(rsiVal).toFixed(0) : '—';
+
+    const atrMultiple = setup.stop_atr_multiple ? Number(setup.stop_atr_multiple).toFixed(2) : (hasValidLevels && setup.risk && techLevels.atr14 ? (setup.risk / techLevels.atr14).toFixed(2) : '1.30');
+    const costInR = setup.cost_in_r != null ? Number(setup.cost_in_r).toFixed(2) : '0.10';
+    const netRR = setup.net_risk_reward != null ? `${Number(setup.net_risk_reward).toFixed(2)}x` : rrRatio;
+
+    const sizing = setup.position_sizing || {};
+    const qty = sizing.suggested_qty || (hasValidLevels && entryPrice > 0 && Math.abs(entryPrice - stopLoss) > 0 ? Math.max(1, Math.floor(5000 / Math.abs(entryPrice - stopLoss))) : null);
+    const rupeeRisk = sizing.rupee_risk || 5000;
+    const segment = pick.segment || (isLong ? 'CNC / F&O' : 'F&O ONLY');
+    const rankScore = Number(pick.rank_score || 0);
+    const isTier1 = rankScore >= 80 || (pick.rank && pick.rank <= 3);
+
     const scenarios = pick.scenarios || {};
     const bullScenario = scenarios.bull || scenarios.bull_case || '— (Scenario not provided)';
     const baseScenario = scenarios.base || scenarios.base_case || '— (Plan not provided)';
@@ -26772,25 +26787,23 @@ function renderNextDayPickCard(pick, index) {
           }).join('')
         : '<li style="color: var(--text-muted); font-size: 0.78rem;">No verified news catalysts recorded for this session.</li>';
 
-    const techLevels = pick.technical_levels || pick.technical_alignment || {};
-    const rsiVal = techLevels.rsi14 ?? techLevels.rsi ?? null;
-    const rsiDisplay = (rsiVal != null && Number.isFinite(Number(rsiVal))) ? Number(rsiVal).toFixed(0) : '—';
-
     return `
-    <div class="card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; position: relative;">
+    <div class="card" style="background: var(--bg-card); border: 1px solid ${isTier1 ? 'rgba(16, 185, 129, 0.35)' : 'var(--border-color)'}; box-shadow: ${isTier1 ? '0 0 10px rgba(16, 185, 129, 0.08)' : 'none'}; border-radius: 12px; padding: 1.25rem; display: flex; flex-direction: column; gap: 0.9rem; position: relative;">
         <!-- Top Row: Symbol, Direction, Rank, R:R -->
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
             <div>
-                <div style="display: flex; align-items: center; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
                     <span style="font-size: 1.25rem; font-weight: 800; color: var(--text-primary); font-family: var(--font-mono, monospace);">${escapeHtml(pick.symbol)}</span>
                     <span style="background: ${dirBg}; color: ${dirColor}; font-weight: 700; font-size: 0.75rem; padding: 2px 8px; border-radius: 4px;">${rawDir}</span>
                     <span style="background: rgba(14, 165, 233, 0.1); color: #0284c7; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px;">RANK #${pick.rank || (index + 1)}</span>
+                    ${isTier1 ? '<span style="background: rgba(16, 185, 129, 0.12); color: #10b981; font-size: 0.68rem; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.3);">★ TIER 1</span>' : ''}
+                    <span style="background: ${isLong ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)'}; color: ${isLong ? '#10b981' : '#f87171'}; font-size: 0.68rem; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px solid ${isLong ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'};">${escapeHtml(segment)}</span>
                 </div>
                 <span style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(pick.company_name || pick.sector || 'NSE Tier-1')}</span>
             </div>
             <div style="text-align: right;">
                 <div style="font-size: 1.1rem; font-weight: 700; color: #10b981; font-family: var(--font-mono, monospace);">${rrRatio}</div>
-                <span style="font-size: 0.7rem; color: var(--text-muted);">${hasValidLevels ? 'Minimum &ge; 1.5x Gate' : 'Levels incomplete'}</span>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">${hasValidLevels ? 'Min &ge; 1.5x Gate' : 'Levels incomplete'}</span>
             </div>
         </div>
 
@@ -26811,6 +26824,12 @@ function renderNextDayPickCard(pick, index) {
                 <div style="font-size: 0.95rem; font-weight: 700; color: #10b981; margin-top: 2px; font-family: var(--font-mono, monospace);">${targetDisplay}</div>
                 <span style="font-size: 0.72rem; color: var(--text-muted);">Gain: ${rewardPct === '—' ? '—' : '+' + rewardPct}</span>
             </div>
+        </div>
+
+        <!-- Geometry & Sizing Transparency Strip -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px; background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 6px; padding: 5px 8px; font-size: 0.72rem; font-family: var(--font-mono, monospace);">
+            <div><span style="color:var(--text-muted);">Stop:</span> <strong style="color:#a5b4fc;">${atrMultiple} ATR</strong> · <span style="color:var(--text-muted);">Friction:</span> <strong style="color:#fca5a5;">${costInR}R</strong> (0.25%) · <span style="color:var(--text-muted);">Net:</span> <strong style="color:#86efac;">${netRR}</strong></div>
+            ${qty ? `<div><span style="color:var(--text-muted);">Size:</span> <strong>${qty} shs</strong> · <span style="color:var(--text-muted);">Risk:</span> <strong>₹${rupeeRisk.toLocaleString('en-IN')}</strong></div>` : ''}
         </div>
 
         <!-- 3-Way Scenarios -->
@@ -26848,6 +26867,7 @@ function renderNextDayPickCard(pick, index) {
             }; padding: 2px 6px; border-radius: 4px; font-weight: 600;">STATUS: ${escapeHtml(pick.outcome_status || pick.status || 'PENDING')}</span>
         </div>
     </div>`;
+}
 }
 
 async function loadNextDayPicksHistory() {
