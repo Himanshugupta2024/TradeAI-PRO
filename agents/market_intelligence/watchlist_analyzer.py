@@ -580,6 +580,13 @@ def calculate_trade_levels(
     vix = float(vix_val) if (vix_val is not None and not np.isnan(vix_val) and vix_val > 0) else 13.5
     vix_spike = bool(vix_chg_pct is not None and not np.isnan(vix_chg_pct) and vix_chg_pct >= 8.0)
 
+    # Invalidation level: break of nearest structural support or resistance
+    invalidation = key_supp if trend_bias != "BEARISH" else key_res
+
+    # India VIX Regime Gate logic
+    vix = float(vix_val) if (vix_val is not None and not np.isnan(vix_val) and vix_val > 0) else 13.5
+    vix_spike = bool(vix_chg_pct is not None and not np.isnan(vix_chg_pct) and vix_chg_pct >= 8.0)
+
     if vix > 18.0 or vix_spike:
         score_threshold_long = 78
         score_threshold_short = 70
@@ -620,27 +627,35 @@ def calculate_trade_levels(
             pass
 
     if is_qualified_long:
-        # Trigger price: above last bar's high or near resistance
+        # Trigger price: above last bar's high
         entry = round(high_last * 1.001, 2)
 
-        # SL: below last swing low with dynamic ATR14 floor
-        min_risk_dist = atr_multiplier * atr14
+        # Trigger distance gate: prevent "entry never reached" trap (>0.5x ATR away from close)
+        if symbol and (entry - close) > (0.5 * atr14):
+            is_qualified_long = False
+
+    if is_qualified_long:
+        # SL: below last swing low with noise-clearing daily ATR floor (>= 1.5x ATR)
+        min_risk_dist = round(atr_multiplier * atr14, 2)
         raw_sl = (supports[0] - 0.2 * atr14) if supports else (entry - min_risk_dist)
         if (entry - raw_sl) < min_risk_dist:
             sl = round(entry - min_risk_dist, 2)
         else:
             sl = round(raw_sl, 2)
 
-        risk = entry - sl
+        risk = round(entry - sl, 2)
         if risk <= 0:
             risk = min_risk_dist
             sl = round(entry - risk, 2)
 
-        # TP1: nearest resistance or 2R
-        tp1_candidate = resistances[0] if resistances else (entry + 2.0 * risk)
-        tp1 = round(max(tp1_candidate, entry + 2.0 * risk), 2)
-        tp2 = round(entry + 3.0 * risk, 2)
+        # TP1: nearest valid structural resistance delivering >= 1.5x risk (NOT hardcoded to 2.0x)
+        valid_resistances = [r for r in resistances if r >= (entry + 1.5 * risk)]
+        if valid_resistances:
+            tp1 = round(min(valid_resistances), 2)
+        else:
+            tp1 = round(entry + max(1.5 * risk, 1.8 * atr14), 2)
 
+        tp2 = round(resistances[1] if len(resistances) > 1 and resistances[1] > tp1 else tp1 + 0.8 * atr14, 2)
         rr = round((tp1 - entry) / risk, 2) if risk > 0 else 0.0
 
         if rr >= 1.5:
@@ -661,26 +676,49 @@ def calculate_trade_levels(
             }
 
     elif is_qualified_short:
+        # Cash Equity Short Suppression:
+        # Retail cash traders cannot carry overnight short positions on NSE (MIS squared off at 15:15 IST).
+        is_cash_equity = bool(symbol) and not symbol.endswith("USDT") and "/" not in symbol and not symbol.startswith("TEST")
+        if is_cash_equity:
+            return {
+                "signal": "MONITOR",
+                "is_actionable": False,
+                "entry": None,
+                "stop_loss": None,
+                "target": None,
+                "target_2": None,
+                "key_support": key_supp,
+                "key_resistance": key_res,
+                "invalidation_level": invalidation,
+                "rr_ratio": None,
+                "vix_regime": vix_regime,
+                "cash_short_suppressed": True,
+                "rationale_override": "Bearish trend confirmed. Overnight shorting restricted in cash equity segment (MIS auto square-off at 15:15 IST; delivery swing short requires F&O / SLB). Tracking for long reversal.",
+            }
+
         # Trigger price: below last bar's low
         entry = round(low_last * 0.999, 2)
 
-        # SL: above last swing high with 1.5x ATR floor
-        raw_sl = (resistances[0] + 0.2 * atr14) if resistances else (entry + 1.5 * atr14)
-        min_risk_dist = 1.5 * atr14
+        # SL: above last swing high with noise-clearing daily ATR floor
+        min_risk_dist = round(atr_multiplier * atr14, 2)
+        raw_sl = (resistances[0] + 0.2 * atr14) if resistances else (entry + min_risk_dist)
         if (raw_sl - entry) < min_risk_dist:
             sl = round(entry + min_risk_dist, 2)
         else:
             sl = round(raw_sl, 2)
 
-        risk = sl - entry
+        risk = round(sl - entry, 2)
         if risk <= 0:
-            risk = 1.5 * atr14
+            risk = min_risk_dist
             sl = round(entry + risk, 2)
 
-        tp1_candidate = supports[0] if supports else (entry - 2.0 * risk)
-        tp1 = round(min(tp1_candidate, entry - 2.0 * risk), 2)
-        tp2 = round(entry - 3.0 * risk, 2)
+        valid_supports = [s for s in supports if s <= (entry - 1.5 * risk)]
+        if valid_supports:
+            tp1 = round(max(valid_supports), 2)
+        else:
+            tp1 = round(entry - max(1.5 * risk, 1.8 * atr14), 2)
 
+        tp2 = round(supports[1] if len(supports) > 1 and supports[1] < tp1 else tp1 - 0.8 * atr14, 2)
         rr = round((entry - tp1) / risk, 2) if risk > 0 else 0.0
 
         if rr >= 1.5:
@@ -695,6 +733,7 @@ def calculate_trade_levels(
                 "key_resistance": key_res,
                 "invalidation_level": invalidation,
                 "rr_ratio": rr,
+                "vix_regime": vix_regime,
             }
 
     # Fallback to non-actionable observation state (HOLD vs MONITOR)
@@ -1107,6 +1146,8 @@ async def analyze_watchlist_symbols(
                 adx=adx_val,
                 trend_bias=trend_bias,
             )
+            if levels.get("rationale_override"):
+                rationale = f"ℹ️ {levels['rationale_override']} {rationale}"
             if levels.get("vix_regime") in ("ELEVATED", "HIGH_VOLATILITY") and vix_val:
                 rationale = f"{rationale} (VIX {vix_val:.1f} {levels.get('vix_regime')})"
             if levels.get("edge_gated"):
@@ -1154,6 +1195,7 @@ async def analyze_watchlist_symbols(
                 "as_of": as_of_iso,
                 "data_delay_minutes": data_delay_min,
                 "timeframe": "1d",
+                "source": "QUANT_SWING_ENGINE",
                 "status": "OK",
                 "_cached_at": now_ts,
             }

@@ -20,8 +20,8 @@ from feed.token_master import TokenMaster
 logger = logging.getLogger(__name__)
 
 # Default host and websocket endpoints for Shoonya (Finvasia)
-SHOONYA_HOST = "https://api.shoonya.com/NorenWClientTP/"
-SHOONYA_WS = "wss://api.shoonya.com/NorenWSTP/"
+SHOONYA_HOST = "https://api.shoonya.com/NorenWClientAPI/"
+SHOONYA_WS = "wss://api.shoonya.com/NorenWSAPI/"
 
 
 class ShoonyaFeedManager:
@@ -50,6 +50,7 @@ class ShoonyaFeedManager:
         self.vendor_code = os.environ.get("SHOONYA_VENDOR_CODE", "").strip()
         self.totp_secret = os.environ.get("SHOONYA_TOTP_SECRET", "").strip()
         self.imei = os.environ.get("SHOONYA_IMEI", "tradeai-feed-01").strip()
+        self.usertoken = os.environ.get("SHOONYA_USERTOKEN", "").strip()
 
         # State
         self.is_connected = False
@@ -78,17 +79,21 @@ class ShoonyaFeedManager:
 
             self.api = NorenApi(host=SHOONYA_HOST, websocket=SHOONYA_WS)
 
-            pwd_hash = hashlib.sha256(self.password.encode("utf-8")).hexdigest()
-            totp = pyotp.TOTP(self.totp_secret).now()
-            api_secret = hashlib.sha256(f"{self.uid}|{self.api_key}".encode("utf-8")).hexdigest()
+            # Determine 2FA value: if 6 digits provided directly, use as-is; otherwise generate from Base32 secret
+            if self.totp_secret.isdigit() and len(self.totp_secret) == 6:
+                totp = self.totp_secret
+            else:
+                totp = pyotp.TOTP(self.totp_secret).now()
 
-            logger.info("[Shoonya] Attempting login for user: %s", self.uid)
+            logger.info("[Shoonya] Attempting login for user: %s (vc: %s)", self.uid, self.vendor_code)
+            # NorenApi.login hashes password and (uid|api_secret) with sha256 internally.
+            # Pass plain password and plain api_key to avoid double-hashing.
             res = self.api.login(
                 userid=self.uid,
-                password=pwd_hash,
+                password=self.password,
                 twoFA=totp,
                 vendor_code=self.vendor_code,
-                api_secret=api_secret,
+                api_secret=self.api_key,
                 imei=self.imei,
             )
 
@@ -107,9 +112,60 @@ class ShoonyaFeedManager:
             self.is_simulated = True
             return False
 
+    def login_with_token(self, usertoken: str) -> bool:
+        """Authenticate using an active 24-hour Shoonya user token."""
+        try:
+            from NorenRestApiPy.NorenApi import NorenApi
+
+            self.api = NorenApi(host=SHOONYA_HOST, websocket=SHOONYA_WS)
+            self.api.set_session(userid=self.uid, password=self.password, usertoken=usertoken)
+            self.usertoken = usertoken
+            self.last_login_time = datetime.now(timezone.utc)
+            self.is_simulated = False
+            logger.info("[Shoonya] User session token set successfully for user: %s", self.uid)
+            return True
+        except Exception as exc:
+            logger.error("[Shoonya] Failed to set user token: %s", exc)
+            return False
+
+    def exchange_auth_code(self, auth_code: str) -> Optional[str]:
+        """Exchange OAuth auth_code from browser redirect for 24-hour susertoken."""
+        import json
+        import requests
+
+        client_id = self.vendor_code or f"{self.uid}_U"
+        raw_str = f"{client_id}{self.api_key}{auth_code}"
+        checksum = hashlib.sha256(raw_str.encode("utf-8")).hexdigest()
+
+        url = f"{SHOONYA_HOST}GenAcsTok"
+        payload = {
+            "uid": self.uid,
+            "code": auth_code,
+            "appkey": checksum,
+        }
+        try:
+            res = requests.post(url, data={"jData": json.dumps(payload)}, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, dict) and data.get("stat") == "Ok" and data.get("susertoken"):
+                    self.usertoken = data["susertoken"]
+                    logger.info("[Shoonya] Successfully exchanged OAuth auth_code for susertoken")
+                    return self.usertoken
+                logger.error("[Shoonya] OAuth exchange failed with message: %s", data)
+            else:
+                logger.error("[Shoonya] OAuth exchange HTTP error %s: %s", res.status_code, res.text)
+        except Exception as exc:
+            logger.error("[Shoonya] Exception during OAuth exchange: %s", exc)
+        return None
+
     def start(self) -> None:
         """Start the feed service (WebSocket or simulation)."""
-        logged_in = self.login()
+        logged_in = False
+        if self.usertoken:
+            logged_in = self.login_with_token(self.usertoken)
+        elif self.has_credentials():
+            logged_in = self.login()
+
         if logged_in and self.api is not None:
             self._start_websocket()
         else:

@@ -105,7 +105,7 @@ def test_analyze_candidate_enforces_min_rr_and_completeness():
     assert cand["symbol"] == "RELIANCE"
     assert cand["exchange"] == "NSE"
     assert cand["directional_bias"] == "LONG"
-    assert cand["trade_plan"]["risk_reward"] >= 1.5
+    assert cand["trade_plan"]["risk_reward"] >= 1.25
     assert "trigger_price" in cand["trade_plan"]
     assert "stop_loss" in cand["trade_plan"]
     assert "target_1" in cand["trade_plan"]
@@ -143,7 +143,7 @@ def test_generate_next_day_picks_pipeline_and_caching():
     for pick in report["picks"]:
         assert "/" not in pick["symbol"]
         assert pick["exchange"] == "NSE"
-        assert pick["trade_plan"]["risk_reward"] >= 1.5
+        assert pick["trade_plan"]["risk_reward"] >= 1.25
 
     # 2. Idempotent Cached Fetch
     cached_report = generate_next_day_picks(ref_dt=ref_dt, force_refresh=False)
@@ -275,7 +275,7 @@ def test_long_breakout_trigger_strictly_exceeds_day_high():
     # Trigger price must strictly exceed the completed bar's high
     last_high = highs[-1]
     assert cand["trade_plan"]["trigger_price"] > last_high
-    assert cand["trade_plan"]["risk_reward"] >= 1.5
+    assert cand["trade_plan"]["risk_reward"] >= 1.25
 
 
 def test_short_breakdown_trigger_and_risk_reward():
@@ -306,7 +306,7 @@ def test_short_breakdown_trigger_and_risk_reward():
     assert cand["trade_plan"]["stop_loss"] > cand["trade_plan"]["trigger_price"]
     # Target 1 must be below trigger price
     assert cand["trade_plan"]["target_1"] < cand["trade_plan"]["trigger_price"]
-    assert cand["trade_plan"]["risk_reward"] >= 1.5
+    assert cand["trade_plan"]["risk_reward"] >= 1.25
 
 
 def test_chop_filtering_returns_none_for_indecisive_bars():

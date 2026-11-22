@@ -10,7 +10,11 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query, status
+
+# Load local environment if present
+load_dotenv()
 
 from feed.bar_builder import BarBuilder
 from feed.shoonya_client import ShoonyaFeedManager
@@ -154,3 +158,33 @@ def get_bars(
         "count": len(bars),
         "bars": bars,
     }
+
+
+@app.get("/oauth/callback")
+@app.post("/oauth/callback")
+def oauth_callback(code: Optional[str] = Query(None)) -> Dict[str, Any]:
+    """
+    OAuth redirect callback endpoint.
+    Receives auth_code from Shoonya browser login redirect, exchanges it for susertoken,
+    and initiates the live WebSocket feed.
+    """
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing authorization code parameter 'code'")
+
+    if not feed_manager:
+        raise HTTPException(status_code=503, detail="Feed manager not initialized")
+
+    token = feed_manager.exchange_auth_code(code)
+    if not token:
+        raise HTTPException(status_code=400, detail="Failed to exchange authorization code with Shoonya")
+
+    success = feed_manager.login_with_token(token)
+    if success:
+        feed_manager._start_websocket()
+        return {
+            "status": "ok",
+            "message": "Shoonya OAuth authentication successful! Live WebSocket connected.",
+            "susertoken_prefix": token[:8] + "...",
+        }
+    raise HTTPException(status_code=500, detail="Failed to start WebSocket session with token")
+

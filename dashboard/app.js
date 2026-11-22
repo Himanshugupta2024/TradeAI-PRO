@@ -27081,7 +27081,7 @@ function _renderWatchlistCard(sym, q, compName) {
                         </div>
                     </div>
                     <div style="text-align:right;">
-                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
+                        <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Day Change %</div>
                         <div style="font-size: 0.9rem; color: var(--text-muted); font-family: var(--font-mono);">--</div>
                     </div>
                 </div>
@@ -27238,6 +27238,7 @@ function _renderWatchlistCard(sym, q, compName) {
                     <span class="watchlist-name">${_escHtml(displayName)}</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;">
+                    ${q && q.source ? `<span style="font-size: 0.65rem;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(148,163,184,0.1);color:#94a3b8;border:1px solid rgba(148,163,184,0.2);" title="Model Provenance">${q.source === 'QUANT_SWING_ENGINE' ? 'QUANT' : (q.source === 'ML_SIDECAR' ? 'ML' : q.source)}</span>` : ''}
                     <span style="font-size: 0.72rem;font-weight:800;padding:2px 8px;border-radius:4px;background:${sigBg};color:${sigColor};border:1px solid ${sigBorder};">
                         ${signalLabel}
                     </span>
@@ -27253,7 +27254,7 @@ function _renderWatchlistCard(sym, q, compName) {
                     <div class="watchlist-ltp">₹${Number(ltp).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
                 </div>
                 <div style="text-align:right;">
-                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">24h Trend</div>
+                    <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Day Change %</div>
                     <div class="watchlist-chg ${chgClass}">${chgStr}</div>
                 </div>
             </div>

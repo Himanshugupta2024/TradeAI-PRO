@@ -73,6 +73,9 @@ def infer_remote_sync(
     timeout: Optional[float] = None,
 ) -> Optional[Dict[str, Any]]:
     """Synchronous HTTP call to the ML Sidecar."""
+    if os.environ.get("SERVICE_ROLE") == "ml_sidecar":
+        return None  # Recursion guard: Box B must never call itself
+
     url = os.environ.get("ML_SIDECAR_URL", ML_SIDECAR_URL).rstrip("/")
     if not url:
         return None
@@ -109,6 +112,9 @@ async def infer_remote_async(
     timeout: Optional[float] = None,
 ) -> Optional[Dict[str, Any]]:
     """Asynchronous HTTP call to the ML Sidecar."""
+    if os.environ.get("SERVICE_ROLE") == "ml_sidecar":
+        return None  # Recursion guard: Box B must never call itself
+
     url = os.environ.get("ML_SIDECAR_URL", ML_SIDECAR_URL).rstrip("/")
     if not url:
         return None

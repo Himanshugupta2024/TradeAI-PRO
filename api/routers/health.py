@@ -235,6 +235,7 @@ async def health_check(response: Response = None):
         ),
         "uptime_seconds": uptime_sec,
         "memory_rss_mb": memory_rss_mb,
+        "build_sha": os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT") or "dev",
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
     _HEALTH_RESPONSE_CACHE = res_payload

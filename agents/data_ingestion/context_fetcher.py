@@ -973,29 +973,7 @@ class ContextFetcher:
         except Exception as exc:
             logger.warning("NSE event-calendar fetch failed: %s", exc)
 
-        # Fallback high-impact schedule: Monthly NSE F&O Expiry (last Thursday of month)
-        import calendar
-        curr_d = now.date()
-        cal = calendar.monthcalendar(curr_d.year, curr_d.month)
-        thursdays = [week[calendar.THURSDAY] for week in cal if week[calendar.THURSDAY] != 0]
-        expiry_day = thursdays[-1]
-        expiry_date = date(curr_d.year, curr_d.month, expiry_day)
-        if curr_d > expiry_date:
-            next_year = curr_d.year if curr_d.month < 12 else curr_d.year + 1
-            next_month = curr_d.month + 1 if curr_d.month < 12 else 1
-            cal_next = calendar.monthcalendar(next_year, next_month)
-            next_thursdays = [week[calendar.THURSDAY] for week in cal_next if week[calendar.THURSDAY] != 0]
-            expiry_date = date(next_year, next_month, next_thursdays[-1])
-
-        days_to_expiry = max(0, (expiry_date - curr_d).days)
-        events.append({
-            "event_name": f"NSE Monthly F&O Expiry ({expiry_date.strftime('%B %Y')})",
-            "date": expiry_date.isoformat(),
-            "impact": "HIGH",
-            "days_away": days_to_expiry,
-            "relevant_markets": "NSE_EQUITIES",
-        })
-
+        # Do not fabricate generic market-wide monthly expiry as a per-symbol earnings risk
         deduped: dict[str, dict[str, Any]] = {}
         for event in events:
             key = f"{event['event_name']}|{event['date']}"

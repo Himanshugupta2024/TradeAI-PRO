@@ -475,7 +475,7 @@ class XGBoostPredictor:
             use_optuna:           Whether to run Optuna hyperparameter tuning.
             n_optuna_trials:      Number of Optuna trials (more = better but slower).
             test_size:            Fraction of data to hold out for validation.
-            round_trip_cost_pct:  Execution cost drag hurdle (0.0006 for 0.06% round trip).
+            round_trip_cost_pct:  Execution cost drag hurdle (0.0025 for authentic 0.25% delivery swing round-trip).
             keep_timeouts:        Whether to keep vertical barrier timeouts as class 0 non-wins.
             embargo_bars:         Purged embargo gap to avoid look-ahead leakage across folds.
 

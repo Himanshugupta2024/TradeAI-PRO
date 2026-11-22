@@ -560,9 +560,11 @@ def analyze_candidate(
     )
 
     # 4. Construct Planned Trade Setup with Volatility-Scaled Reachability Gate
-    # Horizon is single-session (Open-to-Close 15:30 IST).
-    # Maximum allowable reward within expected session volatility expansion envelope is bounded by 1.6x ATR.
-    max_reach_reward = round(1.6 * atr, 2)
+    # Horizon is multi-session positional swing (3-4 sessions).
+    horizon_sessions = 3
+    volatility_envelope = round(atr * math.sqrt(horizon_sessions), 2)  # ~1.73x ATR
+    max_reach_reward = volatility_envelope
+    min_stop_distance = round(1.25 * atr, 2)  # Never inside daily noise band (< 1.25x ATR)
     h20 = metrics.get("high_20d", 0.0)
     l20 = metrics.get("low_20d", 0.0)
 
@@ -572,24 +574,24 @@ def analyze_candidate(
         trigger_price = round(max(last_h * 1.001, r1 if (r1 > last_h and r1 <= last_h * 1.008) else last_h * 1.001), 2)
         trigger_zone = f"₹{round(trigger_price, 2)} – ₹{round(trigger_price + 0.25 * atr, 2)}"
 
-        # Structural stop: place below pivot or previous session midpoint with 0.65x–1.4x ATR buffer
-        raw_risk = max(0.65 * atr, trigger_price - metrics["pivot"])
-        risk = round(max(0.65 * atr, min(1.4 * atr, raw_risk)), 2)
+        # Structural stop: place below pivot or swing floor with noise-clearing >= 1.25x ATR buffer
+        raw_risk = max(min_stop_distance, trigger_price - metrics["pivot"])
+        risk = round(max(min_stop_distance, min(2.0 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price - risk, 2)
 
-        # Candidate structural resistance targets >= 1.5x risk
-        candidate_targets = [t for t in [h20, r1, r2] if t > trigger_price and (t - trigger_price) >= (1.5 * risk)]
+        # Candidate structural resistance targets >= 1.25x risk
+        candidate_targets = [t for t in [h20, r1, r2] if t > trigger_price and (t - trigger_price) >= (1.25 * risk)]
         if candidate_targets:
             raw_target = min(candidate_targets)  # nearest valid structural target
             target_1 = round(min(raw_target, trigger_price + max_reach_reward), 2)
         else:
-            target_1 = round(trigger_price + min(max_reach_reward, max(1.5 * risk, 1.1 * atr)), 2)
+            target_1 = round(trigger_price + min(max_reach_reward, max(1.3 * risk, 1.5 * atr)), 2)
 
         reward = round(target_1 - trigger_price, 2)
         rr_ratio = round(reward / risk, 2)
 
-        # Minimum Risk:Reward Gate: If capped target does not deliver >= 1.5x R:R, reject candidate
-        if rr_ratio < 1.5:
+        # Minimum Risk:Reward Gate: If capped target does not deliver >= 1.25x R:R with wide stop, reject
+        if rr_ratio < 1.25:
             return None
 
         target_2 = round(r2 if r2 > target_1 else target_1 + (0.8 * atr), 2)
@@ -600,29 +602,28 @@ def analyze_candidate(
         trigger_price = round(min(last_l * 0.999, s1 if (s1 < last_l and s1 >= last_l * 0.992) else last_l * 0.999), 2)
         trigger_zone = f"₹{round(trigger_price - 0.25 * atr, 2)} – ₹{round(trigger_price, 2)}"
 
-        raw_risk = max(0.65 * atr, metrics["pivot"] - trigger_price)
-        risk = round(max(0.65 * atr, min(1.4 * atr, raw_risk)), 2)
+        raw_risk = max(min_stop_distance, metrics["pivot"] - trigger_price)
+        risk = round(max(min_stop_distance, min(2.0 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price + risk, 2)
 
-        candidate_targets = [t for t in [l20, s1, s2] if t > 0 and t < trigger_price and (trigger_price - t) >= (1.5 * risk)]
+        candidate_targets = [t for t in [l20, s1, s2] if t > 0 and t < trigger_price and (trigger_price - t) >= (1.25 * risk)]
         if candidate_targets:
             raw_target = max(candidate_targets)
             target_1 = round(max(raw_target, trigger_price - max_reach_reward), 2)
         else:
-            target_1 = round(trigger_price - min(max_reach_reward, max(1.5 * risk, 1.1 * atr)), 2)
+            target_1 = round(trigger_price - min(max_reach_reward, max(1.3 * risk, 1.5 * atr)), 2)
 
         reward = round(trigger_price - target_1, 2)
         rr_ratio = round(reward / risk, 2)
 
-        if rr_ratio < 1.5:
+        if rr_ratio < 1.25:
             return None
 
         target_2 = round(s2 if s2 < target_1 else target_1 - (0.8 * atr), 2)
         invalidation = f"Avoid if gap up opens above ₹{stop_loss} (risk buffer breached) or strong morning sector surge."
-        invalidation = f"Avoid if gap up opens above ₹{stop_loss} (risk buffer breached) or strong morning sector surge."
 
     # Minimum Risk:Reward Gate Enforcement
-    if rr_ratio < 1.5:
+    if rr_ratio < 1.25:
         return None
 
     # 5. Scenarios (Dynamic and Stock-Specific)

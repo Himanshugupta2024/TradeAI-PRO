@@ -2514,6 +2514,8 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
         "target": tp,
         "levels_source": levels_source,
         "rsi": issuance_rsi if (is_terminal or bool(signal_conflict)) else current_rsi,
+        "rsi_basis": "issuance" if (is_terminal or bool(signal_conflict)) else "live",
+        "issuance_rsi": issuance_rsi,
         "live_rsi": current_rsi,
         "trend": current_trend,  # always current trend
         "regime": current_regime,
@@ -3616,10 +3618,6 @@ def _confluence_for_setup(sig: dict, mood: dict, for_display: bool = False) -> t
         score += pens.penalty_sum
         for flag in pens:
             factors.append(f"Conflict: {flag}")
-
-    base_qs = float(sig.get("quality_score") or 0.0)
-    if base_qs > 0:
-        score = int(round(base_qs * 0.35 + score * 0.65))
 
     score = max(0, min(100, score))
     return score, factors[:6]

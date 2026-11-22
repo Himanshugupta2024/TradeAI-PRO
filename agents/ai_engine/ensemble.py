@@ -418,7 +418,7 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
     if _is_lightweight_mode() or bool(os.environ.get("ML_SIDECAR_URL", "").strip()):
         # Check if remote ML sidecar (Box B) is configured and reachable
         ml_sidecar_url = os.environ.get("ML_SIDECAR_URL", "").strip()
-        if ml_sidecar_url:
+        if ml_sidecar_url and os.environ.get("SERVICE_ROLE") != "ml_sidecar":
             try:
                 from api.ml_client import infer_remote_sync
                 sidecar_pred = infer_remote_sync(symbol=symbol, df=df)
@@ -978,7 +978,7 @@ def get_model_status() -> dict:
 
     if _is_lightweight_mode() or bool(os.environ.get("ML_SIDECAR_URL", "").strip()):
         ml_sidecar_url = os.environ.get("ML_SIDECAR_URL", "").strip()
-        if ml_sidecar_url:
+        if ml_sidecar_url and os.environ.get("SERVICE_ROLE") != "ml_sidecar":
             return {
                 "mode": "ML Sidecar Ensemble (XGBoost + LightGBM + Meta-Learner + Calibrator)",
                 "active_inference_mode": "ML_SIDECAR_ENSEMBLE",

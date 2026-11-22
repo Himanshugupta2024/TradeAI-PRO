@@ -230,3 +230,22 @@ async def test_shoonya_feed_provider_quote(monkeypatch):
         assert "RELIANCE" in dfs
         assert len(dfs["RELIANCE"]) == 1
         assert dfs["RELIANCE"]["close"].iloc[0] == 2520.0
+
+
+def test_feed_server_oauth_callback(monkeypatch):
+    monkeypatch.setenv("FEED_INTERNAL_TOKEN", "test-feed-token-2026")
+    with TestClient(app) as client:
+        # Missing code parameter
+        r_fail = client.get("/oauth/callback")
+        assert r_fail.status_code == 400
+
+        # Successful exchange mock
+        with patch("feed_server.feed_manager.exchange_auth_code", return_value="mock_susertoken_12345678"):
+            with patch("feed_server.feed_manager.login_with_token", return_value=True):
+                with patch("feed_server.feed_manager._start_websocket"):
+                    r_ok = client.get("/oauth/callback?code=test_code_123")
+                    assert r_ok.status_code == 200
+                    data = r_ok.json()
+                    assert data["status"] == "ok"
+                    assert "mock_sus" in data["susertoken_prefix"]
+

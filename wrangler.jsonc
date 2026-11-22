@@ -10,7 +10,8 @@
     ]
   },
   "vars": {
-    "ML_BACKEND_ORIGIN": "https://trading-ml-8umr.onrender.com"
+    "ML_BACKEND_ORIGIN": "https://trading-ml-8umr.onrender.com",
+    "FEED_BACKEND_ORIGIN": "https://trading-feed.onrender.com"
   },
   "assets": {
     "directory": "./dashboard",

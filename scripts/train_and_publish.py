@@ -84,7 +84,7 @@ def train_single_asset(
     use_optuna: bool = False,
     n_trials: int = 15,
     embargo_bars: int = 20,
-    round_trip_cost_pct: float = 0.0006,
+    round_trip_cost_pct: float = 0.0025,
     keep_timeouts: bool = True,
 ) -> Dict[str, Any]:
     """Train XGBoost and LightGBM models on a single asset."""
@@ -150,7 +150,7 @@ def main():
     parser.add_argument("--timeframe", type=str, default="1d", help="Candle timeframe (default: 1d for NSE EOD)")
     parser.add_argument("--days", type=int, default=730, help="Lookback days (default: 730 for 2 years)")
     parser.add_argument("--embargo-bars", type=int, default=20, help="Purged embargo gap candles (default: 20)")
-    parser.add_argument("--cost-pct", type=float, default=0.0006, help="Round trip fee drag hurdle (default: 0.0006)")
+    parser.add_argument("--cost-pct", type=float, default=0.0025, help="Round trip fee drag hurdle (default: 0.0025 for 25 bps Indian delivery friction)")
     parser.add_argument("--keep-timeouts", action="store_true", default=True, help="Retain horizontal timeouts as class 0 (default: True)")
     parser.add_argument("--quick", action="store_true", default=True, help="Skip heavy Optuna trials (default: True)")
     parser.add_argument("--optuna", dest="quick", action="store_false", help="Enable Optuna hyperparameter search")
