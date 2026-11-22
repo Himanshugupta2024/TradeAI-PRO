@@ -73,7 +73,7 @@ def get_current_git_commit() -> str:
 
 def run_preflight_tests() -> bool:
     """Execute the core test suite to ensure zero regressions before deploy."""
-    print("🧪 Running pre-flight test suite (test_health_checks, test_health_telemetry, test_ml_sidecar_contract)...")
+    print("🧪 Running pre-flight test suite (test_health_checks, test_health_telemetry, test_ml_sidecar_contract, test_pydantic_contracts)...")
     cmd = [
         sys.executable,
         "-m",
@@ -81,6 +81,7 @@ def run_preflight_tests() -> bool:
         "tests/test_health_checks.py",
         "tests/test_health_telemetry.py",
         "tests/test_ml_sidecar_contract.py",
+        "tests/test_pydantic_contracts.py",
         "-q",
         "--tb=short",
     ]

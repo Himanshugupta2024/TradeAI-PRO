@@ -37,6 +37,7 @@ from fastapi.responses import JSONResponse
 
 from config import settings
 import api.service as svc
+from api.schemas import RiskStateResponse
 from api.security import require_admin, get_authenticated_account
 from api.data_honesty import price_decimals, mark_trade_pricing
 from agents.execution.paper_trading import PaperTradingEngine, PaperTrade
@@ -140,8 +141,7 @@ async def get_track_record(limit: int = Query(1000, le=2000)):
 
         return fallback
 
-@router.get("/api/risk/state")
-
+@router.get("/api/risk/state", response_model=RiskStateResponse)
 async def get_risk_state():
 
     """Get current execution risk state (heat, drawdown, circuit breaker)."""

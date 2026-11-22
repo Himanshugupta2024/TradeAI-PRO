@@ -86,7 +86,11 @@ from api.data_honesty import (
     mark_trade_pricing,
 )
 
-from api.schemas import PaperTradeRequest, ClosePaperTradeRequest
+from api.schemas import (
+    PaperTradeRequest,
+    ClosePaperTradeRequest,
+    WatchlistQuotesResponse,
+)
 
 from db.connection import check_db_connectivity
 
@@ -1011,7 +1015,7 @@ def _generate_technical_rationale(sig: dict, signal_val: str, sym: str) -> str:
     return f"{signal_val} confluence aligned with trend and momentum levels"
 
 
-@router.get("/api/watchlist/quotes")
+@router.get("/api/watchlist/quotes", response_model=WatchlistQuotesResponse)
 async def get_watchlist_quotes(
     symbols: str = Query(..., description="Comma-separated symbols, e.g. RELIANCE,HDFCBANK"),
     force_refresh: bool = Query(False, description="Bypass TTL cache and force fresh analysis"),
