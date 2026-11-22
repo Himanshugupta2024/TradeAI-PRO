@@ -45,6 +45,22 @@ def test_calculate_swing_sl_tp_long_and_short(monkeypatch):
     assert short_levels["risk_reward"] == 1.5
 
 
+def test_calculate_swing_sl_tp_caps_at_resistance_wall():
+    # Entry 100, ATR 2.0, default target 106. Resistance at 104 -> caps target to 104 if RR >= 1.25 (here 4/4 = 1.0, not capped)
+    # Entry 100, ATR 1.0, sl_dist=2.0, tp_dist=3.0 -> target 103, resistance at 102.6 -> (102.6 - 100) / 2.0 = 1.30 >= 1.25 -> capped to 102.6
+    levels = calculate_swing_sl_tp(entry=100.0, atr=1.0, direction="LONG", resistance_level=102.6)
+    assert levels["target"] == 102.6
+    assert levels["risk_reward"] == 1.30
+
+
+def test_calculate_swing_sl_tp_enforces_minimum_atr_noise_floor():
+    # Caller attempts to pass tiny 0.4 ATR stop
+    levels = calculate_swing_sl_tp(entry=100.0, atr=2.0, sl_multiplier=0.4)
+    # Must enforce min 1.20x ATR -> sl_dist = 2.4, stop = 97.6
+    assert levels["stop"] == 97.6
+    assert levels["sl_distance"] == 2.4
+
+
 def test_calculate_swing_position_size_uses_risk_fraction():
     out = calculate_swing_position_size(
         capital=100_000.0,

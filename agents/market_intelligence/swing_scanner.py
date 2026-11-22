@@ -640,6 +640,21 @@ def _finalize_swing_targets(setup: SwingSetup, entry: float) -> None:
         elif setup.target_2 >= setup.target_1:
             setup.target_2 = round(setup.target_1 - sl_dist, 2)
 
+    # Option Wall Capping: Cap targets at institutional F&O resistance/support if available
+    try:
+        from api.fno_client import fetch_fno_analytics_sync
+        fno_data = fetch_fno_analytics_sync(symbol=setup.symbol, spot=e, atr=getattr(setup, "atr", 0.0), days_to_expiry=5.0)
+        ce_wall = fno_data.get("ce_wall")
+        pe_wall = fno_data.get("pe_wall")
+        if setup.direction == "LONG" and ce_wall and ce_wall > e and setup.target_1 > ce_wall:
+            if (ce_wall - e) >= (min_rr * sl_dist):
+                setup.target_1 = round(ce_wall, 2)
+        elif setup.direction == "SHORT" and pe_wall and 0 < pe_wall < e and setup.target_1 < pe_wall:
+            if (e - pe_wall) >= (min_rr * sl_dist):
+                setup.target_1 = round(pe_wall, 2)
+    except Exception:
+        pass
+
     setup.fib_tp1 = 0.0
     setup.fib_tp2 = 0.0
 

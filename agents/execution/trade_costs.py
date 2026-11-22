@@ -25,13 +25,15 @@ ZERO_COST = {
 
 
 def cost_profile_for(symbol: str, signal_type: str):
-    """Delivery for swing equity, intraday otherwise; None for crypto."""
+    """Delivery for swing/positional/default equity, intraday only when explicitly intraday; None for crypto."""
     upper = str(symbol or "").upper()
     if "/" in upper or upper.endswith("USDT"):
         return None
-    if "SWING" in str(signal_type or "").upper():
-        return DELIVERY
-    return INTRADAY
+    sig = str(signal_type or "").upper()
+    if any(k in sig for k in ("INTRADAY", "MIS", "ORB", "SCALP", "VWAP")):
+        return INTRADAY
+    # Default equity (SWING, COMBINED, NEXT_DAY, RESEARCH, BREAKOUT, etc.) requires CNC delivery (~29.3 bps)
+    return DELIVERY
 
 
 def estimate_trade_costs(

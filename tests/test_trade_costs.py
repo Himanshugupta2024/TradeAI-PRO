@@ -14,8 +14,14 @@ class TestProfileSelection:
     def test_swing_equity_uses_delivery(self):
         assert cost_profile_for("TCS", "SWING").name == "delivery"
 
+    def test_default_equity_uses_delivery(self):
+        assert cost_profile_for("RELIANCE", "COMBINED").name == "delivery"
+        assert cost_profile_for("INFY", "NEXT_DAY").name == "delivery"
+        assert cost_profile_for("HDFCBANK", "BREAKOUT").name == "delivery"
+
     def test_intraday_equity_uses_intraday(self):
         assert cost_profile_for("TCS", "INTRADAY").name == "intraday"
+        assert cost_profile_for("TCS", "INTRADAY_ORB").name == "intraday"
 
     def test_crypto_has_no_nse_cost_profile(self):
         assert cost_profile_for("BTC/USDT", "SWING") is None

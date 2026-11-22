@@ -51,8 +51,10 @@ def calculate_swing_sl_tp(
     direction: str = "LONG",
     sl_multiplier: float | None = None,
     tp_multiplier: float | None = None,
+    resistance_level: float | None = None,
+    support_level: float | None = None,
 ) -> dict[str, float]:
-    """Return canonical ATR-based stop/target for swing setups."""
+    """Return canonical ATR-based stop/target for swing setups with noise floor and wall capping."""
     entry_val = _to_float(entry)
     atr_val = _to_float(atr)
     if entry_val <= 0 or atr_val <= 0:
@@ -67,8 +69,9 @@ def calculate_swing_sl_tp(
 
     sl_mult = _to_float(sl_multiplier, _to_float(getattr(settings, "SWING_ATR_SL_MULTIPLIER", 2.0), 2.0))
     tp_mult = _to_float(tp_multiplier, _to_float(getattr(settings, "SWING_ATR_TARGET_MULTIPLIER", 3.0), 3.0))
-    sl_mult = max(sl_mult, 0.1)
-    tp_mult = max(tp_mult, 0.1)
+    # Enforce noise floor: stop loss distance must clear daily noise floor (>= 1.20x ATR)
+    sl_mult = max(sl_mult, 1.20)
+    tp_mult = max(tp_mult, 1.50)
 
     direction_norm = _normalize_direction(direction)
     sl_distance = atr_val * sl_mult
@@ -77,9 +80,19 @@ def calculate_swing_sl_tp(
     if direction_norm == "LONG":
         stop = entry_val - sl_distance
         target = entry_val + tp_distance
+        res = _to_float(resistance_level, 0.0)
+        if res > entry_val and target > res:
+            if (res - entry_val) >= (1.25 * sl_distance):
+                target = res
+                tp_distance = target - entry_val
     else:
         stop = entry_val + sl_distance
         target = entry_val - tp_distance
+        sup = _to_float(support_level, 0.0)
+        if 0 < sup < entry_val and target < sup:
+            if (entry_val - sup) >= (1.25 * sl_distance):
+                target = sup
+                tp_distance = entry_val - target
 
     risk_reward = tp_distance / max(sl_distance, 1e-9)
     return {
