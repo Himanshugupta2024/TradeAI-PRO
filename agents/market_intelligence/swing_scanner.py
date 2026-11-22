@@ -117,6 +117,11 @@ class SwingSetup:
     confidence_disclaimer: str = (
         "Setup Strength reflects technical pattern confluence (0-100), not a probability of profit. Risk management and SL discipline are mandatory."
     )
+    # ── Official NSE Bhavcopy Delivery Fields ─────────────────────────────────
+    delivery_pct: float = 0.0
+    delivery_qty: float = 0.0
+    institutional_accumulation: bool = False
+    delivery_tag: str = ""
 
     def __post_init__(self):
         st = int(getattr(self, "strength", 50) or 50)
@@ -1411,6 +1416,40 @@ def scan_swing_setups(
     filtered = dedupe_swing_setups_one_per_symbol(filtered)
     if stages_out is not None:
         stages_out["after_dedupe_count"] = len(filtered)
+
+    # ── Official NSE Bhavcopy Delivery % & Institutional Accumulation Scoring ─
+    bhav_quote = None
+    if df is not None and not df.empty and "delivery_pct" in df.columns:
+        last_row = df.iloc[-1]
+        bhav_quote = {
+            "delivery_pct": float(last_row.get("delivery_pct", 0.0) or 0.0),
+            "delivery_qty": float(last_row.get("delivery_qty", 0.0) or 0.0),
+        }
+    elif symbol:
+        try:
+            from agents.data_ingestion.nse_bhavcopy import get_bhavcopy_symbol_quote
+            bhav_quote = get_bhavcopy_symbol_quote(symbol)
+        except Exception:
+            bhav_quote = None
+
+    if bhav_quote:
+        d_pct = float(bhav_quote.get("delivery_pct") or 0.0)
+        d_qty = float(bhav_quote.get("delivery_qty") or 0.0)
+        for setup in filtered:
+            setup.delivery_pct = round(d_pct, 2)
+            setup.delivery_qty = round(d_qty, 2)
+            if d_pct >= 50.0:
+                setup.institutional_accumulation = True
+                setup.delivery_tag = f"INSTITUTIONAL ACCUMULATION ({d_pct:.1f}% Delivery)"
+                if setup.direction == "LONG":
+                    setup.strength = min(100, setup.strength + 10)
+                    if not setup.confluence_patterns:
+                        setup.confluence_patterns = "High Delivery Accumulation"
+                    else:
+                        setup.confluence_patterns += "; High Delivery Accumulation"
+            elif 0.0 < d_pct < 25.0 and any(p in setup.pattern for p in ["Breakout", "52W", "Cross"]):
+                setup.delivery_tag = f"SPECULATIVE VOLUME ({d_pct:.1f}% Delivery)"
+                setup.strength = max(30, setup.strength - 5)
 
     for setup in filtered:
         setup.score = float(setup.strength)

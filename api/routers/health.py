@@ -44,7 +44,17 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pat
 router = APIRouter(tags=["health"])
 
 import asyncio
+import subprocess
 from db.connection import check_db_connectivity
+
+def _get_build_sha() -> str:
+    commit = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT")
+    if commit:
+        return commit[:8]
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, timeout=1).strip()
+    except Exception:
+        return "dev"
 
 async def _check_db_connectivity_with_retry() -> bool:
     """Fast non-blocking DB probe so health endpoints respond within sub-second bounds."""
@@ -235,7 +245,7 @@ async def health_check(response: Response = None):
         ),
         "uptime_seconds": uptime_sec,
         "memory_rss_mb": memory_rss_mb,
-        "build_sha": os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT") or "dev",
+        "build_sha": _get_build_sha(),
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
     _HEALTH_RESPONSE_CACHE = res_payload

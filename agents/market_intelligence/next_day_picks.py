@@ -562,9 +562,9 @@ def analyze_candidate(
     # 4. Construct Planned Trade Setup with Volatility-Scaled Reachability Gate
     # Horizon is multi-session positional swing (3-4 sessions).
     horizon_sessions = 3
-    volatility_envelope = round(atr * math.sqrt(horizon_sessions), 2)  # ~1.73x ATR
+    volatility_envelope = round(atr * 2.2, 2)  # Multi-session swing reachability envelope
     max_reach_reward = volatility_envelope
-    min_stop_distance = round(1.25 * atr, 2)  # Never inside daily noise band (< 1.25x ATR)
+    min_stop_distance = round(1.30 * atr, 2)  # Strictly >= 1.30x ATR to clear daily noise floor
     h20 = metrics.get("high_20d", 0.0)
     l20 = metrics.get("low_20d", 0.0)
 
@@ -574,9 +574,9 @@ def analyze_candidate(
         trigger_price = round(max(last_h * 1.001, r1 if (r1 > last_h and r1 <= last_h * 1.008) else last_h * 1.001), 2)
         trigger_zone = f"₹{round(trigger_price, 2)} – ₹{round(trigger_price + 0.25 * atr, 2)}"
 
-        # Structural stop: place below pivot or swing floor with noise-clearing >= 1.25x ATR buffer
+        # Structural stop: place below pivot or swing floor with noise-clearing >= 1.30x ATR buffer
         raw_risk = max(min_stop_distance, trigger_price - metrics["pivot"])
-        risk = round(max(min_stop_distance, min(2.0 * atr, raw_risk)), 2)
+        risk = round(max(min_stop_distance, min(2.2 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price - risk, 2)
 
         # Candidate structural resistance targets >= 1.25x risk
@@ -585,14 +585,10 @@ def analyze_candidate(
             raw_target = min(candidate_targets)  # nearest valid structural target
             target_1 = round(min(raw_target, trigger_price + max_reach_reward), 2)
         else:
-            target_1 = round(trigger_price + min(max_reach_reward, max(1.3 * risk, 1.5 * atr)), 2)
+            target_1 = round(trigger_price + min(max_reach_reward, max(1.5 * risk, 1.8 * atr)), 2)
 
         reward = round(target_1 - trigger_price, 2)
         rr_ratio = round(reward / risk, 2)
-
-        # Minimum Risk:Reward Gate: If capped target does not deliver >= 1.25x R:R with wide stop, reject
-        if rr_ratio < 1.25:
-            return None
 
         target_2 = round(r2 if r2 > target_1 else target_1 + (0.8 * atr), 2)
         invalidation = f"Avoid if gap down opens below ₹{stop_loss} (risk buffer breached) or NIFTY plunges >0.5% at 09:15 open."
@@ -603,7 +599,7 @@ def analyze_candidate(
         trigger_zone = f"₹{round(trigger_price - 0.25 * atr, 2)} – ₹{round(trigger_price, 2)}"
 
         raw_risk = max(min_stop_distance, metrics["pivot"] - trigger_price)
-        risk = round(max(min_stop_distance, min(2.0 * atr, raw_risk)), 2)
+        risk = round(max(min_stop_distance, min(2.2 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price + risk, 2)
 
         candidate_targets = [t for t in [l20, s1, s2] if t > 0 and t < trigger_price and (trigger_price - t) >= (1.25 * risk)]
@@ -611,13 +607,10 @@ def analyze_candidate(
             raw_target = max(candidate_targets)
             target_1 = round(max(raw_target, trigger_price - max_reach_reward), 2)
         else:
-            target_1 = round(trigger_price - min(max_reach_reward, max(1.3 * risk, 1.5 * atr)), 2)
+            target_1 = round(trigger_price - min(max_reach_reward, max(1.5 * risk, 1.8 * atr)), 2)
 
         reward = round(trigger_price - target_1, 2)
         rr_ratio = round(reward / risk, 2)
-
-        if rr_ratio < 1.25:
-            return None
 
         target_2 = round(s2 if s2 < target_1 else target_1 - (0.8 * atr), 2)
         invalidation = f"Avoid if gap up opens above ₹{stop_loss} (risk buffer breached) or strong morning sector surge."
@@ -625,6 +618,24 @@ def analyze_candidate(
     # Minimum Risk:Reward Gate Enforcement
     if rr_ratio < 1.25:
         return None
+
+    # Cost-Aware Accounting: 0.25% delivery/statutory round-trip friction
+    delivery_cost_pct = 0.25
+    cost_rupees = round(trigger_price * (delivery_cost_pct / 100.0), 2)
+    cost_r_ratio = round(cost_rupees / max(risk, 0.01), 3)
+    net_reward = max(0.0, reward - cost_rupees)
+    net_rr_ratio = round(net_reward / max(risk, 0.01), 2)
+
+    # Net Expectancy Gate: Must deliver >= 1.10x R:R net of all friction
+    if net_rr_ratio < 1.10:
+        return None
+
+    # Standard Position Sizing: qty = rupee_risk / stop_distance
+    standard_rupee_risk = 5000.0
+    suggested_qty = max(1, int(standard_rupee_risk / max(risk, 0.01)))
+    position_notional = round(suggested_qty * trigger_price, 2)
+    total_rupee_risk = round(suggested_qty * risk, 2)
+    trade_segment = "F&O (Stock Futures / PE Options)" if bias == "SHORT" else "EQUITY_CASH (CNC) / F&O"
 
     # 5. Scenarios (Dynamic and Stock-Specific)
     gain_pct = round(abs((target_1 - trigger_price) / trigger_price) * 100, 1)
@@ -707,14 +718,27 @@ def analyze_candidate(
         },
         "trade_plan": {
             "direction": bias,
+            "segment": trade_segment,
             "trigger_price": trigger_price,
             "trigger_zone": trigger_zone,
             "stop_loss": stop_loss,
+            "stop_atr_multiple": round(risk / max(atr, 0.01), 2),
             "target_1": target_1,
             "target_2": target_2,
             "risk_reward": rr_ratio,
+            "net_risk_reward": net_rr_ratio,
+            "roundtrip_cost_est_pct": delivery_cost_pct,
+            "cost_rupees": cost_rupees,
+            "cost_in_r": cost_r_ratio,
+            "position_sizing": {
+                "standard_rupee_risk": standard_rupee_risk,
+                "suggested_quantity": suggested_qty,
+                "total_risk_rupees": total_rupee_risk,
+                "notional_position_rupees": position_notional,
+                "sizing_formula": "qty = rupee_risk / stop_distance",
+            },
             "horizon": "Next eligible regular session (Open-to-Close 15:30 IST)",
-            "planned_condition_note": "Planned conditions for research analysis. Not a live execution order.",
+            "planned_condition_note": "Short setups require F&O (Futures/PE) — Indian cash markets disallow overnight shorting. Planned for research only.",
         },
         "model_participation": {
             "participating_models": ["RuleConfluenceEngine", "TechnicalCatalystBlender"],

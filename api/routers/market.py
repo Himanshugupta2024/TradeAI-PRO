@@ -1060,6 +1060,8 @@ async def get_watchlist_quotes(
                 }),
                 "rationale": sig.get("rationale", f"Signal {signal_val} from authoritative engine"),
                 "levels_source": levels_source,
+                "delivery_pct": sig.get("delivery_pct"),
+                "delivery_qty": sig.get("delivery_qty"),
                 "source": sig.get("source", "authoritative_engine"),
                 "as_of": sig.get("as_of", datetime.now(timezone.utc).isoformat()),
                 "data_delay_minutes": sig.get("data_delay_minutes", 15),

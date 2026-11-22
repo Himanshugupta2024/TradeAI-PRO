@@ -526,6 +526,30 @@ async def _hydrate_signals_cache_from_db() -> bool:
                         s["signal_status"] = "EXPIRED_PREVIOUS_SESSION"
                         s["stale"] = True
 
+            # Calibrate closing prices and delivery metrics from official NSE Bhavcopy
+            try:
+                from agents.data_ingestion.nse_bhavcopy import get_latest_nse_bhavcopy
+                bhav_df, _ = await asyncio.to_thread(get_latest_nse_bhavcopy)
+                if bhav_df is not None and not bhav_df.empty:
+                    for s in _persisted_signals_snapshot:
+                        if isinstance(s, dict):
+                            sym = str(s.get("symbol", "")).upper().replace(".NS", "")
+                            if sym in bhav_df.index:
+                                b_row = bhav_df.loc[sym]
+                                if hasattr(b_row, "iloc"):
+                                    b_row = b_row.iloc[0] if len(b_row.shape) > 1 else b_row
+                                official_close = float(b_row.get("close") or 0.0)
+                                if official_close > 0:
+                                    s["close"] = official_close
+                                    s["ltp"] = official_close
+                                    s["delivery_pct"] = float(b_row.get("delivery_pct") or 0.0)
+                                    s["delivery_qty"] = float(b_row.get("delivery_qty") or 0.0)
+                                    s["source"] = "NSE_BHAVCOPY_EOD"
+                                    s["data_delay_minutes"] = 0
+                    logger.info("Calibrated signals snapshot with official NSE Bhavcopy settlement")
+            except Exception as exc:
+                logger.debug("NSE Bhavcopy calibration deferred: %s", exc)
+
             logger.info("Hydrated %d signals from DB snapshot on startup", len(_persisted_signals_snapshot))
             return True
     except Exception as e:
@@ -947,9 +971,9 @@ def _get_feed_status() -> dict[str, object]:
         "last_bar_at": bar_dt.isoformat() if bar_dt else None,
         "bar_age_seconds": round(bar_age_seconds, 1) if bar_age_seconds is not None else None,
         "bar_date_label": bar_dt.astimezone(_IST).strftime("%d %b %H:%M") if bar_dt else None,
-        "source": "SHOONYA_LIVE" if os.environ.get("FEED_SERVICE_URL") else source,
-        "mode": "Real-Time Direct Feed (Shoonya Live)" if os.environ.get("FEED_SERVICE_URL") else "15m Delayed Public Feed (NSE / Yahoo)",
-        "data_delay_minutes": 0 if os.environ.get("FEED_SERVICE_URL") else 15,
+        "source": "SHOONYA_LIVE" if (is_mkt_open and os.environ.get("FEED_SERVICE_URL")) else ("NSE_BHAVCOPY_EOD" if not is_mkt_open else source),
+        "mode": "Real-Time Direct Feed (Shoonya Live)" if (is_mkt_open and os.environ.get("FEED_SERVICE_URL")) else ("Official EOD Settlement (NSE Bhavcopy)" if not is_mkt_open else "15m Delayed Public Feed (NSE / Yahoo)"),
+        "data_delay_minutes": 0 if (os.environ.get("FEED_SERVICE_URL") or not is_mkt_open) else 15,
         "is_market_open": is_mkt_open,
     }
 
