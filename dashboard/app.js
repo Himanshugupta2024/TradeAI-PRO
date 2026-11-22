@@ -26749,7 +26749,7 @@ function renderNextDayPickCard(pick, index) {
             ? (Math.abs(targetPrice - entryPrice) / Math.abs(entryPrice - stopLoss))
             : null
     )) : null;
-    const rrRatio = (rawRR != null && Number.isFinite(Number(rawRR))) ? `${Number(rawRR).toFixed(1)}x R:R` : '— R:R';
+    const rrRatio = (rawRR != null && Number.isFinite(Number(rawRR))) ? `${Number(rawRR).toFixed(2)}x R:R` : '— R:R';
 
     const riskPct = (hasValidLevels && entryPrice > 0) ? `${((Math.abs(entryPrice - stopLoss) / entryPrice) * 100).toFixed(1)}%` : '—';
     const rewardPct = (hasValidLevels && entryPrice > 0) ? `${((Math.abs(targetPrice - entryPrice) / entryPrice) * 100).toFixed(1)}%` : '—';
@@ -26828,7 +26828,21 @@ function renderNextDayPickCard(pick, index) {
         <!-- Footer: Technical & Status -->
         <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 0.6rem; font-size: 0.72rem; color: var(--text-muted);">
             <div>RSI: <strong>${rsiDisplay}</strong> · Confluence: <strong>${escapeHtml(pick.eligibility || '— (unverified)')}</strong></div>
-            <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; padding: 2px 6px; border-radius: 4px;">STATUS: ${escapeHtml(pick.outcome_status || pick.status || 'PENDING')}</span>
+            <span class="badge" style="background: ${
+                String(pick.outcome_status || pick.status || '').toUpperCase() === 'RESOLVED_WIN' ? 'rgba(16, 185, 129, 0.2)' :
+                String(pick.outcome_status || pick.status || '').toUpperCase() === 'RESOLVED_LOSS' ? 'rgba(239, 68, 68, 0.2)' :
+                String(pick.outcome_status || pick.status || '').toUpperCase() === 'INVALIDATED' ? 'rgba(239, 68, 68, 0.15)' :
+                String(pick.outcome_status || pick.status || '').toUpperCase() === 'NOT_TRIGGERED' ? 'rgba(148, 163, 184, 0.15)' :
+                String(pick.outcome_status || pick.status || '').toUpperCase() === 'EXPIRED_AT_CLOSE' ? 'rgba(245, 158, 11, 0.15)' :
+                'rgba(16, 185, 129, 0.15)'
+            }; color: ${
+                String(pick.outcome_status || pick.status || '').toUpperCase() === 'RESOLVED_WIN' ? '#10b981' :
+                String(pick.outcome_status || pick.status || '').toUpperCase() === 'RESOLVED_LOSS' ? '#ef4444' :
+                String(pick.outcome_status || pick.status || '').toUpperCase() === 'INVALIDATED' ? '#ef4444' :
+                String(pick.outcome_status || pick.status || '').toUpperCase() === 'NOT_TRIGGERED' ? '#94a3b8' :
+                String(pick.outcome_status || pick.status || '').toUpperCase() === 'EXPIRED_AT_CLOSE' ? '#f59e0b' :
+                '#10b981'
+            }; padding: 2px 6px; border-radius: 4px; font-weight: 600;">STATUS: ${escapeHtml(pick.outcome_status || pick.status || 'PENDING')}</span>
         </div>
     </div>`;
 }
