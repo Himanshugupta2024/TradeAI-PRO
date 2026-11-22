@@ -596,3 +596,34 @@ class TradeOutcome(Base):
             f"{self.result} pnl={self.pnl_pct}%>"
         )
 
+
+# ── Health & Telemetry Probes (Phase 1 Observability) ──────────────────────
+class HealthProbeRecord(Base):
+    """
+    Automated health & telemetry probe log.
+    Records periodic snapshots from cron or edge workers to track uptime,
+    memory RSS, latency, and data freshness across deployments without extra cost.
+    """
+    __tablename__ = "health_probes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    box = Column(String(32), nullable=False, default="box_a", index=True)  # box_a, box_b, edge
+    status = Column(String(32), nullable=False)                            # HEALTHY, DEGRADED, CRITICAL, ALIVE
+    latency_ms = Column(Float, nullable=True)
+    memory_rss_mb = Column(Float, nullable=True)
+    uptime_seconds = Column(Float, nullable=True)
+    feed_lag_seconds = Column(Float, nullable=True)
+    sidecar_active = Column(Integer, nullable=True, default=0)             # 1 or 0
+    build_sha = Column(String(16), nullable=True)
+    config_hash = Column(String(16), nullable=True)
+    details_json = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_health_probes_box_time", "box", "timestamp"),
+    )
+
+    def __repr__(self):
+        return f"<HealthProbeRecord box={self.box} status={self.status} rss={self.memory_rss_mb}MB>"
+
+

@@ -1074,6 +1074,7 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = ne
   // cron hammering it burns the free instance's CPU budget for no benefit.
   const healthUrl = `${BACKEND_ORIGIN}/api/health/live`;
   try {
+    const t0 = Date.now();
     const res = await fetchFn(healthUrl, {
       method: "GET",
       headers: {
@@ -1081,6 +1082,32 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = ne
         "Accept": "application/json",
       },
     });
+    const edgeLatencyMs = Date.now() - t0;
+
+    // Record automated health & latency probe telemetry into DB (Phase 1 zero-cost telemetry)
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(
+        fetchFn(`${BACKEND_ORIGIN}/api/telemetry/probe`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "TradeAI-Cloudflare-Cron-Telemetry/1.0",
+            ...(env && env.CRON_SECRET ? { "X-Cron-Secret": env.CRON_SECRET } : {}),
+          },
+          body: JSON.stringify({
+            box: "edge",
+            status: res && res.ok ? "HEALTHY" : "DEGRADED",
+            latency_ms: edgeLatencyMs,
+            details: {
+              cron_trigger: Boolean(event && event.cron),
+              http_status: res ? res.status : 0,
+            },
+          }),
+        }).catch((e) => {
+          console.warn("[cron] Edge probe telemetry non-fatal:", e);
+        })
+      );
+    }
 
     // Keep-warm ping for Box B (ML Sidecar) if configured in worker environment
     if (env && env.ML_BACKEND_ORIGIN) {

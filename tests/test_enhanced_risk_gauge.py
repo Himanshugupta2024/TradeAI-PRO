@@ -56,7 +56,7 @@ def test_risk_gauge_dual_vix_and_breadth_scoring(monkeypatch):
         btc_trend="RISING",  # +100
         nifty_trend="RISING",  # +100
         usdjpy_level=155.0,
-        usdjpy_trend="FALLING",  # +100 (inverted)
+        usdjpy_trend="RISING",  # +100 (weak yen / carry on = risk-on)
         gold_trend="FALLING",  # +100 (inverted)
         risk_regime="RISK_ON",
         timestamp=now,
@@ -75,7 +75,7 @@ def test_risk_gauge_dual_vix_and_breadth_scoring(monkeypatch):
         btc_trend="FALLING",  # -100
         nifty_trend="FALLING",  # -100
         usdjpy_level=162.0,
-        usdjpy_trend="RISING",  # -100 (inverted)
+        usdjpy_trend="FALLING",  # -100 (yen surge / carry unwind = risk-off)
         gold_trend="RISING",  # -100 (inverted)
         risk_regime="RISK_OFF",
         timestamp=now,
@@ -86,6 +86,55 @@ def test_risk_gauge_dual_vix_and_breadth_scoring(monkeypatch):
     monkeypatch.setattr(gauge, "fetch_risk_indicators", lambda: bearish_indicators)
     score_bearish = gauge.get_risk_score()
     assert score_bearish == -100.0
+
+
+def test_risk_gauge_vetoes_and_liquidation_conditioning(monkeypatch):
+    """Verify market shock trips vetoes, conditions gold to liquidation (-40), and forces STAND_DOWN."""
+    gauge = RiskGauge()
+    now = datetime.now(timezone.utc)
+
+    # Exact tape readings from user screenshot:
+    # VIX=35.89 (-100), VIX_CHANGE=105.2%, INDIA_VIX=17.32 (+4), AD=0.25 (-100),
+    # BTC=FALLING (-100), NIFTY=FLAT (0), USDJPY=FLAT (0), GOLD=FALLING (liquidation -> -40)
+    tape_indicators = RiskIndicators(
+        vix=35.89,
+        vix_change_pct=105.20,
+        btc_trend="FALLING",
+        nifty_trend="FLAT",
+        usdjpy_level=158.56,
+        usdjpy_trend="FLAT",
+        gold_trend="FALLING",
+        risk_regime="RISK_OFF",  # Will be evaluated by safety gates
+        timestamp=now,
+        india_vix=17.32,
+        ad_ratio=0.25,
+        above_ema20_pct=60.0,
+    )
+
+    monkeypatch.setattr(gauge, "fetch_risk_indicators", lambda: tape_indicators)
+    score = gauge.get_risk_score()
+
+    # NSE weighted model: -3.6 (IV) - 18.0 (shock) - 18.0 (AD) + 4.0 (EMA) - 10.0 (VIX) - 5.0 (BTC) - 0.8 (Gold) = -51.4
+    assert score == -51.4
+
+    # Evaluate safety gates
+    regime, vetoes, posture, integrity = gauge._evaluate_safety_gates(
+        vix=tape_indicators.vix,
+        vix_change=tape_indicators.vix_change_pct,
+        btc_trend=tape_indicators.btc_trend,
+        nifty_trend=tape_indicators.nifty_trend,
+        usdjpy_trend=tape_indicators.usdjpy_trend,
+        gold_trend=tape_indicators.gold_trend,
+        india_vix=tape_indicators.india_vix,
+        ad_ratio=tape_indicators.ad_ratio,
+    )
+
+    assert regime == "RISK_OFF"
+    assert posture == "STAND_DOWN"
+    assert "VOL_SHOCK" in vetoes
+    assert "BREADTH_FLOOR" in vetoes
+    assert "US_VIX_STRESS" in vetoes
+    assert integrity == "UNCONFIRMED_VOL_SPIKE"
 
 
 def test_regime_adjusted_risk_pct():

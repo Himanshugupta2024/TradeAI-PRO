@@ -16,7 +16,7 @@ Implements 1-hour cache with fallback to stale data.
 
 import json
 import logging
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, Literal
@@ -53,6 +53,10 @@ class RiskIndicators:
     ad_ratio: Optional[float] = None
     above_ema20_pct: Optional[float] = None
     breadth_regime: Optional[str] = None
+    # Risk Guardrail Vetoes & Posture
+    posture: str = "OPEN"                  # "OPEN" | "SELECTIVE" | "STAND_DOWN"
+    vetoes: list[str] = field(default_factory=list)
+    data_integrity: str = "CONFIRMED"     # "CONFIRMED" | "UNCONFIRMED_VOL_SPIKE"
 
     def to_dict(self) -> dict:
         """Convert to dict for JSON serialization"""
@@ -86,6 +90,19 @@ class RiskGauge:
     # Minimum indicators required
     MIN_INDICATORS = 3          # Need at least 3 of indicators
 
+    # Indicator Weights for Indian Market Desk (Sum = 100)
+    WEIGHTS = {
+        "india_vix": 22.0,
+        "vix_shock": 18.0,
+        "ad_ratio": 18.0,
+        "above_ema20": 12.0,
+        "us_vix": 10.0,
+        "nifty_trend": 10.0,
+        "btc_trend": 5.0,
+        "usdjpy_trend": 3.0,
+        "gold_trend": 2.0,
+    }
+
     def __init__(
         self,
         cache_file: str = EDGE_RISK_CACHE_FILE,
@@ -104,125 +121,222 @@ class RiskGauge:
         self.cache_ttl_seconds = cache_ttl_seconds
         self.fallback_enabled = fallback_enabled
 
-    def get_risk_score(self) -> float:
+    def calculate_component_scores(self, indicators: RiskIndicators) -> dict[str, dict]:
         """
-        Calculate risk environment score.
-
-        Scoring logic:
-        - VIX < 15, BTC rising, Nifty rising, USD/JPY falling, Gold falling = +100 (RISK_ON)
-        - VIX > 30, BTC falling, Nifty falling, USD/JPY rising, Gold rising = -100 (RISK_OFF)
-        - Mixed signals = 0 (NEUTRAL)
-
-        Risk-On: Investors buying risky assets (stocks, crypto, EM currencies)
-        Risk-Off: Investors fleeing to safe havens (USD, JPY, Gold, bonds)
-
-        Returns:
-            Risk score from -100 (risk-off) to +100 (risk-on)
+        Calculate individual component scores using graded severity curves.
+        Returns dict: {component_key: {'score': float, 'weight': float, 'value': any}}
         """
-        indicators = self.fetch_risk_indicators()
+        components: dict[str, dict] = {}
 
-        # Count available indicators
-        available = sum([
-            indicators.vix is not None,
-            getattr(indicators, "india_vix", None) is not None,
-            getattr(indicators, "ad_ratio", None) is not None,
-            indicators.btc_trend is not None,
-            indicators.nifty_trend is not None,
-            indicators.usdjpy_trend is not None,
-            indicators.gold_trend is not None,
-        ])
-
-        if available < self.MIN_INDICATORS:
-            logger.warning(
-                f"Insufficient risk indicators: {available}/{self.MIN_INDICATORS} available"
-            )
-            return 0.0
-
-        # Calculate individual indicator scores
-        scores = []
-
-        # US VIX score
-        if indicators.vix is not None:
-            if indicators.vix < self.VIX_LOW_THRESHOLD:
-                vix_score = 100.0  # Low volatility = risk-on
-            elif indicators.vix > self.VIX_HIGH_THRESHOLD:
-                vix_score = -100.0  # High volatility = risk-off
-            else:
-                # Linear interpolation between thresholds
-                # VIX 15-30 maps to +100 to -100
-                vix_score = 100.0 - (
-                    (indicators.vix - self.VIX_LOW_THRESHOLD) /
-                    (self.VIX_HIGH_THRESHOLD - self.VIX_LOW_THRESHOLD) * 200.0
-                )
-            scores.append(vix_score)
-            logger.debug(f"US VIX score: {vix_score:.1f} (VIX={indicators.vix:.2f})")
-
-        # India VIX score (Local NSE Volatility fear metric)
+        # 1. India VIX (Local NSE Volatility - 22% weight)
         if getattr(indicators, "india_vix", None) is not None:
             iv = indicators.india_vix
-            if iv < self.INDIA_VIX_LOW_THRESHOLD:
-                india_vix_score = 100.0
-            elif iv > self.INDIA_VIX_HIGH_THRESHOLD:
-                india_vix_score = -100.0
+            if iv <= 13.0:
+                s = 100.0
+            elif iv >= 24.0:
+                s = -100.0
+            elif iv <= 16.0:
+                s = ((16.0 - iv) / 3.0) * 100.0
             else:
-                india_vix_score = 100.0 - (
-                    (iv - self.INDIA_VIX_LOW_THRESHOLD) /
-                    (self.INDIA_VIX_HIGH_THRESHOLD - self.INDIA_VIX_LOW_THRESHOLD) * 200.0
-                )
-            scores.append(india_vix_score)
-            logger.debug(f"India VIX score: {india_vix_score:.1f} (VIX={iv:.2f})")
+                s = -((iv - 16.0) / 8.0) * 100.0
+            components["india_vix"] = {
+                "score": max(-100.0, min(100.0, s)),
+                "weight": self.WEIGHTS["india_vix"],
+                "value": iv,
+                "label": "INDIA_VIX",
+            }
 
-        # Market Breadth score (Advance/Decline Ratio across Nifty 50 constituents)
+        # 2. VIX Volatility Shock (7-Day Rolling Move - 18% weight)
+        if indicators.vix_change_pct is not None:
+            vcp = indicators.vix_change_pct
+            if vcp >= 15.0:
+                s = -100.0
+            elif vcp <= -10.0:
+                s = 100.0
+            elif vcp > 0.0:
+                s = -(vcp / 15.0) * 100.0
+            elif vcp < 0.0:
+                s = (abs(vcp) / 10.0) * 100.0
+            else:
+                s = 0.0
+            components["vix_shock"] = {
+                "score": max(-100.0, min(100.0, s)),
+                "weight": self.WEIGHTS["vix_shock"],
+                "value": vcp,
+                "label": "VIX_CHANGE_PCT (7D)",
+            }
+
+        # 3. Market Breadth AD Ratio (18% weight)
         if getattr(indicators, "ad_ratio", None) is not None:
             ad = indicators.ad_ratio
             if ad >= 2.0:
-                breadth_score = 100.0
-            elif ad <= 0.5:
-                breadth_score = -100.0
+                s = 100.0
+            elif ad <= 0.4:
+                s = -100.0
+            elif ad >= 1.0:
+                s = (ad - 1.0) * 100.0
             else:
-                breadth_score = ((ad - 0.5) / 1.5) * 200.0 - 100.0
-            scores.append(breadth_score)
-            logger.debug(f"Market Breadth score: {breadth_score:.1f} (AD={ad:.2f})")
+                s = -((1.0 - ad) / 0.6) * 100.0
+            components["ad_ratio"] = {
+                "score": max(-100.0, min(100.0, s)),
+                "weight": self.WEIGHTS["ad_ratio"],
+                "value": ad,
+                "label": "AD_RATIO",
+            }
 
-        # BTC trend score
-        if indicators.btc_trend:
-            btc_score = self._trend_to_score(indicators.btc_trend)
-            scores.append(btc_score)
-            logger.debug(f"BTC score: {btc_score:.1f} (trend={indicators.btc_trend})")
+        # 4. Nifty Stocks Above EMA20 % (12% weight)
+        if getattr(indicators, "above_ema20_pct", None) is not None:
+            ema = indicators.above_ema20_pct
+            diff = ema - 50.0
+            s = (diff / 30.0) * 100.0
+            components["above_ema20"] = {
+                "score": max(-100.0, min(100.0, s)),
+                "weight": self.WEIGHTS["above_ema20"],
+                "value": ema,
+                "label": "ABOVE_EMA20_PCT",
+            }
 
-        # Nifty trend score
+        # 5. Global US VIX (10% weight)
+        if indicators.vix is not None:
+            vix = indicators.vix
+            if vix <= 14.0:
+                s = 100.0
+            elif vix >= 32.0:
+                s = -100.0
+            elif vix <= 18.0:
+                s = ((18.0 - vix) / 4.0) * 100.0
+            else:
+                s = -((vix - 18.0) / 14.0) * 100.0
+            components["us_vix"] = {
+                "score": max(-100.0, min(100.0, s)),
+                "weight": self.WEIGHTS["us_vix"],
+                "value": vix,
+                "label": "VIX",
+            }
+
+        # 6. Nifty Trend (10% weight)
         if indicators.nifty_trend:
-            nifty_score = self._trend_to_score(indicators.nifty_trend)
-            scores.append(nifty_score)
-            logger.debug(f"Nifty score: {nifty_score:.1f} (trend={indicators.nifty_trend})")
+            components["nifty_trend"] = {
+                "score": self._trend_to_score(indicators.nifty_trend),
+                "weight": self.WEIGHTS["nifty_trend"],
+                "value": indicators.nifty_trend,
+                "label": "NIFTY_TREND",
+            }
 
-        # USD/JPY trend score (INVERTED: rising USD/JPY = risk-off)
+        # 7. BTC Trend (5% weight)
+        if indicators.btc_trend:
+            components["btc_trend"] = {
+                "score": self._trend_to_score(indicators.btc_trend),
+                "weight": self.WEIGHTS["btc_trend"],
+                "value": indicators.btc_trend,
+                "label": "BTC_TREND",
+            }
+
+        # 8. USD/JPY Trend (3% weight - rising=carry on / risk-on)
         if indicators.usdjpy_trend:
-            usdjpy_score = -self._trend_to_score(indicators.usdjpy_trend)
-            scores.append(usdjpy_score)
-            logger.debug(f"USD/JPY score: {usdjpy_score:.1f} (trend={indicators.usdjpy_trend})")
+            components["usdjpy_trend"] = {
+                "score": self._trend_to_score(indicators.usdjpy_trend),
+                "weight": self.WEIGHTS["usdjpy_trend"],
+                "value": indicators.usdjpy_trend,
+                "label": "USDJPY_TREND",
+            }
 
-        # Gold trend score (INVERTED: rising Gold = risk-off)
+        # 9. Gold Trend (2% weight - safe haven flight vs liquidation)
         if indicators.gold_trend:
-            gold_score = -self._trend_to_score(indicators.gold_trend)
-            scores.append(gold_score)
-            logger.debug(f"Gold score: {gold_score:.1f} (trend={indicators.gold_trend})")
+            is_liquidation_regime = (
+                (indicators.vix is not None and indicators.vix > self.VIX_HIGH_THRESHOLD)
+                or (indicators.vix_change_pct is not None and abs(indicators.vix_change_pct) > 40.0)
+                or (getattr(indicators, "india_vix", None) is not None and indicators.india_vix > self.INDIA_VIX_HIGH_THRESHOLD)
+            )
+            if is_liquidation_regime and indicators.gold_trend == "FALLING":
+                s = -40.0
+            else:
+                s = -self._trend_to_score(indicators.gold_trend)
+            components["gold_trend"] = {
+                "score": max(-100.0, min(100.0, s)),
+                "weight": self.WEIGHTS["gold_trend"],
+                "value": indicators.gold_trend,
+                "label": "GOLD_TREND",
+            }
 
-        # Calculate average score
-        if not scores:
+        return components
+
+    def get_risk_score(self) -> float:
+        """
+        Calculate risk environment score using weighted graded saturation.
+        Returns:
+            Risk score from -100 (extreme risk-off) to +100 (extreme risk-on)
+        """
+        indicators = self.fetch_risk_indicators()
+        comp_scores = self.calculate_component_scores(indicators)
+
+        if len(comp_scores) < self.MIN_INDICATORS:
+            logger.warning(
+                f"Insufficient risk indicators: {len(comp_scores)}/{self.MIN_INDICATORS} available"
+            )
             return 0.0
 
-        risk_score = sum(scores) / len(scores)
+        total_weighted = sum(c["score"] * c["weight"] for c in comp_scores.values())
+        total_weight = sum(c["weight"] for c in comp_scores.values())
 
-        # Clamp to [-100, +100]
+        if total_weight <= 0.0:
+            return 0.0
+
+        risk_score = total_weighted / total_weight
         risk_score = max(-100.0, min(100.0, risk_score))
 
         logger.info(
-            f"Risk score: {risk_score:.1f} (regime={indicators.risk_regime}, "
-            f"{len(scores)}/{available} indicators)"
+            f"NSE-Weighted Risk score: {risk_score:.1f} (regime={indicators.risk_regime}, "
+            f"posture={indicators.posture}, weight={total_weight:.0f}%)"
         )
-
         return round(risk_score, 1)
+
+    def get_indicators_detail(self, indicators: Optional[RiskIndicators] = None) -> list[dict]:
+        """
+        Return comprehensive metadata breakdown for all 14 indicators.
+        Separates actively scored metrics from context-only telemetry.
+        """
+        ind = indicators or self.fetch_risk_indicators()
+        comp_scores = self.calculate_component_scores(ind)
+
+        details = []
+
+        # Scored components
+        for key in ["india_vix", "vix_shock", "ad_ratio", "above_ema20", "us_vix", "nifty_trend", "btc_trend", "usdjpy_trend", "gold_trend"]:
+            if key in comp_scores:
+                c = comp_scores[key]
+                details.append({
+                    "key": key,
+                    "label": c["label"],
+                    "value": c["value"],
+                    "scored": True,
+                    "weight_pct": int(c["weight"]),
+                    "score": round(c["score"], 1),
+                })
+
+        # Context-only components
+        vix_trend = "FLAT"
+        if ind.vix_change_pct is not None:
+            vix_trend = "RISING" if ind.vix_change_pct > 0 else ("FALLING" if ind.vix_change_pct < 0 else "FLAT")
+
+        context_items = [
+            ("vix_trend", "VIX_TREND", vix_trend),
+            ("india_vix_change_pct", "INDIA_VIX_CHANGE_PCT", getattr(ind, "india_vix_change_pct", None)),
+            ("india_vix_trend", "INDIA_VIX_TREND", getattr(ind, "india_vix_trend", "FLAT")),
+            ("breadth_regime", "BREADTH_REGIME", getattr(ind, "breadth_regime", "NEUTRAL")),
+            ("usdjpy_level", "USDJPY_LEVEL", ind.usdjpy_level),
+        ]
+        for key, label, val in context_items:
+            details.append({
+                "key": key,
+                "label": label,
+                "value": val,
+                "scored": False,
+                "weight_pct": 0,
+                "score": 0.0,
+            })
+
+        return details
 
     def fetch_risk_indicators(self) -> RiskIndicators:
         """
@@ -256,10 +370,16 @@ class RiskGauge:
         usdjpy_level, usdjpy_trend = self._fetch_usdjpy()
         gold_trend = self._fetch_gold_trend()
 
-        # Determine risk regime
-        risk_regime = self._calculate_risk_regime(
-            vix, btc_trend, nifty_trend, usdjpy_trend, gold_trend,
-            india_vix=india_vix, ad_ratio=ad_ratio,
+        # Determine risk regime, vetoes, and posture
+        risk_regime, vetoes, posture, data_integrity = self._evaluate_safety_gates(
+            vix=vix,
+            vix_change=vix_change,
+            btc_trend=btc_trend,
+            nifty_trend=nifty_trend,
+            usdjpy_trend=usdjpy_trend,
+            gold_trend=gold_trend,
+            india_vix=india_vix,
+            ad_ratio=ad_ratio,
         )
 
         indicators = RiskIndicators(
@@ -278,6 +398,9 @@ class RiskGauge:
             ad_ratio=ad_ratio,
             above_ema20_pct=above_ema20,
             breadth_regime=breadth_regime,
+            posture=posture,
+            vetoes=vetoes,
+            data_integrity=data_integrity,
         )
 
         # Save to cache
@@ -666,21 +789,28 @@ class RiskGauge:
             elif nifty_trend == "FALLING":
                 risk_off_signals += 1
 
-        # USD/JPY (inverted)
+        # USD/JPY (Rising = carry trade active / risk-on; Falling = carry unwind / risk-off)
         if usdjpy_trend:
             total_signals += 1
-            if usdjpy_trend == "FALLING":
+            if usdjpy_trend == "RISING":
                 risk_on_signals += 1
-            elif usdjpy_trend == "RISING":
+            elif usdjpy_trend == "FALLING":
                 risk_off_signals += 1
 
-        # Gold (inverted)
+        # Gold: Safe haven flight normally, but forced selling/liquidation in panic
         if gold_trend:
             total_signals += 1
-            if gold_trend == "FALLING":
-                risk_on_signals += 1
-            elif gold_trend == "RISING":
+            is_liquidation = (
+                (vix is not None and vix > self.VIX_HIGH_THRESHOLD)
+                or (india_vix is not None and india_vix > self.INDIA_VIX_HIGH_THRESHOLD)
+            )
+            if is_liquidation and gold_trend == "FALLING":
                 risk_off_signals += 1
+            else:
+                if gold_trend == "FALLING":
+                    risk_on_signals += 1
+                elif gold_trend == "RISING":
+                    risk_off_signals += 1
 
         # Determine regime based on majority
         if total_signals == 0:
@@ -696,6 +826,76 @@ class RiskGauge:
             return "RISK_OFF"
         else:
             return "NEUTRAL"
+
+    def _evaluate_safety_gates(
+        self,
+        vix: Optional[float],
+        vix_change: Optional[float],
+        btc_trend: Optional[str],
+        nifty_trend: Optional[str],
+        usdjpy_trend: Optional[str],
+        gold_trend: Optional[str],
+        india_vix: Optional[float] = None,
+        ad_ratio: Optional[float] = None,
+    ) -> tuple[str, list[str], str, str]:
+        """
+        Evaluate hard asymmetric risk vetoes and determine regime & posture.
+
+        Danger is NOT democratic:
+        - A single catastrophic reading (vol shock, severe breadth collapse, extreme VIX)
+          trips a VETO.
+        - Any active veto forces posture='STAND_DOWN' and regime='RISK_OFF'.
+        - When no vetoes trip, regime follows consensus agreement.
+
+        Returns:
+            (regime, vetoes, posture, data_integrity)
+        """
+        vetoes = []
+        data_integrity = "CONFIRMED"
+
+        # 1. Volatility shock check
+        if vix_change is not None:
+            if abs(vix_change) > 100.0:
+                data_integrity = "UNCONFIRMED_VOL_SPIKE"
+            if abs(vix_change) > 40.0:
+                vetoes.append("VOL_SHOCK")
+
+        # 2. Market breadth floor breakdown
+        if ad_ratio is not None and ad_ratio < 0.35:
+            vetoes.append("BREADTH_FLOOR")
+
+        # 3. Local India VIX stress ceiling
+        if india_vix is not None and india_vix > 21.0:
+            vetoes.append("INDIA_VIX_CEILING")
+
+        # 4. Global US VIX stress ceiling
+        if vix is not None and vix > 32.0:
+            vetoes.append("US_VIX_STRESS")
+
+        # Consensus regime baseline
+        consensus_regime = self._calculate_risk_regime(
+            vix, btc_trend, nifty_trend, usdjpy_trend, gold_trend,
+            india_vix=india_vix, ad_ratio=ad_ratio,
+        )
+
+        if vetoes:
+            regime = "RISK_OFF"
+            posture = "STAND_DOWN"
+        else:
+            regime = consensus_regime
+            if regime == "RISK_OFF":
+                posture = "STAND_DOWN"
+            elif regime == "RISK_ON":
+                posture = "OPEN"
+            else:
+                is_caution = (
+                    (india_vix is not None and india_vix > 18.0)
+                    or (vix is not None and vix > 25.0)
+                    or (ad_ratio is not None and ad_ratio < 0.75)
+                )
+                posture = "SELECTIVE" if is_caution else "OPEN"
+
+        return regime, vetoes, posture, data_integrity
 
     def _load_cache(self) -> Optional[RiskIndicators]:
         """Load risk indicators from cache file"""

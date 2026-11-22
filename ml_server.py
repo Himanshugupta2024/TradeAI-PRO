@@ -10,12 +10,16 @@ import io
 import logging
 import os
 import sys
+import time
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 import pandas as pd
 from fastapi import FastAPI, Header, HTTPException, status
 from pydantic import BaseModel
+
+_ML_START_TIME = time.time()
 
 logger = logging.getLogger("ml_server")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -85,8 +89,12 @@ def health() -> Dict[str, Any]:
     return {
         "status": "ok",
         "service": "ml_sidecar",
+        "build_sha": os.environ.get("RENDER_GIT_COMMIT", "dev")[:8],
+        "boot_time": datetime.fromtimestamp(_ML_START_TIME, tz=timezone.utc).isoformat(),
+        "uptime_seconds": round(time.time() - _ML_START_TIME, 2),
         "memory_rss_mb": rss_mb,
         "models": models_status,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 

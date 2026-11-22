@@ -7410,10 +7410,10 @@
                     </div>
 
                     <div id="riskScoreValue" style="margin-top:0.5rem;font-family:var(--font-mono);font-size:1.5rem;font-weight:700;">
-
                         --
-
                     </div>
+                    <div id="riskPostureBadge" style="margin-top:0.6rem;padding:0.25rem 0.75rem;border-radius:999px;font-size:0.75rem;font-weight:700;letter-spacing:0.05em;display:none;"></div>
+                    <div id="riskVetoesList" style="margin-top:0.5rem;display:flex;flex-wrap:wrap;gap:0.35rem;justify-content:center;max-width:190px;"></div>
 
                 </div>
 
@@ -7424,15 +7424,34 @@
                 <div class="intel-card">
 
                     <div class="intel-title">Risk Indicators</div>
-
                     <div id="riskComponentsBreakdown">
-
                         <p style="color:var(--text-muted);font-size:0.85rem;">Loading indicators...</p>
-
                     </div>
-
                 </div>
 
+            </div>
+
+            <!-- Operational Guardrails & Execution Posture Table -->
+            <div class="intel-card" style="margin-top:1.5rem;">
+                <div class="intel-title" style="display:flex;align-items:center;justify-content:space-between;">
+                    <span>Operational Guardrails &amp; Execution Posture</span>
+                    <span id="guardrailActiveState" style="font-size:0.75rem;padding:0.2rem 0.6rem;border-radius:4px;font-weight:700;"></span>
+                </div>
+                <div style="overflow-x:auto;margin-top:0.75rem;">
+                    <table style="width:100%;font-size:0.8rem;text-align:left;border-collapse:collapse;">
+                        <thead>
+                            <tr style="border-bottom:1px solid rgba(255,255,255,0.1);color:var(--text-muted);">
+                                <th style="padding:0.6rem 0.5rem;">Guardrail Rule</th>
+                                <th style="padding:0.6rem 0.5rem;">Trigger Condition</th>
+                                <th style="padding:0.6rem 0.5rem;">Status</th>
+                                <th style="padding:0.6rem 0.5rem;">Enforced Engine Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="guardrailRulesTableBody">
+                            <tr><td colspan="4" style="padding:0.75rem 0.5rem;color:var(--text-muted);">Loading guardrails...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
         </section>

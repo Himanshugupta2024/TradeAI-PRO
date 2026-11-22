@@ -616,10 +616,16 @@ async def get_edge_risk_gauge(
             int((datetime.now(timezone.utc) - indicators.timestamp).total_seconds()),
         )
 
+        indicators_detail = gauge.get_indicators_detail(indicators)
+
         return {
             "risk_score": risk_score,
             "regime": regime,
+            "posture": getattr(indicators, "posture", "OPEN"),
+            "vetoes": getattr(indicators, "vetoes", []),
+            "data_integrity": getattr(indicators, "data_integrity", "CONFIRMED"),
             "indicators": indicators_payload,
+            "indicators_detail": indicators_detail,
             "updated_at": updated_at,
             "cache_age_seconds": cache_age_seconds,
             "force_refresh": force_refresh,

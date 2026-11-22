@@ -24069,134 +24069,50 @@ async function loadEdgeRiskGauge() {
 
 
 
-        let color = '#10b981';
-
-
-
-        if (score >= 70) color = '#ef4444';
-
-
-
-        else if (score >= 45) color = '#f59e0b';
-
-
-
-
-
-
+        // Band color calculation (signed: -100 to +100, never green for negative)
+        let color = '#94a3b8'; // Neutral slate (desaturated)
+        if (score <= -60) color = '#ef4444'; // Red (Stress / Vol shock)
+        else if (score <= -25) color = '#f97316'; // Orange (Risk-off)
+        else if (score >= 60) color = '#a3e635'; // Lime (Overheated)
+        else if (score >= 25) color = '#10b981'; // Emerald (Risk-on)
 
         label.textContent = regime.toUpperCase();
-
-
-
         label.style.color = color;
 
-
-
-        scoreVal.textContent = score.toFixed(1);
-
-
-
+        scoreVal.textContent = (score > 0 ? '+' : '') + score.toFixed(1);
         scoreVal.style.color = color;
 
-
-
-
-
-
-
-        if (canvas) {
-
-
-
-            const ctx = canvas.getContext('2d');
-
-
-
-            const w = canvas.width;
-
-
-
-            const h = canvas.height;
-
-
-
-            ctx.clearRect(0, 0, w, h);
-
-
-
-            const cx = w / 2;
-
-
-
-            const cy = h / 2 + 20;
-
-
-
-            const radius = 65;
-
-
-
-            
-
-
-
-            ctx.beginPath();
-
-
-
-            ctx.arc(cx, cy, radius, Math.PI, 2 * Math.PI, false);
-
-
-
-            ctx.lineWidth = 14;
-
-
-
-            ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-
-
-
-            ctx.stroke();
-
-
-
-
-
-
-
-            const pct = Math.min(100, Math.max(0, score)) / 100;
-
-
-
-            const endAngle = Math.PI + pct * Math.PI;
-
-
-
-            ctx.beginPath();
-
-
-
-            ctx.arc(cx, cy, radius, Math.PI, endAngle, false);
-
-
-
-            ctx.lineWidth = 14;
-
-
-
-            ctx.strokeStyle = color;
-
-
-
-            ctx.lineCap = 'round';
-
-
-
-            ctx.stroke();
-
-
-
+        // Posture badge & Vetoes rendering
+        const postureBadge = document.getElementById('riskPostureBadge');
+        if (postureBadge) {
+            const posture = data.posture || (regime === 'RISK_OFF' ? 'STAND_DOWN' : 'OPEN');
+            postureBadge.style.display = 'inline-block';
+            postureBadge.textContent = `POSTURE: ${posture}`;
+            if (posture === 'STAND_DOWN') {
+                postureBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+                postureBadge.style.color = '#ef4444';
+                postureBadge.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+            } else if (posture === 'SELECTIVE') {
+                postureBadge.style.background = 'rgba(249, 115, 22, 0.15)';
+                postureBadge.style.color = '#f97316';
+                postureBadge.style.border = '1px solid rgba(249, 115, 22, 0.4)';
+            } else {
+                postureBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+                postureBadge.style.color = '#10b981';
+                postureBadge.style.border = '1px solid rgba(16, 185, 129, 0.4)';
+            }
+        }
+
+        const vetoesBox = document.getElementById('riskVetoesList');
+        if (vetoesBox) {
+            const vetoes = Array.isArray(data.vetoes) ? data.vetoes : [];
+            if (vetoes.length > 0) {
+                vetoesBox.innerHTML = vetoes.map(v => 
+                    `<span style="font-size:0.68rem;padding:0.18rem 0.45rem;border-radius:4px;background:rgba(239,68,68,0.18);color:#ef4444;border:1px solid rgba(239,68,68,0.35);font-weight:700;">⚠ ${v}</span>`
+                ).join('');
+            } else {
+                vetoesBox.innerHTML = '';
+            }
         }
 
 
@@ -24205,54 +24121,185 @@ async function loadEdgeRiskGauge() {
 
 
 
-        if (compBox && data.indicators) {
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            const cx = w / 2;
+            const cy = h / 2 + 20;
+            const radius = 65;
+
+            // Background arc track
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, Math.PI, 2 * Math.PI, false);
+            ctx.lineWidth = 14;
+            ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+            ctx.stroke();
+
+            // Scale Reference Ticks (-100, -50, 0, +50, +100)
+            const tickVals = [-100, -50, 0, 50, 100];
+            tickVals.forEach(tv => {
+                const angle = Math.PI + ((tv + 100) / 200) * Math.PI;
+                const innerR = radius - 10;
+                const outerR = radius + 10;
+                const tx1 = cx + innerR * Math.cos(angle);
+                const ty1 = cy + innerR * Math.sin(angle);
+                const tx2 = cx + outerR * Math.cos(angle);
+                const ty2 = cy + outerR * Math.sin(angle);
+
+                ctx.beginPath();
+                ctx.moveTo(tx1, ty1);
+                ctx.lineTo(tx2, ty2);
+                ctx.lineWidth = tv === 0 ? 2 : 1;
+                ctx.strokeStyle = tv === 0 ? 'rgba(255,255,255,0.38)' : 'rgba(255,255,255,0.14)';
+                ctx.stroke();
+            });
+
+            // Signed Center-Origin Fill: 0 is at top centre (1.5 * PI)
+            const s = Math.max(-100, Math.min(100, score));
+            const zeroAngle = 1.5 * Math.PI;
+            const scoreAngle = Math.PI + ((s + 100) / 200) * Math.PI;
+
+            if (Math.abs(scoreAngle - zeroAngle) > 0.015) {
+                ctx.beginPath();
+                ctx.arc(
+                    cx, cy, radius,
+                    Math.min(zeroAngle, scoreAngle),
+                    Math.max(zeroAngle, scoreAngle),
+                    false
+                );
+                ctx.lineWidth = 14;
+                ctx.strokeStyle = color;
+                ctx.lineCap = 'round';
+                ctx.stroke();
+            }
+
+            // Current reading pip
+            const dotX = cx + radius * Math.cos(scoreAngle);
+            const dotY = cy + radius * Math.sin(scoreAngle);
+            ctx.beginPath();
+            ctx.arc(dotX, dotY, 4.5, 0, 2 * Math.PI);
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 6;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
 
 
 
-            const inds = Object.entries(data.indicators);
 
 
+
+
+        if (compBox && (data.indicators_detail || data.indicators)) {
+            const details = Array.isArray(data.indicators_detail) && data.indicators_detail.length > 0
+                ? data.indicators_detail
+                : Object.entries(data.indicators || {}).map(([k, v]) => ({
+                    label: k.toUpperCase(),
+                    value: v,
+                    scored: !k.includes('trend') && !k.includes('regime') && !k.includes('level'),
+                    weight_pct: 0,
+                    score: 0.0,
+                }));
 
             compBox.innerHTML = `
-
-
-
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-top:0.5rem;">
-
-
-
-                    ${inds.map(([k, v]) => `
-
-
-
-                        <div style="padding:0.6rem;background:rgba(255,255,255,0.03);border-radius:6px;">
-
-
-
-                            <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">${_escHtml(k)}</div>
-
-
-
-                            <div style="font-size:0.95rem;font-weight:700;font-family:var(--font-mono);margin-top:2px;">${(typeof v === 'number' && Number.isFinite(v)) ? Number(v).toFixed(2) : (v != null && !isNaN(Number(v)) && String(v).trim() !== '' ? Number(v).toFixed(2) : _escHtml(String(v ?? '—')))}</div>
-
-
-
+                    ${details.map(item => `
+                        <div style="padding:0.6rem;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid ${item.scored ? 'rgba(109,94,252,0.18)' : 'rgba(255,255,255,0.04)'};">
+                            <div style="display:flex;align-items:center;justify-content:space-between;gap:0.25rem;">
+                                <span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;letter-spacing:0.02em;">${_escHtml(item.label)}</span>
+                                ${item.scored 
+                                    ? `<span style="font-size:0.60rem;padding:1px 4px;border-radius:3px;background:rgba(109,94,252,0.22);color:#a7b4d8;border:1px solid rgba(109,94,252,0.4);font-weight:700;">WT: ${item.weight_pct}%</span>`
+                                    : `<span style="font-size:0.58rem;padding:1px 4px;border-radius:3px;background:rgba(255,255,255,0.05);color:var(--text-muted);border:1px solid rgba(255,255,255,0.1);font-weight:600;">CONTEXT ONLY</span>`
+                                }
+                            </div>
+                            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:3px;">
+                                <div style="font-size:0.95rem;font-weight:700;font-family:var(--font-mono);">${(typeof item.value === 'number' && Number.isFinite(item.value)) ? Number(item.value).toFixed(2) : (item.value != null && !isNaN(Number(item.value)) && String(item.value).trim() !== '' ? Number(item.value).toFixed(2) : _escHtml(String(item.value ?? '—')))}</div>
+                                ${item.scored && typeof item.score === 'number'
+                                    ? `<div style="font-size:0.72rem;font-family:var(--font-mono);font-weight:600;color:${item.score <= -25 ? '#f97316' : (item.score >= 25 ? '#10b981' : 'var(--text-muted)')};">${item.score > 0 ? '+' : ''}${item.score.toFixed(0)}</div>`
+                                    : ''
+                                }
+                            </div>
                         </div>
-
-
-
                     `).join('')}
-
-
-
                 </div>
-
-
-
             `;
+        }
 
+        // Render Guardrails Table
+        const guardrailTbody = document.getElementById('guardrailRulesTableBody');
+        const guardrailBadge = document.getElementById('guardrailActiveState');
+        if (guardrailTbody) {
+            const posture = data.posture || (regime === 'RISK_OFF' ? 'STAND_DOWN' : 'OPEN');
+            const vetoes = Array.isArray(data.vetoes) ? data.vetoes : [];
+            const dataIntegrity = data.data_integrity || 'CONFIRMED';
+            const inds = data.indicators || {};
 
+            if (guardrailBadge) {
+                guardrailBadge.textContent = posture;
+                if (posture === 'STAND_DOWN') {
+                    guardrailBadge.style.background = 'rgba(239, 68, 68, 0.2)';
+                    guardrailBadge.style.color = '#ef4444';
+                    guardrailBadge.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+                } else if (posture === 'SELECTIVE') {
+                    guardrailBadge.style.background = 'rgba(249, 115, 22, 0.2)';
+                    guardrailBadge.style.color = '#f97316';
+                    guardrailBadge.style.border = '1px solid rgba(249, 115, 22, 0.4)';
+                } else {
+                    guardrailBadge.style.background = 'rgba(16, 185, 129, 0.2)';
+                    guardrailBadge.style.color = '#10b981';
+                    guardrailBadge.style.border = '1px solid rgba(16, 185, 129, 0.4)';
+                }
+            }
 
+            const rules = [
+                {
+                    name: 'Volatility Shock (VOL_SHOCK)',
+                    condition: '|ΔVIX (7D)| > 40%',
+                    active: vetoes.includes('VOL_SHOCK'),
+                    action: 'Freeze new long momentum breakouts; cut trade sizing to 0x.',
+                },
+                {
+                    name: 'Market Breadth Floor (BREADTH_FLOOR)',
+                    condition: 'AD Ratio < 0.35',
+                    active: vetoes.includes('BREADTH_FLOOR'),
+                    action: 'Halt momentum entries; allow only defensive/hedging setups.',
+                },
+                {
+                    name: 'India VIX Stress Ceiling (INDIA_VIX_CEILING)',
+                    condition: 'India VIX > 21.0',
+                    active: vetoes.includes('INDIA_VIX_CEILING'),
+                    action: 'Enforce max 2 simultaneous open positions; tighten trailing ATR by 50%.',
+                },
+                {
+                    name: 'US VIX Global Stress (US_VIX_STRESS)',
+                    condition: 'US VIX > 32.0',
+                    active: vetoes.includes('US_VIX_STRESS'),
+                    action: 'Stand down on high-beta equity/crypto names; hedge directional exposure.',
+                },
+                {
+                    name: 'Data Integrity Corroboration',
+                    condition: 'Single source spike > 100%',
+                    active: dataIntegrity !== 'CONFIRMED',
+                    action: dataIntegrity === 'CONFIRMED' ? 'Data feeds confirmed across sources.' : 'Mark UNCONFIRMED; require secondary quote before autonomous dispatch.',
+                },
+            ];
+
+            guardrailTbody.innerHTML = rules.map(r => `
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.05);background:${r.active ? 'rgba(239,68,68,0.06)' : 'transparent'};">
+                    <td style="padding:0.6rem 0.5rem;font-weight:600;color:${r.active ? '#ef4444' : 'var(--text-color)'};">${_escHtml(r.name)}</td>
+                    <td style="padding:0.6rem 0.5rem;font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted);">${_escHtml(r.condition)}</td>
+                    <td style="padding:0.6rem 0.5rem;">
+                        <span style="font-size:0.68rem;padding:0.15rem 0.45rem;border-radius:3px;font-weight:700;${r.active ? 'background:rgba(239,68,68,0.2);color:#ef4444;border:1px solid rgba(239,68,68,0.4);' : 'background:rgba(16,185,129,0.12);color:#10b981;border:1px solid rgba(16,185,129,0.25);'}">
+                            ${r.active ? 'TRIPPED' : 'CLEAR'}
+                        </span>
+                    </td>
+                    <td style="padding:0.6rem 0.5rem;font-size:0.75rem;color:${r.active ? '#ff8597' : 'var(--text-muted)'};">${_escHtml(r.action)}</td>
+                </tr>
+            `).join('');
         }
 
 
@@ -25712,14 +25759,20 @@ function clearAllSwingBookmarks() {
 
 
 
-function applyAiBadgeState(ai) {
+function applyAiBadgeState(ai, healthData = null) {
     if (!ai) return;
     const badgeHeader = document.getElementById('aiEngineStatusBadge');
     if (badgeHeader) {
         badgeHeader.textContent = ai.badge_short || (ai.lightweight_mode ? '⚡ Lightweight Mode' : (ai.fitted_count === 4 
             ? 'Models: 4/4 Active' 
             : (ai.fitted_count > 0 ? `Hybrid (${ai.fitted_count}/4 Models)` : 'Rule-Based Engine')));
-        badgeHeader.title = ai.badge_text || 'AI Engine Status';
+        let tooltip = ai.badge_text || 'AI Engine Status';
+        const sha = (healthData && healthData.build_sha) || ai.build_sha;
+        const cfg = (healthData && healthData.config_hash) || ai.config_hash;
+        if (sha) {
+            tooltip += ` | Build: ${sha}${cfg ? ' | Config: ' + cfg : ''}`;
+        }
+        badgeHeader.title = tooltip;
         badgeHeader.dataset.hydrated = 'true';
         if (ai.sidecar_active || (!ai.lightweight_mode && ai.fitted_count >= 3)) {
             badgeHeader.style.background = 'rgba(16,185,129,0.15)';
@@ -25787,7 +25840,7 @@ async function updateAiModelHealthBadge() {
 
         const ai = data.ai_engine;
         if (!ai) return;
-        applyAiBadgeState(ai);
+        applyAiBadgeState(ai, data);
         try { localStorage.setItem('tradeai_ai_engine_v2', JSON.stringify(ai)); } catch (_) {}
 
 

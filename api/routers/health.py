@@ -44,6 +44,7 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pat
 router = APIRouter(tags=["health"])
 
 import asyncio
+import hashlib
 import subprocess
 from db.connection import check_db_connectivity
 
@@ -55,6 +56,25 @@ def _get_build_sha() -> str:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, timeout=1).strip()
     except Exception:
         return "dev"
+
+def _get_boot_time() -> str:
+    """Return ISO UTC timestamp of server startup."""
+    start_t = getattr(svc, "_SERVER_START_TIME", None)
+    if start_t:
+        return datetime.fromtimestamp(start_t, tz=timezone.utc).isoformat()
+    return datetime.now(timezone.utc).isoformat()
+
+def _get_config_hash() -> str:
+    """Deterministic 12-char SHA-256 fingerprint of critical risk and deployment settings."""
+    parts = [
+        str(getattr(settings, "LIGHTWEIGHT_API_MODE", False)),
+        str(getattr(settings, "SWING_MAX_SECTOR_CONCENTRATION", 2)),
+        str(getattr(settings, "MAX_PORTFOLIO_HEAT_PCT", 0.03)),
+        str(getattr(settings, "AUTONOMOUS_TRADING_ENABLED", False)),
+        str(getattr(settings, "CIRCUIT_BREAKER_MAX_LOSSES", 3)),
+    ]
+    raw = ":".join(parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 async def _check_db_connectivity_with_retry() -> bool:
     """Fast non-blocking DB probe so health endpoints respond within sub-second bounds."""
@@ -246,6 +266,10 @@ async def health_check(response: Response = None):
         "uptime_seconds": uptime_sec,
         "memory_rss_mb": memory_rss_mb,
         "build_sha": _get_build_sha(),
+        "boot_time": _get_boot_time(),
+        "config_hash": _get_config_hash(),
+        "sidecar_active": bool(ai_engine_info.get("sidecar_active", False) or ai_engine_info.get("sidecar_models", {})),
+        "feed_lag_seconds": feed_status.get("age_seconds") or feed_status.get("bar_age_seconds"),
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
     _HEALTH_RESPONSE_CACHE = res_payload
@@ -521,6 +545,9 @@ async def liveness_check(response: Response = None):
     return {
         "status": "alive",
         "uptime_seconds": round(time.time() - start_t, 2),
+        "build_sha": _get_build_sha(),
+        "boot_time": _get_boot_time(),
+        "config_hash": _get_config_hash(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -572,3 +599,76 @@ async def warmup_check():
         "phase": getattr(svc, "_loading_status", {}).get("phase", "warming_up"),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+from pydantic import BaseModel, Field
+
+class ProbeTelemetryPayload(BaseModel):
+    box: str = Field(default="edge", description="Source identifier: edge, box_a, box_b")
+    status: str = Field(default="HEALTHY", description="Status code: HEALTHY, DEGRADED, CRITICAL, ALIVE")
+    latency_ms: Optional[float] = Field(default=None, description="Round-trip latency in ms")
+    details: Optional[Dict[str, Any]] = Field(default=None, description="Optional diagnostic details")
+
+
+@router.post("/api/telemetry/probe")
+async def record_edge_telemetry_probe(payload: ProbeTelemetryPayload):
+    """
+    Ingest a health/latency probe from Cloudflare Worker cron or monitoring agent.
+    Non-blocking: records into database asynchronously.
+    """
+    from db.health_store import record_health_probe
+    from utils.memory_profiler import get_process_rss_mb
+
+    uptime_sec = round(time.time() - getattr(svc, "_SERVER_START_TIME", time.time()), 1)
+    rss_mb = get_process_rss_mb(collect_gc=False)
+    feed_status = svc._get_feed_status()
+    feed_lag = feed_status.get("age_seconds") or feed_status.get("bar_age_seconds")
+
+    asyncio.create_task(
+        asyncio.to_thread(
+            record_health_probe,
+            box=payload.box,
+            status=payload.status,
+            latency_ms=payload.latency_ms,
+            memory_rss_mb=rss_mb,
+            uptime_seconds=uptime_sec,
+            feed_lag_seconds=feed_lag,
+            sidecar_active=True,
+            build_sha=_get_build_sha(),
+            config_hash=_get_config_hash(),
+            details=payload.details,
+        )
+    )
+
+    return {
+        "recorded": True,
+        "build_sha": _get_build_sha(),
+        "config_hash": _get_config_hash(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/api/telemetry/probes")
+async def get_telemetry_probes_history(
+    box: Optional[str] = None,
+    limit: int = 50,
+    hours: int = 24,
+):
+    """
+    Query recent automated health probe history and 24-hour aggregate summary.
+    Eliminates manual terminal curling by providing instant observability data.
+    """
+    from db.health_store import get_recent_probes, get_health_summary
+
+    clamped_limit = min(max(1, limit), 200)
+    clamped_hours = min(max(1, hours), 168)
+
+    summary = await asyncio.to_thread(get_health_summary, hours=clamped_hours)
+    recent = await asyncio.to_thread(get_recent_probes, box=box, limit=clamped_limit, hours=clamped_hours)
+
+    return {
+        "summary": summary,
+        "probes": recent,
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
+
