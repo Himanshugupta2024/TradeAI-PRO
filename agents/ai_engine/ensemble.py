@@ -415,7 +415,7 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
     except Exception as exc:
         log.debug("[Ensemble] Statistical failed: %s", exc)
 
-    if _is_lightweight_mode():
+    if _is_lightweight_mode() or bool(os.environ.get("ML_SIDECAR_URL", "").strip()):
         # Check if remote ML sidecar (Box B) is configured and reachable
         ml_sidecar_url = os.environ.get("ML_SIDECAR_URL", "").strip()
         if ml_sidecar_url:
@@ -976,7 +976,7 @@ def get_model_status() -> dict:
     from datetime import datetime, timezone
     now_ts = datetime.now(timezone.utc).isoformat()
 
-    if _is_lightweight_mode():
+    if _is_lightweight_mode() or bool(os.environ.get("ML_SIDECAR_URL", "").strip()):
         ml_sidecar_url = os.environ.get("ML_SIDECAR_URL", "").strip()
         if ml_sidecar_url:
             return {
