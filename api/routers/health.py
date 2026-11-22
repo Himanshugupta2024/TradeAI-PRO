@@ -48,24 +48,41 @@ import hashlib
 import subprocess
 from db.connection import check_db_connectivity
 
+_BUILD_SHA_CACHE: str | None = None
+_CONFIG_HASH_CACHE: str | None = None
+_BOOT_TIME_CACHE: str | None = None
+
 def _get_build_sha() -> str:
+    global _BUILD_SHA_CACHE
+    if _BUILD_SHA_CACHE is not None:
+        return _BUILD_SHA_CACHE
     commit = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("GIT_COMMIT")
     if commit:
-        return commit[:8]
+        _BUILD_SHA_CACHE = commit[:8]
+        return _BUILD_SHA_CACHE
     try:
-        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, timeout=1).strip()
+        _BUILD_SHA_CACHE = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True, timeout=1).strip()
     except Exception:
-        return "dev"
+        _BUILD_SHA_CACHE = "dev"
+    return _BUILD_SHA_CACHE
 
 def _get_boot_time() -> str:
-    """Return ISO UTC timestamp of server startup."""
+    """Return ISO UTC timestamp of server startup (cached after first resolution)."""
+    global _BOOT_TIME_CACHE
+    if _BOOT_TIME_CACHE is not None:
+        return _BOOT_TIME_CACHE
     start_t = getattr(svc, "_SERVER_START_TIME", None)
     if start_t:
-        return datetime.fromtimestamp(start_t, tz=timezone.utc).isoformat()
-    return datetime.now(timezone.utc).isoformat()
+        _BOOT_TIME_CACHE = datetime.fromtimestamp(start_t, tz=timezone.utc).isoformat()
+    else:
+        _BOOT_TIME_CACHE = datetime.now(timezone.utc).isoformat()
+    return _BOOT_TIME_CACHE
 
 def _get_config_hash() -> str:
     """Deterministic 12-char SHA-256 fingerprint of critical risk and deployment settings."""
+    global _CONFIG_HASH_CACHE
+    if _CONFIG_HASH_CACHE is not None:
+        return _CONFIG_HASH_CACHE
     parts = [
         str(getattr(settings, "LIGHTWEIGHT_API_MODE", False)),
         str(getattr(settings, "SWING_MAX_SECTOR_CONCENTRATION", 2)),
@@ -74,13 +91,24 @@ def _get_config_hash() -> str:
         str(getattr(settings, "CIRCUIT_BREAKER_MAX_LOSSES", 3)),
     ]
     raw = ":".join(parts)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    _CONFIG_HASH_CACHE = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return _CONFIG_HASH_CACHE
+
+async def _fetch_runtime_state_safe(key: str, default: Any = None) -> Any:
+    """Non-blocking runtime state fetch with strict 1.2s timeout to prevent health check timeouts."""
+    try:
+        from db.runtime_state import get_runtime_state
+        return await asyncio.wait_for(
+            asyncio.to_thread(get_runtime_state, key, default), timeout=1.2
+        )
+    except Exception:
+        return default
 
 async def _check_db_connectivity_with_retry() -> bool:
     """Fast non-blocking DB probe so health endpoints respond within sub-second bounds."""
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(check_db_connectivity), timeout=1.5
+            asyncio.to_thread(check_db_connectivity), timeout=1.2
         )
     except Exception:
         return False
@@ -102,7 +130,7 @@ async def favicon():
 
 _HEALTH_RESPONSE_CACHE: dict = {}
 _HEALTH_RESPONSE_TS: float = 0.0
-_HEALTH_RESPONSE_TTL: float = 3.0  # 3 seconds cache to eliminate DB contention and sub-second health probe latency
+_HEALTH_RESPONSE_TTL: float = 8.0  # 8 seconds cache to eliminate DB contention and guarantee sub-second health probes
 
 @router.api_route("/api/health", methods=["GET", "HEAD"])
 async def health_check(response: Response = None):
@@ -153,12 +181,7 @@ async def health_check(response: Response = None):
 
     status_str = "ok" if db_ok and (symbols_loaded > 0 or is_lightweight or is_ready_on_demand) else "degraded" if not db_ok else "starting"
 
-    worker_status = None
-    try:
-        from db.runtime_state import get_runtime_state
-        worker_status = await asyncio.to_thread(get_runtime_state, "autonomous_worker:latest_status")
-    except Exception:
-        pass
+    worker_status = await _fetch_runtime_state_safe("autonomous_worker:latest_status")
 
     try:
         from api.health_v2 import evaluate_health_v2
@@ -190,13 +213,9 @@ async def health_check(response: Response = None):
         if getattr(svc, "_persisted_signals_snapshot", None):
             signals_count = len(svc._persisted_signals_snapshot)
         else:
-            try:
-                from db.runtime_state import get_runtime_state
-                snap = await asyncio.to_thread(get_runtime_state, "latest_signals:v1")
-                if snap and isinstance(snap, dict):
-                    signals_count = int(snap.get("count", len(snap.get("signals", []))))
-            except Exception:
-                pass
+            snap = await _fetch_runtime_state_safe("latest_signals:v1")
+            if snap and isinstance(snap, dict):
+                signals_count = int(snap.get("count", len(snap.get("signals", []))))
             if signals_count == 0:
                 try:
                     import db.intraday_store as ids
