@@ -30,6 +30,7 @@ import math
 import logging
 import asyncio
 from datetime import datetime, timezone, date, timedelta
+from dataclasses import asdict
 from zoneinfo import ZoneInfo
 from typing import Optional, List, Dict, Any
 from collections import deque
@@ -49,7 +50,11 @@ from agents.feature_engine.indicators import calculate_indicators
 from agents.feature_engine.regime_detector import detect_regime
 from agents.feature_engine.trend import classify_trend, propagate_trend_to_ltf
 from agents.market_intelligence.breakout_scanner import scan_all_symbols as breakout_scan_all
-from agents.market_intelligence.swing_scanner import scan_all_symbols as swing_scan_all
+from agents.market_intelligence.swing_scanner import (
+    scan_all_symbols as swing_scan_all,
+    compute_sector_momentum_map,
+    scan_swing_setups,
+)
 from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol, fetch_ohlcv, validate_nse_symbol
 from agents.market_intelligence.index_mover import calculate_index_movers
 from agents.stock_screener import opportunity_stocks, start_morning_scan_task, start_screener_task
