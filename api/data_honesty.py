@@ -23,7 +23,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 
-def classify_quote_state(bar_age_seconds: float | None, market_open: bool) -> str:
+def classify_quote_state(
+    bar_age_seconds: float | None,
+    market_open: bool,
+    is_opening_window: bool = False,
+    source: Optional[str] = None,
+) -> str:
     """How trustworthy is a live quote right now, judged by bar age alone.
 
     Deliberately a *separate* dimension from the feed's ``state``: ``state``
@@ -32,14 +37,16 @@ def classify_quote_state(bar_age_seconds: float | None, market_open: bool) -> st
     quotes may be unreliable" while every mark was minutes old and the only stale
     thing was the worker snapshot.
     """
+    if not market_open:
+        return "EOD"
+    if is_opening_window and source and "SHOONYA" in str(source).upper():
+        return "LIVE"
     if bar_age_seconds is None:
         return "UNKNOWN"
     try:
         age = float(bar_age_seconds)
     except (TypeError, ValueError):
         return "UNKNOWN"
-    if not market_open:
-        return "EOD"
     if age <= 300:
         return "LIVE"
     if age <= 1800:

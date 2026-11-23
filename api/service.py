@@ -968,7 +968,8 @@ def _get_feed_status() -> dict[str, object]:
             bar_dt = None
             bar_age_seconds = None
 
-    quote_state = classify_quote_state(bar_age_seconds, is_mkt_open)
+    now_ist = datetime.now(_IST)
+    is_opening_window = bool(is_mkt_open and now_ist.hour == 9 and 15 <= now_ist.minute <= 30)
 
     # Derive actual provider source, mode, and data delay dynamically from telemetry & bar age
     if not is_mkt_open:
@@ -983,9 +984,10 @@ def _get_feed_status() -> dict[str, object]:
                 from data.router import get_default_router
                 router_status = get_default_router().get_health_status()
                 shoonya_stat = router_status.get("shoonya_feed", {})
-                if shoonya_stat.get("healthy") and shoonya_stat.get("total_calls", 0) > 0:
-                    # Shoonya is genuinely active if bar is within rolling 5m window (<= 360s)
-                    if bar_age_seconds is not None and bar_age_seconds <= 360.0:
+                if shoonya_stat.get("healthy"):
+                    # Shoonya is active if bar is within rolling 5m window (<= 360s)
+                    # OR during opening window (09:15-09:30 IST) where 1st candle is actively building
+                    if (bar_age_seconds is not None and bar_age_seconds <= 360.0) or is_opening_window:
                         is_shoonya_active = True
             except Exception:
                 pass
@@ -1003,6 +1005,13 @@ def _get_feed_status() -> dict[str, object]:
             derived_source = source if (source and source not in ("NONE", "SHOONYA_LIVE")) else "YAHOO_DELAYED"
             derived_mode = "15m Delayed Public Feed (NSE / Yahoo)"
             derived_delay = 15
+
+    quote_state = classify_quote_state(
+        bar_age_seconds,
+        is_mkt_open,
+        is_opening_window=is_opening_window,
+        source=derived_source,
+    )
 
     true_data_age = bar_age_seconds if bar_age_seconds is not None else age
 

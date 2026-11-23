@@ -1570,6 +1570,43 @@ function _updateFeedStatusFromWs(feedStatus) {
         updateMarketSessionBadge();
     }
 
+    const dataFeedBadgeEl = document.getElementById("idDataFeedBadge");
+    const feedKpiEl = document.getElementById("idKpiFeed");
+    const isLiveWs = Boolean(
+        _currentFeedStatus && (
+            _currentFeedStatus.state === 'LIVE' ||
+            _currentFeedStatus.quote_state === 'LIVE' ||
+            _currentFeedStatus.source === 'LIVE_TV' ||
+            _currentFeedStatus.source === 'LIVE_NSE' ||
+            _currentFeedStatus.source === 'SHOONYA' ||
+            _currentFeedStatus.source === 'SHOONYA_LIVE' ||
+            String(_currentFeedStatus.source || '').toUpperCase().includes('SHOONYA') ||
+            _currentFeedStatus.data_delay_minutes === 0
+        )
+    );
+    if (dataFeedBadgeEl) {
+        if (isLiveWs) {
+            dataFeedBadgeEl.textContent = "LIVE NSE (REALTIME)";
+            dataFeedBadgeEl.style.color = "#10b981";
+            dataFeedBadgeEl.style.borderColor = "rgba(16,185,129,0.35)";
+            dataFeedBadgeEl.style.background = "rgba(16,185,129,0.12)";
+        } else {
+            dataFeedBadgeEl.textContent = "15M DELAYED (NSE)";
+            dataFeedBadgeEl.style.color = "#60a5fa";
+            dataFeedBadgeEl.style.borderColor = "rgba(59,130,246,0.3)";
+            dataFeedBadgeEl.style.background = "rgba(59,130,246,0.12)";
+        }
+    }
+    if (feedKpiEl) {
+        if (isLiveWs) {
+            feedKpiEl.textContent = "LIVE NSE (REALTIME)";
+            feedKpiEl.style.color = "#10b981";
+        } else {
+            feedKpiEl.textContent = "15M DELAYED (NSE)";
+            feedKpiEl.style.color = "#38bdf8";
+        }
+    }
+
 
 
 
@@ -16056,7 +16093,10 @@ function updateDynamicMarketStatus() {
             _currentFeedStatus.quote_state === 'LIVE' ||
             _currentFeedStatus.source === 'LIVE_TV' ||
             _currentFeedStatus.source === 'LIVE_NSE' ||
-            _currentFeedStatus.source === 'SHOONYA'
+            _currentFeedStatus.source === 'SHOONYA' ||
+            _currentFeedStatus.source === 'SHOONYA_LIVE' ||
+            String(_currentFeedStatus.source || '').toUpperCase().includes('SHOONYA') ||
+            _currentFeedStatus.data_delay_minutes === 0
         )
     );
 
@@ -21804,22 +21844,39 @@ function _updateIntradayKpis(sigs, session, niftyContext, dataStatus) {
     }
 
     // Feed Quality KPI (Strict Truthful Freshness: Dynamic Feed Awareness)
+    const isLive = Boolean(
+        _currentFeedStatus && (
+            _currentFeedStatus.state === 'LIVE' ||
+            _currentFeedStatus.quote_state === 'LIVE' ||
+            _currentFeedStatus.source === 'LIVE_TV' ||
+            _currentFeedStatus.source === 'LIVE_NSE' ||
+            _currentFeedStatus.source === 'SHOONYA' ||
+            _currentFeedStatus.source === 'SHOONYA_LIVE' ||
+            String(_currentFeedStatus.source || '').toUpperCase().includes('SHOONYA') ||
+            _currentFeedStatus.data_delay_minutes === 0
+        )
+    );
     if (feedEl) {
-        const isLive = Boolean(
-            _currentFeedStatus && (
-                _currentFeedStatus.state === 'LIVE' ||
-                _currentFeedStatus.quote_state === 'LIVE' ||
-                _currentFeedStatus.source === 'LIVE_TV' ||
-                _currentFeedStatus.source === 'LIVE_NSE' ||
-                _currentFeedStatus.source === 'SHOONYA'
-            )
-        );
         if (isLive) {
             feedEl.textContent = "LIVE NSE (REALTIME)";
             feedEl.style.color = "#10b981";
         } else {
             feedEl.textContent = "15M DELAYED (NSE)";
             feedEl.style.color = "#38bdf8";
+        }
+    }
+    const dataFeedBadgeEl = document.getElementById("idDataFeedBadge");
+    if (dataFeedBadgeEl) {
+        if (isLive) {
+            dataFeedBadgeEl.textContent = "LIVE NSE (REALTIME)";
+            dataFeedBadgeEl.style.color = "#10b981";
+            dataFeedBadgeEl.style.borderColor = "rgba(16,185,129,0.35)";
+            dataFeedBadgeEl.style.background = "rgba(16,185,129,0.12)";
+        } else {
+            dataFeedBadgeEl.textContent = "15M DELAYED (NSE)";
+            dataFeedBadgeEl.style.color = "#60a5fa";
+            dataFeedBadgeEl.style.borderColor = "rgba(59,130,246,0.3)";
+            dataFeedBadgeEl.style.background = "rgba(59,130,246,0.12)";
         }
     }
 }

@@ -40,3 +40,11 @@ def test_boundaries_match_the_published_budgets():
     assert classify_quote_state(301, True) == "DELAYED"
     assert classify_quote_state(1800, True) == "DELAYED"
     assert classify_quote_state(1801, True) == "STALE"
+
+
+def test_opening_window_with_shoonya_is_live():
+    # During 09:15-09:30 AM when 1st candle is building (e.g. bar age from yesterday close = 60000s)
+    # Shoonya active feed should still be classified as LIVE
+    assert classify_quote_state(60000, True, is_opening_window=True, source="SHOONYA_LIVE") == "LIVE"
+    # But without Shoonya, old bar is STALE/DELAYED
+    assert classify_quote_state(60000, True, is_opening_window=True, source="YAHOO_DELAYED") == "STALE"
