@@ -72,6 +72,7 @@ backtest_results/
 # Feedback loop & runtime data
 config/learned_weights.json
 data/*.json
+!data/swing_shortlist_latest.json
 data/swing_history/
 data/intraday_scorecard.csv
 scratch/

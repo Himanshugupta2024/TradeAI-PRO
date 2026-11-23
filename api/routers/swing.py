@@ -79,7 +79,7 @@ async def get_swing_shortlist():
 
         os.path.join(
 
-            os.path.dirname(__file__), "..", "data", "swing_shortlist_latest.json"
+            os.path.dirname(__file__), "..", "..", "data", "swing_shortlist_latest.json"
 
         )
 

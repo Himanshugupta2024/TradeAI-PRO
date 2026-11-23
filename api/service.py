@@ -662,6 +662,7 @@ async def _hydrate_swing_cache_from_db() -> bool:
     _swing_cache["symbols_scanned"] = best_meta.get("symbols_scanned", 0)
     _swing_cache["real_data"] = True
     _swing_cache["updated_at"] = best_meta.get("updated_at")
+    _swing_cache["scan_date"] = best_meta.get("scan_date")
     _swing_cache["market_context"] = best_meta.get("market_context")
     _swing_cache[f"hydrated_from_{best_source}"] = True
     logger.info(
@@ -4156,7 +4157,12 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
                         db_snap["market_guardrails"]["feed_status"] = current_feed
                 except Exception:
                     pass
-                if not db_snap.get("top_setups"):
+                has_off_hours_fallback = any(
+                    bool(t.get("is_off_hours_fallback"))
+                    for t in (db_snap.get("top_setups") or [])
+                )
+                if not db_snap.get("top_setups") or has_off_hours_fallback:
+                    db_snap["top_setups"] = []
                     db_snap = _ensure_top_setups_fallback(db_snap)
 
                 # Always overlay live engine system_state so capital, P&L,
