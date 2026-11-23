@@ -198,16 +198,20 @@ class MarketDataRouter:
         import time
         now = time.time()
         status: dict[str, Any] = {}
+        has_shoonya = any(p.name == "shoonya_feed" for p in self.providers)
         for p in self.providers:
             h = p.health
             in_cooldown = not h.is_healthy and now < h.cooldown_until
-            role = (
-                "PRIMARY_OHLCV"
-                if p.name == "yahoo"
-                else "FALLBACK_QUOTES"
-                if p.name == "tradingview"
-                else "SPECIALIST_FOREX"
-            )
+            if p.name == "shoonya_feed":
+                role = "PRIMARY_OHLCV"
+            elif p.name == "yahoo":
+                role = "FALLBACK_OHLCV" if has_shoonya else "PRIMARY_OHLCV"
+            elif p.name == "tradingview":
+                role = "FALLBACK_QUOTES"
+            elif p.name == "twelve_data":
+                role = "SPECIALIST_FOREX"
+            else:
+                role = "AUXILIARY"
             status[p.name] = {
                 "healthy": h.is_healthy,
                 "role": role,

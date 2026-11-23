@@ -114,8 +114,8 @@ def test_risk_gauge_vetoes_and_liquidation_conditioning(monkeypatch):
     monkeypatch.setattr(gauge, "fetch_risk_indicators", lambda: tape_indicators)
     score = gauge.get_risk_score()
 
-    # NSE weighted model: -3.6 (IV) - 18.0 (shock) - 18.0 (AD) + 4.0 (EMA) - 10.0 (VIX) - 5.0 (BTC) - 0.8 (Gold) = -51.4
-    assert score == -51.4
+    # NSE weighted model with de-saturated breadth scaling: -48.3
+    assert score == -48.3
 
     # Evaluate safety gates
     regime, vetoes, posture, integrity = gauge._evaluate_safety_gates(
@@ -135,6 +135,51 @@ def test_risk_gauge_vetoes_and_liquidation_conditioning(monkeypatch):
     assert "BREADTH_FLOOR" in vetoes
     assert "US_VIX_STRESS" in vetoes
     assert integrity == "UNCONFIRMED_VOL_SPIKE"
+
+
+def test_vix_staleness_guards_and_spike_expiry():
+    """Verify stale US VIX (>15m) cannot veto, and unconfirmed spike expires after 30m."""
+    from datetime import timedelta
+    gauge = RiskGauge()
+    now = datetime.now(timezone.utc)
+
+    # 1. Stale US VIX test: fetch time is 20 minutes ago
+    vix_stale_time = now - timedelta(minutes=20)
+    regime, vetoes, posture, integrity = gauge._evaluate_safety_gates(
+        vix=35.89,  # High VIX would normally veto
+        vix_change=105.2,  # Shock would normally veto
+        btc_trend="RISING",
+        nifty_trend="RISING",
+        usdjpy_trend="FLAT",
+        gold_trend="FLAT",
+        india_vix=15.0,  # Normal India VIX
+        ad_ratio=1.5,   # Healthy breadth
+        vix_fetched_at=vix_stale_time,
+        now=now,
+    )
+
+    # Stale US VIX must NOT veto and posture must NOT be STAND_DOWN!
+    assert "US_VIX_STRESS" not in vetoes
+    assert "VOL_SHOCK" not in vetoes
+    assert integrity == "VIX_SOURCE_STALE"
+    assert posture != "STAND_DOWN"
+
+    # 2. Unconfirmed vol spike expiration: spike flag from 35 minutes ago
+    spike_time = now - timedelta(minutes=35)
+    regime2, vetoes2, posture2, integrity2 = gauge._evaluate_safety_gates(
+        vix=20.0,
+        vix_change=125.0,  # Massive spike
+        btc_trend="RISING",
+        nifty_trend="RISING",
+        usdjpy_trend="FLAT",
+        gold_trend="FLAT",
+        india_vix=15.0,
+        ad_ratio=1.5,
+        spike_flag_time=spike_time,
+        now=now,
+    )
+    assert integrity2 == "VOL_SPIKE_EXPIRED"
+    assert "VOL_SHOCK" not in vetoes2
 
 
 def test_regime_adjusted_risk_pct():

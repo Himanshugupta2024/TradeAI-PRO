@@ -582,7 +582,14 @@ async def get_edge_risk_gauge(
 
             return "FLAT"
 
-        gauge = RiskGauge(cache_ttl_seconds=0) if force_refresh else RiskGauge()
+        is_mkt_open = False
+        try:
+            from agents.data_ingestion.market_hours import is_nse_market_open
+            is_mkt_open = is_nse_market_open()
+        except Exception:
+            pass
+        active_ttl = 0 if force_refresh else (60 if is_mkt_open else 300)
+        gauge = RiskGauge(cache_ttl_seconds=active_ttl)
 
         indicators = gauge.fetch_risk_indicators()
 
@@ -598,9 +605,11 @@ async def get_edge_risk_gauge(
             "vix": indicators.vix,
             "vix_change_pct": indicators.vix_change_pct,
             "vix_trend": vix_trend,
+            "vix_fetched_at": indicators.vix_fetched_at.isoformat() if indicators.vix_fetched_at else None,
             "india_vix": getattr(indicators, "india_vix", None),
             "india_vix_change_pct": getattr(indicators, "india_vix_change_pct", None),
             "india_vix_trend": getattr(indicators, "india_vix_trend", "FLAT"),
+            "india_vix_fetched_at": indicators.india_vix_fetched_at.isoformat() if getattr(indicators, "india_vix_fetched_at", None) else None,
             "ad_ratio": getattr(indicators, "ad_ratio", None),
             "above_ema20_pct": getattr(indicators, "above_ema20_pct", None),
             "breadth_regime": getattr(indicators, "breadth_regime", "NEUTRAL"),

@@ -267,7 +267,8 @@ async def health_check(response: Response = None):
         "database": {"connected": db_ok},
         "loading": {
             **getattr(svc, "_loading_status", {}),
-            "loaded": symbols_loaded,
+            "loaded": min(symbols_loaded, max(len(getattr(svc, "TOP_NSE_SYMBOLS", [])), symbols_loaded)),
+            "total": max(len(getattr(svc, "TOP_NSE_SYMBOLS", [])), symbols_loaded),
         },
         "feed": feed_status,
         "symbols_loaded": symbols_loaded,
@@ -289,7 +290,7 @@ async def health_check(response: Response = None):
         "boot_time": _get_boot_time(),
         "config_hash": _get_config_hash(),
         "sidecar_active": bool(ai_engine_info.get("sidecar_active", False) or ai_engine_info.get("sidecar_models", {})),
-        "feed_lag_seconds": feed_status.get("age_seconds") or feed_status.get("bar_age_seconds"),
+        "feed_lag_seconds": feed_status.get("bar_age_seconds") if feed_status.get("bar_age_seconds") is not None else feed_status.get("age_seconds"),
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
     _HEALTH_RESPONSE_CACHE = res_payload
@@ -642,7 +643,7 @@ async def record_edge_telemetry_probe(payload: ProbeTelemetryPayload):
     uptime_sec = round(time.time() - getattr(svc, "_SERVER_START_TIME", time.time()), 1)
     rss_mb = get_process_rss_mb(collect_gc=False)
     feed_status = svc._get_feed_status()
-    feed_lag = feed_status.get("age_seconds") or feed_status.get("bar_age_seconds")
+    feed_lag = feed_status.get("bar_age_seconds") if feed_status.get("bar_age_seconds") is not None else feed_status.get("age_seconds")
 
     asyncio.create_task(
         asyncio.to_thread(

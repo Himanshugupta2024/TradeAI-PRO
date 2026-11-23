@@ -162,7 +162,7 @@ _ws_clients: list[WebSocket] = []
 # ── Symbols to track ─────────────────────────────────────
 # Priority symbols loaded first (indices + top stocks), rest loaded progressively
 _ALL_NSE_SYMBOLS = list(NSE_SYMBOLS.keys())
-NSE_SYMBOL_LIMIT = max(1, int(os.getenv("NSE_SYMBOL_LIMIT", "8")))
+NSE_SYMBOL_LIMIT = max(1, int(os.getenv("NSE_SYMBOL_LIMIT", "16")))
 _TRACKED_NSE_SYMBOLS = _ALL_NSE_SYMBOLS[:NSE_SYMBOL_LIMIT]
 _PRIORITY_COUNT = min(8, len(_TRACKED_NSE_SYMBOLS))
 _PRIORITY_SYMBOLS = _TRACKED_NSE_SYMBOLS[:_PRIORITY_COUNT]  # Fast initial load
@@ -955,6 +955,42 @@ def _get_feed_status() -> dict[str, object]:
 
     quote_state = classify_quote_state(bar_age_seconds, is_mkt_open)
 
+    # Derive actual provider source, mode, and data delay dynamically from telemetry & bar age
+    if not is_mkt_open:
+        derived_source = "NSE_BHAVCOPY_EOD"
+        derived_mode = "Official EOD Settlement (NSE Bhavcopy)"
+        derived_delay = 0
+    else:
+        feed_url = os.environ.get("FEED_SERVICE_URL", "").strip()
+        is_shoonya_active = False
+        if feed_url:
+            try:
+                from data.router import get_default_router
+                router_status = get_default_router().get_health_status()
+                shoonya_stat = router_status.get("shoonya_feed", {})
+                if shoonya_stat.get("healthy") and shoonya_stat.get("total_calls", 0) > 0:
+                    # Shoonya is genuinely active if bar is within rolling 5m window (<= 360s)
+                    if bar_age_seconds is not None and bar_age_seconds <= 360.0:
+                        is_shoonya_active = True
+            except Exception:
+                pass
+
+        if is_shoonya_active:
+            derived_source = "SHOONYA_LIVE"
+            derived_mode = "Real-Time Direct Feed (Shoonya Live)"
+            derived_delay = 0
+        elif bar_age_seconds is not None:
+            delay_calc = max(0, int(round(bar_age_seconds / 60.0)))
+            derived_source = "YAHOO_DELAYED" if delay_calc >= 15 else "PUBLIC_FEED"
+            derived_mode = f"Delayed Public Feed ({delay_calc}m lag)"
+            derived_delay = delay_calc
+        else:
+            derived_source = source if (source and source not in ("NONE", "SHOONYA_LIVE")) else "YAHOO_DELAYED"
+            derived_mode = "15m Delayed Public Feed (NSE / Yahoo)"
+            derived_delay = 15
+
+    true_data_age = bar_age_seconds if bar_age_seconds is not None else age
+
     return {
         # `state` is what the dashboard renders ("are my marks trustworthy?").
         # It must follow quote freshness, not the last cycle snapshot: the two
@@ -967,13 +1003,14 @@ def _get_feed_status() -> dict[str, object]:
         "market_snapshot_health": snapshot_health,
         "worker_health": worker_health,
         "last_update": snap_dt.isoformat(),
-        "age_seconds": round(age, 1),
+        "snapshot_age_seconds": round(age, 1),
+        "age_seconds": round(true_data_age, 1),
         "last_bar_at": bar_dt.isoformat() if bar_dt else None,
         "bar_age_seconds": round(bar_age_seconds, 1) if bar_age_seconds is not None else None,
         "bar_date_label": bar_dt.astimezone(_IST).strftime("%d %b %H:%M") if bar_dt else None,
-        "source": "SHOONYA_LIVE" if (is_mkt_open and os.environ.get("FEED_SERVICE_URL")) else ("NSE_BHAVCOPY_EOD" if not is_mkt_open else source),
-        "mode": "Real-Time Direct Feed (Shoonya Live)" if (is_mkt_open and os.environ.get("FEED_SERVICE_URL")) else ("Official EOD Settlement (NSE Bhavcopy)" if not is_mkt_open else "15m Delayed Public Feed (NSE / Yahoo)"),
-        "data_delay_minutes": 0 if (os.environ.get("FEED_SERVICE_URL") or not is_mkt_open) else 15,
+        "source": derived_source,
+        "mode": derived_mode,
+        "data_delay_minutes": derived_delay,
         "is_market_open": is_mkt_open,
     }
 
@@ -2402,25 +2439,29 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
     # Sanity check: SL must be on the correct side of entry
     effective_dir = sig_label if sig_label in ("LONG", "SHORT") else raw_dir
     if sl is not None and effective_dir == "LONG" and sl >= entry_price:
-        # SL above entry for LONG = wrong, recalculate using current ATR
+        # SL above entry for LONG = wrong, recalculate using structural levels & ATR
         atr_val = _safe_float(last, f"ATR_{settings.ATR_PERIOD}")
         if atr_val:
             sl = round(entry_price - atr_val * settings.ATR_SL_MULTIPLIER, precision)
-            tp = round(
-                entry_price
-                + atr_val * settings.ATR_SL_MULTIPLIER * settings.MIN_RISK_REWARD,
-                precision,
-            )
+            res = _safe_float(last, "resistance")
+            if res and res > entry_price + 0.5 * atr_val:
+                tp_val = min(res, entry_price + 2.5 * atr_val)
+                tp_val = max(tp_val, entry_price + 1.25 * atr_val)
+            else:
+                tp_val = entry_price + 2.15 * atr_val
+            tp = round(tp_val, precision)
             levels_source = "RECOMPUTED_ATR"
     elif sl is not None and effective_dir == "SHORT" and sl <= entry_price:
         atr_val = _safe_float(last, f"ATR_{settings.ATR_PERIOD}")
         if atr_val:
             sl = round(entry_price + atr_val * settings.ATR_SL_MULTIPLIER, precision)
-            tp = round(
-                entry_price
-                - atr_val * settings.ATR_SL_MULTIPLIER * settings.MIN_RISK_REWARD,
-                precision,
-            )
+            sup = _safe_float(last, "support")
+            if sup and 0 < sup < entry_price - 0.5 * atr_val:
+                tp_val = max(sup, entry_price - 2.5 * atr_val)
+                tp_val = min(tp_val, entry_price - 1.25 * atr_val)
+            else:
+                tp_val = entry_price - 2.15 * atr_val
+            tp = round(tp_val, precision)
             levels_source = "RECOMPUTED_ATR"
 
     # Degenerate level guard: reject identical levels after rounding
@@ -2500,11 +2541,12 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
     else:
         skip_reason = ""
 
-    # For terminal states, freeze confidence, quality, and confluence from issuance snapshot.
-    # Do not recompute with live indicators.
+    # For terminal states, freeze confidence and quality from issuance snapshot.
+    # Set active confluence to 0 to reflect that a terminated setup has no live confluence.
     if is_terminal:
-        display_conf = int(_cap_confidence(last_signal.get("confluence_score", last_signal.get("confidence", 50))))
-        display_factors = [f"Lifecycle terminal ({signal_status})"]
+        issuance_conf = int(_cap_confidence(last_signal.get("confluence_score", last_signal.get("confidence", 50))))
+        display_conf = 0
+        display_factors = [f"Terminal ({signal_status}) — Issuance confluence was {issuance_conf}"] if issuance_conf else [f"Lifecycle terminal ({signal_status})"]
         pens = []
     else:
         pens = confluence_penalties(

@@ -523,8 +523,8 @@ class AutonomousExecutionDaemon:
         ist_minutes = now.hour * 60 + now.minute
         today = _today_ist()
 
-        # Target window: 15:45 to 16:30 IST
-        if not (is_weekday and (15 * 60 + 45) <= ist_minutes <= (16 * 60 + 30)):
+        # Target window: 15:45 IST to 23:59 IST on weekdays (post-close with evening catch-up)
+        if not (is_weekday and ist_minutes >= (15 * 60 + 45)):
             return None
 
         if self.last_eod_review_date == today:

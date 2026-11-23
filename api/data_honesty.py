@@ -108,17 +108,62 @@ def stale_threshold_minutes(symbol: str) -> float:
 def apply_signal_freshness(signal: dict, now: Any = None) -> dict:
     """Return a copy of ``signal`` with honest freshness fields, price precision, and degenerate check."""
     out = dict(signal)
-    age = signal_age_minutes(out.get("timestamp"), now=now)
+    raw_ts = out.get("timestamp") or out.get("as_of")
+    age = signal_age_minutes(raw_ts, now=now)
     threshold = stale_threshold_minutes(str(out.get("symbol", "")))
 
     if age is None:
         out["stale"] = True
         out["stale_minutes"] = None
+        out["signal_age_minutes"] = None
         out["freshness"] = "unknown"
     else:
         out["stale"] = bool(age > threshold)
         out["stale_minutes"] = round(age, 1)
+        out["signal_age_minutes"] = round(age, 1)
         out["freshness"] = "stale" if out["stale"] else "fresh"
+
+    out["as_of"] = raw_ts
+    out["data_age_minutes"] = round(age, 1) if age is not None else None
+
+    # Check session date for live session honesty
+    now_ref = _as_datetime(now) or datetime.now(timezone.utc)
+    now_ist = now_ref.astimezone(IST)
+    is_mkt_open = False
+    try:
+        from agents.execution.session_guard import is_nse_market_open
+        is_mkt_open = is_nse_market_open()
+    except Exception:
+        pass
+
+    sig_date = None
+    if raw_ts:
+        dt_cand = _as_datetime(raw_ts)
+        if dt_cand:
+            sig_date = dt_cand.astimezone(IST).date()
+
+    is_prior_session = bool(sig_date and sig_date < now_ist.date())
+    if is_prior_session:
+        out["stale"] = True
+        out["freshness"] = "stale"
+        if is_mkt_open:
+            # During live market session, prior session marks must never masquerade as zero-delay live
+            out["signal_status"] = "STALE_DATA"
+            out["actionable"] = False
+            out["data_delay_minutes"] = round(age) if age is not None else 1440
+            out["feed_source"] = "NSE_BHAVCOPY_PRIOR_EOD"
+            out["feed_mode"] = f"Prior EOD Settlement ({sig_date.strftime('%d %b')})"
+
+    # Reconcile skip_reason to use the exact same fresh clock
+    sr = str(out.get("skip_reason") or "")
+    if "Signal stale" in sr and age is not None:
+        out["skip_reason"] = f"Signal stale ({round(age, 1)}m > {threshold}m threshold)"
+    elif is_prior_session and is_mkt_open and (not sr or sr == "Gated"):
+        out["skip_reason"] = f"Prior session data ({sig_date.strftime('%d %b')} close, {round(age, 1) if age else 999}m old)"
+
+    # For terminal signals, suppress active confluence score so stale scores do not masquerade on dead trades
+    if out.get("signal_status") in ("STOPPED_OUT", "TARGET_HIT", "INVALIDATED", "CANCELLED", "STALE_DATA", "STALE"):
+        out["confluence_score"] = 0
 
     entry = out.get("entry")
     sl = out.get("stop_loss")

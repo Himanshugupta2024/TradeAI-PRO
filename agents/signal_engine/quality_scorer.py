@@ -143,7 +143,8 @@ def score_signal(
     # Gate 1: AI confidence too low — system itself is uncertain
     confidence_gate = _min_confidence_for_signal()
     if confidence < confidence_gate:
-        hard_gate_fail = f"low_confidence({confidence:.0f}%<{confidence_gate}%)"
+        lbl = "directional_confidence" if not is_long else "confidence"
+        hard_gate_fail = f"low_{lbl}({confidence:.0f}%<{confidence_gate}%)"
 
     # Gate 2: VWAP guard — SHORT when price is >2% above VWAP is a high-risk short
     # (price has strong bullish momentum relative to fair value)

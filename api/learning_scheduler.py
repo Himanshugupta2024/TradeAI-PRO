@@ -44,7 +44,7 @@ def _flag(name: str, default: bool = True) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
-def should_run_review(now_ist: datetime, last_review_date: Optional[str]) -> tuple[bool, str]:
+def should_run_review(now_ist: datetime, last_review_date: Optional[str], allow_catchup: Optional[bool] = None) -> tuple[bool, str]:
     """Decide whether the EOD review should run right now.
 
     Pure function so the window/day rules stay testable without a database or
@@ -55,7 +55,11 @@ def should_run_review(now_ist: datetime, last_review_date: Optional[str]) -> tup
     minutes = now_ist.hour * 60 + now_ist.minute
     if minutes < WINDOW_START_MIN:
         return False, "before_window"
-    if minutes > WINDOW_END_MIN:
+    
+    catchup_enabled = allow_catchup if allow_catchup is not None else (
+        os.getenv("EOD_REVIEW_ALLOW_CATCHUP", "false").lower() in ("1", "true", "yes", "on")
+    )
+    if not catchup_enabled and minutes > WINDOW_END_MIN:
         return False, "after_window"
     today = now_ist.date().isoformat()
     if last_review_date == today:
@@ -100,7 +104,8 @@ async def run_review_scheduler_loop() -> None:
 
             now_ist = datetime.now(_IST)
             state = await asyncio.to_thread(_read_state)
-            should_run, reason = should_run_review(now_ist, state.get("last_review_date"))
+            is_evening = now_ist.hour >= 16
+            should_run, reason = should_run_review(now_ist, state.get("last_review_date"), allow_catchup=is_evening)
 
             if should_run:
                 review: Any = await asyncio.to_thread(_run_review)

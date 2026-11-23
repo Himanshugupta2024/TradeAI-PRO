@@ -39,16 +39,18 @@ class RiskIndicators:
     """Market risk indicators"""
     vix: Optional[float]                   # VIX index (volatility)
     vix_change_pct: Optional[float]        # % change in VIX (7-day)
-    btc_trend: Optional[str]               # "RISING" | "FALLING" | "FLAT"
-    nifty_trend: Optional[str]             # "RISING" | "FALLING" | "FLAT"
-    usdjpy_level: Optional[float]          # USD/JPY rate
-    usdjpy_trend: Optional[str]            # "RISING" | "FALLING" | "FLAT"
-    gold_trend: Optional[str]              # "RISING" | "FALLING" | "FLAT"
-    risk_regime: str                       # "RISK_ON" | "RISK_OFF" | "NEUTRAL"
-    timestamp: datetime
+    vix_1d_change_pct: Optional[float] = None # % change in VIX (1-day)
+    btc_trend: Optional[str] = None        # "RISING" | "FALLING" | "FLAT"
+    nifty_trend: Optional[str] = None      # "RISING" | "FALLING" | "FLAT"
+    usdjpy_level: Optional[float] = None   # USD/JPY rate
+    usdjpy_trend: Optional[str] = None     # "RISING" | "FALLING" | "FLAT"
+    gold_trend: Optional[str] = None       # "RISING" | "FALLING" | "FLAT"
+    risk_regime: str = "NEUTRAL"           # "RISK_ON" | "RISK_OFF" | "NEUTRAL"
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     # Enhanced Indian Market & Breadth indicators
     india_vix: Optional[float] = None
-    india_vix_change_pct: Optional[float] = None
+    india_vix_change_pct: Optional[float] = None  # 1-day change %
+    india_vix_7d_change_pct: Optional[float] = None  # 7-day change %
     india_vix_trend: Optional[str] = None
     ad_ratio: Optional[float] = None
     above_ema20_pct: Optional[float] = None
@@ -56,12 +58,21 @@ class RiskIndicators:
     # Risk Guardrail Vetoes & Posture
     posture: str = "OPEN"                  # "OPEN" | "SELECTIVE" | "STAND_DOWN"
     vetoes: list[str] = field(default_factory=list)
-    data_integrity: str = "CONFIRMED"     # "CONFIRMED" | "UNCONFIRMED_VOL_SPIKE"
+    data_integrity: str = "CONFIRMED"     # "CONFIRMED" | "UNCONFIRMED_VOL_SPIKE" | "VIX_SOURCE_STALE" | "VOL_SPIKE_EXPIRED"
+    vix_fetched_at: Optional[datetime] = None
+    india_vix_fetched_at: Optional[datetime] = None
+    spike_flag_time: Optional[datetime] = None
 
     def to_dict(self) -> dict:
         """Convert to dict for JSON serialization"""
         data = asdict(self)
         data["timestamp"] = self.timestamp.isoformat()
+        if self.vix_fetched_at:
+            data["vix_fetched_at"] = self.vix_fetched_at.isoformat()
+        if self.india_vix_fetched_at:
+            data["india_vix_fetched_at"] = self.india_vix_fetched_at.isoformat()
+        if self.spike_flag_time:
+            data["spike_flag_time"] = self.spike_flag_time.isoformat()
         return data
 
     @classmethod
@@ -72,6 +83,12 @@ class RiskIndicators:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         d["timestamp"] = ts
+        for dt_field in ("vix_fetched_at", "india_vix_fetched_at", "spike_flag_time"):
+            if d.get(dt_field):
+                dt_val = datetime.fromisoformat(d[dt_field])
+                if dt_val.tzinfo is None:
+                    dt_val = dt_val.replace(tzinfo=timezone.utc)
+                d[dt_field] = dt_val
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
@@ -95,15 +112,16 @@ class RiskGauge:
 
     # Indicator Weights for Indian Market Desk (Sum = 100)
     WEIGHTS = {
-        "india_vix": 22.0,
-        "vix_shock": 18.0,
-        "ad_ratio": 18.0,
+        "india_vix": 18.0,
+        "india_vix_velocity": 12.0,
+        "vix_shock": 10.0,
+        "ad_ratio": 16.0,
         "above_ema20": 12.0,
         "us_vix": 10.0,
         "nifty_trend": 10.0,
         "btc_trend": 5.0,
-        "usdjpy_trend": 3.0,
-        "gold_trend": 2.0,
+        "usdjpy_trend": 4.0,
+        "gold_trend": 3.0,
     }
 
     def __init__(
@@ -131,7 +149,7 @@ class RiskGauge:
         """
         components: dict[str, dict] = {}
 
-        # 1. India VIX (Local NSE Volatility - 22% weight)
+        # 1. India VIX Level (Local NSE Volatility - 18% weight)
         if getattr(indicators, "india_vix", None) is not None:
             iv = indicators.india_vix
             if iv <= 13.0:
@@ -149,7 +167,27 @@ class RiskGauge:
                 "label": "INDIA_VIX",
             }
 
-        # 2. VIX Volatility Shock (7-Day Rolling Move - 18% weight)
+        # 1b. India VIX Velocity (Intraday / 1-Day change % - 12% weight)
+        if getattr(indicators, "india_vix_change_pct", None) is not None:
+            ivc = indicators.india_vix_change_pct
+            if ivc >= 15.0:
+                s = -100.0
+            elif ivc <= -10.0:
+                s = 100.0
+            elif ivc > 0.0:
+                s = -(ivc / 15.0) * 100.0
+            elif ivc < 0.0:
+                s = (abs(ivc) / 10.0) * 100.0
+            else:
+                s = 0.0
+            components["india_vix_velocity"] = {
+                "score": max(-100.0, min(100.0, s)),
+                "weight": self.WEIGHTS["india_vix_velocity"],
+                "value": ivc,
+                "label": "INDIA_VIX_CHANGE_PCT (1D)",
+            }
+
+        # 2. VIX Volatility Shock (7-Day Rolling Move - 10% weight)
         if indicators.vix_change_pct is not None:
             vcp = indicators.vix_change_pct
             if vcp >= 15.0:
@@ -169,7 +207,7 @@ class RiskGauge:
                 "label": "VIX_CHANGE_PCT (7D)",
             }
 
-        # 3. Market Breadth AD Ratio (18% weight)
+        # 3. Market Breadth AD Ratio (16% weight)
         if getattr(indicators, "ad_ratio", None) is not None:
             ad = indicators.ad_ratio
             if ad >= 2.0:
@@ -187,11 +225,17 @@ class RiskGauge:
                 "label": "AD_RATIO",
             }
 
-        # 4. Nifty Stocks Above EMA20 % (12% weight)
+        # 4. Nifty Stocks Above EMA20 % (12% weight) — de-saturated scale
         if getattr(indicators, "above_ema20_pct", None) is not None:
             ema = indicators.above_ema20_pct
             diff = ema - 50.0
-            s = (diff / 30.0) * 100.0
+            # Scale across a wider +-45% band so 80% gives +66.7 and 95% gives +100
+            s = (diff / 45.0) * 100.0
+            # Guard against breadth divergence saturation (Bug 6):
+            # If advance/decline ratio is negative (< 1.0), cap bullish EMA score at +30.0
+            ad = getattr(indicators, "ad_ratio", None)
+            if ad is not None and ad < 1.0 and s > 0:
+                s = min(s, 30.0)
             components["above_ema20"] = {
                 "score": max(-100.0, min(100.0, s)),
                 "weight": self.WEIGHTS["above_ema20"],
@@ -305,7 +349,7 @@ class RiskGauge:
         details = []
 
         # Scored components
-        for key in ["india_vix", "vix_shock", "ad_ratio", "above_ema20", "us_vix", "nifty_trend", "btc_trend", "usdjpy_trend", "gold_trend"]:
+        for key in ["india_vix", "india_vix_velocity", "vix_shock", "ad_ratio", "above_ema20", "us_vix", "nifty_trend", "btc_trend", "usdjpy_trend", "gold_trend"]:
             if key in comp_scores:
                 c = comp_scores[key]
                 details.append({
@@ -324,7 +368,8 @@ class RiskGauge:
 
         context_items = [
             ("vix_trend", "VIX_TREND", vix_trend),
-            ("india_vix_change_pct", "INDIA_VIX_CHANGE_PCT", getattr(ind, "india_vix_change_pct", None)),
+            ("vix_1d_change_pct", "VIX_1D_CHANGE_PCT", getattr(ind, "vix_1d_change_pct", None)),
+            ("india_vix_7d_change_pct", "INDIA_VIX_7D_CHANGE_PCT", getattr(ind, "india_vix_7d_change_pct", None)),
             ("india_vix_trend", "INDIA_VIX_TREND", getattr(ind, "india_vix_trend", "FLAT")),
             ("breadth_regime", "BREADTH_REGIME", getattr(ind, "breadth_regime", "NEUTRAL")),
             ("usdjpy_level", "USDJPY_LEVEL", ind.usdjpy_level),
@@ -365,38 +410,54 @@ class RiskGauge:
         logger.info("Fetching fresh risk indicators")
 
         # Fetch all indicators
-        vix, vix_change = self._fetch_vix()
-        india_vix, india_vix_change, india_vix_trend = self._fetch_india_vix()
+        vix, vix_1d_change, vix_7d_change, vix_fetched_at = self._fetch_vix()
+        india_vix, iv_1d_change, india_vix_trend, iv_7d_change, india_vix_fetched_at = self._fetch_india_vix()
         ad_ratio, above_ema20, breadth_regime = self._fetch_market_breadth()
         btc_trend = self._fetch_btc_trend()
         nifty_trend = self._fetch_nifty_trend()
         usdjpy_level, usdjpy_trend = self._fetch_usdjpy()
         gold_trend = self._fetch_gold_trend()
 
+        now_utc = datetime.now(timezone.utc)
+        cached_spike_time = getattr(cached, "spike_flag_time", None) if cached else None
+
         # Determine risk regime, vetoes, and posture
         risk_regime, vetoes, posture, data_integrity = self._evaluate_safety_gates(
             vix=vix,
-            vix_change=vix_change,
+            vix_change=vix_7d_change,
+            vix_1d_change=vix_1d_change,
             btc_trend=btc_trend,
             nifty_trend=nifty_trend,
             usdjpy_trend=usdjpy_trend,
             gold_trend=gold_trend,
             india_vix=india_vix,
+            india_vix_1d_change=iv_1d_change,
             ad_ratio=ad_ratio,
+            vix_fetched_at=vix_fetched_at,
+            spike_flag_time=cached_spike_time,
+            now=now_utc,
         )
+
+        spike_flag_time = cached_spike_time
+        if data_integrity == "UNCONFIRMED_VOL_SPIKE" and not spike_flag_time:
+            spike_flag_time = now_utc
+        elif data_integrity in ("CONFIRMED", "VOL_SPIKE_EXPIRED", "VIX_SOURCE_STALE"):
+            spike_flag_time = None
 
         indicators = RiskIndicators(
             vix=vix,
-            vix_change_pct=vix_change,
+            vix_change_pct=vix_7d_change,
+            vix_1d_change_pct=vix_1d_change,
             btc_trend=btc_trend,
             nifty_trend=nifty_trend,
             usdjpy_level=usdjpy_level,
             usdjpy_trend=usdjpy_trend,
             gold_trend=gold_trend,
             risk_regime=risk_regime,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=now_utc,
             india_vix=india_vix,
-            india_vix_change_pct=india_vix_change,
+            india_vix_change_pct=iv_1d_change,
+            india_vix_7d_change_pct=iv_7d_change,
             india_vix_trend=india_vix_trend,
             ad_ratio=ad_ratio,
             above_ema20_pct=above_ema20,
@@ -404,6 +465,9 @@ class RiskGauge:
             posture=posture,
             vetoes=vetoes,
             data_integrity=data_integrity,
+            vix_fetched_at=vix_fetched_at,
+            india_vix_fetched_at=india_vix_fetched_at,
+            spike_flag_time=spike_flag_time,
         )
 
         # Save to cache
@@ -448,12 +512,12 @@ class RiskGauge:
         else:
             return "FLAT"
 
-    def _fetch_vix(self) -> tuple[Optional[float], Optional[float]]:
+    def _fetch_vix(self) -> tuple[Optional[float], Optional[float], Optional[float], Optional[datetime]]:
         """
         Fetch VIX index from Yahoo Finance.
 
         Returns:
-            (current_vix, 7day_change_pct) or (None, None)
+            (current_vix, 1day_change_pct, 7day_change_pct, fetched_at) or (None, None, None, None)
         """
         try:
             ticker = yf.Ticker("^VIX")
@@ -461,10 +525,17 @@ class RiskGauge:
 
             if hist.empty:
                 logger.error("No VIX data returned from Yahoo Finance")
-                return None, None
+                return None, None, None, None
 
             # Current VIX
             current_vix = float(hist["Close"].iloc[-1])
+
+            # 1-day change
+            vix_1d_change = None
+            if len(hist) >= 2:
+                vix_prev = float(hist["Close"].iloc[-2])
+                if vix_prev > 0:
+                    vix_1d_change = ((current_vix - vix_prev) / vix_prev) * 100.0
 
             # 7-day change
             if len(hist) >= 8:
@@ -473,19 +544,23 @@ class RiskGauge:
             else:
                 vix_change = None
 
-            logger.info(f"VIX: {current_vix:.2f} (7d change: {vix_change:.2f}%)" if vix_change else f"VIX: {current_vix:.2f}")
-            return current_vix, vix_change
+            fetched_at = datetime.now(timezone.utc)
+            logger.info(
+                f"VIX: {current_vix:.2f} (1d: {vix_1d_change:.1f}%, 7d: {vix_change:.1f}%)"
+                if vix_1d_change is not None and vix_change is not None else f"VIX: {current_vix:.2f}"
+            )
+            return current_vix, vix_1d_change, vix_change, fetched_at
 
         except Exception as e:
             logger.error(f"Failed to fetch VIX: {e}")
-            return None, None
+            return None, None, None, None
 
-    def _fetch_india_vix(self) -> tuple[Optional[float], Optional[float], Optional[str]]:
+    def _fetch_india_vix(self) -> tuple[Optional[float], Optional[float], Optional[str], Optional[float], Optional[datetime]]:
         """
         Fetch India VIX (^INDIAVIX) from Yahoo Finance.
 
         Returns:
-            (current_india_vix, 7day_change_pct, trend) or (None, None, None)
+            (current_india_vix, 1day_change_pct, trend, 7day_change_pct, fetched_at) or (None, None, None, None, None)
         """
         try:
             ticker = yf.Ticker("^INDIAVIX")
@@ -493,9 +568,16 @@ class RiskGauge:
 
             if hist.empty:
                 logger.debug("No India VIX data returned from Yahoo Finance")
-                return None, None, None
+                return None, None, None, None, None
 
             current_vix = float(hist["Close"].iloc[-1])
+
+            # 1-day change
+            iv_1d_change = None
+            if len(hist) >= 2:
+                iv_prev = float(hist["Close"].iloc[-2])
+                if iv_prev > 0:
+                    iv_1d_change = ((current_vix - iv_prev) / iv_prev) * 100.0
 
             if len(hist) >= 8:
                 vix_7d_ago = float(hist["Close"].iloc[-8])
@@ -505,15 +587,16 @@ class RiskGauge:
 
             prices = hist["Close"].tolist()
             trend = self.calculate_trend(prices)
+            fetched_at = datetime.now(timezone.utc)
             logger.info(
-                f"India VIX: {current_vix:.2f} (7d change: {vix_change:.2f}%, trend: {trend})"
-                if vix_change else f"India VIX: {current_vix:.2f}"
+                f"India VIX: {current_vix:.2f} (1d: {iv_1d_change:.1f}%, 7d: {vix_change:.1f}%, trend: {trend})"
+                if iv_1d_change is not None and vix_change is not None else f"India VIX: {current_vix:.2f}"
             )
-            return current_vix, vix_change, trend
+            return current_vix, iv_1d_change, trend, vix_change, fetched_at
 
         except Exception as e:
             logger.debug(f"Failed to fetch India VIX: {e}")
-            return None, None, None
+            return None, None, None, None, None
 
     def _fetch_market_breadth(self) -> tuple[Optional[float], Optional[float], Optional[str]]:
         """
@@ -839,7 +922,12 @@ class RiskGauge:
         usdjpy_trend: Optional[str],
         gold_trend: Optional[str],
         india_vix: Optional[float] = None,
+        india_vix_1d_change: Optional[float] = None,
         ad_ratio: Optional[float] = None,
+        vix_1d_change: Optional[float] = None,
+        vix_fetched_at: Optional[datetime] = None,
+        spike_flag_time: Optional[datetime] = None,
+        now: Optional[datetime] = None,
     ) -> tuple[str, list[str], str, str]:
         """
         Evaluate hard asymmetric risk vetoes and determine regime & posture.
@@ -855,13 +943,53 @@ class RiskGauge:
         """
         vetoes = []
         data_integrity = "CONFIRMED"
+        now_dt = now or datetime.now(timezone.utc)
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=timezone.utc)
 
-        # 1. Volatility shock check
-        if vix_change is not None:
-            if abs(vix_change) > 100.0:
+        # Provider read freshness check: stale US VIX (>15m) cannot veto
+        is_vix_stale = False
+        if vix_fetched_at is not None:
+            v_fetch = vix_fetched_at
+            if v_fetch.tzinfo is None:
+                v_fetch = v_fetch.replace(tzinfo=timezone.utc)
+            if (now_dt - v_fetch).total_seconds() > 15 * 60:
+                is_vix_stale = True
+                logger.warning(
+                    f"US VIX fetch age is {(now_dt - v_fetch).total_seconds() / 60:.1f}m (>15m limit). Discarding US VIX vetoes."
+                )
+                vix = None
+                vix_change = None
+                vix_1d_change = None
+                data_integrity = "VIX_SOURCE_STALE"
+
+        # 1. Volatility shock check (distinguishing single-session panic shock from 7-day trend)
+        is_vol_shock = False
+        # Single-day panic move
+        if vix_1d_change is not None and abs(vix_1d_change) > 40.0:
+            is_vol_shock = True
+        if india_vix_1d_change is not None and abs(india_vix_1d_change) > 30.0:
+            is_vol_shock = True
+        # Severe cumulative 7-day surge
+        if vix_change is not None and abs(vix_change) > 75.0:
+            is_vol_shock = True
+
+        if (vix_1d_change is not None and abs(vix_1d_change) > 80.0) or (vix_change is not None and abs(vix_change) > 100.0):
+            # Check if unconfirmed spike has persisted > 30 minutes
+            if spike_flag_time is not None:
+                sp_dt = spike_flag_time
+                if sp_dt.tzinfo is None:
+                    sp_dt = sp_dt.replace(tzinfo=timezone.utc)
+                if (now_dt - sp_dt).total_seconds() > 30 * 60:
+                    data_integrity = "VOL_SPIKE_EXPIRED"
+                    is_vol_shock = False  # Expire unconfirmed spike veto
+                else:
+                    data_integrity = "UNCONFIRMED_VOL_SPIKE"
+            else:
                 data_integrity = "UNCONFIRMED_VOL_SPIKE"
-            if abs(vix_change) > 40.0:
-                vetoes.append("VOL_SHOCK")
+
+        if is_vol_shock and not is_vix_stale:
+            vetoes.append("VOL_SHOCK")
 
         # 2. Market breadth floor breakdown
         if ad_ratio is not None and ad_ratio < 0.35:
@@ -872,7 +1000,7 @@ class RiskGauge:
             vetoes.append("INDIA_VIX_CEILING")
 
         # 4. Global US VIX stress ceiling
-        if vix is not None and vix > 32.0:
+        if vix is not None and vix > 32.0 and not is_vix_stale:
             vetoes.append("US_VIX_STRESS")
 
         # Consensus regime baseline
@@ -929,4 +1057,14 @@ class RiskGauge:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         age_seconds = (datetime.now(timezone.utc) - ts).total_seconds()
-        return age_seconds < self.cache_ttl_seconds
+
+        # In-session freshness contract: drop TTL to <= 60s when market is open
+        effective_ttl = self.cache_ttl_seconds
+        try:
+            from agents.execution.session_guard import is_nse_market_open
+            if is_nse_market_open():
+                effective_ttl = min(self.cache_ttl_seconds, 60.0)
+        except Exception:
+            pass
+
+        return age_seconds < effective_ttl

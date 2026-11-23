@@ -711,6 +711,11 @@ async def get_all_signals(response: Response):
         results = list(live_signals.values())
         source = "live_partial"
 
+    # Ensure all returned signals have strictly synchronized freshness fields computed from the same UTC reference
+    from api.data_honesty import apply_signal_freshness
+    now_ref = datetime.now(timezone.utc)
+    results = [apply_signal_freshness(s, now=now_ref) for s in results]
+
     # 4. Filter by active market focus (NSE, Crypto, Forex, All)
     try:
         from agents.execution.market_control import get_market_focus_state
