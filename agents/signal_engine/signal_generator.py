@@ -1148,10 +1148,76 @@ def generate_signals(
     result["_raw_direction"] = result["_raw_signal"]
     result = result.drop(columns=["_raw_signal"])
 
-    # ── Stop Loss & Target (ATR-based) ────────────────────────────────────────
+    # ── Stop Loss & Structural Target (Market Geometry) ──────────────────────
     atr = result[f"ATR_{settings.ATR_PERIOD}"]
     sl_distance = atr * atr_sl_mult
-    tp_distance = sl_distance * settings.MIN_RISK_REWARD  # Enforce min 1:2 RR
+    close_px = result["close"]
+
+    # Structural levels (volume profile / pivot S/R / volatility bands)
+    res_level = result["resistance"] if "resistance" in result.columns else pd.Series(np.nan, index=result.index)
+    sup_level = result["support"] if "support" in result.columns else pd.Series(np.nan, index=result.index)
+    bb_upper = result["BB_upper"] if "BB_upper" in result.columns else pd.Series(np.nan, index=result.index)
+    bb_lower = result["BB_lower"] if "BB_lower" in result.columns else pd.Series(np.nan, index=result.index)
+    pivot_r1 = result["pivot_r1"] if "pivot_r1" in result.columns else pd.Series(np.nan, index=result.index)
+    pivot_s1 = result["pivot_s1"] if "pivot_s1" in result.columns else pd.Series(np.nan, index=result.index)
+
+    safe_sl = sl_distance.replace(0, np.nan)
+    rsi_col = result.get("RSI_14", pd.Series(50.0, index=result.index))
+
+    # Dynamic momentum expansion in terms of risk
+    rsi_factor_long = ((rsi_col - 50.0) / 25.0).clip(-0.5, 0.8)
+    implied_reward_long = (1.75 + 0.5 * rsi_factor_long) * sl_distance
+
+    rsi_factor_short = ((50.0 - rsi_col) / 25.0).clip(-0.5, 0.8)
+    implied_reward_short = (1.75 + 0.5 * rsi_factor_short) * sl_distance
+
+    # Structural derivation for LONG:
+    # 1. Check for cramped overhead resistance (< 1.1x risk) -> expose low RR for geometry gating
+    has_res_cramped = res_level.notna() & (res_level > close_px) & (res_level < close_px + 1.1 * safe_sl)
+    # 2. Check for overhead barriers above entry + 1.1x risk (volume profile resistance, BB upper, pivot R1)
+    cands_long = pd.DataFrame({"res": res_level, "bb": bb_upper, "r1": pivot_r1}).where(
+        lambda d: d.gt(close_px + 1.1 * safe_sl, axis=0)
+    )
+    min_overhead = cands_long.min(axis=1)
+
+    target_long = np.where(
+        has_res_cramped,
+        res_level,
+        min_overhead.fillna(close_px + implied_reward_long).clip(
+            lower=close_px + 1.1 * safe_sl,
+            upper=close_px + 2.5 * safe_sl,
+        ),
+    )
+
+    # Structural derivation for SHORT:
+    # 1. Check for cramped underlying support (> -1.1x risk) -> expose low RR for geometry gating
+    has_sup_cramped = sup_level.notna() & (sup_level > 0) & (sup_level < close_px) & (sup_level > close_px - 1.1 * safe_sl)
+    # 2. Check for underlying barriers below entry - 1.1x risk (volume profile support, BB lower, pivot S1)
+    cands_short = pd.DataFrame({"sup": sup_level, "bb": bb_lower, "s1": pivot_s1}).where(
+        lambda d: d.lt(close_px - 1.1 * safe_sl, axis=0) & d.gt(0, axis=0)
+    )
+    max_underlying = cands_short.max(axis=1)
+
+    target_short = np.where(
+        has_sup_cramped,
+        sup_level,
+        max_underlying.fillna(close_px - implied_reward_short).clip(
+            lower=close_px - 2.5 * safe_sl,
+            upper=close_px - 1.1 * safe_sl,
+        ),
+    )
+
+    # Risk:Reward per bar
+    rr_long = (target_long - close_px) / safe_sl
+    rr_short = (close_px - target_short) / safe_sl
+
+    # Enforce minimum geometry gate (rr < 1.1 = skip geometry)
+    long_bad_rr = (result["signal"] == "LONG") & (rr_long < 1.1)
+    short_bad_rr = (result["signal"] == "SHORT") & (rr_short < 1.1)
+    bad_rr = long_bad_rr | short_bad_rr
+    if bad_rr.any():
+        result.loc[bad_rr, "quality_hard_gate"] = "GEOMETRY_RR_BELOW_1_1"
+        result.loc[bad_rr, "signal"] = "SKIP"
 
     result["stop_loss"] = np.nan
     result["target"]    = np.nan
@@ -1352,19 +1418,22 @@ def generate_signals(
     short_mask = result["signal"] == "SHORT"
     skip_mask  = result["signal"] == "SKIP"
 
+    target_long_series = pd.Series(target_long, index=result.index)
+    target_short_series = pd.Series(target_short, index=result.index)
+
     result.loc[long_mask,  "stop_loss"] = result.loc[long_mask,  "close"] - sl_distance[long_mask]
-    result.loc[long_mask,  "target"]    = result.loc[long_mask,  "close"] + tp_distance[long_mask]
+    result.loc[long_mask,  "target"]    = target_long_series[long_mask]
     result.loc[short_mask, "stop_loss"] = result.loc[short_mask, "close"] + sl_distance[short_mask]
-    result.loc[short_mask, "target"]    = result.loc[short_mask, "close"] - tp_distance[short_mask]
+    result.loc[short_mask, "target"]    = target_short_series[short_mask]
 
     # SKIP rows also get SL/Target using their original direction
     skip_long  = skip_mask & (result["_raw_direction"] == "LONG")
     skip_short = skip_mask & (result["_raw_direction"] == "SHORT")
 
     result.loc[skip_long,  "stop_loss"] = result.loc[skip_long,  "close"] - sl_distance[skip_long]
-    result.loc[skip_long,  "target"]    = result.loc[skip_long,  "close"] + tp_distance[skip_long]
+    result.loc[skip_long,  "target"]    = target_long_series[skip_long]
     result.loc[skip_short, "stop_loss"] = result.loc[skip_short, "close"] + sl_distance[skip_short]
-    result.loc[skip_short, "target"]    = result.loc[skip_short, "close"] - tp_distance[skip_short]
+    result.loc[skip_short, "target"]    = target_short_series[skip_short]
 
     # ── Signal Quality Logging ────────────────────────────────────────────────
     hold_count  = (result["signal"] == "HOLD").sum()
