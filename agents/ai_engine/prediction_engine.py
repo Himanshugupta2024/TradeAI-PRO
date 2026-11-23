@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -426,6 +427,32 @@ async def predict_stock_price(
         except Exception as exc:
             logger.debug("[PredictionEngine] Fallback fetch failed for %s: %s", clean_sym, exc)
 
+    # ── Layer 1 Live Tick Calibration & Provider Telemetry ───────────────────
+    feed_url = os.environ.get("FEED_SERVICE_URL", "").strip()
+    feed_source = "YAHOO_NSE_DELAYED"
+    data_delay_minutes = 15
+
+    if feed_url:
+        try:
+            from api.feed_client import fetch_feed_snapshot
+            snap = await fetch_feed_snapshot([clean_sym], timeout=2.0)
+            if snap and isinstance(snap, dict):
+                quotes = snap.get("quotes", {})
+                q = quotes.get(clean_sym)
+                if q and q.get("lp"):
+                    lp = float(q["lp"])
+                    if lp > 0:
+                        feed_source = "SHOONYA_LIVE"
+                        data_delay_minutes = 0
+                        if df is not None and not df.empty and "close" in df.columns:
+                            df.iloc[-1, df.columns.get_loc("close")] = lp
+                            if "high" in df.columns:
+                                df.iloc[-1, df.columns.get_loc("high")] = max(float(df["high"].iloc[-1]), lp)
+                            if "low" in df.columns:
+                                df.iloc[-1, df.columns.get_loc("low")] = min(float(df["low"].iloc[-1]), lp)
+        except Exception as exc:
+            logger.debug("[PredictionEngine] Shoonya live snapshot probe deferred: %s", exc)
+
     # Layer 1 Data Validation Contract: reject if < 60 bars (minimum 60 required for EMA50, MACD, RSI, ATR)
     if df is None or df.empty or len(df) < 60:
         available_bars = len(df) if df is not None else 0
@@ -479,8 +506,8 @@ async def predict_stock_price(
             "prediction_timestamp": now_iso,
             "source": "LOCAL_HEURISTIC",
             "model_version": "v1.2.0-ensemble-6layer",
-            "data_delay_minutes": 15,
-            "feed_source": "YAHOO_NSE_DELAYED",
+            "data_delay_minutes": data_delay_minutes,
+            "feed_source": feed_source,
             "horizon": "5–8 Trading Days (Swing)",
             "status": "INSUFFICIENT_DATA",
             "direction": None,
@@ -723,8 +750,8 @@ async def predict_stock_price(
         "company_name": comp_name,
         "as_of": as_of_str,
         "as_of_iso": as_of_iso,
-        "data_delay_minutes": 15,
-        "feed_source": "YAHOO_NSE_DELAYED",
+        "data_delay_minutes": data_delay_minutes,
+        "feed_source": feed_source,
         "horizon": dynamic_horizon,
         "prediction_horizon": dynamic_horizon,
         "horizon_details": horizon_meta,

@@ -282,3 +282,47 @@ async def test_predict_stock_insufficient_data(monkeypatch):
     assert res["listing_range"]["high"] == 10.0
     assert res["listing_range"]["low"] == 8.0
 
+
+@pytest.mark.asyncio
+async def test_predict_stock_shoonya_live_calibration(monkeypatch):
+    """Verify Shoonya live tick calibration elevates feed_source to SHOONYA_LIVE with 0m delay."""
+    from data.providers.yahoo import YahooProvider
+    import api.feed_client
+
+    n = 250
+    dates = pd.date_range("2025-01-01", periods=n, freq="B")
+    close = np.linspace(240, 270, n)
+    high = close + 2.0
+    low = close - 2.0
+    vol = np.random.uniform(1000, 5000, n)
+    mock_df = pd.DataFrame({"high": high, "low": low, "close": close, "volume": vol}, index=dates)
+
+    nifty_close = np.linspace(24000, 25000, n)
+    mock_nifty = pd.DataFrame({"close": nifty_close}, index=dates)
+    mock_vix = pd.DataFrame({"close": np.full(n, 14.5)}, index=dates)
+
+    async def mock_get_batch_ohlcv(self, symbols, period="1y", interval="1d"):
+        return {
+            "RELIANCE": mock_df,
+            "^NSEI": mock_nifty,
+            "^INDIAVIX": mock_vix,
+        }
+
+    async def mock_fetch_feed_snapshot(symbols, timeout=2.0):
+        return {
+            "quotes": {
+                "RELIANCE": {"lp": 285.50, "open": 280.0, "high": 288.0, "low": 279.0}
+            }
+        }
+
+    monkeypatch.setenv("FEED_SERVICE_URL", "http://mock-feed:8000")
+    monkeypatch.setattr(YahooProvider, "get_batch_ohlcv", mock_get_batch_ohlcv)
+    monkeypatch.setattr(api.feed_client, "fetch_feed_snapshot", mock_fetch_feed_snapshot)
+
+    res = await predict_stock_price("RELIANCE", force_refresh=True)
+    assert res["status"] == "PREDICTION_ACTIVE"
+    assert res["feed_source"] == "SHOONYA_LIVE"
+    assert res["data_delay_minutes"] == 0
+    # Last close in price_levels should reflect calibrated live tick (285.50)
+    assert res["price_levels"]["reference_price"] == 285.50
+

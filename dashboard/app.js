@@ -28141,8 +28141,32 @@ async function openAiPredictionModal(sym) {
         dirEl.style.color = isUp ? '#34d399' : (isDown ? '#f87171' : '#38bdf8');
         dirEl.style.borderColor = isUp ? 'rgba(16,185,129,0.4)' : (isDown ? 'rgba(239,68,68,0.4)' : 'rgba(56,189,248,0.4)');
 
-        delayEl.textContent = `⏱️ ${data.data_delay_minutes || 15}m Delayed (${data.feed_source || 'YAHOO'})`;
-        delayEl.style.color = '#facc15';
+        const isLivePred = Boolean(
+            data.data_delay_minutes === 0 ||
+            String(data.feed_source || '').toUpperCase().includes('SHOONYA') ||
+            (_currentFeedStatus && (
+                _currentFeedStatus.state === 'LIVE' ||
+                _currentFeedStatus.quote_state === 'LIVE' ||
+                String(_currentFeedStatus.source || '').toUpperCase().includes('SHOONYA')
+            ))
+        );
+
+        if (isLivePred) {
+            delayEl.textContent = '⚡ Real-Time Feed (SHOONYA LIVE)';
+            delayEl.style.color = '#34d399';
+            delayEl.style.borderColor = 'rgba(16,185,129,0.4)';
+            delayEl.style.background = 'rgba(16,185,129,0.14)';
+        } else if (data.feed_source === 'NSE_BHAVCOPY_EOD' || (typeof isNseMarketOpen === 'function' && !isNseMarketOpen())) {
+            delayEl.textContent = '🏛️ Official Settlement (NSE EOD)';
+            delayEl.style.color = '#38bdf8';
+            delayEl.style.borderColor = 'rgba(56,189,248,0.4)';
+            delayEl.style.background = 'rgba(56,189,248,0.14)';
+        } else {
+            delayEl.textContent = `⏱️ ${data.data_delay_minutes ?? 15}m Delayed (${data.feed_source || 'YAHOO'})`;
+            delayEl.style.color = '#facc15';
+            delayEl.style.borderColor = 'rgba(250,204,21,0.4)';
+            delayEl.style.background = 'rgba(250,204,21,0.14)';
+        }
 
         const p = data.probabilities || { up: 33.3, down: 33.3, sideways: 33.4 };
         const pl = data.price_levels || {};
