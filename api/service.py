@@ -585,7 +585,7 @@ async def _hydrate_context_v3_from_db() -> bool:
 
 async def _hydrate_swing_cache_from_db() -> bool:
     """On startup, seed _swing_cache from the best available source.
-    Checks both nightly JSON and DB, picks whichever has more setups.
+    Picks the MOST RECENT scan (comparing scan_date first), breaking ties by setups count.
     Returns True if hydration placed setups into the cache, False otherwise.
     """
     global _swing_cache
@@ -593,6 +593,7 @@ async def _hydrate_swing_cache_from_db() -> bool:
     best_source = None
     best_setups = []
     best_meta = {}
+    best_date = ""
 
     # Source 1: Nightly scan JSON (usually has the full 500-stock scan)
     try:
@@ -606,13 +607,16 @@ async def _hydrate_swing_cache_from_db() -> bool:
             with open(json_path, "r", encoding="utf-8") as f:
                 raw = _json.load(f)
             shortlist = raw.get("shortlist") or raw.get("raw_setups") or []
-            if len(shortlist) > len(best_setups):
+            json_date = str(raw.get("scan_date") or raw.get("scan_timestamp") or "")[:10]
+            if shortlist:
                 best_source = "json"
                 best_setups = shortlist
+                best_date = json_date
                 best_meta = {
                     "total_found": raw.get("setups_found", len(shortlist)),
                     "symbols_scanned": raw.get("symbols_scanned", 0),
-                    "updated_at": raw.get("scan_timestamp"),
+                    "updated_at": raw.get("scan_timestamp") or raw.get("scan_date"),
+                    "scan_date": json_date,
                 }
     except Exception as exc:
         logger.warning("Swing hydration JSON read failed: %s", exc)
@@ -623,16 +627,27 @@ async def _hydrate_swing_cache_from_db() -> bool:
             latest = await asyncio.to_thread(_swing_store.load_latest_scan)
             if latest:
                 db_setups = latest.get("setups") or []
-                if len(db_setups) > len(best_setups):
+                db_date = str(latest.get("scan_date") or latest.get("scan_time") or "")[:10]
+                take_db = False
+                if not best_setups:
+                    take_db = True
+                elif db_date > best_date:
+                    take_db = True
+                elif db_date == best_date and len(db_setups) > len(best_setups):
+                    take_db = True
+
+                if take_db and db_setups:
                     best_source = "db"
                     best_setups = db_setups
+                    best_date = db_date
                     best_meta = {
                         "total_found": int(
                             latest.get("total_setups") or len(db_setups)
                         ),
                         "symbols_scanned": int(latest.get("symbols_scanned") or 0),
-                        "updated_at": latest.get("scan_time"),
+                        "updated_at": latest.get("scan_time") or latest.get("scan_date"),
                         "market_context": latest.get("market_context"),
+                        "scan_date": db_date,
                     }
         except Exception as exc:
             logger.warning("Swing hydration DB read failed: %s", exc)
@@ -3978,6 +3993,44 @@ def _ensure_top_setups_fallback(payload: dict) -> dict:
     if existing:
         return payload
 
+    now_ist = datetime.now(_IST)
+    today_ist = now_ist.date()
+    scan_date_str = None
+    if _swing_cache.get("scan_date"):
+        scan_date_str = str(_swing_cache.get("scan_date"))[:10]
+    elif _swing_cache.get("updated_at"):
+        scan_date_str = str(_swing_cache.get("updated_at"))[:10]
+
+    is_stale_scan = False
+    if scan_date_str:
+        try:
+            s_date = datetime.strptime(scan_date_str, "%Y-%m-%d").date()
+            calendar_days = (today_ist - s_date).days
+            if now_ist.weekday() < 5:  # Mon-Fri
+                if calendar_days >= 1:
+                    is_stale_scan = True
+            else:  # Weekend Sat-Sun
+                if calendar_days > 2:
+                    is_stale_scan = True
+        except Exception:
+            is_stale_scan = True
+
+    if is_stale_scan:
+        logger.info(
+            "Rejecting swing shortlist fallback: scan date %s is expired relative to %s",
+            scan_date_str,
+            today_ist,
+        )
+        meta = payload.get("ranking_meta") or {}
+        meta["actionable"] = 0
+        meta["fallback_applied"] = False
+        meta["stale_scan_rejected"] = True
+        meta["last_scan_date"] = scan_date_str
+        meta["message"] = f"No active setups. Today's EOD scan ({today_ist}) pending. Prior scan ({scan_date_str}) expired."
+        payload["ranking_meta"] = meta
+        payload["top_setups"] = []
+        return payload
+
     swing_candidates = _swing_cache.get("setups") or []
     if not swing_candidates:
         try:
@@ -3985,7 +4038,16 @@ def _ensure_top_setups_fallback(payload: dict) -> dict:
             if _SWING_STORE_ENABLED and swing_store is not None:
                 latest = swing_store.load_latest_scan()
                 if latest:
-                    swing_candidates = latest.get("setups") or []
+                    db_date = str(latest.get("scan_date") or latest.get("scan_time") or "")[:10]
+                    try:
+                        d_date = datetime.strptime(db_date, "%Y-%m-%d").date()
+                        d_days = (today_ist - d_date).days
+                        if (now_ist.weekday() < 5 and d_days >= 1) or (now_ist.weekday() >= 5 and d_days > 2):
+                            logger.info("Rejecting DB swing scan: date %s is expired relative to %s", db_date, today_ist)
+                        else:
+                            swing_candidates = latest.get("setups") or []
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -3999,13 +4061,23 @@ def _ensure_top_setups_fallback(payload: dict) -> dict:
         r_d = abs(entry_p - sl_p)
         rw_d = abs(tp_p - entry_p)
         rr_val = round(rw_d / max(r_d, 0.01), 1) if r_d > 0 and rw_d > 0 else 1.8
+
+        raw_conf = s.get("confidence")
+        if raw_conf is not None:
+            conf_val = round(float(raw_conf), 1)
+            conf_src = "ML_MODEL"
+        else:
+            conf_val = round(float(s.get("strength") or s.get("score") or qs or 50.0), 1)
+            conf_src = "SETUP_STRENGTH"
+
         setups.append({
             "symbol": str(s.get("symbol", "")),
             "signal": str(s.get("direction") or s.get("signal") or "LONG"),
             "quality_score": qs,
             "quality_grade": q_grade,
             "quality_source": q_source,
-            "confidence": float(s.get("confidence") or 70.0),
+            "confidence": conf_val,
+            "confidence_source": conf_src,
             "composite_rank": float(qs),
             "confluence_score": int(min(100, qs)),
             "entry": entry_p,
@@ -4525,14 +4597,45 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
 
     if not top_setups:
         # Off-hours fallback to latest SwingSpectrum shortlist candidates
-        swing_candidates = _swing_cache.get("setups") or []
-        if not swing_candidates:
+        now_ist = datetime.now(_IST)
+        today_ist = now_ist.date()
+        scan_date_str = None
+        if _swing_cache.get("scan_date"):
+            scan_date_str = str(_swing_cache.get("scan_date"))[:10]
+        elif _swing_cache.get("updated_at"):
+            scan_date_str = str(_swing_cache.get("updated_at"))[:10]
+
+        is_stale_scan = False
+        if scan_date_str:
+            try:
+                s_date = datetime.strptime(scan_date_str, "%Y-%m-%d").date()
+                calendar_days = (today_ist - s_date).days
+                if now_ist.weekday() < 5:  # Mon-Fri
+                    if calendar_days >= 1:
+                        is_stale_scan = True
+                else:
+                    if calendar_days > 2:
+                        is_stale_scan = True
+            except Exception:
+                is_stale_scan = True
+
+        swing_candidates = [] if is_stale_scan else (_swing_cache.get("setups") or [])
+        if not swing_candidates and not is_stale_scan:
             try:
                 from db import swing_store
                 if _SWING_STORE_ENABLED and swing_store is not None:
                     latest = swing_store.load_latest_scan()
                     if latest:
-                        swing_candidates = latest.get("setups") or []
+                        db_date = str(latest.get("scan_date") or latest.get("scan_time") or "")[:10]
+                        try:
+                            d_date = datetime.strptime(db_date, "%Y-%m-%d").date()
+                            d_days = (today_ist - d_date).days
+                            if (now_ist.weekday() < 5 and d_days >= 1) or (now_ist.weekday() >= 5 and d_days > 2):
+                                logger.info("Rejecting DB swing scan: date %s is expired relative to %s", db_date, today_ist)
+                            else:
+                                swing_candidates = latest.get("setups") or []
+                        except Exception:
+                            pass
             except Exception:
                 pass
         for s in swing_candidates[:5]:
@@ -4546,13 +4649,23 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
             r_d = abs(entry_p - sl_p)
             rw_d = abs(tp_p - entry_p)
             rr_val = round(rw_d / max(r_d, 0.01), 1) if sw_valid and r_d > 0 and rw_d > 0 else 1.8
+
+            raw_conf = s.get("confidence")
+            if raw_conf is not None:
+                conf_val = round(float(raw_conf), 1)
+                conf_src = "ML_MODEL"
+            else:
+                conf_val = round(float(s.get("strength") or s.get("score") or qs or 50.0), 1)
+                conf_src = "SETUP_STRENGTH"
+
             top_setups.append({
                 "symbol": str(s.get("symbol", "")),
                 "signal": sw_dir,
                 "quality_score": qs,
                 "quality_grade": q_grade,
                 "quality_source": q_source,
-                "confidence": float(s.get("confidence") or 70.0),
+                "confidence": conf_val,
+                "confidence_source": conf_src,
                 "composite_rank": float(qs),
                 "confluence_score": int(min(100, qs)),
                 "entry": entry_p,

@@ -353,6 +353,52 @@ class TestBestRightNowDecisionCockpitGates(unittest.TestCase):
         self.assertEqual(payload["ranking_meta"]["scoring_version"], "phase7_v3")
         self.assertIn("R:R expectancy", payload["ranking_meta"]["scoring_summary"])
 
+    def test_expired_swing_shortlist_is_rejected(self):
+        """A swing scan from >1 weekday ago is rejected as expired and not dumped into top_setups."""
+        stale_cache = {
+            "setups": [
+                {
+                    "symbol": "STALE_SYM",
+                    "entry_zone": 100.0,
+                    "stop_loss": 95.0,
+                    "target_1": 115.0,
+                    "strength": 80,
+                    "direction": "LONG",
+                }
+            ],
+            "scan_date": "2026-11-10",  # Definitely expired
+            "updated_at": "2026-11-10T18:00:00",
+        }
+        with patch.object(svc, "_swing_cache", stale_cache):
+            res = _ensure_top_setups_fallback({"top_setups": []})
+            self.assertEqual(res["top_setups"], [])
+            self.assertTrue(res.get("ranking_meta", {}).get("stale_scan_rejected"))
+
+    def test_honest_confidence_and_not_flat_70_mock(self):
+        """Fresh swing candidates reflect real strength (e.g. 80.0%) and not flat 70.0% mock."""
+        from datetime import datetime
+        today_str = datetime.now(svc._IST).date().isoformat()
+        fresh_cache = {
+            "setups": [
+                {
+                    "symbol": "FRESH_SYM",
+                    "entry_zone": 100.0,
+                    "stop_loss": 95.0,
+                    "target_1": 115.0,
+                    "strength": 84,  # distinct strength
+                    "direction": "LONG",
+                }
+            ],
+            "scan_date": today_str,
+            "updated_at": f"{today_str}T18:00:00",
+        }
+        with patch.object(svc, "_swing_cache", fresh_cache):
+            res = _ensure_top_setups_fallback({"top_setups": []})
+            self.assertEqual(len(res["top_setups"]), 1)
+            item = res["top_setups"][0]
+            self.assertEqual(item["confidence"], 84.0)
+            self.assertEqual(item["confidence_source"], "SETUP_STRENGTH")
+
 
 if __name__ == "__main__":
     unittest.main()

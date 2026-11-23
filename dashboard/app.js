@@ -4768,17 +4768,30 @@ function _renderTopSetups(setups, meta) {
 
 
     if (setups.length === 0) {
-
-
-
-        grid.innerHTML = '<span class="cockpit-empty-msg">No high-quality actionable setups right now. Market may be in SKIP zone or data is warming up.</span>';
-
-
-
+        const isClosed = meta.session_state === 'EOD' || (typeof isNseMarketOpen === 'function' && !isNseMarketOpen());
+        let msg = 'No high-quality actionable setups right now. Market may be in SKIP zone or regime gate active.';
+        let title = '🎯 No Actionable Setups Right Now';
+        if (isClosed) {
+            title = '🌙 Market Closed (EOD Session)';
+            if (meta.stale_scan_rejected && meta.last_scan_date) {
+                msg = `Prior scan (${meta.last_scan_date}) expired. Today's EOD swing scan is pending/processing.`;
+            } else {
+                msg = 'Intraday session ended. Fresh daily swing setups will appear once EOD scan completes.';
+            }
+        } else if (meta.message) {
+            msg = meta.message;
+        }
+        grid.innerHTML = `
+            <div style="grid-column: 1 / -1; background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.12); border-radius: 8px; padding: 2rem 1.5rem; text-align: center;">
+                <div style="font-size: 1.05rem; font-weight: 700; color: #94a3b8; margin-bottom: 6px;">
+                    ${title}
+                </div>
+                <div style="font-size: 0.82rem; color: #64748b; line-height: 1.5;">
+                    ${_escHtml(msg)}
+                </div>
+            </div>
+        `;
         return;
-
-
-
     }
 
 
@@ -5095,7 +5108,7 @@ function _renderTopSetups(setups, meta) {
 
 
 
-                    <div class="cs-level"><span class="cs-level-key">Conf </span><span class="cs-level-val">${s.confidence}%</span></div>
+                    <div class="cs-level"><span class="cs-level-key">${s.confidence_source === 'SETUP_STRENGTH' ? 'Strength ' : 'Conf '}</span><span class="cs-level-val">${s.confidence != null ? Number(s.confidence).toFixed(0) + '%' : '—'}</span></div>
 
 
 
