@@ -300,6 +300,11 @@ async def test_analyze_watchlist_symbols_insufficient_data(monkeypatch):
     assert res["NEWSTOCK"]["entry"] is None
     assert res["NEWSTOCK"]["stop_loss"] is None
     assert res["NEWSTOCK"]["target"] is None
+    assert res["NEWSTOCK"]["ltp"] == 102.0
+    assert res["NEWSTOCK"]["key_support"] == 95.0
+    assert res["NEWSTOCK"]["key_resistance"] == 105.0
+    assert res["NEWSTOCK"]["horizon"]["short"] == "Maturing IPO"
+    assert "50/60 Bars" in res["NEWSTOCK"]["horizon"]["barrier_short"]
 
 
 @pytest.mark.asyncio

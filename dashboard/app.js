@@ -1549,35 +1549,26 @@ function updateWsIndicator(connected) {
 
 
 
+let _currentFeedStatus = null;
+
 function _updateFeedStatusFromWs(feedStatus) {
     if (!feedStatus) return;
     if (typeof feedStatus === 'string') {
         feedStatus = { state: feedStatus };
     }
-
-
+    _currentFeedStatus = { ...(_currentFeedStatus || {}), ...feedStatus };
 
     if (_lastCockpitData) {
-
-
-
         if (!_lastCockpitData.market_guardrails) _lastCockpitData.market_guardrails = {};
-
-
-
         const prev = _lastCockpitData.market_guardrails.feed_status || {};
-
-
-
         _lastCockpitData.market_guardrails.feed_status = { ...prev, ...feedStatus };
-
-
-
     }
 
-
-
     _renderFeedStalenessBanner(_lastCockpitData && _lastCockpitData.market_guardrails);
+
+    if (typeof updateMarketSessionBadge === 'function') {
+        updateMarketSessionBadge();
+    }
 
 
 
@@ -16046,13 +16037,28 @@ function updateDynamicMarketStatus() {
     const isPreMarket = isMuhuratPre || (!isWeekend && (mins >= 9 * 60 && mins < 9 * 60 + 15));
     const isOpen = isMuhuratOpen || (!isWeekend && (mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30));
 
+    const isLiveFeed = Boolean(
+        _currentFeedStatus && (
+            _currentFeedStatus.state === 'LIVE' ||
+            _currentFeedStatus.quote_state === 'LIVE' ||
+            _currentFeedStatus.source === 'LIVE_TV' ||
+            _currentFeedStatus.source === 'LIVE_NSE' ||
+            _currentFeedStatus.source === 'SHOONYA'
+        )
+    );
+
     if (isOpen) {
         if (isMuhuratOpen) {
             el.innerHTML = '<span class="status-dot live" style="background:#10b981;box-shadow:0 0 8px #10b981;"></span><span style="color:#10b981;font-weight:700;letter-spacing:0.04em;">NSE OPEN · MUHURAT TRADING</span>';
             el.title = 'Diwali Muhurat Trading Session Active (14:20 - 15:30 IST) · Samvat 2083';
         } else if (_wsConnected) {
-            el.innerHTML = '<span class="status-dot live" style="background:#10b981;"></span><span style="color:#10b981;font-weight:700;letter-spacing:0.04em;">NSE OPEN · 15m DELAYED</span>';
-            el.title = 'NSE Indian Market Open (09:15 - 15:30 IST) | Quotes delayed ~15m per exchange compliance on zero-cost public feed. WebSocket active.';
+            if (isLiveFeed) {
+                el.innerHTML = '<span class="status-dot live" style="background:#10b981;box-shadow:0 0 8px #10b981;"></span><span style="color:#10b981;font-weight:700;letter-spacing:0.04em;">NSE OPEN · LIVE</span>';
+                el.title = 'NSE Indian Market Open (09:15 - 15:30 IST) | Real-time live quotes active. WebSocket connected.';
+            } else {
+                el.innerHTML = '<span class="status-dot live" style="background:#10b981;"></span><span style="color:#10b981;font-weight:700;letter-spacing:0.04em;">NSE OPEN · 15m DELAYED</span>';
+                el.title = 'NSE Indian Market Open (09:15 - 15:30 IST) | Quotes delayed ~15m per exchange compliance on zero-cost public feed. WebSocket active.';
+            }
         } else {
             el.innerHTML = '<span class="status-dot" style="background:#f59e0b;box-shadow:0 0 6px rgba(245,158,11,0.6);"></span><span style="color:#f59e0b;font-weight:700;letter-spacing:0.04em;">NSE OPEN · SYNCING</span>';
             el.title = 'Indian Market Open (09:15 - 15:30 IST) | Reconnecting to live feed';
@@ -16070,7 +16076,7 @@ function updateDynamicMarketStatus() {
     const eePill = document.getElementById('eeLiveStatusPill');
     if (eeText && eePill) {
         if (isOpen) {
-            eeText.textContent = isMuhuratOpen ? 'NSE OPEN · MUHURAT TRADING' : 'NSE OPEN · 15m Delayed';
+            eeText.textContent = isMuhuratOpen ? 'NSE OPEN · MUHURAT TRADING' : (isLiveFeed ? 'NSE OPEN · LIVE' : 'NSE OPEN · 15m Delayed');
             eePill.className = 'ee-telemetry-pill live';
         } else if (isPreMarket) {
             eeText.textContent = 'NSE PRE-OPEN';
@@ -21784,10 +21790,24 @@ function _updateIntradayKpis(sigs, session, niftyContext, dataStatus) {
         regEl.style.color = trend === "BULLISH" ? "var(--green)" : (trend === "BEARISH" ? "var(--red)" : "var(--text-muted)");
     }
 
-    // Feed Quality KPI (Strict Truthful Freshness: No Fake LIVE Badges)
+    // Feed Quality KPI (Strict Truthful Freshness: Dynamic Feed Awareness)
     if (feedEl) {
-        feedEl.textContent = "15M DELAYED (NSE)";
-        feedEl.style.color = "#38bdf8";
+        const isLive = Boolean(
+            _currentFeedStatus && (
+                _currentFeedStatus.state === 'LIVE' ||
+                _currentFeedStatus.quote_state === 'LIVE' ||
+                _currentFeedStatus.source === 'LIVE_TV' ||
+                _currentFeedStatus.source === 'LIVE_NSE' ||
+                _currentFeedStatus.source === 'SHOONYA'
+            )
+        );
+        if (isLive) {
+            feedEl.textContent = "LIVE NSE (REALTIME)";
+            feedEl.style.color = "#10b981";
+        } else {
+            feedEl.textContent = "15M DELAYED (NSE)";
+            feedEl.style.color = "#38bdf8";
+        }
     }
 }
 
@@ -25951,11 +25971,18 @@ async function updateAiModelHealthBadge() {
                 }
             }
 
+            if (data && data.feed && !_currentFeedStatus) {
+                _currentFeedStatus = data.feed;
+                if (typeof updateMarketSessionBadge === 'function') updateMarketSessionBadge();
+            }
+
             if (subEl) {
                 if (dataAgeHuman) {
                     subEl.textContent = dataAgeHuman;
                 } else if (data.feed && !data.feed.is_market_open) {
                     subEl.textContent = 'EOD Snapshot · Market Closed';
+                } else if (data.feed && (data.feed.state === 'LIVE' || data.feed.quote_state === 'LIVE' || data.feed.source === 'LIVE_TV')) {
+                    subEl.textContent = 'Data: Realtime Live';
                 } else {
                     subEl.textContent = 'Data: 15m Delayed';
                 }
@@ -27273,11 +27300,30 @@ function _renderWatchlistCard(sym, q, compName) {
     // Levels Grid Duality (Actionable vs Observation vs Insufficient)
     let levelsHtml = '';
     if (isInsufficient) {
-        levelsHtml = `
-            <div class="watchlist-levels" style="grid-template-columns: 1fr; text-align: center; padding: 6px 0;">
-                <span style="font-size: 0.72rem; color: var(--text-muted);">⚠️ Insufficient historical data (&lt; 200 daily bars for scoring)</span>
-            </div>
-        `;
+        if (q.keySupport && q.keyResistance) {
+            levelsHtml = `
+                <div class="watchlist-levels">
+                    <div>
+                        <div class="watchlist-lvl-label" style="color:#f87171;" title="All-time low since listing">Listing Low</div>
+                        <div class="watchlist-lvl-val" style="color:#f87171;">₹${Number(q.keySupport).toFixed(1)}</div>
+                    </div>
+                    <div>
+                        <div class="watchlist-lvl-label" style="color:#34d399;" title="All-time high since listing">Listing High</div>
+                        <div class="watchlist-lvl-val" style="color:#34d399;">₹${Number(q.keyResistance).toFixed(1)}</div>
+                    </div>
+                    <div>
+                        <div class="watchlist-lvl-label" style="color:#fbbf24;" title="IPO Maturation Gate">Maturation</div>
+                        <div class="watchlist-lvl-val" style="color:#fbbf24;font-size:0.68rem;">&lt; 60 Bars</div>
+                    </div>
+                </div>
+            `;
+        } else {
+            levelsHtml = `
+                <div class="watchlist-levels" style="grid-template-columns: 1fr; text-align: center; padding: 6px 0;">
+                    <span style="font-size: 0.72rem; color: var(--text-muted);">⚠️ Young listing / Insufficient data (&lt; 60 daily bars)</span>
+                </div>
+            `;
+        }
     } else if (isActionable) {
         const entryVal = q.entry ? '₹' + Number(q.entry).toFixed(1) : '₹' + Number(ltp).toFixed(1);
         const slVal = q.sl ? '₹' + Number(q.sl).toFixed(1) : '—';
@@ -27942,12 +27988,74 @@ async function openAiPredictionModal(sym) {
 
         if (data.status === 'INSUFFICIENT_DATA') {
             nameEl.textContent = data.company_name || cleanSym;
-            delayEl.textContent = '⚠️ Insufficient Bars';
-            delayEl.style.color = '#f87171';
+            const avail = Number(data.available_bars !== undefined ? data.available_bars : 0);
+            const req = Number(data.required_bars || 60);
+            const rem = Number(data.bars_remaining !== undefined ? data.bars_remaining : Math.max(0, req - avail));
+            const pct = Math.min(100, Math.round((avail / req) * 100));
+            const lr = data.listing_range;
+
+            delayEl.textContent = avail > 0 ? `⚠️ Maturing IPO (${avail}/${req} Bars)` : '⚠️ Insufficient Bars';
+            delayEl.style.color = '#f59e0b';
+
+            let rangeHtml = '';
+            if (lr) {
+                rangeHtml = `
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin:12px 0;text-align:center;">
+                        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);padding:8px;border-radius:6px;">
+                            <div style="font-size:0.65rem;color:#94a3b8;text-transform:uppercase;">Listing Open</div>
+                            <div style="font-size:0.95rem;font-weight:700;color:#e2e8f0;font-family:var(--font-mono);">₹${Number(lr.listing_open || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                        </div>
+                        <div style="background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.2);padding:8px;border-radius:6px;">
+                            <div style="font-size:0.65rem;color:#34d399;text-transform:uppercase;">All-Time High</div>
+                            <div style="font-size:0.95rem;font-weight:700;color:#34d399;font-family:var(--font-mono);">₹${Number(lr.high || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                        </div>
+                        <div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.2);padding:8px;border-radius:6px;">
+                            <div style="font-size:0.65rem;color:#f87171;text-transform:uppercase;">All-Time Low</div>
+                            <div style="font-size:0.95rem;font-weight:700;color:#f87171;font-family:var(--font-mono);">₹${Number(lr.low || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                        </div>
+                        <div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);padding:8px;border-radius:6px;">
+                            <div style="font-size:0.65rem;color:#60a5fa;text-transform:uppercase;">Mark (LTP)</div>
+                            <div style="font-size:0.95rem;font-weight:700;color:#93c5fd;font-family:var(--font-mono);">₹${Number(lr.current || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                        </div>
+                    </div>
+                `;
+            }
+
             contentEl.innerHTML = `
-                <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:16px;text-align:center;">
-                    <div style="font-size:1.1rem;color:#f87171;font-weight:700;">Data Insufficient (< 60 Daily Bars)</div>
-                    <div style="margin-top:6px;font-size:0.8rem;color:#cbd5e1;line-height:1.4;">${_escHtml(data.rationale || 'Minimum 60 trading sessions required to reliably fit indicators and regime filters.')}</div>
+                <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <span style="font-size:0.8rem;font-weight:700;color:#f59e0b;text-transform:uppercase;letter-spacing:0.04em;">
+                            🛡️ Layer 1 Guardrail: Maturing IPO
+                        </span>
+                        <span style="font-size:0.75rem;font-family:var(--font-mono);color:#cbd5e1;font-weight:600;">
+                            ${avail} / ${req} Sessions (${pct}%)
+                        </span>
+                    </div>
+
+                    <!-- Progress Bar towards 60-bar Swing Activation -->
+                    <div style="height:10px;border-radius:5px;overflow:hidden;background:rgba(255,255,255,0.06);margin-bottom:8px;">
+                        <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,#f59e0b,#eab308);border-radius:5px;transition:width 0.5s ease;"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#94a3b8;margin-bottom:12px;">
+                        <span>${data.first_trading_date ? 'Listed on ' + _escHtml(data.first_trading_date) : 'Young Listing'}</span>
+                        <span style="color:#fbbf24;font-weight:600;">${rem} more sessions for 60-day Swing AI</span>
+                    </div>
+
+                    ${rangeHtml}
+
+                    <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.22);border-radius:6px;padding:10px;font-size:0.75rem;color:#cbd5e1;line-height:1.45;margin-bottom:14px;">
+                        <div style="font-weight:700;color:#fbbf24;margin-bottom:4px;">Why is Swing AI Paused?</div>
+                        TradeAI PRO enforces a strict 60-bar convergence filter to protect capital. Mathematical indicators (EMA 50, MACD, 20d RS vs NIFTY 50) and 45-feature ML ensembles require at least 60 trading days to avoid hallucinated predictions on newly listed securities.
+                    </div>
+
+                    <div style="display:flex;gap:8px;justify-content:flex-end;">
+                        <button class="btn btn-secondary btn-sm" onclick="closeAiPredictionModal();" style="padding:6px 14px;font-size:0.78rem;">
+                            Close
+                        </button>
+                        <button class="btn btn-primary btn-sm" onclick="closeAiPredictionModal(); fetchAndShowQuote('${_escHtml(cleanSym)}');" style="padding:6px 16px;font-size:0.78rem;font-weight:700;background:linear-gradient(135deg,#3b82f6,#2563eb);">
+                            ⚡ Open Intraday Chart & Price Action
+                        </button>
+                    </div>
                 </div>
             `;
             return;

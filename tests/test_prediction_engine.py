@@ -274,4 +274,11 @@ async def test_predict_stock_insufficient_data(monkeypatch):
     assert res["probabilities"] is None
     assert res["price_levels"] is None
     assert "Insufficient historical data" in res["rationale"]
+    assert res["available_bars"] == 50
+    assert res["required_bars"] == 60
+    assert res["bars_remaining"] == 10
+    assert res["first_trading_date"] == "2026-01-01"
+    assert res["listing_range"] is not None
+    assert res["listing_range"]["high"] == 10.0
+    assert res["listing_range"]["low"] == 8.0
 

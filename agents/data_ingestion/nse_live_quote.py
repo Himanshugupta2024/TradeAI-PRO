@@ -277,11 +277,14 @@ class NSELiveQuoteClient:
                 self._cache[clean] = (now, quote)
                 return quote
 
-        # Tier 1: Direct NSE
+        # Tier 1: Direct NSE (tested locally first)
         quote = self._fetch_direct_nse(clean, avg_volume)
         # Tier 2: nsepython fallback
         if quote is None:
             quote = self._fetch_nsepython(clean, avg_volume)
+        # Tier 0: TradingView real-time fallback (unblocked for local + cloud)
+        if quote is None:
+            quote = self._fetch_tradingview(clean, avg_volume)
         # Tier 3: yfinance fast_info fallback
         if quote is None:
             quote = self._fetch_yfinance(symbol, avg_volume)
@@ -305,19 +308,28 @@ class NSELiveQuoteClient:
         return quote
 
     def _fetch_tradingview(self, clean_symbol: str, avg_volume: float) -> Optional[NSELiveQuote]:
-        """Tier 0: TradingView India scanner — real-time, works from datacenter IPs."""
+        """Tier 0: TradingView India scanner — real-time, works from datacenter and local IPs."""
         try:
             import asyncio
+            import concurrent.futures
             from data.providers.tradingview import TradingViewProvider
 
             provider = TradingViewProvider(timeout=6.0)
-            try:
-                asyncio.get_running_loop()
-                return None  # inside a running loop — skip TV tier, caller is async context
-            except RuntimeError:
-                pass  # normal case: sync worker thread (scan runs via asyncio.to_thread)
 
-            quotes = asyncio.run(provider.get_batch_quotes([clean_symbol]))
+            def _run_fetch():
+                return asyncio.run(provider.get_batch_quotes([clean_symbol]))
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    quotes = pool.submit(_run_fetch).result(timeout=6.0)
+            else:
+                quotes = _run_fetch()
+
             mq = quotes.get(clean_symbol)
             if mq is None or not mq.is_valid():
                 return None
@@ -330,6 +342,10 @@ class NSELiveQuoteClient:
             freshness = max(0.0, (now_ist - ts_ist).total_seconds())
             typical = ((mq.high or mq.price) + (mq.low or mq.price) + mq.price) / 3.0
             rvol = (float(mq.volume or 0) / avg_volume) if avg_volume else 1.0
+
+            is_open = is_nse_market_open(now_ist)
+            is_rt = freshness <= 180.0 if is_open else (freshness <= 60.0)
+            is_eligible = is_rt and (is_open or freshness <= 60.0)
 
             return NSELiveQuote(
                 symbol=clean_symbol,
@@ -348,9 +364,9 @@ class NSELiveQuoteClient:
                 data_timestamp=ts_ist.isoformat(),
                 fetched_at=now_ist.isoformat(),
                 freshness_seconds=freshness,
-                is_realtime=freshness <= 60,
-                trade_eligible=freshness <= 60,
-                status_reason="LIVE_TV_SCANNER" if freshness <= 60 else f"TV_AGE_{int(freshness)}S",
+                is_realtime=is_rt,
+                trade_eligible=is_eligible,
+                status_reason="LIVE_TV_SCANNER" if is_rt else (f"TV_AGE_{int(freshness)}S" if is_open else "MARKET_CLOSED_LAST_CLOSE"),
             )
         except Exception as exc:
             logger.debug("TradingView quote tier failed for %s: %s", clean_symbol, exc)

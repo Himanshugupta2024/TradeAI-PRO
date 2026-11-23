@@ -1003,11 +1003,37 @@ async def analyze_watchlist_symbols(
             # Insufficient data check (< 200 bars)
             if df is None or df.empty or len(df) < 200:
                 available_bars = len(df) if df is not None else 0
+                ltp_val = 0.0
+                chg_val = 0.0
+                supp_val = None
+                res_val = None
+                last_bar_iso = None
+                if df is not None and not df.empty:
+                    try:
+                        ltp_val = round(float(df["close"].iloc[-1]), 2)
+                        if len(df) >= 2 and float(df["close"].iloc[-2]) > 0:
+                            prev_c = float(df["close"].iloc[-2])
+                            chg_val = round(((ltp_val - prev_c) / prev_c) * 100.0, 2)
+                        if "low" in df.columns and not df["low"].empty:
+                            supp_val = round(float(df["low"].min()), 2)
+                        if "high" in df.columns and not df["high"].empty:
+                            res_val = round(float(df["high"].max()), 2)
+                        lts = df["timestamp"].iloc[-1] if "timestamp" in df.columns else df.index[-1]
+                        bdt = pd.to_datetime(lts)
+                        last_bar_iso = bdt.tz_localize(_IST).astimezone(timezone.utc).isoformat() if bdt.tzinfo is None else bdt.astimezone(timezone.utc).isoformat()
+                    except Exception:
+                        pass
+
+                is_young_ipo = 0 < available_bars < 60
+                horizon_short = "Maturing IPO" if is_young_ipo else "Data Unavailable"
+                horizon_full = f"Maturing IPO ({available_bars}/60 daily bars recorded)" if is_young_ipo else f"Insufficient historical data ({available_bars} daily bars)"
+                barrier_short = f"{available_bars}/60 Bars" if is_young_ipo else "No Barrier"
+
                 results[sym] = {
                     "symbol": sym,
                     "company_name": comp_name,
-                    "ltp": float(df["close"].iloc[-1]) if (df is not None and not df.empty) else 0.0,
-                    "change_pct": 0.0,
+                    "ltp": ltp_val,
+                    "change_pct": chg_val,
                     "signal": "INSUFFICIENT_DATA",
                     "confidence": None,
                     "factor_breakdown": None,
@@ -1016,22 +1042,22 @@ async def analyze_watchlist_symbols(
                     "stop_loss": None,
                     "target": None,
                     "target_2": None,
-                    "levels_source": "UNAVAILABLE",
-                    "key_support": None,
-                    "key_resistance": None,
+                    "levels_source": "ALL_TIME_RANGE" if (supp_val and res_val) else "UNAVAILABLE",
+                    "key_support": supp_val,
+                    "key_resistance": res_val,
                     "invalidation_level": None,
                     "rr_ratio": None,
                     "horizon": {
-                        "short": "Data Unavailable",
-                        "full": "Insufficient historical data (< 200 daily bars)",
-                        "barrier_short": "No Barrier",
-                        "barrier_full": "No Barrier",
+                        "short": horizon_short,
+                        "full": horizon_full,
+                        "barrier_short": barrier_short,
+                        "barrier_full": horizon_full,
                         "est_bars": 0,
                         "time_stop_bars": 0,
                     },
-                    "rationale": f"Insufficient data ({available_bars} bars available, minimum 200 required)",
-                    "as_of": None,
-                    "data_delay_minutes": None,
+                    "rationale": f"Insufficient historical data ({available_bars} bars available, minimum 60 required for swing model)",
+                    "as_of": last_bar_iso,
+                    "data_delay_minutes": 15 if last_bar_iso else None,
                     "timeframe": "1d",
                     "status": "INSUFFICIENT_DATA",
                     "_cached_at": now_ts,

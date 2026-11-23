@@ -88,9 +88,10 @@ def test_quote_client_fallback_to_yfinance():
         timestamp_ist=datetime.now(_IST).isoformat(),
     )
 
-    # Direct NSE fails, nsepython fails -> falls back to yfinance
+    # Direct NSE fails, nsepython fails, TradingView fails -> falls back to yfinance
     with patch.object(client, "_fetch_direct_nse", return_value=None), \
          patch.object(client, "_fetch_nsepython", return_value=None), \
+         patch.object(client, "_fetch_tradingview", return_value=None), \
          patch.object(client, "_fetch_yfinance", return_value=fake_yf_quote) as mock_yf:
         quote = client.get_quote("TCS")
         assert quote is not None

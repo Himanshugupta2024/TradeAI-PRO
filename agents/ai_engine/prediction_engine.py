@@ -429,7 +429,11 @@ async def predict_stock_price(
     # Layer 1 Data Validation Contract: reject if < 60 bars (minimum 60 required for EMA50, MACD, RSI, ATR)
     if df is None or df.empty or len(df) < 60:
         available_bars = len(df) if df is not None else 0
+        required_bars = 60
+        bars_remaining = max(0, required_bars - available_bars)
         last_bar_iso = None
+        first_date_str = None
+        listing_range = None
         if df is not None and not df.empty:
             try:
                 lts = df["timestamp"].iloc[-1] if "timestamp" in df.columns else df.index[-1]
@@ -437,8 +441,36 @@ async def predict_stock_price(
                 last_bar_iso = bdt.tz_localize(_IST).astimezone(timezone.utc).isoformat() if bdt.tzinfo is None else bdt.astimezone(timezone.utc).isoformat()
             except Exception:
                 pass
+            try:
+                fts = df["timestamp"].iloc[0] if "timestamp" in df.columns else df.index[0]
+                first_date_str = str(pd.to_datetime(fts).date())
+            except Exception:
+                pass
+            try:
+                hi = float(df["high"].max()) if "high" in df.columns else float(df["close"].max())
+                lo = float(df["low"].min()) if "low" in df.columns else float(df["close"].min())
+                last_close = float(df["close"].iloc[-1])
+                first_open = float(df["open"].iloc[0]) if "open" in df.columns else float(df["close"].iloc[0])
+                listing_range = {
+                    "high": round(hi, 2),
+                    "low": round(lo, 2),
+                    "current": round(last_close, 2),
+                    "listing_open": round(first_open, 2),
+                }
+            except Exception:
+                pass
+
         now_utc = datetime.now(timezone.utc)
         now_iso = now_utc.isoformat()
+
+        rationale_msg = (
+            f"Insufficient historical data ({available_bars} daily bars available, minimum 60 required). "
+            f"Newly listed equity (listed {first_date_str or 'recently'}) needs {bars_remaining} more trading sessions "
+            f"before 60-day statistical models and regime filters activate."
+            if available_bars > 0 else
+            f"Insufficient historical data ({available_bars} daily bars available, minimum 60 required)."
+        )
+
         res = {
             "symbol": clean_sym,
             "company_name": comp_name,
@@ -457,7 +489,12 @@ async def predict_stock_price(
             "brier_score_historical": None,
             "price_levels": None,
             "market_context": None,
-            "rationale": f"Insufficient historical data ({available_bars} daily bars available, minimum 60 required).",
+            "available_bars": available_bars,
+            "required_bars": required_bars,
+            "bars_remaining": bars_remaining,
+            "first_trading_date": first_date_str,
+            "listing_range": listing_range,
+            "rationale": rationale_msg,
             "_cached_at": now_ts,
         }
         _PREDICTION_CACHE[clean_sym] = res

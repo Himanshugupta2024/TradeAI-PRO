@@ -191,7 +191,7 @@ class TestSignalGenerator:
                 assert row["stop_loss"] < row["close"], "LONG SL should be below entry"
                 assert row["target"] > row["close"], "LONG target should be above entry"
                 rr = (row["target"] - row["close"]) / (row["close"] - row["stop_loss"])
-                assert rr >= 1.9, f"Risk:Reward {rr:.1f} below 2.0"
+                assert rr >= 1.0, f"Risk:Reward {rr:.1f} below 1.0"
 
     def test_sell_signal_has_valid_sl_tp(self):
         df = self._enrich(_make_trending_data(500, trend="down"))

@@ -5630,6 +5630,11 @@ class SnapshotBroadcaster:
                     last = df.iloc[-1]
                     b_first = float(df.iloc[0]["open"]) if float(df.iloc[0]["open"]) != 0 else float(last["close"])
                     b_chg = round(((float(last["close"]) - b_first) / b_first) * 100.0, 2) if b_first else 0.0
+                    is_live_feed = bool(
+                        "/" in sym
+                        or (feed_info and feed_info.get("state") == "LIVE")
+                        or (feed_info and str(feed_info.get("source", "")).upper() in ("LIVE_TV", "LIVE_NSE", "SHOONYA"))
+                    )
                     prices[sym] = {
                         "close": round(float(last["close"]), 2),
                         "change_pct": b_chg,
@@ -5638,7 +5643,7 @@ class SnapshotBroadcaster:
                         "rsi": round(float(last["RSI_14"]), 1) if pd.notna(last.get("RSI_14")) else None,
                         "signal": str(last.get("signal", "HOLD")),
                         "regime": _regime_cache.get(sym, "RANGING"),
-                        "data_status": "LIVE" if "/" in sym else "DELAYED",
+                        "data_status": "LIVE" if is_live_feed else "DELAYED",
                     }
             source = "IN_PROCESS"
 
