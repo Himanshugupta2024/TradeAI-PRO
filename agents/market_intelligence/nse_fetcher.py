@@ -396,9 +396,44 @@ def _normalise_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _get_live_market_tick(display_name: str) -> Optional[float]:
+    """
+    Fetch exact real-time tick (LTP) using:
+      1. Box C (Shoonya WebSocket)
+      2. TradingView India Scanner (Option C)
+    Returns None on failure.
+    """
+    clean = display_name.replace(".NS", "").replace(".BO", "").strip()
+    feed_url = os.environ.get("FEED_SERVICE_URL", "").strip()
+    if feed_url:
+        try:
+            from api.feed_client import fetch_feed_snapshot_sync
+            snap = fetch_feed_snapshot_sync([clean], timeout=1.5)
+            if snap and isinstance(snap, dict):
+                q = snap.get("quotes", {}).get(clean)
+                if q and q.get("lp"):
+                    lp = float(q["lp"])
+                    if lp > 0:
+                        return lp
+        except Exception:
+            pass
+
+    try:
+        from data.providers.tradingview import TradingViewProvider
+        tv = TradingViewProvider(timeout=2.5)
+        tv_q = tv.get_quote_sync(clean)
+        if tv_q and tv_q.is_valid() and tv_q.price > 0:
+            return tv_q.price
+    except Exception:
+        pass
+
+    return None
+
+
 def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> Optional[pd.DataFrame]:
     """
-    Fetch OHLCV data for an NSE symbol using yf.Ticker().history().
+    Fetch OHLCV data for an NSE symbol using Box C Shoonya 5m rolling bars (Priority 1)
+    or yf.Ticker().history() calibrated with real-time exchange ticks (TradingView / Box C).
 
     We use Ticker.history() (not yf.download) to guarantee that:
       - Columns are NEVER a MultiIndex (avoids the silent data-sharing bug
@@ -423,6 +458,28 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
 
     # Each symbol gets its own cache key (ticker + period + interval)
     cache_key = f"{ticker}_{period}_{interval}"
+
+    # ── Option A (Priority 1): Check Box C Shoonya 5m rolling bars ──
+    feed_url = os.environ.get("FEED_SERVICE_URL", "").strip()
+    if feed_url and interval == "5m":
+        try:
+            from api.feed_client import fetch_feed_snapshot_sync, convert_feed_bars_to_df
+            clean_name = display_name.replace(".NS", "").replace(".BO", "").strip()
+            snap = fetch_feed_snapshot_sync([clean_name], timeout=2.0)
+            if snap and isinstance(snap, dict):
+                bars_dict = snap.get("bars", {})
+                bar_list = bars_dict.get(clean_name) or bars_dict.get(display_name)
+                if bar_list and len(bar_list) >= 12:
+                    feed_df = convert_feed_bars_to_df(bar_list)
+                    if feed_df is not None and not feed_df.empty:
+                        feed_df = _normalise_df(feed_df)
+                        if "quotes" in snap and clean_name in snap["quotes"] and snap["quotes"][clean_name].get("lp"):
+                            feed_df.iloc[-1, feed_df.columns.get_loc("close")] = float(snap["quotes"][clean_name]["lp"])
+                        _cache[cache_key] = {"df": feed_df, "fetched_at": time.time()}
+                        logger.debug("Served %d rolling 5m bars for %s from Box C Shoonya feed", len(feed_df), display_name)
+                        return feed_df.copy()
+        except Exception as exc:
+            logger.debug("Box C feed 5m fetch deferred for %s: %s", display_name, exc)
     if _is_cache_valid(cache_key):
         logger.debug(f"Cache hit: {display_name}")
         return _cache[cache_key]["df"].copy()  # return copy so callers can't mutate cache
@@ -523,6 +580,16 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
         if merged_df.empty:
             merged_df = df
 
+        # Calibrate latest candle close with real-time exchange tick
+        live_tick = _get_live_market_tick(display_name)
+        if live_tick is not None and live_tick > 0:
+            if not merged_df.empty and "close" in merged_df.columns:
+                merged_df.iloc[-1, merged_df.columns.get_loc("close")] = live_tick
+                if "high" in merged_df.columns:
+                    merged_df.iloc[-1, merged_df.columns.get_loc("high")] = max(float(merged_df["high"].iloc[-1]), live_tick)
+                if "low" in merged_df.columns:
+                    merged_df.iloc[-1, merged_df.columns.get_loc("low")] = min(float(merged_df["low"].iloc[-1]), live_tick)
+
         _cache[cache_key] = {"df": merged_df, "fetched_at": time.time()}
         logger.debug(
             "Fetched %d new candles for %s (cached total=%d)",
@@ -542,7 +609,11 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
 
 
 def fetch_current_price(display_name: str) -> Optional[float]:
-    """Get the latest close price for a symbol."""
+    """Get the latest real-time LTP for a symbol using Option A, Option C, or fallback."""
+    live_tick = _get_live_market_tick(display_name)
+    if live_tick is not None and live_tick > 0:
+        return live_tick
+
     df = fetch_ohlcv(display_name, period="1d", interval="5m")
     if df is None or df.empty:
         return None
@@ -818,6 +889,16 @@ def fetch_arbitrary_symbol(ticker_or_name: str, period: str = "5d", interval: st
         df = _normalise_df(raw)
         if df.empty:
             return None
+
+        # Calibrate latest candle close with real-time exchange tick
+        live_tick = _get_live_market_tick(ticker)
+        if live_tick is not None and live_tick > 0:
+            if not df.empty and "close" in df.columns:
+                df.iloc[-1, df.columns.get_loc("close")] = live_tick
+                if "high" in df.columns:
+                    df.iloc[-1, df.columns.get_loc("high")] = max(float(df["high"].iloc[-1]), live_tick)
+                if "low" in df.columns:
+                    df.iloc[-1, df.columns.get_loc("low")] = min(float(df["low"].iloc[-1]), live_tick)
 
         _cache[cache_key] = {"df": df, "fetched_at": time.time()}
         logger.info(f"Fetched {len(df)} candles for {ticker}")

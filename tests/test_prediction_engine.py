@@ -199,8 +199,9 @@ async def test_predict_stock_price_mocked(monkeypatch):
     assert res["status"] == "PREDICTION_ACTIVE"
     assert res["symbol"] == "VEDL"
     assert res["company_name"] == "Vedanta Limited"
-    assert res["data_delay_minutes"] == 15
-    assert res["feed_source"] == "YAHOO_NSE_DELAYED"
+    # When no mock is applied, TradingView/Bhavcopy provides real-time/EOD marks (0m lag)
+    assert res["data_delay_minutes"] in {0, 15}
+    assert res["feed_source"] in {"TRADINGVIEW_LIVE", "NSE_BHAVCOPY_EOD", "YAHOO_NSE_DELAYED"}
     assert res["direction"] in {"UP", "DOWN", "SIDEWAYS"}
     assert "source" in res
     assert res["source"] in {"LOCAL_HEURISTIC", "ML_SIDECAR", "ML_ENSEMBLE"}
@@ -325,4 +326,76 @@ async def test_predict_stock_shoonya_live_calibration(monkeypatch):
     assert res["data_delay_minutes"] == 0
     # Last close in price_levels should reflect calibrated live tick (285.50)
     assert res["price_levels"]["reference_price"] == 285.50
+
+
+@pytest.mark.asyncio
+async def test_predict_stock_tradingview_calibration(monkeypatch):
+    """Verify that when Box C does not have symbol, TradingView calibrates live tick (Option C)."""
+    from data.providers.yahoo import YahooProvider
+    from data.providers.tradingview import TradingViewProvider
+    from data.providers.base import MarketQuote
+
+    n = 250
+    dates = pd.date_range("2025-01-01", periods=n, freq="B")
+    close = np.linspace(200, 240, n)
+    mock_df = pd.DataFrame({"high": close + 2.0, "low": close - 2.0, "close": close, "volume": np.full(n, 1000)}, index=dates)
+
+    async def mock_get_batch_ohlcv(self, symbols, period="1y", interval="1d"):
+        return {"VEDL": mock_df, "^NSEI": pd.DataFrame({"close": np.full(n, 25000)}, index=dates), "^INDIAVIX": pd.DataFrame({"close": np.full(n, 15.0)}, index=dates)}
+
+    async def mock_tv_get_quote(self, symbol):
+        return MarketQuote(
+            symbol="VEDL",
+            price=245.50,
+            open=240.0,
+            high=248.0,
+            low=239.0,
+            close=245.50,
+            prev_close=240.0,
+            change_pct=2.29,
+            volume=500000.0,
+            source="TRADINGVIEW_LIVE",
+            data_age_seconds=1.5,
+            quality_score=1.0,
+        )
+
+    # Box C not configured
+    monkeypatch.delenv("FEED_SERVICE_URL", raising=False)
+    monkeypatch.setattr(YahooProvider, "get_batch_ohlcv", mock_get_batch_ohlcv)
+    monkeypatch.setattr(TradingViewProvider, "get_quote", mock_tv_get_quote)
+
+    res = await predict_stock_price("VEDL", force_refresh=True)
+    assert res["status"] == "PREDICTION_ACTIVE"
+    assert res["feed_source"] == "TRADINGVIEW_LIVE"
+    assert res["data_delay_minutes"] == 0
+    assert res["price_levels"]["reference_price"] == 245.50
+
+
+@pytest.mark.asyncio
+async def test_predict_stock_yahoo_delayed_fallback(monkeypatch):
+    """Verify that when both Box C and TradingView fail during market hours, falls back to Yahoo 15m delay."""
+    from data.providers.yahoo import YahooProvider
+    from data.providers.tradingview import TradingViewProvider
+    import agents.data_ingestion.nse_live_quote as nse_lq
+
+    n = 250
+    dates = pd.date_range("2025-01-01", periods=n, freq="B")
+    close = np.linspace(200, 240, n)
+    mock_df = pd.DataFrame({"high": close + 2.0, "low": close - 2.0, "close": close, "volume": np.full(n, 1000)}, index=dates)
+
+    async def mock_get_batch_ohlcv(self, symbols, period="1y", interval="1d"):
+        return {"VEDL": mock_df, "^NSEI": pd.DataFrame({"close": np.full(n, 25000)}, index=dates), "^INDIAVIX": pd.DataFrame({"close": np.full(n, 15.0)}, index=dates)}
+
+    async def mock_tv_fail(self, symbol):
+        return None
+
+    monkeypatch.delenv("FEED_SERVICE_URL", raising=False)
+    monkeypatch.setattr(YahooProvider, "get_batch_ohlcv", mock_get_batch_ohlcv)
+    monkeypatch.setattr(TradingViewProvider, "get_quote", mock_tv_fail)
+    monkeypatch.setattr(nse_lq, "is_nse_market_open", lambda: True)
+
+    res = await predict_stock_price("VEDL", force_refresh=True)
+    assert res["status"] == "PREDICTION_ACTIVE"
+    assert res["feed_source"] == "YAHOO_NSE_DELAYED"
+    assert res["data_delay_minutes"] == 15
 

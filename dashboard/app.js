@@ -4805,7 +4805,7 @@ function _renderTopSetups(setups, meta) {
 
 
     if (setups.length === 0) {
-        const isClosed = meta.session_state === 'EOD' || (typeof isNseMarketOpen === 'function' && !isNseMarketOpen());
+        const isClosed = meta.session_state === 'EOD' || (typeof _isNseMarketOpen === 'function' ? !_isNseMarketOpen() : false);
         let msg = 'No high-quality actionable setups right now. Market may be in SKIP zone or regime gate active.';
         let title = '🎯 No Actionable Setups Right Now';
         if (isClosed) {
@@ -16095,7 +16095,9 @@ function updateDynamicMarketStatus() {
             _currentFeedStatus.source === 'LIVE_NSE' ||
             _currentFeedStatus.source === 'SHOONYA' ||
             _currentFeedStatus.source === 'SHOONYA_LIVE' ||
+            _currentFeedStatus.source === 'TRADINGVIEW_LIVE' ||
             String(_currentFeedStatus.source || '').toUpperCase().includes('SHOONYA') ||
+            String(_currentFeedStatus.source || '').toUpperCase().includes('TRADINGVIEW') ||
             _currentFeedStatus.data_delay_minutes === 0
         )
     );
@@ -28141,22 +28143,28 @@ async function openAiPredictionModal(sym) {
         dirEl.style.color = isUp ? '#34d399' : (isDown ? '#f87171' : '#38bdf8');
         dirEl.style.borderColor = isUp ? 'rgba(16,185,129,0.4)' : (isDown ? 'rgba(239,68,68,0.4)' : 'rgba(56,189,248,0.4)');
 
+        const isMktClosed = typeof _isNseMarketOpen === 'function' ? !_isNseMarketOpen() : false;
+        const feedSrc = String(data.feed_source || '').toUpperCase();
+        const isLiveFeedSrc = feedSrc.includes('SHOONYA') || feedSrc.includes('TRADINGVIEW') || feedSrc.includes('LIVE');
+
         const isLivePred = Boolean(
-            data.data_delay_minutes === 0 ||
-            String(data.feed_source || '').toUpperCase().includes('SHOONYA') ||
+            (!isMktClosed && data.data_delay_minutes === 0) ||
+            isLiveFeedSrc ||
             (_currentFeedStatus && (
                 _currentFeedStatus.state === 'LIVE' ||
                 _currentFeedStatus.quote_state === 'LIVE' ||
-                String(_currentFeedStatus.source || '').toUpperCase().includes('SHOONYA')
+                String(_currentFeedStatus.source || '').toUpperCase().includes('SHOONYA') ||
+                String(_currentFeedStatus.source || '').toUpperCase().includes('TRADINGVIEW')
             ))
         );
 
-        if (isLivePred) {
-            delayEl.textContent = '⚡ Real-Time Feed (SHOONYA LIVE)';
+        if (isLivePred && !isMktClosed) {
+            const feedName = feedSrc.includes('TRADINGVIEW') ? 'TRADINGVIEW LIVE' : 'SHOONYA LIVE';
+            delayEl.textContent = `⚡ Real-Time Feed (${feedName})`;
             delayEl.style.color = '#34d399';
             delayEl.style.borderColor = 'rgba(16,185,129,0.4)';
             delayEl.style.background = 'rgba(16,185,129,0.14)';
-        } else if (data.feed_source === 'NSE_BHAVCOPY_EOD' || (typeof isNseMarketOpen === 'function' && !isNseMarketOpen())) {
+        } else if (data.feed_source === 'NSE_BHAVCOPY_EOD' || isMktClosed) {
             delayEl.textContent = '🏛️ Official Settlement (NSE EOD)';
             delayEl.style.color = '#38bdf8';
             delayEl.style.borderColor = 'rgba(56,189,248,0.4)';

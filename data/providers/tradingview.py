@@ -41,8 +41,16 @@ def _normalize_tv_symbol(symbol: str) -> str:
         return "NSE:NIFTY"
     if sym in ("BANKNIFTY", "BANK NIFTY", "^NSEBANK"):
         return "NSE:BANKNIFTY"
+    if sym in ("FINNIFTY", "CNXFIN", "NIFTY FINANCIAL SERVICES"):
+        return "NSE:CNXFINANCE"
+    if sym in ("MIDCPNIFTY", "NIFTY MIDCAP 50", "^NSEMDCP50"):
+        return "NSE:MIDCPNIFTY"
+    if sym in ("NIFTY IT", "^CNXIT"):
+        return "NSE:CNXIT"
     if sym in ("SENSEX", "^BSESN"):
         return "BSE:SENSEX"
+    if sym == "TATAMOTORS":
+        return "NSE:TMPV"
     if sym.endswith(".NS"):
         return f"NSE:{sym[:-3]}"
     if sym.endswith(".BO"):
@@ -70,6 +78,126 @@ class TradingViewProvider(MarketDataProvider):
         """Fetch quote for a single symbol using the batch engine."""
         res = await self.get_batch_quotes([symbol])
         return res.get(symbol)
+
+    def get_quote_sync(self, symbol: str) -> Optional[MarketQuote]:
+        """Fetch quote for a single symbol synchronously."""
+        res = self.get_batch_quotes_sync([symbol])
+        return res.get(symbol)
+
+    def get_batch_quotes_sync(self, symbols: List[str]) -> Dict[str, MarketQuote]:
+        """Synchronous version of get_batch_quotes for sync callers."""
+        if not symbols:
+            return {}
+
+        clean_to_tv = {s: _normalize_tv_symbol(s) for s in symbols}
+        tv_to_clean = {tv: clean for clean, tv in clean_to_tv.items()}
+        tv_tickers = list(clean_to_tv.values())
+
+        payload = {
+            "symbols": {"tickers": tv_tickers},
+            "columns": SCANNER_COLUMNS,
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        t0 = time.perf_counter()
+        try:
+            with httpx.Client(headers=headers, timeout=self.timeout) as client:
+                resp = client.post(self.url, json=payload)
+
+            if resp.status_code != 200:
+                self.health.record_failure()
+                logger.warning(
+                    "[TradingViewProvider] HTTP error %d from scanner endpoint",
+                    resp.status_code,
+                )
+                return {}
+
+            body = resp.json()
+        except Exception as exc:
+            self.health.record_failure()
+            logger.warning("[TradingViewProvider] Sync request failed: %s", exc)
+            return {}
+
+        if not isinstance(body, dict) or "data" not in body or not isinstance(body["data"], list):
+            self.health.record_failure()
+            return {}
+
+        now_utc = datetime.now(timezone.utc)
+        quotes: Dict[str, MarketQuote] = {}
+        expected_len = len(SCANNER_COLUMNS)
+
+        for row in body["data"]:
+            if not isinstance(row, dict) or "s" not in row or "d" not in row:
+                continue
+
+            tv_sym = str(row["s"])
+            d_vals = row["d"]
+            if not isinstance(d_vals, list) or len(d_vals) != expected_len:
+                continue
+
+            clean_sym = tv_to_clean.get(tv_sym)
+            if not clean_sym:
+                continue
+
+            try:
+                ltp = float(d_vals[0]) if d_vals[0] is not None else 0.0
+                if not math.isfinite(ltp) or ltp <= 0:
+                    continue
+
+                change_abs = float(d_vals[2]) if d_vals[2] is not None else 0.0
+                prev_close = round(ltp - change_abs, 2)
+                if prev_close <= 0 or not math.isfinite(prev_close):
+                    prev_close = ltp
+
+                change_pct = round(((ltp - prev_close) / prev_close) * 100.0, 2) if prev_close > 0 else 0.0
+
+                update_epoch = int(d_vals[7]) if d_vals[7] is not None else None
+                regular_mkt_time = None
+                data_age_sec = None
+                if update_epoch and update_epoch > 0:
+                    regular_mkt_time = datetime.fromtimestamp(update_epoch, tz=timezone.utc)
+                    data_age_sec = max(0.0, (now_utc - regular_mkt_time).total_seconds())
+
+                open_val = float(d_vals[4]) if d_vals[4] is not None else ltp
+                high_val = float(d_vals[5]) if d_vals[5] is not None else ltp
+                low_val = float(d_vals[6]) if d_vals[6] is not None else ltp
+                vol_val = float(d_vals[3]) if d_vals[3] is not None else 0.0
+
+                quote = MarketQuote(
+                    symbol=clean_sym,
+                    price=ltp,
+                    open=open_val,
+                    high=high_val,
+                    low=low_val,
+                    close=ltp,
+                    volume=vol_val,
+                    source="TRADINGVIEW_LIVE",
+                    fetched_at=now_utc,
+                    regular_market_time=regular_mkt_time,
+                    prev_close=prev_close,
+                    change_pct=change_pct,
+                    data_age_seconds=data_age_sec,
+                    quality_score=0.99,
+                    extra={"tv_symbol": tv_sym},
+                )
+
+                if quote.is_valid():
+                    quotes[clean_sym] = quote
+            except Exception as parse_exc:
+                logger.debug("[TradingViewProvider] Sync parse failure for %s: %s", tv_sym, parse_exc)
+                continue
+
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        if quotes:
+            self.health.record_success(latency_ms)
+        else:
+            self.health.record_failure()
+
+        return quotes
 
     async def get_candles(
         self,
@@ -185,7 +313,7 @@ class TradingViewProvider(MarketDataProvider):
                     low=low_val,
                     close=ltp,
                     volume=vol_val,
-                    source="TRADINGVIEW_SCANNER",
+                    source="TRADINGVIEW_LIVE",
                     fetched_at=now_utc,
                     regular_market_time=regular_mkt_time,
                     prev_close=prev_close,

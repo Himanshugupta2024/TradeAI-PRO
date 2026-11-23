@@ -48,6 +48,7 @@ def format_human_data_age(
     is_nse_open: bool,
     now_ist: Optional[datetime] = None,
     data_age_source: str = "LAST_BAR",
+    source: Optional[str] = None,
 ) -> str:
     """Format an honest, user-facing label for data freshness and exchange delay."""
     if snap_dt is None or age_seconds is None:
@@ -85,7 +86,14 @@ def format_human_data_age(
         hours_ago = int(mins_ago // 60)
         age_str = f"{hours_ago}h ago"
 
-    if age_seconds <= 1800:
+    is_realtime_feed = bool(
+        source and any(s in str(source).upper() for s in ("SHOONYA", "TRADINGVIEW", "LIVE_TV", "LIVE_NSE"))
+    )
+
+    if is_realtime_feed:
+        feed_tag = "Shoonya" if "SHOONYA" in str(source).upper() else "TradingView"
+        return f"⚡ Real-Time Feed ({feed_tag}) · Updated {age_str}"
+    elif age_seconds <= 1800:
         return f"15m Delayed · Updated {age_str}"
     else:
         return f"⚠️ Stale Feed · Updated {age_str}"
@@ -274,7 +282,12 @@ def evaluate_health_v2(
         overall_reason = "All system tiers nominal"
 
     data_age_human = format_human_data_age(
-        snap_dt, age_seconds, is_nse_open, now_ist, data_age_source=data_age_source
+        snap_dt,
+        age_seconds,
+        is_nse_open,
+        now_ist,
+        data_age_source=data_age_source,
+        source=feed_status.get("source"),
     )
 
     router_telemetry = {}

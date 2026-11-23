@@ -997,15 +997,30 @@ def _get_feed_status() -> dict[str, object]:
             derived_source = "SHOONYA_LIVE"
             derived_mode = "Real-Time Direct Feed (Shoonya Live)"
             derived_delay = 0
-        elif bar_age_seconds is not None:
-            delay_calc = max(0, int(round(bar_age_seconds / 60.0)))
-            derived_source = "YAHOO_DELAYED" if delay_calc >= 15 else "PUBLIC_FEED"
-            derived_mode = f"Delayed Public Feed ({delay_calc}m lag)"
-            derived_delay = delay_calc
         else:
-            derived_source = source if (source and source not in ("NONE", "SHOONYA_LIVE")) else "YAHOO_DELAYED"
-            derived_mode = "15m Delayed Public Feed (NSE / Yahoo)"
-            derived_delay = 15
+            is_tv_active = False
+            try:
+                from data.router import get_default_router
+                router_status = get_default_router().get_health_status()
+                tv_stat = router_status.get("tradingview", {})
+                if tv_stat.get("healthy"):
+                    is_tv_active = True
+            except Exception:
+                pass
+
+            if is_tv_active:
+                derived_source = "TRADINGVIEW_LIVE"
+                derived_mode = "Real-Time Public Feed (TradingView Scanner)"
+                derived_delay = 0
+            elif bar_age_seconds is not None:
+                delay_calc = max(0, int(round(bar_age_seconds / 60.0)))
+                derived_source = "YAHOO_DELAYED" if delay_calc >= 15 else "PUBLIC_FEED"
+                derived_mode = f"Delayed Public Feed ({delay_calc}m lag)"
+                derived_delay = delay_calc
+            else:
+                derived_source = source if (source and source not in ("NONE", "SHOONYA_LIVE")) else "YAHOO_DELAYED"
+                derived_mode = "15m Delayed Public Feed (NSE / Yahoo)"
+                derived_delay = 15
 
     quote_state = classify_quote_state(
         bar_age_seconds,

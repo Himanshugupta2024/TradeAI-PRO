@@ -249,3 +249,90 @@ def test_feed_server_oauth_callback(monkeypatch):
                     assert data["status"] == "ok"
                     assert "mock_sus" in data["susertoken_prefix"]
 
+
+def test_fetch_ohlcv_shoonya_box_c_priority(monkeypatch):
+    """Option A: Verify fetch_ohlcv retrieves 5m rolling bars from Box C when configured."""
+    from agents.market_intelligence.nse_fetcher import fetch_ohlcv, _cache
+    from datetime import datetime, timedelta
+
+    _cache.clear()
+    base_dt = datetime(2026, 11, 23, 9, 15)
+    mock_bars = [
+        {
+            "t": (base_dt + timedelta(minutes=i * 5)).isoformat(),
+            "o": 2500.0 + i,
+            "h": 2505.0 + i,
+            "l": 2498.0 + i,
+            "c": 2502.0 + i,
+            "v": 10000.0,
+        }
+        for i in range(15)
+    ]
+    mock_snap = {
+        "source": "SHOONYA_LIVE",
+        "quotes": {"RELIANCE": {"lp": 2516.0}},
+        "bars": {"RELIANCE": mock_bars},
+    }
+
+    monkeypatch.setenv("FEED_SERVICE_URL", "http://mock-feed.local")
+    with patch("api.feed_client.fetch_feed_snapshot_sync", return_value=mock_snap):
+        df = fetch_ohlcv("RELIANCE", period="1d", interval="5m")
+        assert df is not None
+        assert len(df) == 15
+        assert df["close"].iloc[-1] == 2516.0  # Calibrated to live tick
+
+
+def test_fetch_current_price_option_a_and_c_tiers(monkeypatch):
+    """Verify fetch_current_price prioritizes Box C (Option A) then TradingView (Option C)."""
+    from agents.market_intelligence.nse_fetcher import fetch_current_price
+    from data.providers.base import MarketQuote
+
+    # 1. Option A (Shoonya Box C) hit
+    monkeypatch.setenv("FEED_SERVICE_URL", "http://mock-feed.local")
+    mock_snap = {"quotes": {"RELIANCE": {"lp": 2555.0}}}
+    with patch("api.feed_client.fetch_feed_snapshot_sync", return_value=mock_snap):
+        p = fetch_current_price("RELIANCE")
+        assert p == 2555.0
+
+    # 2. Option C (TradingView Scanner) fallback when Box C has no quote
+    monkeypatch.delenv("FEED_SERVICE_URL", raising=False)
+    mock_tv_quote = MarketQuote(
+        symbol="VEDL",
+        price=236.40,
+        open=234.0,
+        high=238.0,
+        low=233.0,
+        close=236.40,
+        volume=100000.0,
+        source="TRADINGVIEW_LIVE",
+        quality_score=1.0,
+    )
+    with patch("data.providers.tradingview.TradingViewProvider.get_quote_sync", return_value=mock_tv_quote):
+        p_vedl = fetch_current_price("VEDL")
+        assert p_vedl == 236.40
+
+
+def test_format_human_data_age_realtime_badges():
+    """Verify health data age formatting reflects real-time tags for Shoonya and TradingView."""
+    from api.health_v2 import format_human_data_age
+    from datetime import datetime, timezone, timedelta
+    from zoneinfo import ZoneInfo
+
+    _IST = ZoneInfo("Asia/Kolkata")
+    now_ist = datetime.now(_IST)
+    snap = now_ist - timedelta(seconds=120)
+
+    # Shoonya live feed
+    shoonya_badge = format_human_data_age(snap, age_seconds=120, is_nse_open=True, now_ist=now_ist, source="SHOONYA_LIVE")
+    assert "⚡ Real-Time Feed (Shoonya)" in shoonya_badge
+    assert "2m ago" in shoonya_badge
+
+    # TradingView live feed
+    tv_badge = format_human_data_age(snap, age_seconds=120, is_nse_open=True, now_ist=now_ist, source="TRADINGVIEW_LIVE")
+    assert "⚡ Real-Time Feed (TradingView)" in tv_badge
+
+    # Delayed public feed
+    delayed_badge = format_human_data_age(snap, age_seconds=120, is_nse_open=True, now_ist=now_ist, source="YAHOO_DELAYED")
+    assert "15m Delayed · Updated 2m ago" in delayed_badge
+
+

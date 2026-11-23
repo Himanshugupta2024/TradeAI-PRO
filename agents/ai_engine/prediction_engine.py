@@ -429,9 +429,10 @@ async def predict_stock_price(
 
     # ── Layer 1 Live Tick Calibration & Provider Telemetry ───────────────────
     feed_url = os.environ.get("FEED_SERVICE_URL", "").strip()
-    feed_source = "YAHOO_NSE_DELAYED"
-    data_delay_minutes = 15
+    feed_source = None
+    data_delay_minutes = 0
 
+    # Option A (Priority 1): Shoonya Dedicated WebSocket (Box C)
     if feed_url:
         try:
             from api.feed_client import fetch_feed_snapshot
@@ -452,6 +453,37 @@ async def predict_stock_price(
                                 df.iloc[-1, df.columns.get_loc("low")] = min(float(df["low"].iloc[-1]), lp)
         except Exception as exc:
             logger.debug("[PredictionEngine] Shoonya live snapshot probe deferred: %s", exc)
+
+    # Option C (Priority 2): TradingView India Scanner Realtime Fallback (zero cost, sub-second)
+    if not feed_source:
+        try:
+            from data.providers.tradingview import TradingViewProvider
+            tv = TradingViewProvider(timeout=3.0)
+            tv_quote = await tv.get_quote(clean_sym)
+            if tv_quote and tv_quote.is_valid() and tv_quote.price > 0:
+                feed_source = "TRADINGVIEW_LIVE"
+                data_delay_minutes = 0
+                if df is not None and not df.empty and "close" in df.columns:
+                    df.iloc[-1, df.columns.get_loc("close")] = tv_quote.price
+                    if "high" in df.columns and tv_quote.high:
+                        df.iloc[-1, df.columns.get_loc("high")] = max(float(df["high"].iloc[-1]), tv_quote.high)
+                    if "low" in df.columns and tv_quote.low:
+                        df.iloc[-1, df.columns.get_loc("low")] = min(float(df["low"].iloc[-1]), tv_quote.low)
+                    if "volume" in df.columns and tv_quote.volume:
+                        df.iloc[-1, df.columns.get_loc("volume")] = tv_quote.volume
+        except Exception as exc:
+            logger.debug("[PredictionEngine] TradingView live quote fallback deferred: %s", exc)
+
+    # Tier 3: Off-Hours Settlement / Yahoo Fallback
+    if not feed_source:
+        from agents.data_ingestion.nse_live_quote import is_nse_market_open
+        mkt_open = is_nse_market_open()
+        if not mkt_open:
+            feed_source = "NSE_BHAVCOPY_EOD"
+            data_delay_minutes = 0
+        else:
+            feed_source = "YAHOO_NSE_DELAYED"
+            data_delay_minutes = 15
 
     # Layer 1 Data Validation Contract: reject if < 60 bars (minimum 60 required for EMA50, MACD, RSI, ATR)
     if df is None or df.empty or len(df) < 60:

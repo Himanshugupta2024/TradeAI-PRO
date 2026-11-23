@@ -39,7 +39,7 @@ def classify_quote_state(
     """
     if not market_open:
         return "EOD"
-    if is_opening_window and source and "SHOONYA" in str(source).upper():
+    if is_opening_window and source and any(k in str(source).upper() for k in ("SHOONYA", "TRADINGVIEW")):
         return "LIVE"
     if bar_age_seconds is None:
         return "UNKNOWN"
