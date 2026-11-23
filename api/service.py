@@ -2254,6 +2254,29 @@ def _stale_threshold_minutes(symbol: str) -> float:
     return 60.0 if "/" in str(symbol) else 30.0
 
 
+def _get_news_spike_warning(symbol: str) -> str | None:
+    try:
+        from agents.data_ingestion.context_fetcher import build_context_fetcher
+        cf = build_context_fetcher()
+        snap = cf.get_snapshot_sync(symbol)
+        if snap and getattr(snap, "news_volume_spike", False):
+            return "NEWS_SPIKE - verify before trusting signal"
+    except Exception:
+        pass
+    return None
+
+
+def _get_effective_days_to_event(symbol: str, last_signal: Any) -> int:
+    d = _safe_int(last_signal, "days_to_next_event", 99)
+    if d == 99:
+        try:
+            from agents.data_ingestion.corporate_events import get_symbol_days_to_next_event
+            d = get_symbol_days_to_next_event(symbol)
+        except Exception:
+            pass
+    return d
+
+
 def _get_previous_daily_close(symbol: str, today_date: date) -> float | None:
     """Find the previous completed session's daily closing price strictly dated before today."""
     try:
@@ -2341,6 +2364,23 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
         local_trend = "NEUTRAL"
         if pd.notna(last.get("EMA_20")) and pd.notna(last.get("EMA_50")):
             local_trend = "BULLISH" if float(last["EMA_20"]) >= float(last["EMA_50"]) else "BEARISH"
+
+        days_to_ev = 99
+        news_warning = None
+        try:
+            from agents.data_ingestion.corporate_events import get_symbol_days_to_next_event
+            days_to_ev = get_symbol_days_to_next_event(symbol)
+        except Exception:
+            pass
+        try:
+            from agents.data_ingestion.context_fetcher import build_context_fetcher
+            cf = build_context_fetcher()
+            snap = cf.get_snapshot_sync(symbol)
+            if snap and getattr(snap, "news_volume_spike", False):
+                news_warning = "NEWS_SPIKE - verify before trusting signal"
+        except Exception:
+            pass
+
         return {
             "symbol": symbol,
             "signal": "HOLD",
@@ -2356,7 +2396,9 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
             "confluence_factors": [],
             "local_trend": local_trend,
             "current_bar_signal": "HOLD",
-            "confidence": current_conf,
+            "confidence": 0.0,
+            "ai_confidence": 0.0,
+            "quant_score": 0.0,
             "entry": current_close,
             "close": current_close,
             "change_pct": day_chg_pct,
@@ -2371,9 +2413,9 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
             "stale_minutes": round(current_age_min, 1),
             "context_score": 0.0,
             "context_adjusted": False,
-            "context_warning": None,
+            "context_warning": news_warning,
             "event_risk_active": False,
-            "days_to_next_event": 99,
+            "days_to_next_event": days_to_ev,
             "news_sentiment_24hr": 0.0,
             "news_sentiment_7d": 0.0,
             "drift_z_score": 0.0,
@@ -2644,9 +2686,9 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
         # Context layer fields
         "context_score": _safe_float(last_signal, "context_score") or 0.0,
         "context_adjusted": bool(last_signal.get("context_adjusted", False)),
-        "context_warning": str(last_signal.get("context_warning") or "") or None,
+        "context_warning": str(last_signal.get("context_warning") or "") or _get_news_spike_warning(symbol),
         "event_risk_active": bool(last_signal.get("event_risk_active", False)),
-        "days_to_next_event": _safe_int(last_signal, "days_to_next_event", 99),
+        "days_to_next_event": _get_effective_days_to_event(symbol, last_signal),
         "news_sentiment_24hr": _safe_float(last_signal, "news_sentiment_24hr") or 0.0,
         "news_sentiment_7d": _safe_float(last_signal, "news_sentiment_7d") or 0.0,
         # Drift guardrail fields

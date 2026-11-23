@@ -514,11 +514,84 @@ async def run_single_autonomous_cycle(
 
         # 7. Evaluate Signals with Deterministic Idempotency & Risk Gates
         if candidate_signals and daemon.enabled and not dry_run:
+            posture = "OPEN"
+            vetoes = []
+            try:
+                from agents.macro.risk_gauge import RiskGauge
+                gauge = RiskGauge()
+                ind = gauge.fetch_risk_indicators()
+                posture = getattr(ind, "posture", "OPEN")
+                vetoes = getattr(ind, "vetoes", [])
+            except Exception as g_exc:
+                logger.debug("Could not fetch risk posture: %s", g_exc)
+
             open_count = len(engine_inst.open_trades)
             remaining_slots = max(0, daemon.max_positions - open_count)
-            logger.info("[Risk] Open positions: %d/%d (Slots remaining: %d)", open_count, daemon.max_positions, remaining_slots)
+            logger.info("[Risk] Open positions: %d/%d (Slots remaining: %d, Posture: %s)", open_count, daemon.max_positions, remaining_slots, posture)
 
-            if remaining_slots > 0:
+            if posture == "STAND_DOWN":
+                logger.warning("🛑 [Risk] Posture is STAND_DOWN (%s). Blocking all new entries.", vetoes)
+                for cand in candidate_signals:
+                    sig_id = cand.get("signal_id") or generate_signal_id(cand["symbol"], cand["strategy"], cand["direction"], cand["candle_time"], today_str)
+                    reason = f"POSTURE_STAND_DOWN_VETOES({','.join(vetoes) or 'RISK_OFF'})"
+                    record_autonomous_decision_to_db(
+                        signal_id=f"veto-{sig_id}-{int(time.time())}",
+                        run_id=run_id,
+                        symbol=cand["symbol"],
+                        action="SKIPPED",
+                        direction=cand["direction"],
+                        entry_price=cand["entry"],
+                        stop_loss=cand["stop_loss"],
+                        target_price=cand["target"],
+                        quality_score=cand["quant_score"],
+                        confluence_score=cand["confidence"],
+                        risk_reward=cand["risk_reward"],
+                        market_regime=cand["regime"],
+                        source_freshness=cand["data_status"],
+                        reason=reason,
+                        meta={
+                            "symbol": cand["symbol"],
+                            "decision": "SKIPPED",
+                            "reason": reason,
+                            "posture": posture,
+                            "computed_qty": 0,
+                            "capital_available": engine_inst.capital,
+                        },
+                    )
+                    daemon.record_decision(action="SKIPPED", symbol=cand["symbol"], direction=cand["direction"], price=cand["entry"], reason=reason)
+                    summary["decisions_recorded"] += 1
+            elif remaining_slots <= 0:
+                logger.info("[Risk] Max positions reached (%d/%d). Recording SKIPPED decisions.", open_count, daemon.max_positions)
+                for cand in candidate_signals:
+                    sig_id = cand.get("signal_id") or generate_signal_id(cand["symbol"], cand["strategy"], cand["direction"], cand["candle_time"], today_str)
+                    reason = f"MAX_POSITIONS_REACHED ({open_count}/{daemon.max_positions})"
+                    record_autonomous_decision_to_db(
+                        signal_id=f"maxpos-{sig_id}-{int(time.time())}",
+                        run_id=run_id,
+                        symbol=cand["symbol"],
+                        action="SKIPPED",
+                        direction=cand["direction"],
+                        entry_price=cand["entry"],
+                        stop_loss=cand["stop_loss"],
+                        target_price=cand["target"],
+                        quality_score=cand["quant_score"],
+                        confluence_score=cand["confidence"],
+                        risk_reward=cand["risk_reward"],
+                        market_regime=cand["regime"],
+                        source_freshness=cand["data_status"],
+                        reason=reason,
+                        meta={
+                            "symbol": cand["symbol"],
+                            "decision": "SKIPPED",
+                            "reason": reason,
+                            "posture": posture,
+                            "computed_qty": 0,
+                            "capital_available": engine_inst.capital,
+                        },
+                    )
+                    daemon.record_decision(action="SKIPPED", symbol=cand["symbol"], direction=cand["direction"], price=cand["entry"], reason=reason)
+                    summary["decisions_recorded"] += 1
+            else:
                 # Filter candidates by quality and AI confidence
                 qualified: list[dict[str, Any]] = []
                 for cand in candidate_signals:
@@ -548,13 +621,59 @@ async def run_single_autonomous_cycle(
 
                     # Minimum R:R check (>= 1.5)
                     if cand["risk_reward"] < 1.5:
-                        logger.debug("[Risk] %s R:R (%.2f) below 1.5 threshold. Skipping.", sym, cand["risk_reward"])
+                        reason = f"RR_{cand['risk_reward']:.2f}_BELOW_MIN_1.5"
+                        logger.debug("[Risk] %s %s. Skipping.", sym, reason)
+                        record_autonomous_decision_to_db(
+                            signal_id=f"lowrr-{sig_id}-{int(time.time())}",
+                            run_id=run_id,
+                            symbol=sym,
+                            action="SKIPPED",
+                            direction=direction,
+                            entry_price=cand["entry"],
+                            stop_loss=cand["stop_loss"],
+                            target_price=cand["target"],
+                            quality_score=cand["quant_score"],
+                            confluence_score=cand["confidence"],
+                            risk_reward=cand["risk_reward"],
+                            reason=reason,
+                            meta={
+                                "symbol": sym,
+                                "decision": "SKIPPED",
+                                "reason": reason,
+                                "posture": posture,
+                                "computed_qty": 0,
+                                "capital_available": engine_inst.capital,
+                            },
+                        )
+                        daemon.record_decision(action="SKIPPED", symbol=sym, direction=direction, price=cand["entry"], reason=reason)
+                        summary["decisions_recorded"] += 1
                         continue
 
                     # Geometry check
-                    if direction == "LONG" and not (cand["stop_loss"] < cand["entry"] < cand["target"]):
-                        continue
-                    if direction == "SHORT" and not (cand["target"] < cand["entry"] < cand["stop_loss"]):
+                    if (direction == "LONG" and not (cand["stop_loss"] < cand["entry"] < cand["target"])) or \
+                       (direction == "SHORT" and not (cand["target"] < cand["entry"] < cand["stop_loss"])):
+                        reason = f"INVALID_GEOMETRY (SL {cand['stop_loss']} Entry {cand['entry']} TP {cand['target']})"
+                        record_autonomous_decision_to_db(
+                            signal_id=f"badgeom-{sig_id}-{int(time.time())}",
+                            run_id=run_id,
+                            symbol=sym,
+                            action="SKIPPED",
+                            direction=direction,
+                            entry_price=cand["entry"],
+                            stop_loss=cand["stop_loss"],
+                            target_price=cand["target"],
+                            reason=reason,
+                            meta={
+                                "symbol": sym,
+                                "decision": "SKIPPED",
+                                "reason": reason,
+                                "posture": posture,
+                                "computed_qty": 0,
+                                "capital_available": engine_inst.capital,
+                            },
+                        )
+                        daemon.record_decision(action="SKIPPED", symbol=sym, direction=direction, price=cand["entry"], reason=reason)
+                        summary["decisions_recorded"] += 1
                         continue
 
                     qualified.append(cand)
@@ -610,6 +729,45 @@ async def run_single_autonomous_cycle(
                                 "🚀 [Autonomous] AUTO_ENTER: %s %s #%d @ %.2f (QS: %.1f, AI: %.1f%%, R:R: %.2f)",
                                 cand["direction"], cand["symbol"], trade.id, cand["entry"],
                                 cand["quant_score"], cand["confidence"], cand["risk_reward"],
+                            )
+                        else:
+                            rejection_reason = engine_inst.last_rejection_reason or "RISK_RULES_BLOCKED_ENTRY"
+                            computed_qty = getattr(engine_inst, "_last_attempted_qty", 0)
+                            record_autonomous_decision_to_db(
+                                signal_id=f"rej-{cand['signal_id']}-{int(time.time())}",
+                                run_id=run_id,
+                                symbol=cand["symbol"],
+                                action="SKIPPED",
+                                direction=cand["direction"],
+                                entry_price=cand["entry"],
+                                stop_loss=cand["stop_loss"],
+                                target_price=cand["target"],
+                                quality_score=cand["quant_score"],
+                                confluence_score=cand["confidence"],
+                                risk_reward=cand["risk_reward"],
+                                market_regime=cand["regime"],
+                                source_freshness=cand["data_status"],
+                                reason=rejection_reason,
+                                meta={
+                                    "symbol": cand["symbol"],
+                                    "decision": "SKIPPED",
+                                    "reason": rejection_reason,
+                                    "posture": posture,
+                                    "computed_qty": computed_qty,
+                                    "capital_available": engine_inst.capital,
+                                },
+                            )
+                            daemon.record_decision(
+                                action="SKIPPED",
+                                symbol=cand["symbol"],
+                                direction=cand["direction"],
+                                price=cand["entry"],
+                                reason=rejection_reason,
+                            )
+                            summary["decisions_recorded"] += 1
+                            logger.warning(
+                                "⚠️ [Autonomous] SKIPPED: %s %s @ %.2f — reason: %s (posture: %s, qty: %s, cap: %.2f)",
+                                cand["direction"], cand["symbol"], cand["entry"], rejection_reason, posture, computed_qty, engine_inst.capital,
                             )
                     except Exception as exec_err:
                         logger.error("[Autonomous] Execution failed for %s: %s", cand["symbol"], exec_err)

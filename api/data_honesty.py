@@ -156,14 +156,24 @@ def apply_signal_freshness(signal: dict, now: Any = None) -> dict:
 
     # Reconcile skip_reason to use the exact same fresh clock
     sr = str(out.get("skip_reason") or "")
-    if "Signal stale" in sr and age is not None:
+    if out.get("stale") and age is not None:
         out["skip_reason"] = f"Signal stale ({round(age, 1)}m > {threshold}m threshold)"
     elif is_prior_session and is_mkt_open and (not sr or sr == "Gated"):
         out["skip_reason"] = f"Prior session data ({sig_date.strftime('%d %b')} close, {round(age, 1) if age else 999}m old)"
 
-    # For terminal signals, suppress active confluence score so stale scores do not masquerade on dead trades
-    if out.get("signal_status") in ("STOPPED_OUT", "TARGET_HIT", "INVALIDATED", "CANCELLED", "STALE_DATA", "STALE"):
+    # For terminal signals, suppress active confluence score and factors so stale scores do not masquerade on dead trades
+    is_terminal = out.get("signal_status") in ("STOPPED_OUT", "TARGET_HIT", "INVALIDATED", "CANCELLED", "STALE_DATA", "STALE") or out.get("stale")
+    if is_terminal:
         out["confluence_score"] = 0
+        out["confluence_factors"] = []
+
+    # Confidence on NO_SIGNAL / HOLD: suppress misleading positive conviction
+    if out.get("signal") == "HOLD" or out.get("signal_status") == "NO_SIGNAL":
+        out["confidence"] = 0.0
+        out["ai_confidence"] = 0.0
+        out["confluence_score"] = 0
+        out["confluence_factors"] = []
+        out["actionable"] = False
 
     entry = out.get("entry")
     sl = out.get("stop_loss")

@@ -705,7 +705,15 @@ async def get_all_signals(response: Response):
     elif fallback_signals:
         merged = dict(fallback_signals)
         merged.update(live_signals)
-        results = list(merged.values())
+        # Filter merged to active tracked universe to prevent injecting orphan symbols from stale prior snapshots
+        tracked_universe = set(s.upper().replace(".NS", "") for s in getattr(svc, "TOP_NSE_SYMBOLS", []))
+        if tracked_universe:
+            results = [
+                s for s in merged.values()
+                if str(s.get("symbol", "")).upper().replace(".NS", "") in tracked_universe or "/" in str(s.get("symbol", ""))
+            ]
+        else:
+            results = list(merged.values())
         source = "merged_snapshot_live" if live_signals else "persisted_snapshot"
     else:
         results = list(live_signals.values())
@@ -2222,6 +2230,21 @@ async def get_screener_opportunities():
                     if sig in ("LONG", "SHORT", "BUY", "SELL"):
                         sig_direction = "LONG" if sig in ("LONG", "BUY") else "SHORT"
                         entry_val = float(p.get("close") or 0.0)
+                        p_target = float(p.get("target") or 0.0)
+                        p_sl = float(p.get("stop_loss") or 0.0)
+                        if p_target > 0 and p_sl > 0:
+                            target_val = round(p_target, 2)
+                            sl_val = round(p_sl, 2)
+                        else:
+                            atr_val = float(p.get("atr") or (entry_val * 0.012))
+                            if sig_direction == "LONG":
+                                sl_val = round(entry_val - 1.5 * atr_val, 2)
+                                res = float(p.get("resistance") or 0.0)
+                                target_val = round(res if res > entry_val + 1.2 * atr_val else entry_val + 2.3 * atr_val, 2)
+                            else:
+                                sl_val = round(entry_val + 1.5 * atr_val, 2)
+                                sup = float(p.get("support") or 0.0)
+                                target_val = round(sup if 0 < sup < entry_val - 1.2 * atr_val else entry_val - 2.3 * atr_val, 2)
                         opps.append({
                             "symbol": sym,
                             "direction": sig_direction,
@@ -2230,8 +2253,8 @@ async def get_screener_opportunities():
                             "confidence": 65.0,
                             "entry": entry_val,
                             "price": entry_val,
-                            "target": round(entry_val * (1.02 if sig_direction == "LONG" else 0.98), 2),
-                            "stop_loss": round(entry_val * (0.99 if sig_direction == "LONG" else 1.01), 2),
+                            "target": target_val,
+                            "stop_loss": sl_val,
                             "rationale": f"Market snapshot signal {sig} in regime {p.get('regime', 'TREND')}",
                             "source": "MARKET_SNAPSHOT",
                         })

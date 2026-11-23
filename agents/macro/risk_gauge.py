@@ -58,6 +58,7 @@ class RiskIndicators:
     # Risk Guardrail Vetoes & Posture
     posture: str = "OPEN"                  # "OPEN" | "SELECTIVE" | "STAND_DOWN"
     vetoes: list[str] = field(default_factory=list)
+    cautions: list[str] = field(default_factory=list)
     data_integrity: str = "CONFIRMED"     # "CONFIRMED" | "UNCONFIRMED_VOL_SPIKE" | "VIX_SOURCE_STALE" | "VOL_SPIKE_EXPIRED"
     vix_fetched_at: Optional[datetime] = None
     india_vix_fetched_at: Optional[datetime] = None
@@ -308,57 +309,41 @@ class RiskGauge:
 
         return components
 
-    def get_risk_score(self) -> float:
+    def get_risk_breakdown(self, indicators: Optional[RiskIndicators] = None) -> dict:
         """
-        Calculate risk environment score using weighted graded saturation.
+        Calculate full risk score breakdown with guaranteed arithmetic provenance.
         Returns:
-            Risk score from -100 (extreme risk-off) to +100 (extreme risk-on)
-        """
-        indicators = self.fetch_risk_indicators()
-        comp_scores = self.calculate_component_scores(indicators)
-
-        if len(comp_scores) < self.MIN_INDICATORS:
-            logger.warning(
-                f"Insufficient risk indicators: {len(comp_scores)}/{self.MIN_INDICATORS} available"
-            )
-            return 0.0
-
-        total_weighted = sum(c["score"] * c["weight"] for c in comp_scores.values())
-        total_weight = sum(c["weight"] for c in comp_scores.values())
-
-        if total_weight <= 0.0:
-            return 0.0
-
-        risk_score = total_weighted / total_weight
-        risk_score = max(-100.0, min(100.0, risk_score))
-
-        logger.info(
-            f"NSE-Weighted Risk score: {risk_score:.1f} (regime={indicators.risk_regime}, "
-            f"posture={indicators.posture}, weight={total_weight:.0f}%)"
-        )
-        return round(risk_score, 1)
-
-    def get_indicators_detail(self, indicators: Optional[RiskIndicators] = None) -> list[dict]:
-        """
-        Return comprehensive metadata breakdown for all 14 indicators.
-        Separates actively scored metrics from context-only telemetry.
+            {
+                "score": float,
+                "raw_score": float,
+                "published_sum": float,
+                "weight_sum": float,
+                "normalized": bool,
+                "score_reconciles": bool,
+                "adjustments": list[dict],
+                "cautions": list[str],
+                "details": list[dict],
+            }
         """
         ind = indicators or self.fetch_risk_indicators()
         comp_scores = self.calculate_component_scores(ind)
 
-        details = []
-
         # Scored components
+        scored_details = []
         for key in ["india_vix", "india_vix_velocity", "vix_shock", "ad_ratio", "above_ema20", "us_vix", "nifty_trend", "btc_trend", "usdjpy_trend", "gold_trend"]:
             if key in comp_scores:
                 c = comp_scores[key]
-                details.append({
+                w = float(c["weight"])
+                sc = round(float(c["score"]), 1)
+                pts = round(sc * (w / 100.0), 3)
+                scored_details.append({
                     "key": key,
                     "label": c["label"],
                     "value": c["value"],
                     "scored": True,
-                    "weight_pct": int(c["weight"]),
-                    "score": round(c["score"], 1),
+                    "weight_pct": round(w, 1),
+                    "score": sc,
+                    "points": pts,
                 })
 
         # Context-only components
@@ -374,17 +359,83 @@ class RiskGauge:
             ("breadth_regime", "BREADTH_REGIME", getattr(ind, "breadth_regime", "NEUTRAL")),
             ("usdjpy_level", "USDJPY_LEVEL", ind.usdjpy_level),
         ]
+        context_details = []
         for key, label, val in context_items:
-            details.append({
+            context_details.append({
                 "key": key,
                 "label": label,
                 "value": val,
                 "scored": False,
-                "weight_pct": 0,
+                "weight_pct": 0.0,
                 "score": 0.0,
+                "points": 0.0,
             })
 
-        return details
+        all_details = scored_details + context_details
+
+        published_sum = sum(d["points"] for d in scored_details)
+        weight_sum = sum(d["weight_pct"] for d in scored_details)
+
+        if weight_sum > 0:
+            raw_score = sum(d["score"] * d["weight_pct"] for d in scored_details) / weight_sum
+        else:
+            raw_score = 0.0
+
+        adjustments: list[dict] = []
+        # If weight_sum is not exactly 100, record weight normalization difference
+        norm_diff = round(raw_score - published_sum, 2)
+        if abs(norm_diff) >= 0.05 and abs(weight_sum - 100.0) >= 0.1:
+            adjustments.append({
+                "reason": "WEIGHT_NORMALIZATION",
+                "weight_sum": round(weight_sum, 1),
+                "points": norm_diff,
+            })
+
+        cautions = list(getattr(ind, "cautions", []) or [])
+        caution_pts = 0.0
+        # If cautions are active and posture reflects caution (e.g. SELECTIVE / OPEN_WITH_CAUTION)
+        if cautions and getattr(ind, "posture", "") in ("OPEN_WITH_CAUTION", "SELECTIVE"):
+            caution_pts = round(len(cautions) * -4.0, 1)
+            adjustments.append({
+                "reason": "CAUTION_PENALTY",
+                "count": len(cautions),
+                "points": caution_pts,
+                "cautions": cautions,
+            })
+
+        # Calculate final reconciled score
+        final_score = round(max(-100.0, min(100.0, raw_score + caution_pts)), 1)
+        total_adj = sum(a.get("points", 0.0) for a in adjustments)
+        reconciles = abs((published_sum + total_adj) - final_score) < 0.05
+
+        return {
+            "score": final_score,
+            "raw_score": round(raw_score, 1),
+            "published_sum": round(published_sum, 2),
+            "weight_sum": round(weight_sum, 1),
+            "normalized": True,
+            "score_reconciles": reconciles,
+            "adjustments": adjustments,
+            "cautions": cautions,
+            "details": all_details,
+        }
+
+    def get_risk_score(self) -> float:
+        """
+        Calculate risk environment score using weighted graded saturation and explicit reconciliation.
+        Returns:
+            Risk score from -100 (extreme risk-off) to +100 (extreme risk-on)
+        """
+        breakdown = self.get_risk_breakdown()
+        return breakdown["score"]
+
+    def get_indicators_detail(self, indicators: Optional[RiskIndicators] = None) -> list[dict]:
+        """
+        Return comprehensive metadata breakdown for all 14 indicators.
+        Separates actively scored metrics from context-only telemetry.
+        """
+        breakdown = self.get_risk_breakdown(indicators)
+        return breakdown["details"]
 
     def fetch_risk_indicators(self) -> RiskIndicators:
         """
@@ -444,6 +495,16 @@ class RiskGauge:
         elif data_integrity in ("CONFIRMED", "VOL_SPIKE_EXPIRED", "VIX_SOURCE_STALE"):
             spike_flag_time = None
 
+        cautions = self._derive_cautions(
+            vix=vix,
+            india_vix=india_vix,
+            ad_ratio=ad_ratio,
+            above_ema20=above_ema20,
+            vetoes=vetoes,
+        )
+        if not vetoes and cautions and posture in ("OPEN", "SELECTIVE"):
+            posture = "OPEN_WITH_CAUTION"
+
         indicators = RiskIndicators(
             vix=vix,
             vix_change_pct=vix_7d_change,
@@ -464,6 +525,7 @@ class RiskGauge:
             breadth_regime=breadth_regime,
             posture=posture,
             vetoes=vetoes,
+            cautions=cautions,
             data_integrity=data_integrity,
             vix_fetched_at=vix_fetched_at,
             india_vix_fetched_at=india_vix_fetched_at,
@@ -1024,9 +1086,38 @@ class RiskGauge:
                     or (vix is not None and vix > 25.0)
                     or (ad_ratio is not None and ad_ratio < 0.75)
                 )
-                posture = "SELECTIVE" if is_caution else "OPEN"
+                posture = "OPEN_WITH_CAUTION" if is_caution else "OPEN"
 
         return regime, vetoes, posture, data_integrity
+
+    def _derive_cautions(
+        self,
+        vix: Optional[float],
+        india_vix: Optional[float],
+        ad_ratio: Optional[float],
+        above_ema20: Optional[float] = None,
+        vetoes: Optional[list[str]] = None,
+    ) -> list[str]:
+        """Derive named market cautions for risk posture and execution sizing."""
+        cautions = []
+        if india_vix is not None and india_vix > 18.0:
+            cautions.append("INDIA_VIX_ELEVATED")
+        if vix is not None and vix > 25.0:
+            cautions.append("US_VIX_ELEVATED")
+        if ad_ratio is not None and ad_ratio < 0.75:
+            cautions.append("BREADTH_WEAK")
+        if above_ema20 is not None and above_ema20 < 40.0:
+            cautions.append("MOMENTUM_DIVERGENCE")
+        try:
+            from agents.data_ingestion.context_fetcher import build_context_fetcher
+            cf = build_context_fetcher()
+            for sym in ("RELIANCE", "TCS", "INFY", "HDFCBANK"):
+                snap = cf.get_snapshot_sync(sym)
+                if snap and getattr(snap, "news_volume_spike", False):
+                    cautions.append(f"NEWS_SPIKE_{sym}")
+        except Exception:
+            pass
+        return cautions
 
     def _load_cache(self) -> Optional[RiskIndicators]:
         """Load risk indicators from cache file"""

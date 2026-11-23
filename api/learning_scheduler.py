@@ -32,7 +32,7 @@ _IST = ZoneInfo("Asia/Kolkata")
 TICK_SEC = 300
 STATE_KEY = "eod_review:last_run:v1"
 
-# Same window the daemon enforces internally (15:45-16:30 IST, weekdays).
+# Standard post-market review window: 15:45-16:30 IST on weekdays.
 WINDOW_START_MIN = 15 * 60 + 45
 WINDOW_END_MIN = 16 * 60 + 30
 
@@ -57,7 +57,7 @@ def should_run_review(now_ist: datetime, last_review_date: Optional[str], allow_
         return False, "before_window"
     
     catchup_enabled = allow_catchup if allow_catchup is not None else (
-        os.getenv("EOD_REVIEW_ALLOW_CATCHUP", "false").lower() in ("1", "true", "yes", "on")
+        os.getenv("EOD_REVIEW_ALLOW_CATCHUP", "true").lower() in ("1", "true", "yes", "on")
     )
     if not catchup_enabled and minutes > WINDOW_END_MIN:
         return False, "after_window"

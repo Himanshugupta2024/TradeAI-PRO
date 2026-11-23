@@ -133,6 +133,38 @@ async def refresh_corporate_events(force: bool = False) -> None:
         log.warning("[CorporateEvents] Refresh failed: %s", exc)
 
 
+_event_days_cache: dict[str, dict[str, Any]] = {}
+
+
+def get_symbol_days_to_next_event(symbol: str) -> int:
+    """Return days until next major corporate event (earnings/dividend) using yfinance calendar with fallback to 99."""
+    clean = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
+    now_d = datetime.now(timezone.utc).date()
+    cached = _event_days_cache.get(clean)
+    if cached and (time.time() - cached.get("ts", 0) < 86400):
+        return int(cached.get("days", 99))
+
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(f"{clean}.NS")
+        cal = ticker.calendar
+        if cal and isinstance(cal, dict):
+            ed = cal.get("Earnings Date")
+            if ed and isinstance(ed, list) and len(ed) > 0:
+                e_date = ed[0]
+                if hasattr(e_date, "date"):
+                    e_date = e_date.date()
+                if hasattr(e_date, "year") and hasattr(e_date, "month") and hasattr(e_date, "day"):
+                    diff = (e_date - now_d).days
+                    if diff >= 0:
+                        days = min(diff, 99)
+                        _event_days_cache[clean] = {"days": days, "ts": time.time()}
+                        return days
+    except Exception:
+        pass
+    return 99
+
+
 def check_symbol_event_risk(symbol: str) -> dict[str, Any]:
     """
     Check if a symbol has active or upcoming high-impact event risk.

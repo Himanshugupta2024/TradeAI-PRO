@@ -263,6 +263,7 @@ class PaperTradingEngine:
             PaperTrade if executed, None if blocked by risk rules.
         """
         self.last_rejection_reason = ""
+        self._last_attempted_qty = 0
 
         # Daily reset: clear consecutive losses at start of new day (IST)
         today = _today_ist()
@@ -536,6 +537,7 @@ class PaperTradingEngine:
             max_leverage=getattr(settings, "MAX_POSITION_LEVERAGE", 1.0),
         )
         qty = self._apply_correlation_size_reduction(symbol, qty)
+        self._last_attempted_qty = qty
         if qty <= 0:
             max_lev = getattr(settings, "MAX_POSITION_LEVERAGE", 1.0)
             if self.capital * max_lev >= entry:

@@ -1389,7 +1389,7 @@ def generate_signals(
         )
         result.at[idx, "confidence"] = new_conf
         result.at[idx, "context_adjusted"] = adjusted
-        if warning and direction not in ("SKIP", "HOLD"):
+        if warning:
             result.at[idx, "context_warning"] = warning
 
     # ── Feature Drift Guardrail ───────────────────────────────────────────

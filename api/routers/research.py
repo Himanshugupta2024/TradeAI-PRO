@@ -593,7 +593,13 @@ async def get_edge_risk_gauge(
 
         indicators = gauge.fetch_risk_indicators()
 
-        risk_score = gauge.get_risk_score()
+        breakdown = gauge.get_risk_breakdown(indicators)
+        risk_score = breakdown["score"]
+        adjustments = breakdown["adjustments"]
+        weight_sum = breakdown["weight_sum"]
+        score_reconciles = breakdown["score_reconciles"]
+        cautions = breakdown["cautions"]
+        indicators_detail = breakdown["details"]
 
         updated_at = indicators.timestamp.isoformat()
 
@@ -625,14 +631,17 @@ async def get_edge_risk_gauge(
             int((datetime.now(timezone.utc) - indicators.timestamp).total_seconds()),
         )
 
-        indicators_detail = gauge.get_indicators_detail(indicators)
-
         return {
             "risk_score": risk_score,
             "regime": regime,
             "posture": getattr(indicators, "posture", "OPEN"),
             "vetoes": getattr(indicators, "vetoes", []),
+            "cautions": cautions,
             "data_integrity": getattr(indicators, "data_integrity", "CONFIRMED"),
+            "adjustments": adjustments,
+            "weight_sum": weight_sum,
+            "normalized": True,
+            "score_reconciles": score_reconciles,
             "indicators": indicators_payload,
             "indicators_detail": indicators_detail,
             "updated_at": updated_at,

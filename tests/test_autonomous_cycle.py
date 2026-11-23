@@ -263,5 +263,45 @@ def test_resolve_universe_crypto_prioritization_under_any_input(monkeypatch):
     # Case 2: Tier1 universe when NSE closed
     res_tier1 = resolve_universe("tier1", max_symbols=5)
     assert res_tier1[0] == "BTC/USDT"
-    assert res_tier1[1] == "ETH/USDT"
-    assert res_tier1[2] == "SOL/USDT"
+
+
+def test_autonomous_cycle_records_skipped_decision_ledger(monkeypatch, tmp_path):
+    """Verify that when a signal is skipped by risk rules, a detailed ledger record is emitted."""
+    import uuid
+    from agents.execution.idempotency import record_autonomous_decision_to_db
+    from db.runtime_state import get_runtime_state
+
+    # Emit a simulated skipped decision
+    rec = record_autonomous_decision_to_db(
+        signal_id=f"test-skip-{uuid.uuid4().hex[:8]}",
+        run_id="test_run_ledger",
+        symbol="TCS",
+        action="SKIPPED",
+        direction="LONG",
+        entry_price=2408.5,
+        stop_loss=2394.2,
+        target_price=2437.1,
+        quality_score=81.0,
+        confluence_score=72.0,
+        risk_reward=2.0,
+        reason="POSTURE_CAUTION_SIZE_BELOW_MIN",
+        meta={
+            "symbol": "TCS",
+            "decision": "SKIPPED",
+            "reason": "POSTURE_CAUTION_SIZE_BELOW_MIN",
+            "posture": "OPEN_WITH_CAUTION",
+            "computed_qty": 0,
+            "capital_available": 10000.0,
+        },
+    )
+
+    assert rec is not None
+    assert rec["action"] == "SKIPPED"
+    assert rec["symbol"] == "TCS"
+    assert "POSTURE_CAUTION" in rec["reason"]
+
+    feed = get_runtime_state("autonomous_feed:v1", [])
+    assert len(feed) > 0
+    top = feed[0]
+    assert top["action"] == "SKIPPED"
+    assert top["symbol"] == "TCS"

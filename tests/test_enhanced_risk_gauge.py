@@ -291,3 +291,65 @@ def test_paper_trading_sector_concentration_guardrail(tmp_path):
         atr=30.0,
     )
     assert t_it is not None
+
+
+def test_score_arithmetic_reconciles_with_adjustments(tmp_path):
+    """Verify that published indicators detail sum + adjustments strictly equals score (< 0.05)."""
+    gauge = RiskGauge(cache_file=str(tmp_path / "risk_cache.json"))
+
+    # Test 1: Full indicators with cautions
+    ind = RiskIndicators(
+        vix=26.5,  # > 25 -> caution
+        vix_change_pct=7.2,
+        vix_1d_change_pct=-4.3,
+        btc_trend="FLAT",
+        nifty_trend="FLAT",
+        usdjpy_level=154.2,
+        usdjpy_trend="FLAT",
+        gold_trend="FLAT",
+        risk_regime="NEUTRAL",
+        india_vix=18.5,  # > 18 -> caution
+        india_vix_change_pct=15.1,
+        ad_ratio=0.65,  # < 0.75 -> caution
+        above_ema20_pct=35.0,  # < 40 -> caution
+        posture="OPEN_WITH_CAUTION",
+        cautions=["INDIA_VIX_ELEVATED", "US_VIX_ELEVATED", "BREADTH_WEAK", "MOMENTUM_DIVERGENCE"],
+    )
+
+    breakdown = gauge.get_risk_breakdown(ind)
+    score = breakdown["score"]
+    published_sum = breakdown["published_sum"]
+    adjustments = breakdown["adjustments"]
+    weight_sum = breakdown["weight_sum"]
+
+    assert weight_sum > 0
+    adj_pts = sum(a.get("points", 0.0) for a in adjustments)
+    # The user audit invariant: abs(published_sum + adjustments − score) < 0.05
+    assert abs((published_sum + adj_pts) - score) < 0.05
+    assert breakdown["score_reconciles"] is True
+
+    # Test 2: Sub-100 weight sum (e.g. 96%)
+    # Partial indicators (omitting USDJPY trend and Gold trend)
+    ind_partial = RiskIndicators(
+        vix=14.9,
+        vix_change_pct=5.0,
+        vix_1d_change_pct=-2.0,
+        btc_trend="FLAT",
+        nifty_trend="RISING",
+        usdjpy_level=None,
+        usdjpy_trend=None,
+        gold_trend=None,
+        risk_regime="RISK_ON",
+        india_vix=14.2,
+        india_vix_change_pct=-1.5,
+        ad_ratio=1.4,
+        above_ema20_pct=60.0,
+        posture="OPEN",
+        cautions=[],
+    )
+    bd_partial = gauge.get_risk_breakdown(ind_partial)
+    score_p = bd_partial["score"]
+    pub_p = bd_partial["published_sum"]
+    adj_p = sum(a.get("points", 0.0) for a in bd_partial["adjustments"])
+    assert abs((pub_p + adj_p) - score_p) < 0.05
+    assert bd_partial["score_reconciles"] is True
