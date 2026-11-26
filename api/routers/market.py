@@ -697,16 +697,19 @@ async def get_all_signals(response: Response):
         except Exception:
             pass
 
-    # 3. If live_signals has the full tracked universe (>= 10 symbols), it completely supersedes baseline.
-    # But if live_signals is only a partial subset (e.g. 1 or 2 ad-hoc quoted symbols), OVERLAY live onto baseline!
-    if len(live_signals) >= 10:
+    # 3. If live_signals covers the full tracked NSE universe (and no extra active crypto remains),
+    # live cache supersedes baseline. Otherwise overlay live onto filtered baseline.
+    tracked_universe = {s.upper().replace(".NS", "") for s in getattr(svc, "TOP_NSE_SYMBOLS", [])}
+    full_threshold = len(tracked_universe) if tracked_universe else 10
+    has_fallback_crypto = any("/" in k for k in fallback_signals)
+
+    if len(live_signals) >= full_threshold and not has_fallback_crypto:
         results = list(live_signals.values())
         source = "live_cache"
     elif fallback_signals:
         merged = dict(fallback_signals)
         merged.update(live_signals)
         # Filter merged to active tracked universe to prevent injecting orphan symbols from stale prior snapshots
-        tracked_universe = set(s.upper().replace(".NS", "") for s in getattr(svc, "TOP_NSE_SYMBOLS", []))
         if tracked_universe:
             results = [
                 s for s in merged.values()
@@ -719,10 +722,14 @@ async def get_all_signals(response: Response):
         results = list(live_signals.values())
         source = "live_partial"
 
-    # Ensure all returned signals have strictly synchronized freshness fields computed from the same UTC reference
+    # Enrich cached corporate-event countdown and news-spike provenance on persisted rows (zero HTTP I/O),
+    # then synchronize freshness fields once from a single UTC reference clock.
     from api.data_honesty import apply_signal_freshness
     now_ref = datetime.now(timezone.utc)
-    results = [apply_signal_freshness(s, now=now_ref) for s in results]
+    results = [
+        apply_signal_freshness(svc.enrich_signal_context_fields(s, cache_only=True), now=now_ref)
+        for s in results
+    ]
 
     # 4. Filter by active market focus (NSE, Crypto, Forex, All)
     try:
@@ -743,8 +750,8 @@ async def get_all_signals(response: Response):
     tracker.finish()
 
     return {
-        "signals": [apply_signal_freshness(s) for s in results],
-        "updated_at": getattr(svc, "_persisted_signals_updated_at", None) or datetime.now(timezone.utc).isoformat(),
+        "signals": results,
+        "updated_at": getattr(svc, "_persisted_signals_updated_at", None) or now_ref.isoformat(),
         "source": source,
     }
 
@@ -1160,7 +1167,8 @@ async def get_current_signal(symbol: str):
             "hint": "Check symbol spelling or try another instrument.",
         })
 
-    return result
+    from api.data_honesty import apply_signal_freshness
+    return apply_signal_freshness(svc.enrich_signal_context_fields(result, cache_only=True))
 
 
 
@@ -1572,15 +1580,17 @@ async def screener_gainers():
         from db.runtime_state import get_runtime_state
         db_data = await asyncio.to_thread(get_runtime_state, "screener_gainers")
         if db_data and isinstance(db_data, list) and len(db_data) > 0:
-            logger.info("Screener gainers served from DB runtime_state: %d stocks", len(db_data))
-            svc._movers_cache["gainers"] = db_data
-            svc._movers_cache["updated_at"] = datetime.now().isoformat()
-            return {
-                "data": db_data,
-                "real_data": True,
-                "source": "durable_snapshot",
-                "updated_at": datetime.now().isoformat(),
-            }
+            db_data = [r for r in db_data if abs(float(r.get("pct_change") or 0.0)) <= 20.0]
+            if db_data:
+                logger.info("Screener gainers served from DB runtime_state: %d stocks", len(db_data))
+                svc._movers_cache["gainers"] = db_data
+                svc._movers_cache["updated_at"] = datetime.now().isoformat()
+                return {
+                    "data": db_data,
+                    "real_data": True,
+                    "source": "durable_snapshot",
+                    "updated_at": datetime.now().isoformat(),
+                }
     except Exception as exc:
         logger.debug("Runtime state lookup for gainers failed: %s", exc)
 
@@ -1647,15 +1657,17 @@ async def screener_losers():
         from db.runtime_state import get_runtime_state
         db_data = await asyncio.to_thread(get_runtime_state, "screener_losers")
         if db_data and isinstance(db_data, list) and len(db_data) > 0:
-            logger.info("Screener losers served from DB runtime_state: %d stocks", len(db_data))
-            svc._movers_cache["losers"] = db_data
-            svc._movers_cache["updated_at"] = datetime.now().isoformat()
-            return {
-                "data": db_data,
-                "real_data": True,
-                "source": "durable_snapshot",
-                "updated_at": datetime.now().isoformat(),
-            }
+            db_data = [r for r in db_data if abs(float(r.get("pct_change") or 0.0)) <= 20.0]
+            if db_data:
+                logger.info("Screener losers served from DB runtime_state: %d stocks", len(db_data))
+                svc._movers_cache["losers"] = db_data
+                svc._movers_cache["updated_at"] = datetime.now().isoformat()
+                return {
+                    "data": db_data,
+                    "real_data": True,
+                    "source": "durable_snapshot",
+                    "updated_at": datetime.now().isoformat(),
+                }
     except Exception as exc:
         logger.debug("Runtime state lookup for losers failed: %s", exc)
 

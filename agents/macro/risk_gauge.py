@@ -384,7 +384,7 @@ class RiskGauge:
         adjustments: list[dict] = []
         # If weight_sum is not exactly 100, record weight normalization difference
         norm_diff = round(raw_score - published_sum, 2)
-        if abs(norm_diff) >= 0.05 and abs(weight_sum - 100.0) >= 0.1:
+        if abs(weight_sum - 100.0) >= 0.1 and abs(norm_diff) >= 0.01:
             adjustments.append({
                 "reason": "WEIGHT_NORMALIZATION",
                 "weight_sum": round(weight_sum, 1),
@@ -403,8 +403,19 @@ class RiskGauge:
                 "cautions": cautions,
             })
 
-        # Calculate final reconciled score
-        final_score = round(max(-100.0, min(100.0, raw_score + caution_pts)), 1)
+        # Calculate final reconciled score and explicitly itemize any bounds clamping
+        unclamped = raw_score + caution_pts
+        clamped = max(-100.0, min(100.0, unclamped))
+        final_score = round(clamped, 1)
+        if abs(clamped - unclamped) >= 0.01:
+            pre_clamp_adj = sum(a.get("points", 0.0) for a in adjustments)
+            clamp_pts = round(final_score - (published_sum + pre_clamp_adj), 2)
+            adjustments.append({
+                "reason": "SCORE_CLAMP",
+                "unclamped": round(unclamped, 2),
+                "points": clamp_pts,
+            })
+
         total_adj = sum(a.get("points", 0.0) for a in adjustments)
         reconciles = abs((published_sum + total_adj) - final_score) < 0.05
 

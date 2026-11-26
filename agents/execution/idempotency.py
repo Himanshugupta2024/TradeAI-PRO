@@ -149,6 +149,7 @@ def record_autonomous_decision_to_db(
         "trade_id": paper_trade_id,
         "reason": reason or "",
         "asset_class": "CRYPTO" if "/" in symbol else "EQUITY",
+        "meta": dict(meta) if isinstance(meta, dict) else {},
     }
 
     try:

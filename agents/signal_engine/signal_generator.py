@@ -1363,6 +1363,12 @@ def generate_signals(
     context_score = float(getattr(context_snapshot, "context_score", 0.0) or 0.0)
     event_risk_active = bool(getattr(context_snapshot, "event_risk_active", False))
     days_to_next_event = int(getattr(context_snapshot, "days_to_next_event", 99) or 99)
+    if not offline and symbol and days_to_next_event == 99 and "/" not in str(symbol):
+        try:
+            from agents.data_ingestion.corporate_events import get_symbol_days_to_next_event
+            days_to_next_event = get_symbol_days_to_next_event(symbol)
+        except Exception:
+            pass
     news_volume_spike = bool(getattr(context_snapshot, "news_volume_spike", False))
     news_sentiment_24hr = float(getattr(context_snapshot, "news_sentiment_24hr", 0.0) or 0.0)
     news_sentiment_7d = float(getattr(context_snapshot, "news_sentiment_7d", 0.0) or 0.0)

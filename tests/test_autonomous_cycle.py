@@ -305,3 +305,68 @@ def test_autonomous_cycle_records_skipped_decision_ledger(monkeypatch, tmp_path)
     top = feed[0]
     assert top["action"] == "SKIPPED"
     assert top["symbol"] == "TCS"
+    assert isinstance(top.get("meta"), dict)
+    assert top["meta"]["posture"] == "OPEN_WITH_CAUTION"
+    assert top["meta"]["computed_qty"] == 0
+    assert top["meta"]["capital_available"] == 10000.0
+
+
+def test_record_skipped_candidate_emits_meta_and_respects_ledger():
+    """Verify shared ledger helper records posture, computed_qty, and capital_available into feed & DB."""
+    import uuid
+    from scripts.autonomous_cycle import _record_skipped_candidate
+    from db.runtime_state import get_runtime_state
+    from api.routers.admin import _fetch_feed_db_sync
+
+    class _StubDaemon:
+        def __init__(self):
+            self.decisions = []
+        def record_decision(self, **kwargs):
+            self.decisions.append(kwargs)
+
+    class _StubEngine:
+        capital = 85000.0
+
+    daemon = _StubDaemon()
+    engine = _StubEngine()
+    summary = {"decisions_recorded": 0}
+    cand = {
+        "symbol": f"INFY_{uuid.uuid4().hex[:4]}",
+        "direction": "LONG",
+        "strategy": "INTRADAY_MOMENTUM",
+        "candle_time": "2026-11-26T10:30:00+05:30",
+        "entry": 1109.4,
+        "stop_loss": 1102.6,
+        "target": 1123.0,
+        "quant_score": 79.0,
+        "confidence": 69.0,
+        "risk_reward": 2.0,
+        "regime": "TRENDING",
+        "data_status": "LIVE",
+    }
+    _record_skipped_candidate(
+        cand,
+        sig_prefix="slotrank",
+        run_id="test_ledger_helper",
+        today_str="2026-11-26",
+        reason="MAX_POSITIONS_SLOT_RANKED",
+        posture="OPEN_WITH_CAUTION",
+        daemon=daemon,
+        engine_inst=engine,
+        summary=summary,
+        computed_qty=0,
+    )
+    assert summary["decisions_recorded"] == 1
+    assert len(daemon.decisions) == 1
+    assert daemon.decisions[0]["reason"] == "MAX_POSITIONS_SLOT_RANKED"
+
+    feed = get_runtime_state("autonomous_feed:v1", [])
+    assert feed[0]["symbol"] == cand["symbol"]
+    assert feed[0]["meta"]["posture"] == "OPEN_WITH_CAUTION"
+    assert feed[0]["meta"]["computed_qty"] == 0
+    assert feed[0]["meta"]["capital_available"] == 85000.0
+
+    db_items = _fetch_feed_db_sync(10)
+    matched = [i for i in db_items if i["symbol"] == cand["symbol"]]
+    assert matched, "DB feed fallback must surface newly recorded skipped entry"
+    assert matched[0]["meta"]["capital_available"] == 85000.0

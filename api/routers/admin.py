@@ -469,6 +469,14 @@ def _fetch_feed_db_sync(limit: int):
                     if ts.tzinfo is None:
                         ts = ts.replace(tzinfo=timezone.utc)
                     ts_str = ts.isoformat()
+                meta_dict = {}
+                if getattr(r, "meta_json", None):
+                    try:
+                        parsed_meta = json.loads(r.meta_json)
+                        if isinstance(parsed_meta, dict):
+                            meta_dict = parsed_meta
+                    except Exception:
+                        meta_dict = {}
                 items.append({
                     "id": r.signal_id or f"rec-{r.id}",
                     "run_id": r.run_id,
@@ -485,6 +493,7 @@ def _fetch_feed_db_sync(limit: int):
                     "trade_id": r.paper_trade_id,
                     "reason": r.reason or "",
                     "asset_class": "CRYPTO" if "/" in (r.symbol or "") else "EQUITY",
+                    "meta": meta_dict,
                 })
     except Exception:
         pass

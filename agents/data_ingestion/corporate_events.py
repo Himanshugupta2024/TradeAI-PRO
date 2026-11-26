@@ -136,14 +136,26 @@ async def refresh_corporate_events(force: bool = False) -> None:
 _event_days_cache: dict[str, dict[str, Any]] = {}
 
 
+def get_cached_days_to_next_event(symbol: str) -> int | None:
+    """Return cached days-to-next-event without performing any network I/O."""
+    clean = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
+    cached = _event_days_cache.get(clean)
+    if not cached:
+        return None
+    ttl = float(cached.get("ttl", 86400))
+    if (time.time() - cached.get("ts", 0)) < ttl:
+        return int(cached.get("days", 99))
+    return None
+
+
 def get_symbol_days_to_next_event(symbol: str) -> int:
     """Return days until next major corporate event (earnings/dividend) using yfinance calendar with fallback to 99."""
     clean = symbol.replace(".NS", "").replace(".BO", "").strip().upper()
-    now_d = datetime.now(timezone.utc).date()
-    cached = _event_days_cache.get(clean)
-    if cached and (time.time() - cached.get("ts", 0) < 86400):
-        return int(cached.get("days", 99))
+    cached_val = get_cached_days_to_next_event(clean)
+    if cached_val is not None:
+        return cached_val
 
+    now_d = datetime.now(timezone.utc).date()
     try:
         import yfinance as yf
         ticker = yf.Ticker(f"{clean}.NS")
@@ -158,10 +170,13 @@ def get_symbol_days_to_next_event(symbol: str) -> int:
                     diff = (e_date - now_d).days
                     if diff >= 0:
                         days = min(diff, 99)
-                        _event_days_cache[clean] = {"days": days, "ts": time.time()}
+                        _event_days_cache[clean] = {"days": days, "ts": time.time(), "ttl": 86400}
                         return days
     except Exception:
         pass
+
+    # Negative-cache misses for 1h so hot request paths don't keep retrying Yahoo on every call
+    _event_days_cache[clean] = {"days": 99, "ts": time.time(), "ttl": 3600}
     return 99
 
 

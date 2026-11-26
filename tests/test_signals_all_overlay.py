@@ -125,3 +125,82 @@ async def test_get_all_signals_filters_by_nse_market_focus(monkeypatch):
     assert "TCS" in symbols
     assert "BTC/USDT" not in symbols
     assert "ETH/USDT" not in symbols
+
+
+@pytest.mark.asyncio
+async def test_get_all_signals_filters_orphans_and_enriches_cached_context(monkeypatch):
+    """Persist snapshot merge must drop out-of-universe NSE orphans and populate cached events & news spikes."""
+    from agents.data_ingestion import corporate_events as ce
+    from agents.data_ingestion import context_fetcher as cf_mod
+    from agents.data_ingestion.context_fetcher import ContextSnapshotData
+    from datetime import timezone
+
+    monkeypatch.setattr(svc, "TOP_NSE_SYMBOLS", ["NIFTY 50", "BANKNIFTY", "RELIANCE", "TCS"])
+    monkeypatch.setattr(svc, "_signal_cache", {})
+    monkeypatch.setattr(
+        svc,
+        "_persisted_signals_snapshot",
+        [
+            {"symbol": "RELIANCE", "signal": "LONG", "close": 1350.0, "entry": 1350.0, "stop_loss": 1340.0, "target": 1370.0, "days_to_next_event": 99},
+            {"symbol": "ICICIBANK", "signal": "HOLD", "close": 1250.0},  # Orphan outside TOP_NSE_SYMBOLS
+            {"symbol": "SBIN", "signal": "HOLD", "close": 800.0},        # Orphan outside TOP_NSE_SYMBOLS
+        ],
+    )
+    monkeypatch.setattr(ce, "get_cached_days_to_next_event", lambda sym: 14 if sym == "RELIANCE" else None)
+
+    class _StubCF:
+        def get_cached_snapshot_only(self, sym):
+            if sym == "RELIANCE":
+                return ContextSnapshotData(
+                    symbol="RELIANCE",
+                    timestamp_utc=datetime.now(timezone.utc),
+                    price_change_24hr_pct=1.0,
+                    volume_change_24hr_pct=10.0,
+                    news_sentiment_24hr=0.2,
+                    news_sentiment_7d=0.1,
+                    news_volume_spike=True,
+                    weekly_trend_bias="BULLISH",
+                    oi_change_7d_pct=0.0,
+                    btc_dominance_7d_trend="FLAT",
+                    days_to_next_event=14,
+                    event_risk_active=False,
+                    context_score=0.2,
+                )
+            return None
+
+    monkeypatch.setattr(cf_mod, "build_context_fetcher", lambda: _StubCF())
+
+    res = Response()
+    payload = await get_all_signals(res)
+    by_sym = {s["symbol"]: s for s in payload["signals"]}
+    assert "RELIANCE" in by_sym
+    assert "ICICIBANK" not in by_sym
+    assert "SBIN" not in by_sym
+    assert by_sym["RELIANCE"]["days_to_next_event"] == 14
+    assert by_sym["RELIANCE"]["context_warning"] == "NEWS_SPIKE - verify before trusting signal"
+
+
+@pytest.mark.asyncio
+async def test_get_current_signal_clears_terminal_confluence_factors(monkeypatch):
+    """Single-symbol /api/signal/{symbol} must also suppress confluence on terminal signals via apply_signal_freshness."""
+    from api.routers.market import get_current_signal
+
+    monkeypatch.setattr(
+        svc,
+        "_get_signal_for_symbol",
+        lambda sym: {
+            "symbol": "TCS",
+            "signal": "LONG",
+            "signal_status": "STALE",
+            "stale": True,
+            "confluence_score": 82,
+            "confluence_factors": ["Lifecycle terminal (STALE)"],
+            "entry": 2400.0,
+            "stop_loss": 2380.0,
+            "target": 2440.0,
+            "timestamp": "2026-11-20T15:25:00+05:30",
+        },
+    )
+    out = await get_current_signal("TCS")
+    assert out["confluence_score"] == 0
+    assert out["confluence_factors"] == []

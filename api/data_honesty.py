@@ -180,7 +180,8 @@ def apply_signal_freshness(signal: dict, now: Any = None) -> dict:
         out["ai_confidence"] = 0.0
         out["confluence_score"] = 0
         out["confluence_factors"] = []
-        out["actionable"] = False
+        if "actionable" in out:
+            out["actionable"] = False
 
     entry = out.get("entry")
     sl = out.get("stop_loss")

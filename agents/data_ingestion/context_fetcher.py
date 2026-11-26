@@ -91,6 +91,17 @@ class ContextFetcher:
         """Return a context snapshot for symbol using cache-first refresh."""
         return await asyncio.to_thread(self.get_snapshot_sync, symbol)
 
+    def get_cached_snapshot_only(self, symbol: str) -> ContextSnapshotData | None:
+        """Return fresh cached context snapshot without triggering any network fetch."""
+        normalized = self._normalize_symbol(symbol)
+        cached = self._get_cached_snapshot(normalized)
+        if cached and self._is_fresh(cached.get("cached_at"), settings.CONTEXT_REFRESH_INTERVAL):
+            try:
+                return self._snapshot_from_cache(cached)
+            except Exception:
+                return None
+        return None
+
     def get_snapshot_sync(self, symbol: str) -> ContextSnapshotData:
         """Synchronous context fetch for scheduler and tests."""
         normalized = self._normalize_symbol(symbol)
@@ -1033,11 +1044,15 @@ class ContextFetcher:
     def _compute_news_spike(self, symbol: str, count_24h: int) -> bool:
         key = f"spike_{symbol}"
         hist = self._news_cache.setdefault(key, {}).setdefault("history", [])
-        baseline = mean(hist[-7:]) if hist else 0.1
+        baseline = mean(hist[-7:]) if hist else 0.0
+        # On cold starts (<3 samples, e.g. ephemeral containers), require a meaningful
+        # headline count before alerting instead of triggering NEWS_SPIKE on 1-2 articles.
+        floor = 3.0 if len(hist) < 3 else 0.5
+        effective_baseline = max(float(baseline), floor)
         hist.append(count_24h)
         self._news_cache[key]["history"] = hist[-30:]
         self._write_json(self._news_cache_path, self._news_cache)
-        return count_24h > (settings.NEWS_SPIKE_MULTIPLIER * max(baseline, 0.1))
+        return count_24h > (settings.NEWS_SPIKE_MULTIPLIER * effective_baseline)
 
     def _derive_btc_dominance_trend(self, btc_dom: float) -> str:
         history = self._global_cache.setdefault("btc_dominance_history", [])

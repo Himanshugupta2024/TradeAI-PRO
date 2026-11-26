@@ -353,3 +353,30 @@ def test_score_arithmetic_reconciles_with_adjustments(tmp_path):
     adj_p = sum(a.get("points", 0.0) for a in bd_partial["adjustments"])
     assert abs((pub_p + adj_p) - score_p) < 0.05
     assert bd_partial["score_reconciles"] is True
+
+    # Test 3: Extreme clamped scenario with active cautions must still reconcile
+    ind_clamp = RiskIndicators(
+        vix=35.0,
+        vix_change_pct=20.0,
+        vix_1d_change_pct=5.0,
+        btc_trend="FALLING",
+        nifty_trend="FALLING",
+        usdjpy_level=165.0,
+        usdjpy_trend="FALLING",
+        gold_trend="RISING",
+        risk_regime="RISK_OFF",
+        india_vix=26.0,
+        india_vix_change_pct=18.0,
+        ad_ratio=0.3,
+        above_ema20_pct=5.0,
+        posture="OPEN_WITH_CAUTION",
+        cautions=["A", "B", "C", "D"],
+    )
+    bd_clamp = gauge.get_risk_breakdown(ind_clamp)
+    score_c = bd_clamp["score"]
+    pub_c = bd_clamp["published_sum"]
+    adj_c = sum(a.get("points", 0.0) for a in bd_clamp["adjustments"])
+    assert score_c == -100.0
+    assert any(a.get("reason") == "SCORE_CLAMP" for a in bd_clamp["adjustments"])
+    assert abs((pub_c + adj_c) - score_c) < 0.05
+    assert bd_clamp["score_reconciles"] is True

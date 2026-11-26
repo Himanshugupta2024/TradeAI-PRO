@@ -68,7 +68,7 @@ async def test_tradingview_provider_success(monkeypatch):
     assert q.price == 1339.7
     assert q.prev_close == 1335.4
     assert q.change_pct == 0.32
-    assert q.source == "TRADINGVIEW_SCANNER"
+    assert q.source == "TRADINGVIEW_LIVE"
     assert q.regular_market_time is not None
     assert q.is_valid() is True
 

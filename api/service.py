@@ -179,6 +179,17 @@ _loading_status = {
     "ready": False,
 }
 
+
+def get_loading_status() -> dict:
+    """Single source of truth for loading status across /api/health and /api/nse/dashboard."""
+    loaded = len(_market_data)
+    total = max(len(TOP_NSE_SYMBOLS), loaded)
+    return {
+        **_loading_status,
+        "loaded": min(loaded, total),
+        "total": total,
+    }
+
 # Previous signal state per symbol — used to detect NEW signals for Telegram alerts
 _prev_signal_cache: dict[str, str] = {}
 
@@ -488,7 +499,7 @@ async def _hydrate_signals_cache_from_db() -> bool:
                             "rsi": float(p_info.get("rsi", 50.0)),
                             "regime": p_info.get("regime", "TRENDING"),
                             "trend": "NEUTRAL",
-                            "confidence": 45.0,
+                            "confidence": 0.0,
                             "timestamp": snap_mkt.get("timestamp") or datetime.now(timezone.utc).isoformat(),
                             "source": "market_snapshot_fallback",
                         }
@@ -2294,11 +2305,12 @@ def _stale_threshold_minutes(symbol: str) -> float:
     return 60.0 if "/" in str(symbol) else 30.0
 
 
-def _get_news_spike_warning(symbol: str) -> str | None:
+def _get_news_spike_warning(symbol: str, *, cache_only: bool = True) -> str | None:
+    """Return NEWS_SPIKE warning using cached ContextFetcher snapshot by default (zero blocking HTTP)."""
     try:
         from agents.data_ingestion.context_fetcher import build_context_fetcher
         cf = build_context_fetcher()
-        snap = cf.get_snapshot_sync(symbol)
+        snap = cf.get_cached_snapshot_only(symbol) if cache_only else cf.get_snapshot_sync(symbol)
         if snap and getattr(snap, "news_volume_spike", False):
             return "NEWS_SPIKE - verify before trusting signal"
     except Exception:
@@ -2306,15 +2318,50 @@ def _get_news_spike_warning(symbol: str) -> str | None:
     return None
 
 
-def _get_effective_days_to_event(symbol: str, last_signal: Any) -> int:
-    d = _safe_int(last_signal, "days_to_next_event", 99)
-    if d == 99:
+def _get_effective_days_to_event(symbol: str, last_signal: Any, *, cache_only: bool = True) -> int:
+    """Resolve corporate event countdown, falling back to cached/live calendar lookup if unset (99)."""
+    try:
+        if last_signal is None:
+            raw_val = 99
+        elif hasattr(last_signal, "get"):
+            raw_val = last_signal.get("days_to_next_event", 99)
+        else:
+            raw_val = getattr(last_signal, "days_to_next_event", 99)
+    except Exception:
+        raw_val = 99
+    try:
+        d = int(raw_val) if raw_val is not None and pd.notna(raw_val) else 99
+    except (TypeError, ValueError):
+        d = 99
+    if d == 99 and "/" not in str(symbol):
         try:
-            from agents.data_ingestion.corporate_events import get_symbol_days_to_next_event
-            d = get_symbol_days_to_next_event(symbol)
+            from agents.data_ingestion.corporate_events import (
+                get_cached_days_to_next_event,
+                get_symbol_days_to_next_event,
+            )
+            val = get_cached_days_to_next_event(symbol) if cache_only else get_symbol_days_to_next_event(symbol)
+            if val is not None:
+                d = int(val)
         except Exception:
             pass
     return d
+
+
+def enrich_signal_context_fields(signal: dict, *, cache_only: bool = True) -> dict:
+    """Backfill cached corporate-event countdown and news-spike provenance onto persisted signals."""
+    if not isinstance(signal, dict):
+        return signal
+    sym = str(signal.get("symbol") or "").strip().upper().replace(".NS", "")
+    if not sym:
+        return signal
+    out = dict(signal)
+    if out.get("days_to_next_event") in (None, 99):
+        out["days_to_next_event"] = _get_effective_days_to_event(sym, out, cache_only=cache_only)
+    if not out.get("context_warning"):
+        warn = _get_news_spike_warning(sym, cache_only=cache_only)
+        if warn:
+            out["context_warning"] = warn
+    return out
 
 
 def _get_previous_daily_close(symbol: str, today_date: date) -> float | None:
@@ -2405,21 +2452,8 @@ def _get_signal_for_symbol(symbol: str, mood: dict | None = None) -> dict:
         if pd.notna(last.get("EMA_20")) and pd.notna(last.get("EMA_50")):
             local_trend = "BULLISH" if float(last["EMA_20"]) >= float(last["EMA_50"]) else "BEARISH"
 
-        days_to_ev = 99
-        news_warning = None
-        try:
-            from agents.data_ingestion.corporate_events import get_symbol_days_to_next_event
-            days_to_ev = get_symbol_days_to_next_event(symbol)
-        except Exception:
-            pass
-        try:
-            from agents.data_ingestion.context_fetcher import build_context_fetcher
-            cf = build_context_fetcher()
-            snap = cf.get_snapshot_sync(symbol)
-            if snap and getattr(snap, "news_volume_spike", False):
-                news_warning = "NEWS_SPIKE - verify before trusting signal"
-        except Exception:
-            pass
+        days_to_ev = _get_effective_days_to_event(symbol, None, cache_only=True)
+        news_warning = _get_news_spike_warning(symbol, cache_only=True)
 
         return {
             "symbol": symbol,
@@ -2827,9 +2861,16 @@ def _compute_gainers_losers_from_cache(mode: str) -> list[dict]:
     """
     Fallback: compute gainers/losers from the in-memory _market_data cache
     when the NSE screener API is unavailable or times out.
-    Compares current close vs day's first bar (open) for meaningful daily % change.
+    Compares current close vs previous completed daily close, rejecting >20%
+    corrupt/unadjusted outlier prints.
     """
+    from api.feed_client import validate_live_tick
+    from zoneinfo import ZoneInfo
+
     results = []
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    today_date = now_ist.date()
+
     for symbol, df in _market_data.items():
         if df is None or len(df) < 5:
             continue
@@ -2838,13 +2879,10 @@ def _compute_gainers_losers_from_cache(mode: str) -> list[dict]:
             continue
         try:
             close = float(df.iloc[-1]["close"])
-
-            from zoneinfo import ZoneInfo
-            now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
-            today_date = now_ist.date()
-
             prev_close = _get_previous_daily_close(symbol, today_date)
             if not prev_close or prev_close <= 0:
+                continue
+            if not validate_live_tick(symbol, close, prev_close):
                 continue
 
             pct_change = ((close - prev_close) / prev_close) * 100
@@ -3030,7 +3068,8 @@ def _compute_sectors_from_cache() -> list[dict]:
 
             if day_open > 0:
                 pct = ((close - day_open) / day_open) * 100
-                sector_changes.setdefault(sector, []).append(pct)
+                if abs(pct) <= 20.0:
+                    sector_changes.setdefault(sector, []).append(pct)
         except Exception:
             continue
 
@@ -3271,7 +3310,13 @@ def _compute_market_mood() -> dict:
         "breadth": {
             "gainers": len(gainers),
             "losers": len(losers),
+            "flat": max(0, breadth_universe - len(gainers) - len(losers)),
+            "total_tracked": breadth_universe,
+            "total_movers": total_movers,
             "breadth_pct": round(breadth_pct, 1),
+            "net_advance_pct": round(breadth_pct, 1),
+            "advancers_pct": round(len(gainers) / total_movers * 100.0, 1) if total_movers else 0.0,
+            "definition": "(gainers - losers) / (gainers + losers) * 100 across directional movers",
         },
         "signals": {
             "long": long_count,
@@ -3310,13 +3355,27 @@ def _build_ai_market_summary(mood_payload: dict | None = None) -> dict:
     gainers = list((_movers_cache.get("gainers") or [])[:2])
     losers = list((_movers_cache.get("losers") or [])[:2])
 
-    top_gainer = gainers[0]["symbol"] if gainers else "NA"
-    top_gainer_pct = gainers[0].get("pct_change", 0.0) if gainers else 0.0
-    top_loser = losers[0]["symbol"] if losers else "NA"
-    top_loser_pct = losers[0].get("pct_change", 0.0) if losers else 0.0
-
     mood_score_val = mood.get("score")
     score_text = f"{float(mood_score_val):.1f}" if mood_score_val is not None else "—"
+
+    if gainers and losers:
+        top_line = (
+            f"Top movers: {gainers[0]['symbol']} ({gainers[0].get('pct_change', 0.0):+.2f}%) and "
+            f"{losers[0]['symbol']} ({losers[0].get('pct_change', 0.0):+.2f}%)."
+        )
+    elif gainers:
+        top_line = (
+            f"Top gainer: {gainers[0]['symbol']} ({gainers[0].get('pct_change', 0.0):+.2f}%); "
+            f"no decliners in sample."
+        )
+    elif losers:
+        top_line = (
+            f"Top decliner: {losers[0]['symbol']} ({losers[0].get('pct_change', 0.0):+.2f}%); "
+            f"no advancers in sample."
+        )
+    else:
+        top_line = "Top movers: awaiting validated session breadth quotes."
+
     lines = [
         (
             f"Market mood is {mood.get('mood', 'NEUTRAL')} "
@@ -3327,10 +3386,7 @@ def _build_ai_market_summary(mood_payload: dict | None = None) -> dict:
             f"{mood.get('breadth', {}).get('losers', 0)} losers; "
             f"signal bias {mood.get('signals', {}).get('bias_pct', 0):+.1f}%."
         ),
-        (
-            f"Top movers: {top_gainer} ({top_gainer_pct:+.2f}%) and "
-            f"{top_loser} ({top_loser_pct:+.2f}%)."
-        ),
+        top_line,
     ]
 
     return {
