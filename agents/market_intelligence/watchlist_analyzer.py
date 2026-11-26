@@ -971,7 +971,11 @@ async def analyze_watchlist_symbols(
             # Try alternate key
             nifty_df = ohlcv_map.get("NIFTY 50")
 
-        nifty_close = nifty_df["close"] if nifty_df is not None and "close" in nifty_df.columns else pd.Series(dtype=float)
+        nifty_close = (
+            nifty_df["close"].dropna()
+            if nifty_df is not None and "close" in nifty_df.columns
+            else pd.Series(dtype=float)
+        )
         nifty_chg_pct = 0.0
         if not nifty_close.empty and len(nifty_close) >= 2:
             n_prev = float(nifty_close.iloc[-2])
@@ -998,6 +1002,8 @@ async def analyze_watchlist_symbols(
         # 3. Analyze each missing symbol
         for sym in missing_symbols:
             df = ohlcv_map.get(sym)
+            if df is not None and not df.empty and "close" in df.columns:
+                df = df.dropna(subset=["close"])
             comp_name = get_company_name(sym)
 
             # Insufficient data check (< 200 bars)

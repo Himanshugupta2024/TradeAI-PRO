@@ -266,3 +266,40 @@ def test_swing_shortlist_prefers_database_scan_over_stale_json(monkeypatch):
     assert out["scan_date"] == "2026-11-26"
     assert [s["symbol"] for s in out["setups"]] == ["HAL", "TRENT"]
 
+
+def test_watchlist_analyzer_drops_trailing_nan_close_rows(monkeypatch):
+    """Trailing Yahoo placeholder rows with NaN close must not yield None/NaN ltp or change_pct."""
+    import numpy as np
+    import pandas as pd
+    from agents.market_intelligence import watchlist_analyzer as wa
+
+    wa._WATCHLIST_ANALYSIS_CACHE.clear()
+    dates = pd.date_range("2025-10-01", periods=210, freq="B", tz="Asia/Kolkata")
+    closes = [1000.0 + i * 0.5 for i in range(209)] + [np.nan]
+    df_stock = pd.DataFrame({
+        "timestamp": dates,
+        "open": closes,
+        "high": [c + 5.0 if not pd.isna(c) else np.nan for c in closes],
+        "low": [c - 5.0 if not pd.isna(c) else np.nan for c in closes],
+        "close": closes,
+        "volume": [100000.0] * 209 + [np.nan],
+    })
+    df_bench = df_stock.copy()
+
+    class _MockProvider:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def get_batch_ohlcv(self, fetch_list, period="1y", interval="1d"):
+            return {"TESTNAN": df_stock, "^NSEI": df_bench}
+
+    monkeypatch.setattr("data.providers.yahoo.YahooProvider", _MockProvider)
+    monkeypatch.setattr("db.runtime_state.get_runtime_state", lambda key: None)
+
+    out = asyncio.run(wa.analyze_watchlist_symbols(["TESTNAN"], force_refresh=True))
+    assert "TESTNAN" in out
+    assert isinstance(out["TESTNAN"]["ltp"], float)
+    assert out["TESTNAN"]["ltp"] == 1104.0
+    assert isinstance(out["TESTNAN"]["change_pct"], float)
+
+
