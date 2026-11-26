@@ -242,14 +242,15 @@ def test_lightweight_server_boot_defers_scipy_and_sklearn():
     assert loaded_line == "LOADED:", f"Heavy ML libs eagerly loaded at API boot: {loaded_line}"
 
 
-def test_swing_shortlist_prefers_database_scan_over_stale_json(monkeypatch):
+def test_swing_shortlist_prefers_database_scan_over_stale_json(monkeypatch, tmp_path):
     """/api/swing/shortlist must prefer central DB scan over older baked-in swing_shortlist_latest.json."""
     from api.routers.swing import get_swing_shortlist
     from db import swing_store
 
+    future_db_date = (datetime.now(timezone.utc) + timedelta(days=2)).date().isoformat()
     mock_db_scan = {
-        "scan_date": "2026-11-26",
-        "scan_time": "2026-11-26T16:15:00+05:30",
+        "scan_date": future_db_date,
+        "scan_time": f"{future_db_date}T16:15:00+05:30",
         "symbols_scanned": 500,
         "grade_a_count": 2,
         "grade_b_count": 3,
@@ -263,7 +264,7 @@ def test_swing_shortlist_prefers_database_scan_over_stale_json(monkeypatch):
 
     out = asyncio.run(get_swing_shortlist())
     assert out["source"] == "database"
-    assert out["scan_date"] == "2026-11-26"
+    assert out["scan_date"] == future_db_date
     assert [s["symbol"] for s in out["setups"]] == ["HAL", "TRENT"]
 
 
