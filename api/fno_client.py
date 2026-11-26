@@ -12,7 +12,7 @@ import logging
 import math
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
@@ -45,18 +45,18 @@ def _get_sync_client(timeout: float) -> httpx.Client:
 
 # Fallback spot price anchors for major index & stock underlyings when spot is unprovided
 _DEFAULT_SPOT_ANCHORS: Dict[str, float] = {
-    "NIFTY 50": 24200.0,
-    "NIFTY BANK": 51500.0,
-    "RELIANCE": 1335.0,
-    "TCS": 4120.0,
-    "INFY": 1820.0,
-    "HDFCBANK": 1740.0,
-    "ICICIBANK": 1260.0,
-    "SBIN": 810.0,
-    "BHARTIARTL": 1580.0,
-    "ITC": 475.0,
-    "KOTAKBANK": 1780.0,
-    "LT": 3650.0,
+    "NIFTY 50": 25885.0,
+    "NIFTY BANK": 53000.0,
+    "RELIANCE": 1396.0,
+    "TCS": 2640.0,
+    "INFY": 1183.0,
+    "HDFCBANK": 862.0,
+    "ICICIBANK": 1290.0,
+    "SBIN": 840.0,
+    "BHARTIARTL": 1620.0,
+    "ITC": 480.0,
+    "KOTAKBANK": 1760.0,
+    "LT": 3600.0,
 }
 
 
@@ -110,6 +110,33 @@ def _build_atr_fallback(symbol: str, spot: float, atr: float) -> Dict[str, Any]:
     }
 
 
+def _apply_atr_fallback_if_unbacked(
+    data: Dict[str, Any],
+    sym: str,
+    spot: float,
+    atr: float,
+) -> Dict[str, Any]:
+    """Ensure unbacked Box C responses never claim BOX_C_MODEL provenance."""
+    if data.get("envelope_source") == "NO_CHAIN_DATA" or (
+        data.get("ce_wall") is None and data.get("pe_wall") is None
+    ):
+        fb = _build_atr_fallback(sym, spot, atr)
+        data.update({
+            "ce_wall": fb["ce_wall"],
+            "pe_wall": fb["pe_wall"],
+            "atm_strike": fb["atm_strike"],
+            "straddle_price": fb["straddle_price"],
+            "straddle_iv": fb["straddle_iv"],
+            "max_pain": fb["max_pain"],
+            "pcr_oi": data.get("pcr_oi") or fb["pcr_oi"],
+            "pcr_volume": data.get("pcr_volume") or fb["pcr_volume"],
+            "implied_move_1d_pct": data.get("implied_move_1d_pct") or fb["implied_move_1d_pct"],
+            "implied_move_5d_pct": data.get("implied_move_5d_pct") or fb["implied_move_5d_pct"],
+            "envelope_source": "ATR_FALLBACK",
+        })
+    return data
+
+
 async def fetch_fno_analytics(
     symbol: str,
     spot: float,
@@ -122,17 +149,18 @@ async def fetch_fno_analytics(
     Falls back to ATR envelope on failure.
     """
     sym = symbol.strip().upper().replace(".NS", "")
-    now = time.monotonic()
-
-    # Check cache
-    if sym in _FNO_CACHE:
-        cached_ts, cached_data = _FNO_CACHE[sym]
-        if (now - cached_ts) < FNO_CACHE_TTL_SEC:
-            return cached_data
-
     url = os.environ.get("FEED_SERVICE_URL", FEED_SERVICE_URL).rstrip("/")
     if not url:
         return _build_atr_fallback(sym, spot, atr)
+
+    now = time.monotonic()
+    cache_key = f"{sym}|{url}|{round(float(spot or 0.0), 2)}"
+
+    # Check cache
+    if cache_key in _FNO_CACHE:
+        cached_ts, cached_data = _FNO_CACHE[cache_key]
+        if (now - cached_ts) < FNO_CACHE_TTL_SEC:
+            return cached_data
 
     to = timeout or FNO_TIMEOUT_SEC
     token = os.environ.get("FEED_INTERNAL_TOKEN", FEED_INTERNAL_TOKEN)
@@ -148,28 +176,14 @@ async def fetch_fno_analytics(
         if resp.status_code == 200:
             data = resp.json()
             if isinstance(data, dict):
-                if data.get("envelope_source") == "NO_CHAIN_DATA" or (data.get("ce_wall") is None and data.get("pe_wall") is None):
-                    fb = _build_atr_fallback(sym, spot, atr)
-                    data.update({
-                        "ce_wall": fb["ce_wall"],
-                        "pe_wall": fb["pe_wall"],
-                        "atm_strike": fb["atm_strike"],
-                        "straddle_price": fb["straddle_price"],
-                        "straddle_iv": fb["straddle_iv"],
-                        "max_pain": fb["max_pain"],
-                        "pcr_oi": data.get("pcr_oi") or fb["pcr_oi"],
-                        "pcr_volume": data.get("pcr_volume") or fb["pcr_volume"],
-                        "implied_move_1d_pct": data.get("implied_move_1d_pct") or fb["implied_move_1d_pct"],
-                        "implied_move_5d_pct": data.get("implied_move_5d_pct") or fb["implied_move_5d_pct"],
-                        "envelope_source": "BOX_C_MODEL",
-                    })
-                _FNO_CACHE[sym] = (now, data)
+                _apply_atr_fallback_if_unbacked(data, sym, spot, atr)
+                _FNO_CACHE[cache_key] = (now, data)
                 return data
     except Exception as exc:
         logger.debug("[FNOClient] Call failed for %s, using ATR fallback: %s", sym, exc)
 
     fallback = _build_atr_fallback(sym, spot, atr)
-    _FNO_CACHE[sym] = (now, fallback)
+    _FNO_CACHE[cache_key] = (now, fallback)
     return fallback
 
 
@@ -182,16 +196,17 @@ def fetch_fno_analytics_sync(
 ) -> Dict[str, Any]:
     """Synchronous version for threads and sync scanning routines."""
     sym = symbol.strip().upper().replace(".NS", "")
-    now = time.monotonic()
-
-    if sym in _FNO_CACHE:
-        cached_ts, cached_data = _FNO_CACHE[sym]
-        if (now - cached_ts) < FNO_CACHE_TTL_SEC:
-            return cached_data
-
     url = os.environ.get("FEED_SERVICE_URL", FEED_SERVICE_URL).rstrip("/")
     if not url:
         return _build_atr_fallback(sym, spot, atr)
+
+    now = time.monotonic()
+    cache_key = f"{sym}|{url}|{round(float(spot or 0.0), 2)}"
+
+    if cache_key in _FNO_CACHE:
+        cached_ts, cached_data = _FNO_CACHE[cache_key]
+        if (now - cached_ts) < FNO_CACHE_TTL_SEC:
+            return cached_data
 
     to = timeout or FNO_TIMEOUT_SEC
     token = os.environ.get("FEED_INTERNAL_TOKEN", FEED_INTERNAL_TOKEN)
@@ -207,26 +222,12 @@ def fetch_fno_analytics_sync(
         if resp.status_code == 200:
             data = resp.json()
             if isinstance(data, dict):
-                if data.get("envelope_source") == "NO_CHAIN_DATA" or (data.get("ce_wall") is None and data.get("pe_wall") is None):
-                    fb = _build_atr_fallback(sym, spot, atr)
-                    data.update({
-                        "ce_wall": fb["ce_wall"],
-                        "pe_wall": fb["pe_wall"],
-                        "atm_strike": fb["atm_strike"],
-                        "straddle_price": fb["straddle_price"],
-                        "straddle_iv": fb["straddle_iv"],
-                        "max_pain": fb["max_pain"],
-                        "pcr_oi": data.get("pcr_oi") or fb["pcr_oi"],
-                        "pcr_volume": data.get("pcr_volume") or fb["pcr_volume"],
-                        "implied_move_1d_pct": data.get("implied_move_1d_pct") or fb["implied_move_1d_pct"],
-                        "implied_move_5d_pct": data.get("implied_move_5d_pct") or fb["implied_move_5d_pct"],
-                        "envelope_source": "BOX_C_MODEL",
-                    })
-                _FNO_CACHE[sym] = (now, data)
+                _apply_atr_fallback_if_unbacked(data, sym, spot, atr)
+                _FNO_CACHE[cache_key] = (now, data)
                 return data
     except Exception as exc:
         logger.debug("[FNOClient] Sync call failed for %s, using ATR fallback: %s", sym, exc)
 
     fallback = _build_atr_fallback(sym, spot, atr)
-    _FNO_CACHE[sym] = (now, fallback)
+    _FNO_CACHE[cache_key] = (now, fallback)
     return fallback

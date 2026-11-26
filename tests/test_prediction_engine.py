@@ -399,3 +399,68 @@ async def test_predict_stock_yahoo_delayed_fallback(monkeypatch):
     assert res["feed_source"] == "YAHOO_NSE_DELAYED"
     assert res["data_delay_minutes"] == 15
 
+
+
+def test_prediction_engine_rejects_simulated_and_outlier_tick(monkeypatch):
+    """predict_stock_price must never let Box C SIMULATED or >20% outlier ticks corrupt LTP."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    import numpy as np
+    import pandas as pd
+    from agents.ai_engine.prediction_engine import predict_stock_price
+    from data.providers.base import MarketQuote
+
+    n = 80
+    dates = pd.date_range("2026-08-01", periods=n, freq="B")
+    closes = np.linspace(840.0, 862.0, n)
+    df = pd.DataFrame({
+        "timestamp": dates,
+        "open": closes - 2.0,
+        "high": closes + 5.0,
+        "low": closes - 5.0,
+        "close": closes,
+        "volume": np.full(n, 1_500_000.0),
+    })
+    idx_df = pd.DataFrame({
+        "timestamp": dates,
+        "open": np.full(n, 25000.0),
+        "high": np.full(n, 25100.0),
+        "low": np.full(n, 24900.0),
+        "close": np.full(n, 25050.0),
+        "volume": np.full(n, 1_000_000.0),
+    })
+    vix_df = pd.DataFrame({
+        "timestamp": dates,
+        "open": np.full(n, 14.5),
+        "high": np.full(n, 15.0),
+        "low": np.full(n, 14.0),
+        "close": np.full(n, 14.8),
+        "volume": np.full(n, 100_000.0),
+    })
+    ohlcv_map = {"HDFCBANK": df.copy(), "^NSEI": idx_df, "^INDIAVIX": vix_df}
+
+    monkeypatch.setenv("FEED_SERVICE_URL", "http://mock-box-c.local")
+    corrupt_snap = {
+        "source": "SHOONYA_SIMULATED",
+        "quotes": {"HDFCBANK": {"lp": 1734.39, "prev_close": 862.0}},
+    }
+    bad_tv = MarketQuote(
+        symbol="HDFCBANK",
+        price=1734.39,
+        open=862.0,
+        high=1735.0,
+        low=860.0,
+        close=1734.39,
+        volume=1_000_000.0,
+        source="TRADINGVIEW_LIVE",
+        quality_score=1.0,
+    )
+
+    with patch("data.providers.yahoo.YahooProvider.get_batch_ohlcv", new=AsyncMock(return_value=ohlcv_map)), \
+         patch("api.feed_client.fetch_feed_snapshot", new=AsyncMock(return_value=corrupt_snap)), \
+         patch("data.providers.tradingview.TradingViewProvider.get_quote", new=AsyncMock(return_value=bad_tv)):
+        res = asyncio.run(predict_stock_price("HDFCBANK", force_refresh=True))
+        ref_p = res["price_levels"]["reference_price"]
+        assert ref_p < 900.0
+        assert res["feed_source"] != "SHOONYA_LIVE"
+        assert res["feed_source"] != "TRADINGVIEW_LIVE"

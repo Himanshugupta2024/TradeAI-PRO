@@ -339,3 +339,30 @@ async def test_box_a_fno_gateway_endpoints():
     assert d2["count"] > 0
     assert "RELIANCE" in d2["data"]
 
+
+
+def test_fno_null_walls_never_claim_box_c_model(monkeypatch):
+    """Box C returning null walls / NO_CHAIN_DATA must rewrite provenance to ATR_FALLBACK."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from api import fno_client
+
+    fno_client._FNO_CACHE.clear()
+    monkeypatch.setenv("FEED_SERVICE_URL", "http://mock-box-c.local")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "symbol": "TCS",
+        "spot_price": 2640.0,
+        "ce_wall": None,
+        "pe_wall": None,
+        "max_pain": None,
+        "envelope_source": "BOX_C_MODEL",
+    }
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+
+    with patch("api.fno_client._get_async_client", return_value=mock_client):
+        res = asyncio.run(fno_client.fetch_fno_analytics("TCS", spot=2640.0, atr=40.0))
+        assert res["envelope_source"] == "ATR_FALLBACK"

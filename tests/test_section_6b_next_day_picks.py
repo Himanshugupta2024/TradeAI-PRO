@@ -330,3 +330,112 @@ def test_chop_filtering_returns_none_for_indecisive_bars():
     cand = analyze_candidate("FLATSTOCK", df, src_date, tgt_date, benchmark_trend="NEUTRAL")
     assert cand is None  # Screened out, no false breakout signal
 
+
+
+def test_pre_close_session_honest_freshness_and_cutoff():
+    """Mid-session 11:41 IST generation must never claim EOD Completed Bar or future cutoff."""
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
+    import numpy as np
+    import pandas as pd
+    from agents.market_intelligence.next_day_picks import (
+        is_eod_bar_complete,
+        resolve_next_trading_session,
+        _sanitize_daily_bars,
+    )
+
+    ist = ZoneInfo("Asia/Kolkata")
+    midday = datetime(2026, 11, 25, 11, 41, 18, tzinfo=ist)
+    src_date, tgt_date, _, _ = resolve_next_trading_session(midday)
+    # 2026-11-24 is Guru Nanak Jayanti holiday, so prior regular trading session is 2026-11-23
+    assert src_date == date(2026, 11, 23)
+    assert src_date < midday.date()
+    assert tgt_date == date(2026, 11, 26)
+    assert is_eod_bar_complete(date(2026, 11, 25), midday) is False
+    assert is_eod_bar_complete(date(2026, 11, 23), midday) is True
+
+    # Forming bar on 2026-11-25 must be stripped before 15:30 IST
+    dates = pd.date_range("2026-10-01", "2026-11-25", freq="B")
+    closes = np.linspace(1000.0, 1100.0, len(dates))
+    df = pd.DataFrame({
+        "timestamp": dates,
+        "open": closes - 3.0,
+        "high": closes + 6.0,
+        "low": closes - 6.0,
+        "close": closes,
+        "volume": np.full(len(dates), 500_000.0),
+    })
+    cleaned = _sanitize_daily_bars(df, "SBIN", ref_dt=midday, completed_only=True)
+    assert cleaned is not None
+    assert pd.to_datetime(cleaned["timestamp"].iloc[-1]).date() < midday.date()
+
+
+def test_next_day_picks_rr_varies_across_candidates():
+    """Structural targets in next-day picks must not collapse to identical fixed R:R (1.500)."""
+    from datetime import date, datetime
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+    import numpy as np
+    import pandas as pd
+    from agents.market_intelligence.next_day_picks import analyze_candidate
+
+    ist = ZoneInfo("Asia/Kolkata")
+    ref_dt = datetime(2026, 11, 25, 17, 0, tzinfo=ist)
+    dates = pd.date_range("2026-07-01", "2026-11-25", freq="B")
+    n = len(dates)
+
+    def _make_df(base: float, range_pct: float, swing_mult: float, cap_r1: float | None = None) -> pd.DataFrame:
+        trend = np.linspace(0.0, base * 0.14, n)
+        wave = np.sin(np.linspace(0.0, 5.0 * np.pi, n)) * (base * range_pct * swing_mult)
+        c = base + trend + wave
+        # Ensure strong positive closing trend near the end
+        c[-5:] = np.linspace(c[-6], c[-6] * 1.03, 5)
+        spread = c * range_pct
+        h = c + spread * 0.5
+        l = c - spread * 0.5
+        if cap_r1 is not None:
+            # Place a genuine prior swing high inside reachable structural corridor
+            h[-12] = c[-1] * (1.0 + cap_r1)
+            c[-12] = c[-1] * (1.0 + cap_r1 * 0.85)
+        return pd.DataFrame({
+            "timestamp": dates,
+            "open": c - spread * 0.2,
+            "high": h,
+            "low": l,
+            "close": c,
+            "volume": np.full(n, 800_000.0) * (1.0 + 0.6 * (np.arange(n) == n - 1)),
+        })
+
+    specs = [
+        ("HCLTECH", 1300.0, 0.022, 1.4, None),
+        ("MARUTI", 13500.0, 0.020, 1.0, 0.048),
+        ("M&M", 3200.0, 0.026, 2.2, 0.072),
+    ]
+    rrs = []
+    with patch("api.fno_client.fetch_fno_analytics_sync", return_value={"envelope_source": "ATR_FALLBACK", "ce_wall": None, "pe_wall": None}):
+        for sym, base, rpct, smult, cap_r1 in specs:
+            cand = analyze_candidate(sym, _make_df(base, rpct, smult, cap_r1), date(2026, 11, 25), date(2026, 11, 26), "BULLISH", ref_dt=ref_dt)
+            assert cand is not None, f"{sym} unexpectedly filtered out"
+            rrs.append(round(float(cand["trade_plan"]["risk_reward"]), 3))
+    assert len(set(rrs)) > 1, f"Expected non-formulaic varying R:R, got {rrs}"
+
+
+def test_catalyst_filter_rejects_seo_spam_aged_and_opposing_bias():
+    """Catalyst scorer rejects SEO farms, >7d items, and penalizes BEARISH news on LONG picks."""
+    from agents.market_intelligence.next_day_picks import _is_seo_spam_item, _score_catalysts_for_bias
+
+    assert _is_seo_spam_item("Simply Wall St — Why HCLTECH Stock Forecast Changed") is True
+    assert _is_seo_spam_item("HCLTech Q3 results beat estimates on NSE filing") is False
+
+    # Stale (>7d) disclosure must be ignored
+    stale_only = [
+        {"title": "Old Q3 note", "category": "CONFIRMED_DISCLOSURE", "impact": "BULLISH", "age_days": 51}
+    ]
+    assert _score_catalysts_for_bias(stale_only, "LONG") < 60.0
+
+    # Fresh BEARISH news on LONG bias must penalize below neutral
+    bearish_on_long = [
+        {"title": "IT shares drag Nifty IT down 2%", "category": "FINANCIAL_NEWS", "impact": "BEARISH", "age_days": 2},
+        {"title": "Client budget cut warning", "category": "CONFIRMED_DISCLOSURE", "impact": "BEARISH", "age_days": 3},
+    ]
+    assert _score_catalysts_for_bias(bearish_on_long, "LONG") < 50.0

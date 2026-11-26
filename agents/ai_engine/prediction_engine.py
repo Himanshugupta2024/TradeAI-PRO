@@ -428,21 +428,28 @@ async def predict_stock_price(
             logger.debug("[PredictionEngine] Fallback fetch failed for %s: %s", clean_sym, exc)
 
     # ── Layer 1 Live Tick Calibration & Provider Telemetry ───────────────────
+    from api.feed_client import fetch_feed_snapshot, is_simulated_snapshot, validate_live_tick
+
     feed_url = os.environ.get("FEED_SERVICE_URL", "").strip()
     feed_source = None
     data_delay_minutes = 0
+    ref_close = (
+        float(df["close"].iloc[-1])
+        if (df is not None and not df.empty and "close" in df.columns and pd.notna(df["close"].iloc[-1]))
+        else None
+    )
 
-    # Option A (Priority 1): Shoonya Dedicated WebSocket (Box C)
+    # Option A (Priority 1): Shoonya Dedicated WebSocket (Box C) — reject simulated feeds & >20% spikes
     if feed_url:
         try:
-            from api.feed_client import fetch_feed_snapshot
             snap = await fetch_feed_snapshot([clean_sym], timeout=2.0)
-            if snap and isinstance(snap, dict):
+            if snap and isinstance(snap, dict) and not is_simulated_snapshot(snap):
                 quotes = snap.get("quotes", {})
                 q = quotes.get(clean_sym)
                 if q and q.get("lp"):
                     lp = float(q["lp"])
-                    if lp > 0:
+                    tick_ref = ref_close if (ref_close and ref_close > 0) else (float(q["prev_close"]) if q.get("prev_close") else None)
+                    if validate_live_tick(clean_sym, lp, tick_ref):
                         feed_source = "SHOONYA_LIVE"
                         data_delay_minutes = 0
                         if df is not None and not df.empty and "close" in df.columns:
@@ -461,16 +468,18 @@ async def predict_stock_price(
             tv = TradingViewProvider(timeout=3.0)
             tv_quote = await tv.get_quote(clean_sym)
             if tv_quote and tv_quote.is_valid() and tv_quote.price > 0:
-                feed_source = "TRADINGVIEW_LIVE"
-                data_delay_minutes = 0
-                if df is not None and not df.empty and "close" in df.columns:
-                    df.iloc[-1, df.columns.get_loc("close")] = tv_quote.price
-                    if "high" in df.columns and tv_quote.high:
-                        df.iloc[-1, df.columns.get_loc("high")] = max(float(df["high"].iloc[-1]), tv_quote.high)
-                    if "low" in df.columns and tv_quote.low:
-                        df.iloc[-1, df.columns.get_loc("low")] = min(float(df["low"].iloc[-1]), tv_quote.low)
-                    if "volume" in df.columns and tv_quote.volume:
-                        df.iloc[-1, df.columns.get_loc("volume")] = tv_quote.volume
+                tick_ref = ref_close if (ref_close and ref_close > 0) else getattr(tv_quote, "prev_close", None)
+                if validate_live_tick(clean_sym, tv_quote.price, tick_ref):
+                    feed_source = "TRADINGVIEW_LIVE"
+                    data_delay_minutes = 0
+                    if df is not None and not df.empty and "close" in df.columns:
+                        df.iloc[-1, df.columns.get_loc("close")] = tv_quote.price
+                        if "high" in df.columns and tv_quote.high:
+                            df.iloc[-1, df.columns.get_loc("high")] = max(float(df["high"].iloc[-1]), tv_quote.high)
+                        if "low" in df.columns and tv_quote.low:
+                            df.iloc[-1, df.columns.get_loc("low")] = min(float(df["low"].iloc[-1]), tv_quote.low)
+                        if "volume" in df.columns and tv_quote.volume:
+                            df.iloc[-1, df.columns.get_loc("volume")] = tv_quote.volume
         except Exception as exc:
             logger.debug("[PredictionEngine] TradingView live quote fallback deferred: %s", exc)
 

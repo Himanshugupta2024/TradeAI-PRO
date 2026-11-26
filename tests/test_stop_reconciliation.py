@@ -216,3 +216,66 @@ class TestReconciliation:
             assert len(engine.open_trades) == 1
         finally:
             os.unlink(path)
+
+
+def test_paper_engine_blocks_inverted_geometry_and_quarantines_legacy(monkeypatch):
+    """execute() rejects inverted SL/TP at entry and _load_from_payload quarantines corrupt legacy rows."""
+    import uuid
+    from agents.execution.paper_trading import PaperTradingEngine, validate_trade_geometry
+
+    ok_l, _ = validate_trade_geometry("LONG", 1266.10, 1291.33, 1320.0)
+    assert ok_l is False
+    ok_s, _ = validate_trade_geometry("SHORT", 2265.96, 2263.14, 2200.0)
+    assert ok_s is False
+
+    engine = PaperTradingEngine(state_key=f"test_geom_{uuid.uuid4().hex[:8]}", log_file=None)
+    engine.trades = []
+    engine.open_trades = []
+    engine.capital = 100000.0
+    engine.initial_capital = 100000.0
+
+    # Inverted LONG SL (sl > entry) must be blocked
+    res_l = engine.execute(symbol="RELIANCE", direction="LONG", entry=1266.10, sl=1291.33, tp=1340.0, atr=10.0)
+    assert res_l is None
+    assert "GEOMETRY" in (engine.last_rejection_reason or "").upper() or "INVALID" in (engine.last_rejection_reason or "").upper()
+
+    # Inverted SHORT SL (sl < entry) must be blocked
+    res_s = engine.execute(symbol="SBIN", direction="SHORT", entry=840.0, sl=830.0, tp=800.0, atr=10.0)
+    assert res_s is None
+
+    # Legacy payload hydration must quarantine corrupt rows and keep them out of get_stats()
+    payload = {
+        "capital": 100000.0,
+        "initial_capital": 100000.0,
+        "trades": [
+            {
+                "id": 30,
+                "symbol": "RELIANCE",
+                "direction": "LONG",
+                "entry_price": 1266.10,
+                "stop_loss": 1291.33,
+                "target": 1286.77,
+                "stop_raw": 0.0,
+                "status": "CLOSED_SL",
+                "exit_price": 1260.0,
+                "exit_time": "2026-11-05T15:00:00+05:30",
+                "total_pnl": -500.0,
+            },
+            {
+                "id": 34,
+                "symbol": "INDUSINDBK",
+                "direction": "SHORT",
+                "entry_price": 856.75,
+                "stop_loss": 872.61,
+                "target": 645.0,
+                "stop_raw": 0.0,
+                "status": "CLOSED_SL",
+                "exit_price": 907.85,
+                "exit_time": "2026-11-06T00:00:00",
+                "total_pnl": -1500.0,
+            },
+        ],
+    }
+    engine._load_from_payload(payload)
+    assert all(t.data_quality == "LEGACY_EXCLUDED" for t in engine.trades)
+    assert engine.get_stats()["total_trades"] == 0

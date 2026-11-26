@@ -261,18 +261,18 @@ class ShoonyaFeedManager:
         import random
 
         anchors = {
-            "NIFTY 50": 24200.0,
-            "NIFTY BANK": 51500.0,
-            "RELIANCE": 2510.0,
-            "TCS": 4120.0,
-            "INFY": 1820.0,
-            "HDFCBANK": 1740.0,
-            "ICICIBANK": 1260.0,
-            "SBIN": 810.0,
-            "BHARTIARTL": 1580.0,
-            "ITC": 475.0,
-            "KOTAKBANK": 1780.0,
-            "LT": 3650.0,
+            "NIFTY 50": 25885.0,
+            "NIFTY BANK": 53000.0,
+            "RELIANCE": 1396.0,
+            "TCS": 2640.0,
+            "INFY": 1183.0,
+            "HDFCBANK": 862.0,
+            "ICICIBANK": 1290.0,
+            "SBIN": 840.0,
+            "BHARTIARTL": 1620.0,
+            "ITC": 480.0,
+            "KOTAKBANK": 1760.0,
+            "LT": 3600.0,
         }
 
         def _sim_loop():
@@ -282,9 +282,12 @@ class ShoonyaFeedManager:
 
             while not self._stop_event.is_set():
                 for sym in self.watchlist:
+                    anchor = anchors.get(sym, 1000.0)
                     p = cur_price[sym]
-                    delta = (random.random() - 0.495) * (p * 0.001)
-                    p = round(max(1.0, p + delta), 2)
+                    # Zero-drift mean-reverting random walk clamped to ±3% of anchor
+                    mean_reversion = (anchor - p) * 0.02
+                    noise = (random.random() - 0.5) * (p * 0.001)
+                    p = round(max(anchor * 0.97, min(anchor * 1.03, p + noise + mean_reversion)), 2)
                     cur_price[sym] = p
 
                     added_vol = random.randint(10, 250)
@@ -294,7 +297,7 @@ class ShoonyaFeedManager:
                         symbol=sym,
                         price=p,
                         volume=day_vol[sym],
-                        prev_close=anchors.get(sym, 1000.0),
+                        prev_close=anchor,
                     )
 
                 time.sleep(2.0)

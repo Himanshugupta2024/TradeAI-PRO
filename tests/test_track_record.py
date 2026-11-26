@@ -150,3 +150,85 @@ class TestTrackRecord:
         assert record["losses"] == 1
         assert record["breakevens"] == 1
 
+
+
+def test_track_record_quarantines_corrupt_legacy_trades():
+    """Inverted-stop, unconverted non-INR FX, and >10x R:R breached rows are excluded from track record."""
+    from api.track_record import build_track_record
+
+    trades = [
+        # Clean valid closed INR trade
+        {
+            "id": 48,
+            "symbol": "TCS",
+            "direction": "LONG",
+            "entry_price": 2400.0,
+            "stop_loss": 2360.0,
+            "target": 2480.0,
+            "stop_raw": 2360.0,
+            "status": "CLOSED_TP",
+            "exit_price": 2480.0,
+            "exit_time": "2026-11-24T14:00:00+05:30",
+            "net_pnl": 800.0,
+            "total_pnl": 820.0,
+            "estimated_costs": 20.0,
+            "cost_profile": "delivery",
+            "quote_currency": "INR",
+            "base_currency": "INR",
+            "fx_status": "ACTIVE",
+        },
+        # Inverted-stop legacy LONG (sl > entry, no stop_raw)
+        {
+            "id": 30,
+            "symbol": "RELIANCE",
+            "direction": "LONG",
+            "entry_price": 1266.10,
+            "stop_loss": 1291.33,
+            "target": 1286.77,
+            "stop_raw": 0.0,
+            "status": "CLOSED_SL",
+            "exit_price": 1260.0,
+            "exit_time": "2026-11-05T15:00:00+05:30",
+            "total_pnl": -200.0,
+            "quote_currency": "INR",
+            "fx_status": "ACTIVE",
+        },
+        # Unconverted USDT legacy trade
+        {
+            "id": 27,
+            "symbol": "ETH/USDT",
+            "direction": "SHORT",
+            "entry_price": 2265.96,
+            "stop_loss": 2263.14,
+            "target": 2200.0,
+            "stop_raw": 0.0,
+            "status": "CLOSED_SL",
+            "exit_price": 2270.0,
+            "exit_time": "2026-11-05T15:00:00+05:30",
+            "total_pnl": -50.0,
+            "quote_currency": "USDT",
+            "fx_status": "LEGACY_UNCONVERTED",
+        },
+        # Outlier >10x R:R midnight EOD breach (INDUSINDBK id 34 pattern)
+        {
+            "id": 34,
+            "symbol": "INDUSINDBK",
+            "direction": "SHORT",
+            "entry_price": 856.75,
+            "stop_loss": 872.61,
+            "target": 645.0,
+            "stop_raw": 0.0,
+            "status": "CLOSED_SL",
+            "exit_price": 907.85,
+            "exit_time": "2026-11-06T00:00:00",
+            "total_pnl": -1500.0,
+            "quote_currency": "INR",
+            "fx_status": "ACTIVE",
+        },
+    ]
+
+    rec = build_track_record(trades, initial_capital=100000.0)
+    assert rec["total_trades"] == 1
+    assert rec["trades"][0]["id"] == 48
+    assert rec["excluded_legacy_trades_count"] == 3
+    assert len(rec["unconverted_legacy_trades"]) == 1

@@ -11,7 +11,12 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from api.feed_client import convert_feed_bars_to_df, fetch_feed_snapshot
+from api.feed_client import (
+    convert_feed_bars_to_df,
+    fetch_feed_snapshot,
+    is_simulated_snapshot,
+    validate_live_tick,
+)
 from data.providers.base import MarketDataProvider, MarketQuote
 
 logger = logging.getLogger(__name__)
@@ -38,7 +43,7 @@ class ShoonyaFeedProvider(MarketDataProvider):
         snap = await fetch_feed_snapshot([symbol], timeout=self.timeout)
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
-        if not snap:
+        if not snap or is_simulated_snapshot(snap):
             self.health.record_failure()
             return None
 
@@ -48,9 +53,13 @@ class ShoonyaFeedProvider(MarketDataProvider):
             self.health.record_failure()
             return None
 
-        self.health.record_success(latency_ms)
         lp = float(q_data["lp"])
         prev_close = float(q_data["prev_close"]) if q_data.get("prev_close") else None
+        if not validate_live_tick(symbol, lp, prev_close):
+            self.health.record_failure()
+            return None
+
+        self.health.record_success(latency_ms)
         change_pct = ((lp - prev_close) / prev_close * 100.0) if prev_close and prev_close > 0 else 0.0
 
         return MarketQuote(
@@ -78,7 +87,7 @@ class ShoonyaFeedProvider(MarketDataProvider):
         snap = await fetch_feed_snapshot(symbols, timeout=self.timeout)
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
-        if not snap:
+        if not snap or is_simulated_snapshot(snap):
             self.health.record_failure()
             return {}
 
@@ -93,6 +102,8 @@ class ShoonyaFeedProvider(MarketDataProvider):
 
             lp = float(q["lp"])
             prev_close = float(q["prev_close"]) if q.get("prev_close") else None
+            if not validate_live_tick(sym, lp, prev_close):
+                continue
             change_pct = ((lp - prev_close) / prev_close * 100.0) if prev_close and prev_close > 0 else 0.0
 
             out[sym] = MarketQuote(
@@ -126,7 +137,7 @@ class ShoonyaFeedProvider(MarketDataProvider):
     ) -> List[Dict[str, Any]]:
         """Fetch historical candle bars from Box C."""
         snap = await fetch_feed_snapshot([symbol], timeout=self.timeout)
-        if not snap:
+        if not snap or is_simulated_snapshot(snap):
             return []
 
         bars_data = snap.get("bars", {}).get(symbol.strip().upper(), [])
@@ -146,11 +157,12 @@ class ShoonyaFeedProvider(MarketDataProvider):
             return {}
 
         snap = await fetch_feed_snapshot(symbols, timeout=self.timeout)
-        if not snap:
+        if not snap or is_simulated_snapshot(snap):
             self.health.record_failure()
             return {}
 
         bars_dict = snap.get("bars", {})
+        quotes_data = snap.get("quotes", {})
         results: Dict[str, pd.DataFrame] = {}
 
         for sym in symbols:
@@ -159,6 +171,11 @@ class ShoonyaFeedProvider(MarketDataProvider):
             if bar_list:
                 df = convert_feed_bars_to_df(bar_list)
                 if df is not None and not df.empty:
+                    q = quotes_data.get(norm) or {}
+                    prev_close = float(q["prev_close"]) if q.get("prev_close") else None
+                    last_c = float(df["close"].iloc[-1])
+                    if not validate_live_tick(sym, last_c, prev_close):
+                        continue
                     results[sym] = df
 
         if results:

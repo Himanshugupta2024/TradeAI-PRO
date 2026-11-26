@@ -256,11 +256,20 @@ class TradeOutcomeLogger:
             log.debug("Quarantined test trade %s from production trade_outcomes", symbol)
             return None
 
-        # Detect missing critical metadata
+        # Detect missing critical metadata or compromised historical stop/target geometry
         if regime in ("UNKNOWN", "", None) or confidence <= 0.0:
             environment = "LEGACY_INCOMPLETE"
             log.warning("Trade %s has incomplete metadata (regime=%s, conf=%.1f) -> marked %s",
                         symbol, regime, confidence, environment)
+        elif stop_loss is not None and entry_price > 0 and stop_loss > 0:
+            d_u = str(direction or "").upper()
+            risk_g = abs(entry_price - stop_loss)
+            reward_g = abs((target or entry_price) - entry_price)
+            bad_outlier = (target is not None and target > 0 and risk_g > 0 and (reward_g / risk_g) > 10.0)
+            crossed_tp = (target is not None and target > 0 and ((d_u in ("LONG", "BUY") and stop_loss >= target) or (d_u in ("SHORT", "SELL") and stop_loss <= target)))
+            if bad_outlier or crossed_tp:
+                environment = "LEGACY_INCOMPLETE"
+                log.warning("Trade %s has compromised stop/target geometry -> marked %s", symbol, environment)
 
         # Auto-detect asset class if not provided
         if not asset_class:

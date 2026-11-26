@@ -396,24 +396,34 @@ def _normalise_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _get_live_market_tick(display_name: str) -> Optional[float]:
+def _get_live_market_tick(
+    display_name: str,
+    prev_close: Optional[float] = None,
+) -> Optional[float]:
     """
     Fetch exact real-time tick (LTP) using:
-      1. Box C (Shoonya WebSocket)
+      1. Box C (Shoonya WebSocket) — strictly non-simulated
       2. TradingView India Scanner (Option C)
-    Returns None on failure.
+    Enforces single-session 20% sanity gate against reference close.
+    Returns None on failure or sanity rejection.
     """
+    from api.feed_client import (
+        fetch_feed_snapshot_sync,
+        is_simulated_snapshot,
+        validate_live_tick,
+    )
+
     clean = display_name.replace(".NS", "").replace(".BO", "").strip()
     feed_url = os.environ.get("FEED_SERVICE_URL", "").strip()
     if feed_url:
         try:
-            from api.feed_client import fetch_feed_snapshot_sync
             snap = fetch_feed_snapshot_sync([clean], timeout=1.5)
-            if snap and isinstance(snap, dict):
+            if snap and isinstance(snap, dict) and not is_simulated_snapshot(snap):
                 q = snap.get("quotes", {}).get(clean)
                 if q and q.get("lp"):
                     lp = float(q["lp"])
-                    if lp > 0:
+                    ref = prev_close if (prev_close and prev_close > 0) else (float(q["prev_close"]) if q.get("prev_close") else None)
+                    if validate_live_tick(clean, lp, ref):
                         return lp
         except Exception:
             pass
@@ -423,11 +433,33 @@ def _get_live_market_tick(display_name: str) -> Optional[float]:
         tv = TradingViewProvider(timeout=2.5)
         tv_q = tv.get_quote_sync(clean)
         if tv_q and tv_q.is_valid() and tv_q.price > 0:
-            return tv_q.price
+            ref = prev_close if (prev_close and prev_close > 0) else getattr(tv_q, "prev_close", None)
+            if validate_live_tick(clean, tv_q.price, ref):
+                return tv_q.price
     except Exception:
         pass
 
     return None
+
+
+def _calibrate_latest_bar_with_tick(
+    df: pd.DataFrame,
+    display_name: str,
+) -> pd.DataFrame:
+    """Safely calibrate the latest bar using a sanity-checked real-time tick."""
+    if df is None or df.empty or "close" not in df.columns:
+        return df
+    ref_close = float(df["close"].iloc[-1])
+    if not (ref_close > 0):
+        return df
+    live_tick = _get_live_market_tick(display_name, prev_close=ref_close)
+    if live_tick is not None and live_tick > 0:
+        df.iloc[-1, df.columns.get_loc("close")] = live_tick
+        if "high" in df.columns:
+            df.iloc[-1, df.columns.get_loc("high")] = max(float(df["high"].iloc[-1]), live_tick)
+        if "low" in df.columns:
+            df.iloc[-1, df.columns.get_loc("low")] = min(float(df["low"].iloc[-1]), live_tick)
+    return df
 
 
 def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> Optional[pd.DataFrame]:
@@ -463,18 +495,28 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
     feed_url = os.environ.get("FEED_SERVICE_URL", "").strip()
     if feed_url and interval == "5m":
         try:
-            from api.feed_client import fetch_feed_snapshot_sync, convert_feed_bars_to_df
+            from api.feed_client import (
+                convert_feed_bars_to_df,
+                fetch_feed_snapshot_sync,
+                is_simulated_snapshot,
+                validate_live_tick,
+            )
             clean_name = display_name.replace(".NS", "").replace(".BO", "").strip()
             snap = fetch_feed_snapshot_sync([clean_name], timeout=2.0)
-            if snap and isinstance(snap, dict):
+            if snap and isinstance(snap, dict) and not is_simulated_snapshot(snap):
                 bars_dict = snap.get("bars", {})
                 bar_list = bars_dict.get(clean_name) or bars_dict.get(display_name)
                 if bar_list and len(bar_list) >= 12:
                     feed_df = convert_feed_bars_to_df(bar_list)
                     if feed_df is not None and not feed_df.empty:
                         feed_df = _normalise_df(feed_df)
-                        if "quotes" in snap and clean_name in snap["quotes"] and snap["quotes"][clean_name].get("lp"):
-                            feed_df.iloc[-1, feed_df.columns.get_loc("close")] = float(snap["quotes"][clean_name]["lp"])
+                        q = (snap.get("quotes") or {}).get(clean_name) or {}
+                        q_prev = float(q["prev_close"]) if q.get("prev_close") else None
+                        last_c = float(feed_df["close"].iloc[-1])
+                        if not validate_live_tick(clean_name, last_c, q_prev):
+                            raise ValueError(f"Sanity gate rejected Box C bars for {clean_name}")
+                        if q.get("lp") and validate_live_tick(clean_name, float(q["lp"]), q_prev or last_c):
+                            feed_df.iloc[-1, feed_df.columns.get_loc("close")] = float(q["lp"])
                         _cache[cache_key] = {"df": feed_df, "fetched_at": time.time()}
                         logger.debug("Served %d rolling 5m bars for %s from Box C Shoonya feed", len(feed_df), display_name)
                         return feed_df.copy()
@@ -580,15 +622,8 @@ def fetch_ohlcv(display_name: str, period: str = "5d", interval: str = "5m") -> 
         if merged_df.empty:
             merged_df = df
 
-        # Calibrate latest candle close with real-time exchange tick
-        live_tick = _get_live_market_tick(display_name)
-        if live_tick is not None and live_tick > 0:
-            if not merged_df.empty and "close" in merged_df.columns:
-                merged_df.iloc[-1, merged_df.columns.get_loc("close")] = live_tick
-                if "high" in merged_df.columns:
-                    merged_df.iloc[-1, merged_df.columns.get_loc("high")] = max(float(merged_df["high"].iloc[-1]), live_tick)
-                if "low" in merged_df.columns:
-                    merged_df.iloc[-1, merged_df.columns.get_loc("low")] = min(float(merged_df["low"].iloc[-1]), live_tick)
+        # Calibrate latest candle close with sanity-checked real-time exchange tick
+        merged_df = _calibrate_latest_bar_with_tick(merged_df, display_name)
 
         _cache[cache_key] = {"df": merged_df, "fetched_at": time.time()}
         logger.debug(
@@ -890,15 +925,8 @@ def fetch_arbitrary_symbol(ticker_or_name: str, period: str = "5d", interval: st
         if df.empty:
             return None
 
-        # Calibrate latest candle close with real-time exchange tick
-        live_tick = _get_live_market_tick(ticker)
-        if live_tick is not None and live_tick > 0:
-            if not df.empty and "close" in df.columns:
-                df.iloc[-1, df.columns.get_loc("close")] = live_tick
-                if "high" in df.columns:
-                    df.iloc[-1, df.columns.get_loc("high")] = max(float(df["high"].iloc[-1]), live_tick)
-                if "low" in df.columns:
-                    df.iloc[-1, df.columns.get_loc("low")] = min(float(df["low"].iloc[-1]), live_tick)
+        # Calibrate latest candle close with sanity-checked real-time exchange tick
+        df = _calibrate_latest_bar_with_tick(df, ticker)
 
         _cache[cache_key] = {"df": df, "fetched_at": time.time()}
         logger.info(f"Fetched {len(df)} candles for {ticker}")
@@ -987,6 +1015,12 @@ def fetch_nse_gainers_losers(mode: str = "gainers", force_refresh: bool = False)
                             continue
 
                         pct_change = round((last_close - prev_close) / prev_close * 100, 2)
+                        if abs(pct_change) > 20.0:
+                            logger.warning(
+                                "[ScreenerSanity] Rejected %s outlier %.2f%% (close=%.2f, prev_close=%.2f)",
+                                display, pct_change, last_close, prev_close,
+                            )
+                            continue
                         volume = float(sub["Volume"].iloc[-1]) if "Volume" in sub.columns else 0
                         volume_cr = round(volume * last_close / 1e7, 1)
 

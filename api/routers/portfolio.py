@@ -40,7 +40,12 @@ import api.service as svc
 from api.schemas import RiskStateResponse
 from api.security import require_admin, get_authenticated_account
 from api.data_honesty import price_decimals, mark_trade_pricing
-from agents.execution.paper_trading import PaperTradingEngine, PaperTrade
+from agents.execution.paper_trading import (
+    PaperTradingEngine,
+    PaperTrade,
+    classify_legacy_trade,
+    validate_trade_geometry,
+)
 from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
 
 logger = logging.getLogger(__name__)
@@ -67,13 +72,27 @@ def _safe_div(num: float, den: float) -> float:
 
 
 @router.get("/api/trades")
-async def get_trades(limit: int = Query(50, le=100), account_id: str = Depends(get_authenticated_account)):
+async def get_trades(
+    limit: int = Query(50, le=100),
+    include_legacy: bool = Query(True, description="Include LEGACY_EXCLUDED quarantined historical rows"),
+    account_id: str = Depends(get_authenticated_account),
+):
     """Get recent trade history from real paper trading engine (newest first)."""
     engine = svc.get_engine_for_account(account_id)
     raw_history = await asyncio.to_thread(engine.get_history, limit)
     enriched = []
     for t in raw_history:
         d = dict(t)
+        dq, dq_reason = classify_legacy_trade(d)
+        d["data_quality"] = dq
+        if dq_reason:
+            d["exclusion_reason"] = dq_reason
+        if not include_legacy and dq == "LEGACY_EXCLUDED":
+            continue
+        init_sl = float(d.get("initial_stop_loss") or d.get("stop_raw") or 0.0)
+        if init_sl > 0:
+            d["initial_stop_loss"] = init_sl
+        d["trailing_stop_active"] = bool(init_sl > 0 and abs(float(d.get("stop_loss") or 0.0) - init_sl) > 1e-4)
         exit_t = d.get("exit_time")
         entry_t = d.get("entry_time")
         d.setdefault("timestamp", exit_t or entry_t or "")

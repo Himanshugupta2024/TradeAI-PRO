@@ -336,3 +336,41 @@ def test_format_human_data_age_realtime_badges():
     assert "15m Delayed · Updated 2m ago" in delayed_badge
 
 
+
+
+def test_fetch_feed_snapshot_rejects_simulated_by_default(monkeypatch):
+    """Box A feed client must reject Box C SIMULATED snapshots unless allow_simulated=True."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    from api import feed_client
+
+    monkeypatch.setenv("FEED_SERVICE_URL", "http://mock-box-c.local")
+    sim_payload = {
+        "source": "SHOONYA_SIMULATED",
+        "feed_state": "SIMULATED",
+        "quotes": {"HDFCBANK": {"lp": 1734.39}},
+        "bars": {},
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = sim_payload
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_resp)
+
+    with patch("api.feed_client._get_async_client", return_value=mock_client):
+        blocked = asyncio.run(feed_client.fetch_feed_snapshot(["HDFCBANK"]))
+        assert blocked is None
+        allowed = asyncio.run(feed_client.fetch_feed_snapshot(["HDFCBANK"], allow_simulated=True))
+        assert allowed is not None
+        assert allowed["quotes"]["HDFCBANK"]["lp"] == 1734.39
+
+
+def test_validate_live_tick_rejects_gt_20_pct_outlier():
+    """Tick sanity gate blocks >20% single-session outlier moves and invalid ticks."""
+    from api.feed_client import validate_live_tick
+
+    assert validate_live_tick("HDFCBANK", 1734.39, prev_close=817.81) is False
+    assert validate_live_tick("RELIANCE", 2486.73, prev_close=1350.94) is False
+    assert validate_live_tick("HDFCBANK", 895.0, prev_close=817.81) is True
+    assert validate_live_tick("INFY", float("nan"), prev_close=1103.38) is False
+    assert validate_live_tick("INFY", -10.0, prev_close=1103.38) is False

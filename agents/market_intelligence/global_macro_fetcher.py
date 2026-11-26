@@ -65,6 +65,8 @@ class CommodityQuote:
     change_pct: float
     unit: str
     status: str  # BULLISH / BEARISH / NEUTRAL for Indian equities
+    status_scope: str = "INDIA_EQUITIES_IMPACT"
+    impact_note: str = ""
 
 
 @dataclass
@@ -185,6 +187,8 @@ class GlobalMacroFetcher:
                         change_pct=chg_pct,
                         unit=unit,
                         status=status,
+                        status_scope="INDIA_EQUITIES_IMPACT",
+                        impact_note=self._describe_india_impact(key, status),
                     )
         except Exception as ex:
             logger.warning("yfinance macro download failed: %s — using defaults", ex)
@@ -200,6 +204,8 @@ class GlobalMacroFetcher:
                     change_pct=chg_pct,
                     unit=unit,
                     status="NEUTRAL",
+                    status_scope="INDIA_EQUITIES_IMPACT",
+                    impact_note=self._describe_india_impact(key, "NEUTRAL"),
                 )
 
         # 2. Fetch targeted news streams
@@ -351,6 +357,25 @@ class GlobalMacroFetcher:
         elif key in ("sp500", "nasdaq"):
             return "BULLISH" if chg_pct > 0.3 else ("BEARISH" if chg_pct < -0.6 else "NEUTRAL")
         return "NEUTRAL"
+
+    @staticmethod
+    def _describe_india_impact(key: str, status: str) -> str:
+        """Clarify that macro status reflects directional impact on Indian equities."""
+        if key in ("brent", "wti"):
+            return {
+                "BULLISH": "Softer crude eases India import bill & input costs (bullish for Indian equities)",
+                "BEARISH": "Rising crude tightens India CAD & OMCs/Paints margins (bearish for Indian equities)",
+            }.get(status, "Neutral crude cue for Indian equities")
+        if key == "yield_10y":
+            return {
+                "BEARISH": "Elevated US 10Y yield risks FII outflows & IT valuation pressure (bearish for India)",
+            }.get(status, "Benign US yield cue for Indian equities")
+        if key == "dxy":
+            return {
+                "BULLISH": "Softer USD supports INR stability & EM inflows (bullish for India)",
+                "BEARISH": "Strong USD pressures INR & FII risk appetite (bearish for India)",
+            }.get(status, "Neutral USD cue for Indian equities")
+        return f"{status.title()} global risk-appetite cue for Indian equities"
 
     def _default_val(self, key: str) -> Tuple[float, float]:
         defaults = {

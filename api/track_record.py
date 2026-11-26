@@ -130,13 +130,29 @@ def build_track_record(
 
     closed.sort(key=lambda t: str(t.get("exit_time") or t.get("timestamp") or ""))
 
-    # Quarantine unconverted non-INR legacy trades from INR totals (F05)
+    # Quarantine unconverted non-INR legacy trades and corrupt/uncosted legacy trades (F05)
+    try:
+        from agents.execution.paper_trading import classify_legacy_trade
+    except Exception:
+        classify_legacy_trade = None  # type: ignore[assignment]
+
     inr_closed: list[dict] = []
     unconverted_trades: list[dict] = []
+    excluded_trades: list[dict] = []
     for t in closed:
         qc = t.get("quote_currency") or ("USDT" if "/" in str(t.get("symbol", "")) else "INR")
-        if t.get("fx_status") == "LEGACY_UNCONVERTED" and qc != "INR":
+        if callable(classify_legacy_trade):
+            dq, dq_reason = classify_legacy_trade(t)
+        else:
+            dq, dq_reason = (str(t.get("data_quality") or "VALID"), str(t.get("exclusion_reason") or ""))
+
+        is_unconverted_fx = t.get("fx_status") == "LEGACY_UNCONVERTED" and qc != "INR"
+        if is_unconverted_fx:
             unconverted_trades.append(t)
+            if dq == "LEGACY_EXCLUDED":
+                excluded_trades.append({**t, "data_quality": dq, "exclusion_reason": dq_reason})
+        elif dq == "LEGACY_EXCLUDED":
+            excluded_trades.append({**t, "data_quality": dq, "exclusion_reason": dq_reason})
         else:
             inr_closed.append(t)
 
@@ -210,6 +226,15 @@ def build_track_record(
         "per_symbol": per_symbol,
         "trades": inr_normalised,
         "unconverted_legacy_trades": [_normalise_trade(t) for t in unconverted_trades],
+        "excluded_legacy_trades_count": len(excluded_trades),
+        "excluded_legacy_trades": [
+            {
+                **_normalise_trade(t),
+                "data_quality": str(t.get("data_quality") or "LEGACY_EXCLUDED"),
+                "exclusion_reason": str(t.get("exclusion_reason") or ""),
+            }
+            for t in excluded_trades
+        ],
         "disclaimer": (
             "Paper trading only. No broker connection, no real orders. "
             "Not investment advice. Not a SEBI-registered research analyst or investment adviser. "

@@ -702,7 +702,7 @@ async def get_nse_dashboard_snapshot():
 
         else None,
 
-        "loading": svc._loading_status,
+        "loading": svc.get_loading_status() if hasattr(svc, "get_loading_status") else svc._loading_status,
 
         "mood": mood,
 

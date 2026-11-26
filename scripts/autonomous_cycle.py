@@ -391,6 +391,7 @@ async def run_single_autonomous_cycle(
         market_prices: dict[str, Any] = {}
         regimes: dict[str, str] = {}
         atr_lookup: dict[str, float] = {}
+        symbol_dfs: dict[str, Any] = {}
         candidate_signals: list[dict[str, Any]] = []
         all_scanned_signals: list[dict[str, Any]] = []
         max_bar_dt: datetime | None = None
@@ -483,6 +484,7 @@ async def run_single_autonomous_cycle(
                     "freshness_sec": int(age_sec),
                 }
                 atr_lookup[sym] = atr_val
+                symbol_dfs[sym] = df
 
                 # Signal Generation
                 sig_df = generate_signals(df, symbol=sym)
@@ -784,6 +786,19 @@ async def run_single_autonomous_cycle(
                     )
 
                 for cand in selected:
+                    if cand.get("p_calibrated") is None and cand["symbol"] in symbol_dfs:
+                        try:
+                            from agents.ai_engine.ensemble import predict_advanced
+                            _adv = predict_advanced(symbol_dfs[cand["symbol"]], symbol=cand["symbol"], offline=True)
+                            if isinstance(_adv, dict):
+                                if _adv.get("calibrated_trade_win_probability") is not None:
+                                    cand["calibrated_trade_win_probability"] = _adv.get("calibrated_trade_win_probability")
+                                if "calibration_active" in _adv:
+                                    cand["calibration_active"] = _adv.get("calibration_active")
+                                if _adv.get("p_source"):
+                                    cand["p_source"] = _adv.get("p_source")
+                        except Exception:
+                            pass
                     try:
                         from agents.ai_engine.calibrator import probability_from_signal
                         _p_cal, _p_src = probability_from_signal(cand)

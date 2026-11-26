@@ -30,6 +30,7 @@ class TrailingState:
     current_sl: float
     highest_favorable: float  # Highest price for BUY, lowest for SELL
     breakeven_triggered: bool = False
+    direction: str = "LONG"
 
 
 class TrailingStopManager:
@@ -61,6 +62,7 @@ class TrailingStopManager:
             original_sl=sl,
             current_sl=sl,
             highest_favorable=entry,
+            direction=str(direction or "LONG").upper(),
         )
         self._save_state()
 
@@ -71,9 +73,11 @@ class TrailingStopManager:
         current_high: float,
         current_low: float,
         atr: float,
+        target: float | None = None,
     ) -> float | None:
         """
         Update trailing SL for a trade based on latest price.
+        Optionally clamps against `target` so trailing stop never crosses take-profit.
 
         Returns:
             New SL level, or None if trade is not registered.
@@ -82,17 +86,18 @@ class TrailingStopManager:
         if not state:
             return None
 
-        if direction in ("LONG", "BUY"):
+        dir_norm = str(direction or state.direction or "LONG").upper()
+        state.direction = dir_norm
+
+        if dir_norm in ("LONG", "BUY"):
             # Track highest high since entry
             state.highest_favorable = max(state.highest_favorable, current_high)
             favorable_price = state.highest_favorable
 
             # Break-even check: if price moved >= breakeven_threshold * ATR above entry
-            entry_distance = favorable_price - state.original_sl  # approx entry from original SL
             if not state.breakeven_triggered and atr > 0:
                 profit_atrs = (favorable_price - (state.original_sl + atr * settings.ATR_SL_MULTIPLIER)) / atr
                 if profit_atrs >= self.breakeven_threshold:
-                    # Move SL to approximate entry (original_sl + original risk distance)
                     entry_approx = state.original_sl + atr * settings.ATR_SL_MULTIPLIER
                     state.current_sl = max(state.current_sl, entry_approx)
                     state.breakeven_triggered = True
@@ -100,13 +105,16 @@ class TrailingStopManager:
 
             # ATR trailing: SL = highest_favorable - (trailing_mult * ATR)
             trailing_sl = favorable_price - (self.trailing_atr_mult * atr)
-
-            # Only tighten, never loosen
             if trailing_sl > state.current_sl:
                 state.current_sl = trailing_sl
                 log.debug("📈 Trade #%d trailing SL tightened → %.2f", trade_id, state.current_sl)
 
-        elif direction in ("SHORT", "SELL"):
+            # Never trail SL at or beyond TP
+            if target is not None and target > state.original_sl:
+                max_sl = max(state.original_sl, target - 0.05)
+                state.current_sl = min(state.current_sl, max_sl)
+
+        elif dir_norm in ("SHORT", "SELL"):
             # Track lowest low since entry
             state.highest_favorable = min(state.highest_favorable, current_low)
             favorable_price = state.highest_favorable
@@ -122,10 +130,14 @@ class TrailingStopManager:
 
             # ATR trailing for shorts: SL = lowest_low + (trailing_mult * ATR)
             trailing_sl = favorable_price + (self.trailing_atr_mult * atr)
-
             if trailing_sl < state.current_sl:
                 state.current_sl = trailing_sl
                 log.debug("📉 Trade #%d trailing SL tightened → %.2f", trade_id, state.current_sl)
+
+            # Never trail SL at or below TP
+            if target is not None and 0 < target < state.original_sl:
+                min_sl = min(state.original_sl, target + 0.05)
+                state.current_sl = max(state.current_sl, min_sl)
 
         self._save_state()
         return state.current_sl
@@ -140,14 +152,19 @@ class TrailingStopManager:
         self._states.pop(trade_id, None)
         self._save_state()
 
-    def tighten_to(self, trade_id: int, sl_level: float):
-        """Force-tighten current trailing SL (never loosens)."""
+    def tighten_to(self, trade_id: int, sl_level: float, direction: str | None = None):
+        """Force-tighten current trailing SL (direction-aware, never loosens)."""
         state = self._states.get(trade_id)
         if not state:
             return
         prev = state.current_sl
-        if sl_level > state.current_sl:
-            state.current_sl = sl_level
+        dir_norm = str(direction or getattr(state, "direction", "LONG") or "LONG").upper()
+        if dir_norm in ("SHORT", "SELL"):
+            if sl_level < state.current_sl:
+                state.current_sl = sl_level
+        else:
+            if sl_level > state.current_sl:
+                state.current_sl = sl_level
         self._save_state()
         if state.current_sl != prev:
             log.debug("🔧 Trade #%d trailing SL force-tightened → %.2f", trade_id, state.current_sl)

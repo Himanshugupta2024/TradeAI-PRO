@@ -85,3 +85,31 @@ class TestTrailingStopManager:
 
         assert sl1 > 90   # BUY tightened
         assert sl2 < 210  # SELL tightened
+
+
+def test_trailing_sl_tighten_short_and_clamp_before_target(monkeypatch):
+    """tighten_to must work for SHORT and trailing SL must never cross target."""
+    import uuid
+    from agents.execution import trailing_sl
+
+    monkeypatch.setattr(trailing_sl, "get_runtime_state", lambda _k: None)
+    monkeypatch.setattr(trailing_sl, "set_runtime_state", lambda _k, _v: True)
+    mgr = trailing_sl.TrailingStopManager(state_file=f"test_trail_{uuid.uuid4().hex[:8]}.json")
+    mgr._states.clear()
+
+    # SHORT trade: entry 100, SL 105, TP 90
+    mgr.register(trade_id=901, direction="SHORT", entry=100.0, sl=105.0, atr=2.0)
+    mgr.tighten_to(901, 99.0, direction="SHORT")
+    assert mgr.get_sl(901) == 99.0
+    # Looser SL (higher for SHORT) must be ignored
+    mgr.tighten_to(901, 102.0, direction="SHORT")
+    assert mgr.get_sl(901) == 99.0
+
+    # Even on extreme favorable move for SHORT (low=70), SL must never trail below target (90)
+    new_sl = mgr.update(trade_id=901, direction="SHORT", current_high=95.0, current_low=70.0, atr=2.0, target=90.0)
+    assert new_sl > 90.0
+
+    # LONG trade: entry 100, SL 95, TP 110 — SL must never trail above target (110)
+    mgr.register(trade_id=902, direction="LONG", entry=100.0, sl=95.0, atr=2.0)
+    new_long_sl = mgr.update(trade_id=902, direction="LONG", current_high=150.0, current_low=100.0, atr=2.0, target=110.0)
+    assert new_long_sl < 110.0

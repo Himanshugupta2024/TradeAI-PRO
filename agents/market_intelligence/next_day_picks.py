@@ -23,6 +23,7 @@ Core Architectural Rules:
 from __future__ import annotations
 
 import concurrent.futures
+import email.utils
 import logging
 import math
 from datetime import date, datetime, time as dtime, timedelta, timezone
@@ -100,43 +101,106 @@ SECTOR_MAP = {
 
 # ── Calendar & Cutoff Policy ──────────────────────────────────────────────────
 
+_MARKET_CLOSE_IST = dtime(15, 30)
+_EOD_PUBLISH_CUTOFF_IST = dtime(16, 30)
+_MAX_CATALYST_AGE_DAYS = 7
+
+_SEO_SPAM_PATTERNS = (
+    "simply wall st",
+    "simplywall.st",
+    "walletinvestor",
+    "tipranks",
+    "stockopedia",
+    "marketsmojo",
+    "alphaspread",
+    "stock forecast",
+    "analyst predictions",
+    "share price today",
+    "stock price and chart",
+    "stock price today",
+    "share price target",
+    "should you buy",
+    "upcoming dividend",
+    "prediction 202",
+    "multibagger",
+    "technical analysis &",
+)
+
+
+def _to_ist(ref_dt: Optional[datetime] = None) -> datetime:
+    now = ref_dt or datetime.now(_IST)
+    if now.tzinfo is not None:
+        return now.astimezone(_IST)
+    return now.replace(tzinfo=_IST)
+
+
+def _previous_regular_trading_day(ref_date: date) -> date:
+    cand = ref_date - timedelta(days=1)
+    while cand.weekday() >= 5 or is_holiday(cand):
+        cand -= timedelta(days=1)
+    return cand
+
+
+def _extract_last_bar_date(df: pd.DataFrame) -> Optional[date]:
+    if df is None or df.empty:
+        return None
+    ts_val = None
+    for col in ("timestamp", "Date", "date"):
+        if col in df.columns:
+            ts_val = df[col].iloc[-1]
+            break
+    if ts_val is None:
+        ts_val = df.index[-1]
+    try:
+        parsed = pd.to_datetime(ts_val)
+        if pd.isna(parsed):
+            return None
+        return parsed.date()
+    except Exception:
+        return None
+
+
+def is_eod_bar_complete(bar_date: Optional[date], ref_dt: Optional[datetime] = None) -> bool:
+    """Return True only when the bar date has genuinely closed as an EOD session."""
+    if bar_date is None:
+        return False
+    now_ist = _to_ist(ref_dt)
+    today_ist = now_ist.date()
+    if bar_date < today_ist:
+        return True
+    if bar_date > today_ist:
+        return False
+    # bar_date == today_ist: complete only after 15:30 IST on a trading day (or weekend/holiday)
+    if today_ist.weekday() >= 5 or is_holiday(today_ist):
+        return True
+    return now_ist.time() >= _MARKET_CLOSE_IST
+
+
 def resolve_next_trading_session(
     ref_dt: Optional[datetime] = None
 ) -> Tuple[date, date, str, Optional[str]]:
     """
-    Resolve the source completed session date and the next eligible regular trading day.
+    Resolve the source COMPLETED session date and the next eligible regular trading day.
     Strictly follows Mon-Fri regular session policy using the official NSE holiday calendar.
-    
-    Returns:
-      (source_session_date, next_regular_session_date, next_session_label, special_session_notes)
-    
-    Example:
-      Friday 2026-11-06 ->
-        source: 2026-11-06
-        target: 2026-11-09 (Monday)
-        label: "Monday, 09 November 2026"
-        special_notes: "Sunday, 08 Nov 2026 Diwali Laxmi Pujan (Muhurat Trading) flagged separately"
+    During market hours (before 15:30 IST), steps source_date back to the previous completed session
+    so look-ahead partial intraday bars are never treated as EOD complete.
     """
-    now = ref_dt or datetime.now(_IST)
-    if now.tzinfo is not None:
-        now_ist = now.astimezone(_IST)
+    now_ist = _to_ist(ref_dt)
+    today_ist = now_ist.date()
+
+    if today_ist.weekday() >= 5 or is_holiday(today_ist):
+        source_date = _previous_regular_trading_day(today_ist)
+    elif now_ist.time() < _MARKET_CLOSE_IST:
+        # Today's session has not closed yet; latest completed bar is previous session.
+        source_date = _previous_regular_trading_day(today_ist)
     else:
-        now_ist = now.replace(tzinfo=_IST)
+        source_date = today_ist
 
-    source_date = now_ist.date()
-
-    # If calling during weekend, source is previous Friday
-    if source_date.weekday() == 5:  # Saturday
-        source_date -= timedelta(days=1)
-    elif source_date.weekday() == 6:  # Sunday
-        source_date -= timedelta(days=2)
-
-    # Scan forward for next eligible REGULAR trading session (Mon-Fri, non-holiday)
-    candidate_date = now_ist.date() + timedelta(days=1)
+    # Scan forward from today for the next eligible REGULAR trading session (Mon-Fri, non-holiday)
+    candidate_date = today_ist + timedelta(days=1)
     special_notes_list = []
 
-    # Check intermediate days for special sessions like Muhurat
-    check_date = now_ist.date() + timedelta(days=1)
+    check_date = today_ist + timedelta(days=1)
     while check_date.weekday() >= 5 or is_holiday(check_date):
         h_name = get_holiday_name(check_date)
         if "Diwali" in h_name or "Muhurat" in h_name or (check_date.month == 11 and check_date.day == 8):
@@ -145,7 +209,6 @@ def resolve_next_trading_session(
             )
         check_date += timedelta(days=1)
 
-    # Find the next regular session
     while candidate_date.weekday() >= 5 or is_holiday(candidate_date):
         candidate_date += timedelta(days=1)
 
@@ -217,9 +280,31 @@ def _compute_eod_technical_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     else:
         vol_ratio = (last_vol / vol_mean_20) if vol_mean_20 > 0 else 1.0
 
-    # 20-Day High / Low
+    # 20-Day & 60-Day Structural High / Low + Multi-bar Swing Pivots
     high_20d = float(np.max(highs[-20:]))
     low_20d = float(np.min(lows[-20:]))
+    high_60d = float(np.max(highs[-min(60, n_bars):]))
+    low_60d = float(np.min(lows[-min(60, n_bars):]))
+    high_5d = float(np.max(highs[-min(5, n_bars):]))
+    low_5d = float(np.min(lows[-min(5, n_bars):]))
+    swing_range_20d = max(high_20d - low_20d, atr14)
+
+    # Bollinger / Keltner Structural Extensions for measured breakout targets
+    sma20 = float(s_closes.rolling(min(20, n_bars)).mean().iloc[-1])
+    std20 = float(s_closes.rolling(min(20, n_bars)).std(ddof=0).iloc[-1] or 0.0)
+    bb_upper_25 = sma20 + (2.5 * std20)
+    bb_lower_25 = max(0.01, sma20 - (2.5 * std20))
+    keltner_upper = ema20 + (2.8 * atr14)
+    keltner_lower = max(0.01, ema20 - (2.8 * atr14))
+
+    swing_highs: List[float] = []
+    swing_lows: List[float] = []
+    if n_bars >= 7:
+        for i in range(2, n_bars - 2):
+            if highs[i] >= np.max(highs[i - 2 : i + 3]):
+                swing_highs.append(round(float(highs[i]), 2))
+            if lows[i] <= np.min(lows[i - 2 : i + 3]):
+                swing_lows.append(round(float(lows[i]), 2))
 
     # Candlestick anatomy (wick vs body)
     candle_range = max(last_high - last_low, 0.001)
@@ -256,27 +341,100 @@ def _compute_eod_technical_metrics(df: pd.DataFrame) -> Dict[str, Any]:
         "vol_ratio": round(vol_ratio, 2),
         "high_20d": round(high_20d, 2),
         "low_20d": round(low_20d, 2),
+        "high_60d": round(high_60d, 2),
+        "low_60d": round(low_60d, 2),
+        "high_5d": round(high_5d, 2),
+        "low_5d": round(low_5d, 2),
+        "swing_range_20d": round(swing_range_20d, 2),
+        "bb_upper_25": round(bb_upper_25, 2),
+        "bb_lower_25": round(bb_lower_25, 2),
+        "keltner_upper": round(keltner_upper, 2),
+        "keltner_lower": round(keltner_lower, 2),
+        "swing_highs": sorted(set(swing_highs)),
+        "swing_lows": sorted(set(swing_lows), reverse=True),
     }
 
 
-# ── Synthetic / Real Catalyst Discovery Helper ────────────────────────────────
+# ── Catalyst Discovery & Filtering Helper ─────────────────────────────────────
+
+def _parse_pub_date(pub_date: str) -> Optional[datetime]:
+    """Parse RFC 2822 or ISO publication timestamps into timezone-aware UTC datetime."""
+    if not pub_date or not str(pub_date).strip():
+        return None
+    raw = str(pub_date).strip()
+    try:
+        dt = email.utils.parsedate_to_datetime(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        pass
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_IST)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _is_seo_spam_item(headline: str, source: str = "", url: str = "") -> bool:
+    blob = f"{headline} {source} {url}".lower()
+    return any(pat in blob for pat in _SEO_SPAM_PATTERNS)
+
+
+def _score_catalysts_for_bias(catalysts: List[Dict[str, Any]], bias: str) -> float:
+    """
+    Score fresh (<=7d) catalysts factoring in both disclosure quality AND directional alignment.
+    Opposing headlines penalize score instead of artificially boosting a directional setup.
+    """
+    if not catalysts:
+        return 55.0
+
+    aligned_dir = "BULLISH" if bias == "LONG" else "BEARISH"
+    opp_dir = "BEARISH" if bias == "LONG" else "BULLISH"
+
+    fresh_real = [
+        c for c in catalysts
+        if c.get("category") in ("CONFIRMED_DISCLOSURE", "FINANCIAL_NEWS")
+        and int(c.get("age_days", 0) or 0) <= _MAX_CATALYST_AGE_DAYS
+    ]
+    if not fresh_real:
+        return 58.0
+
+    aligned_cnt = sum(1 for c in fresh_real if c.get("impact") == aligned_dir)
+    opp_cnt = sum(1 for c in fresh_real if c.get("impact") == opp_dir)
+    has_confirmed_aligned = any(
+        c.get("category") == "CONFIRMED_DISCLOSURE" and c.get("impact") != opp_dir
+        for c in fresh_real
+    )
+
+    if opp_cnt > aligned_cnt:
+        return 42.0
+    if has_confirmed_aligned and aligned_cnt > 0:
+        return 86.0
+    if has_confirmed_aligned:
+        return 76.0
+    if aligned_cnt > 0:
+        return 72.0
+    return 62.0
+
 
 def _discover_catalysts_for_symbol(symbol: str, cutoff_date: date) -> List[Dict[str, Any]]:
     """
-    Fetch verified or point-in-time news / exchange filings for symbol.
-    Uses public financial news RSS (Google News / Yahoo Finance) with fallback
-    to deterministic exchange corporate disclosures.
+    Fetch fresh (<= 7 days) news / exchange filings for symbol.
+    Strictly rejects aged items (>7 days), SEO forecast farms, and future-dated entries.
     """
     filing_time = f"{cutoff_date.isoformat()}T14:45:00+05:30"
+    cutoff_end_utc = datetime.combine(cutoff_date, dtime(23, 59, 59), tzinfo=_IST).astimezone(timezone.utc)
     real_catalysts: List[Dict[str, Any]] = []
 
-    # 1. Attempt live Google News / Yahoo Finance RSS
     try:
         from urllib.parse import quote_plus
         import urllib.request
         import xml.etree.ElementTree as ET
 
-        query = quote_plus(f"{symbol} NSE stock price India")
+        query = quote_plus(f"{symbol} NSE India stock when:7d")
         url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
         req = urllib.request.Request(
             url,
@@ -288,141 +446,70 @@ def _discover_catalysts_for_symbol(symbol: str, cutoff_date: date) -> List[Dict[
         with urllib.request.urlopen(req, timeout=3.0) as resp:
             content = resp.read()
             root = ET.fromstring(content)
-            SEO_PATTERNS = ["share price today", "stock price and chart", "share price", "stock price today (nse)", "share price target"]
-            for item in root.findall(".//item")[:5]:
+            for item in root.findall(".//item")[:15]:
                 title = item.findtext("title", "")
                 pub_date = item.findtext("pubDate", "")
                 link = item.findtext("link", f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}")
-                if title:
-                    headline = title.split(" - ")[0].strip()
-                    source = title.split(" - ")[-1].strip() if " - " in title else "Financial Media"
-                    h_lower = headline.lower()
-                    # Skip generic auto-generated programmatic SEO stock updates unless it mentions real corporate actions
-                    is_catalyst = any(k in h_lower for k in ["q1", "q2", "q3", "q4", "earnings", "order", "acquisition", "merger", "dividend", "approval", "launches", "expansion", "secures", "wins", "deal", "profit"])
-                    if any(p in h_lower for p in SEO_PATTERNS) and not is_catalyst:
-                        continue
+                if not title:
+                    continue
 
-                    category = "CONFIRMED_DISCLOSURE" if is_catalyst else "FINANCIAL_NEWS"
-                    impact = "BULLISH" if any(w in h_lower for w in ["gain", "surge", "record", "jump", "high", "rally", "win", "secures", "profit", "beats", "growth"]) else ("BEARISH" if any(w in h_lower for w in ["fall", "drop", "plunge", "loss", "probe", "down", "miss"]) else "NEUTRAL")
+                headline = title.split(" - ")[0].strip()
+                source = title.split(" - ")[-1].strip() if " - " in title else "Financial Media"
+                if _is_seo_spam_item(headline, source, link):
+                    continue
 
-                    real_catalysts.append({
-                        "headline": headline,
-                        "source": source,
-                        "published_at": pub_date or filing_time,
-                        "category": category,
-                        "url": link,
-                        "impact": impact,
-                    })
-                    if len(real_catalysts) >= 2:
-                        break
+                pub_dt = _parse_pub_date(pub_date)
+                if pub_dt is None:
+                    continue
+                age_days = (cutoff_end_utc - pub_dt).total_seconds() / 86400.0
+                if age_days > _MAX_CATALYST_AGE_DAYS or age_days < -1.0:
+                    continue
+
+                h_lower = headline.lower()
+                s_lower = source.lower()
+                is_disclosure_source = any(s in s_lower for s in ("nse", "bse", "exchange", "regulatory", "business standard", "economic times", "livemint", "reuters", "moneycontrol"))
+                is_corporate_event = any(k in h_lower for k in ("q1 ", "q2 ", "q3 ", "q4 ", "earnings", "wins order", "secures order", "contract", "acquisition", "merger", "dividend", "board approves", "results", "profit"))
+                category = "CONFIRMED_DISCLOSURE" if (is_corporate_event and is_disclosure_source) else "FINANCIAL_NEWS"
+
+                impact = (
+                    "BULLISH"
+                    if any(w in h_lower for w in ["gain", "surge", "record", "jump", "high", "rally", "win", "secures", "profit", "beats", "growth", "upgrade", "approves"])
+                    else (
+                        "BEARISH"
+                        if any(w in h_lower for w in ["fall", "drop", "plunge", "loss", "probe", "down", "miss", "drag", "downgrade", "slump"])
+                        else "NEUTRAL"
+                    )
+                )
+
+                real_catalysts.append({
+                    "headline": headline,
+                    "source": source,
+                    "published_at": pub_date,
+                    "age_days": max(0, int(round(age_days))),
+                    "category": category,
+                    "url": link,
+                    "impact": impact,
+                })
+                if len(real_catalysts) >= 2:
+                    break
     except Exception as exc:
         logger.debug("Live RSS catalyst discovery skipped for %s: %s", symbol, exc)
 
     if real_catalysts:
         return real_catalysts
 
-    # 2. Deterministic structured disclosures fallback
-    catalysts_db = {
-        "RELIANCE": [
-            {
-                "headline": "Reliance Retail expands consumer supply chain footprint with new regional fulfilment hubs",
-                "source": "BSE Corporate Disclosures / Exchange Filing",
-                "published_at": filing_time,
-                "category": "CONFIRMED_DISCLOSURE",
-                "url": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
-                "impact": "BULLISH",
-            },
-            {
-                "headline": "Crude refining margin projections firm up amid tightening Asian middle distillate crack spreads",
-                "source": "Financial Express / Market News",
-                "published_at": f"{cutoff_date.isoformat()}T12:30:00+05:30",
-                "category": "FINANCIAL_NEWS",
-                "url": "https://www.financialexpress.com/market/",
-                "impact": "BULLISH",
-            }
-        ],
-        "TCS": [
-            {
-                "headline": "TCS bags multi-year digital transformation and cloud modernization contract with European financial leader",
-                "source": "NSE Corporate Announcements",
-                "published_at": filing_time,
-                "category": "CONFIRMED_DISCLOSURE",
-                "url": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
-                "impact": "BULLISH",
-            }
-        ],
-        "HDFCBANK": [
-            {
-                "headline": "HDFC Bank reports 14.8% YoY gross advance expansion in quarterly regulatory credit metric filing",
-                "source": "BSE Regulatory Filing",
-                "published_at": filing_time,
-                "category": "CONFIRMED_DISCLOSURE",
-                "url": "https://www.bseindia.com/corporates/ann.html",
-                "impact": "BULLISH",
-            }
-        ],
-        "INFY": [
-            {
-                "headline": "Infosys expands enterprise generative AI partnership suite with major Nordic banking group",
-                "source": "NSE Exchange Disclosures",
-                "published_at": filing_time,
-                "category": "CONFIRMED_DISCLOSURE",
-                "url": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
-                "impact": "BULLISH",
-            }
-        ],
-        "ICICIBANK": [
-            {
-                "headline": "ICICI Bank domestic loan book grows 16.2% YoY with gross NPA ratio declining to multi-year low",
-                "source": "NSE Corporate Filings",
-                "published_at": filing_time,
-                "category": "CONFIRMED_DISCLOSURE",
-                "url": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
-                "impact": "BULLISH",
-            }
-        ],
-        "LT": [
-            {
-                "headline": "L&T Construction wins significant orders valued between ₹2,500 Cr to ₹5,000 Cr for Transmission & Distribution projects",
-                "source": "BSE Corporate Announcements",
-                "published_at": filing_time,
-                "category": "CONFIRMED_DISCLOSURE",
-                "url": "https://www.bseindia.com/corporates/ann.html",
-                "impact": "BULLISH",
-            }
-        ],
-        "BHARTIARTL": [
-            {
-                "headline": "Bharti Airtel expands 5G enterprise network footprint across Tier-2 manufacturing clusters",
-                "source": "Exchange Disclosure",
-                "published_at": filing_time,
-                "category": "CONFIRMED_DISCLOSURE",
-                "url": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
-                "impact": "BULLISH",
-            }
-        ],
-        "TATAMOTORS": [
-            {
-                "headline": "Tata Motors Passenger Vehicles achieves record monthly wholesale volume led by EV SUV demand",
-                "source": "NSE Exchange Disclosures",
-                "published_at": filing_time,
-                "category": "CONFIRMED_DISCLOSURE",
-                "url": "https://www.nseindia.com/companies-listing/corporate-filings-announcements",
-                "impact": "BULLISH",
-            }
-        ]
-    }
-
-    return catalysts_db.get(symbol, [
+    # Neutral sector/price-action context when no verified fresh catalyst within 7 days is available
+    return [
         {
-            "headline": f"{COMPANY_NAME_MAP.get(symbol, symbol)} trades with steady volume; sector relative strength index positive",
-            "source": "Market News Context",
+            "headline": f"No fresh exchange filing or catalyst (<={_MAX_CATALYST_AGE_DAYS}d) found; setup driven by EOD price structure",
+            "source": "Market Context Filter",
             "published_at": filing_time,
-            "category": "REPORTED_CLAIM",
-            "url": "https://www.nseindia.com/get-quotes/equity?symbol=" + symbol,
+            "age_days": 0,
+            "category": "CONTEXT_SUMMARY",
+            "url": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}",
             "impact": "NEUTRAL",
         }
-    ])
+    ]
 
 
 # ── Core Candidate Analysis & Ranking Engine ──────────────────────────────────
@@ -432,16 +519,25 @@ def analyze_candidate(
     df: pd.DataFrame,
     source_date: date,
     target_date: date,
-    benchmark_trend: str = "BULLISH"
+    benchmark_trend: str = "BULLISH",
+    ref_dt: Optional[datetime] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Perform deep Section 6B multi-factor analysis on a single candidate.
-    Computes technical levels, catalysts, bull/base/bear scenarios, and planned trade setup.
-    Enforces minimum Risk:Reward >= 1.5x.
+    Computes technical levels, fresh aligned catalysts, structural R:R trade plan,
+    and honest bar-completeness metadata.
     """
+    now_ist = _to_ist(ref_dt)
     metrics = _compute_eod_technical_metrics(df)
     if not metrics:
         return None
+    bar_date = _extract_last_bar_date(df) or source_date
+    bar_complete = is_eod_bar_complete(bar_date, now_ist)
+    freshness_label = (
+        f"EOD Completed Bar ({bar_date.isoformat()})"
+        if bar_complete
+        else f"Intraday Partial Bar ({bar_date.isoformat()} {now_ist.strftime('%H:%M')} IST — Incomplete)"
+    )
 
     close = metrics["close"]
     atr = metrics["atr14"]
@@ -537,10 +633,9 @@ def analyze_candidate(
                          symbol, is_red, close_pos, lower_wick_ratio)
             return None
 
-    # 2. Catalysts
-    catalysts = _discover_catalysts_for_symbol(symbol, source_date)
-    has_confirmed = any(c["category"] == "CONFIRMED_DISCLOSURE" for c in catalysts)
-    catalyst_score = 85.0 if has_confirmed else 65.0
+    # 2. Catalysts (strictly fresh <=7d & direction-aligned)
+    catalysts = _discover_catalysts_for_symbol(symbol, min(bar_date, now_ist.date()))
+    catalyst_score = _score_catalysts_for_bias(catalysts, bias)
 
     # 3. Fundamentals & Sector Context
     sector = SECTOR_MAP.get(symbol, "Equities")
@@ -569,14 +664,17 @@ def analyze_candidate(
     implied_5d = fno_data.get("implied_move_5d_pct")
     envelope_source = fno_data.get("envelope_source", "ATR_FALLBACK")
 
-    if envelope_source != "ATR_FALLBACK" and implied_5d and implied_5d > 0:
+    if envelope_source not in ("ATR_FALLBACK", "NO_CHAIN_DATA") and implied_5d and implied_5d > 0:
         volatility_envelope = round(close * (implied_5d / 100.0), 2)
     else:
-        volatility_envelope = round(atr * 2.2, 2)  # Multi-session swing reachability envelope
-    max_reach_reward = max(volatility_envelope, atr * 2.2)
-    min_stop_distance = round(1.30 * atr, 2)  # Strictly >= 1.30x ATR to clear daily noise floor
+        volatility_envelope = round(atr * 3.2, 2)  # Multi-session structural swing corridor
+    max_reach_reward = max(volatility_envelope, round(atr * 3.2, 2))
+    min_stop_distance = round(1.25 * atr, 2)  # Strictly >= 1.25x ATR to clear daily noise floor
     h20 = metrics.get("high_20d", 0.0)
     l20 = metrics.get("low_20d", 0.0)
+    h60 = metrics.get("high_60d", 0.0)
+    l60 = metrics.get("low_60d", 0.0)
+    swing_range = metrics.get("swing_range_20d", atr)
 
     if bias == "LONG":
         last_h = metrics["high"]
@@ -584,30 +682,45 @@ def analyze_candidate(
         trigger_price = round(max(last_h * 1.001, r1 if (r1 > last_h and r1 <= last_h * 1.008) else last_h * 1.001), 2)
         trigger_zone = f"₹{round(trigger_price, 2)} – ₹{round(trigger_price + 0.25 * atr, 2)}"
 
-        # Structural stop: place below pivot or swing floor with noise-clearing >= 1.30x ATR buffer
-        raw_risk = max(min_stop_distance, trigger_price - metrics["pivot"])
+        # Structural stop: blend pivot and 5-day swing low anchored within [1.25*ATR, 2.2*ATR]
+        swing_floor = min(metrics["pivot"], metrics.get("low_5d", metrics["low"]) - 0.15 * atr)
+        raw_risk = trigger_price - swing_floor
         risk = round(max(min_stop_distance, min(2.2 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price - risk, 2)
 
-        # Candidate structural resistance targets >= 1.25x risk
-        candidate_targets = [t for t in [h20, r1, r2] if t > trigger_price and (t - trigger_price) >= (1.25 * risk)]
-        if ce_wall and ce_wall > trigger_price and (ce_wall - trigger_price) >= (1.25 * risk):
-            candidate_targets.append(ce_wall)
+        # Structural resistance targets within reachability corridor (>= 1.25x risk)
+        structural_pool = [
+            r1, r2, h20, h60,
+            *metrics.get("swing_highs", []),
+            metrics.get("bb_upper_25", 0.0),
+            metrics.get("keltner_upper", 0.0),
+        ]
+        candidate_targets = [
+            float(t) for t in structural_pool
+            if t and (trigger_price + 1.25 * risk) <= float(t) <= (trigger_price + max_reach_reward)
+        ]
+        if ce_wall and ce_wall > trigger_price:
+            if (ce_wall - trigger_price) < (1.25 * risk):
+                # Cramped by options call wall -> geometry fails cleanly below
+                candidate_targets = [float(ce_wall)]
+            elif (ce_wall - trigger_price) <= max_reach_reward:
+                candidate_targets.append(float(ce_wall))
 
         if candidate_targets:
-            raw_target = min(candidate_targets)  # nearest valid structural target
-            target_1 = round(min(raw_target, trigger_price + max_reach_reward), 2)
+            target_1 = round(min(candidate_targets), 2)
         else:
-            target_1 = round(trigger_price + min(max_reach_reward, max(1.5 * risk, 1.8 * atr)), 2)
+            # Multi-month ATH breakout with no historical overhead bar: measured swing projection
+            measured_ext = (0.618 * swing_range) + (0.35 * atr)
+            bounded_ext = max(1.28 * risk, min(max_reach_reward, measured_ext))
+            target_1 = round(trigger_price + bounded_ext, 2)
 
-        # Respect options market CE wall resistance ceiling
         if ce_wall and ce_wall > trigger_price and target_1 > ce_wall:
             target_1 = round(ce_wall, 2)
 
         reward = round(target_1 - trigger_price, 2)
         rr_ratio = round(reward / risk, 2)
 
-        target_2 = round(r2 if r2 > target_1 else target_1 + (0.8 * atr), 2)
+        target_2 = round(max(target_1 + 0.8 * atr, r2 if r2 > target_1 else target_1 + 0.8 * atr), 2)
         invalidation = f"Avoid if gap down opens below ₹{stop_loss} (risk buffer breached) or NIFTY plunges >0.5% at 09:15 open."
     else:
         last_l = metrics["low"]
@@ -615,28 +728,41 @@ def analyze_candidate(
         trigger_price = round(min(last_l * 0.999, s1 if (s1 < last_l and s1 >= last_l * 0.992) else last_l * 0.999), 2)
         trigger_zone = f"₹{round(trigger_price - 0.25 * atr, 2)} – ₹{round(trigger_price, 2)}"
 
-        raw_risk = max(min_stop_distance, metrics["pivot"] - trigger_price)
+        swing_ceil = max(metrics["pivot"], metrics.get("high_5d", metrics["high"]) + 0.15 * atr)
+        raw_risk = swing_ceil - trigger_price
         risk = round(max(min_stop_distance, min(2.2 * atr, raw_risk)), 2)
         stop_loss = round(trigger_price + risk, 2)
 
-        candidate_targets = [t for t in [l20, s1, s2] if t > 0 and t < trigger_price and (trigger_price - t) >= (1.25 * risk)]
-        if pe_wall and pe_wall < trigger_price and (trigger_price - pe_wall) >= (1.25 * risk):
-            candidate_targets.append(pe_wall)
+        structural_pool = [
+            s1, s2, l20, l60,
+            *metrics.get("swing_lows", []),
+            metrics.get("bb_lower_25", 0.0),
+            metrics.get("keltner_lower", 0.0),
+        ]
+        candidate_targets = [
+            float(t) for t in structural_pool
+            if t and 0.0 < float(t) and (trigger_price - max_reach_reward) <= float(t) <= (trigger_price - 1.25 * risk)
+        ]
+        if pe_wall and 0.0 < pe_wall < trigger_price:
+            if (trigger_price - pe_wall) < (1.25 * risk):
+                candidate_targets = [float(pe_wall)]
+            elif (trigger_price - pe_wall) <= max_reach_reward:
+                candidate_targets.append(float(pe_wall))
 
         if candidate_targets:
-            raw_target = max(candidate_targets)
-            target_1 = round(max(raw_target, trigger_price - max_reach_reward), 2)
+            target_1 = round(max(candidate_targets), 2)
         else:
-            target_1 = round(trigger_price - min(max_reach_reward, max(1.5 * risk, 1.8 * atr)), 2)
+            measured_ext = (0.618 * swing_range) + (0.35 * atr)
+            bounded_ext = max(1.28 * risk, min(max_reach_reward, measured_ext))
+            target_1 = round(max(0.05, trigger_price - bounded_ext), 2)
 
-        # Respect options market PE wall support floor
-        if pe_wall and pe_wall < trigger_price and target_1 < pe_wall:
+        if pe_wall and 0.0 < pe_wall < trigger_price and target_1 < pe_wall:
             target_1 = round(pe_wall, 2)
 
         reward = round(trigger_price - target_1, 2)
         rr_ratio = round(reward / risk, 2)
 
-        target_2 = round(s2 if s2 < target_1 else target_1 - (0.8 * atr), 2)
+        target_2 = round(min(target_1 - 0.8 * atr, s2 if s2 < target_1 else target_1 - 0.8 * atr), 2)
         invalidation = f"Avoid if gap up opens above ₹{stop_loss} (risk buffer breached) or strong morning sector surge."
 
     # Minimum Risk:Reward Gate Enforcement
@@ -709,7 +835,9 @@ def analyze_candidate(
             "market_context": regime_score,
             "model_confidence": model_score,
         },
-        "freshness": f"EOD Completed Bar ({source_date.isoformat()})",
+        "freshness": freshness_label,
+        "bar_completed": bar_complete,
+        "bar_date": bar_date.isoformat(),
         "eligibility": "QUALIFIED",
         "completed_prices": {
             "open": metrics["open"],
@@ -783,11 +911,61 @@ def analyze_candidate(
 
 # ── Exchange Daily Candle Provider (Strict Zero-Synthetic Policy) ────────────
 
-def _get_daily_candles_for_symbol(symbol: str, source_date: date) -> Optional[pd.DataFrame]:
+def _sanitize_daily_bars(
+    df: pd.DataFrame,
+    symbol: str,
+    ref_dt: Optional[datetime] = None,
+    *,
+    completed_only: bool = True,
+) -> Optional[pd.DataFrame]:
+    """
+    Strip incomplete intraday partial bars before market close and reject
+    corrupt outlier prints (>20% jump against prior session close).
+    """
+    if df is None or df.empty:
+        return None
+    df = df.copy()
+    df.columns = [c.lower() for c in df.columns]
+
+    now_ist = _to_ist(ref_dt)
+    if completed_only and now_ist.weekday() < 5 and not is_holiday(now_ist.date()) and now_ist.time() < _MARKET_CLOSE_IST:
+        ts_col = "timestamp" if "timestamp" in df.columns else ("date" if "date" in df.columns else None)
+        if ts_col is not None:
+            d_series = pd.to_datetime(df[ts_col], errors="coerce").dt.date
+            completed = df[d_series < now_ist.date()]
+            if len(completed) >= 15:
+                df = completed.reset_index(drop=True)
+        elif isinstance(df.index, pd.DatetimeIndex):
+            completed = df[df.index.date < now_ist.date()]
+            if len(completed) >= 15:
+                df = completed
+
+    # Guard against poisoned last daily bar (>20% jump vs prior completed close)
+    if len(df) >= 2 and "close" in df.columns:
+        try:
+            c_last = float(df["close"].iloc[-1])
+            c_prev = float(df["close"].iloc[-2])
+            if c_prev > 0 and abs(c_last / c_prev - 1.0) > 0.20:
+                logger.warning(
+                    "[NextDayPicksSanity] Stripped corrupt outlier daily bar for %s (close=%.2f, prev=%.2f)",
+                    symbol, c_last, c_prev,
+                )
+                df = df.iloc[:-1].copy()
+        except Exception:
+            pass
+
+    return df if len(df) >= 15 else None
+
+
+def _get_daily_candles_for_symbol(
+    symbol: str,
+    source_date: date,
+    ref_dt: Optional[datetime] = None,
+) -> Optional[pd.DataFrame]:
     """
     Retrieve completed daily candles for symbol from genuine exchange data.
     Uses nse_fetcher / yfinance with strict zero-synthetic-data policy.
-    Never returns fabricated or random walk bars.
+    Never returns fabricated, random-walk, or incomplete intraday bars.
     """
     try:
         from agents.market_intelligence.nse_fetcher import fetch_ohlcv, fetch_arbitrary_symbol
@@ -803,9 +981,7 @@ def _get_daily_candles_for_symbol(symbol: str, source_date: date) -> Optional[pd
                     if df is not None and len(df) >= 15:
                         break
         if df is not None and len(df) >= 15:
-            df = df.copy()
-            df.columns = [c.lower() for c in df.columns]
-            return df
+            return _sanitize_daily_bars(df, symbol, ref_dt=ref_dt, completed_only=True)
     except Exception as exc:
         logger.warning("Live exchange fetch failed for %s: %s", symbol, exc)
 
@@ -814,18 +990,20 @@ def _get_daily_candles_for_symbol(symbol: str, source_date: date) -> Optional[pd
 
 # ── Benchmark Trend Detection (Strict Zero-Synthetic Policy) ────────────
 
-def _detect_benchmark_trend(source_date: Optional[date] = None) -> Tuple[str, str]:
+def _detect_benchmark_trend(
+    source_date: Optional[date] = None,
+    ref_dt: Optional[datetime] = None,
+) -> Tuple[str, str]:
     """
     Evaluate NIFTY 50 (^NSEI) daily candle trend to determine overall market regime.
     Returns (regime: "BULLISH" | "BEARISH" | "NEUTRAL", summary: str).
-    Uses genuine exchange data.
+    Uses genuine completed exchange bars with outlier protection.
     """
     try:
         from agents.market_intelligence.nse_fetcher import fetch_arbitrary_symbol
-        df = fetch_arbitrary_symbol("^NSEI", period="60d", interval="1d")
+        raw_df = fetch_arbitrary_symbol("^NSEI", period="60d", interval="1d")
+        df = _sanitize_daily_bars(raw_df, "^NSEI", ref_dt=ref_dt, completed_only=True) if raw_df is not None else None
         if df is not None and len(df) >= 20:
-            df = df.copy()
-            df.columns = [c.lower() for c in df.columns]
             closes = df["close"].dropna()
             if len(closes) >= 20:
                 c = float(closes.iloc[-1])
@@ -875,21 +1053,22 @@ def generate_next_day_picks(
       - Returns NO_QUALIFIED_SETUPS truthfully if criteria not met.
       - Persists atomically to Supabase / runtime_state.
     """
-    now = ref_dt or datetime.now(_IST)
-    if now.tzinfo is not None:
-        now_ist = now.astimezone(_IST)
-    else:
-        now_ist = now.replace(tzinfo=_IST)
-
+    now_ist = _to_ist(ref_dt)
     source_date, target_date, target_label, special_notes = resolve_next_trading_session(now_ist)
     report_id = f"ndp-{source_date.strftime('%Y%m%d')}-v1"
 
-    # 1. Check existing cached report if not force_refresh
+    # 1. Check existing cached report if not force_refresh (invalidate if future cutoff or corrupted macro)
     if not force_refresh:
         latest = get_runtime_state(STATE_KEY_LATEST)
         if isinstance(latest, dict) and latest.get("source_session_date") == source_date.isoformat():
-            logger.info("Serving existing valid Next-Day Picks report for %s", source_date)
-            return latest
+            cutoff_str = str(latest.get("information_cutoff_ist") or "")
+            gen_str = str(latest.get("generated_at_ist") or "")
+            macro_txt = str(latest.get("macro_context_summary") or "")
+            cutoff_valid = (not cutoff_str or not gen_str or cutoff_str <= now_ist.strftime("%Y-%m-%d %H:%M:%S IST"))
+            corrupt_macro = "+3" in macro_txt or "+5" in macro_txt or "35,050" in macro_txt or "40,590" in macro_txt
+            if cutoff_valid and not corrupt_macro:
+                logger.info("Serving existing valid Next-Day Picks report for %s", source_date)
+                return latest
 
     # 2. Strict Section 6A policy check: zero crypto/forex work
     if is_crypto_forex_enabled():
@@ -898,7 +1077,7 @@ def generate_next_day_picks(
         logger.info("Strict Section 6A NSE Focus Mode verified: Crypto & Forex zero-work enforced.")
 
     # 3. Benchmark Market Regime Evaluation
-    benchmark_trend, macro_summary = _detect_benchmark_trend(source_date)
+    benchmark_trend, macro_summary = _detect_benchmark_trend(source_date, ref_dt=now_ist)
     logger.info("Next-Day Picks benchmark regime evaluated: %s", benchmark_trend)
 
     # 4. Two-Stage Pipeline
@@ -908,9 +1087,9 @@ def generate_next_day_picks(
 
     def _screen_symbol(sym: str) -> Optional[Dict[str, Any]]:
         try:
-            df = _get_daily_candles_for_symbol(sym, source_date)
+            df = _get_daily_candles_for_symbol(sym, source_date, ref_dt=now_ist)
             if df is not None and len(df) >= 15:
-                cand = analyze_candidate(sym, df, source_date, target_date, benchmark_trend=benchmark_trend)
+                cand = analyze_candidate(sym, df, source_date, target_date, benchmark_trend=benchmark_trend, ref_dt=now_ist)
                 if cand:
                     cand["data_source"] = "NSE_EXCHANGE_EOD"
                     cand["is_synthetic"] = False
@@ -956,10 +1135,13 @@ def generate_next_day_picks(
 
     status = "READY" if selected_picks else "NO_QUALIFIED_SETUPS"
     status_reason = (
-        f"Successfully identified {len(selected_picks)} high-conviction setup(s) meeting strict 1.5+ R:R criteria in {benchmark_trend} market regime."
+        f"Successfully identified {len(selected_picks)} high-conviction setup(s) meeting structural R:R (>= 1.25x gross, >= 1.10x net) criteria in {benchmark_trend} market regime."
         if selected_picks else
-        f"No stocks met the required 1.5x Risk:Reward ratio and multi-factor confluence gates for this session (Regime: {benchmark_trend}). Stand-down active."
+        f"No stocks met the required structural Risk:Reward ratio and multi-factor confluence gates for this session (Regime: {benchmark_trend}). Stand-down active."
     )
+
+    nominal_cutoff = datetime.combine(source_date, _EOD_PUBLISH_CUTOFF_IST, tzinfo=_IST)
+    effective_cutoff = min(now_ist, nominal_cutoff)
 
     report_payload: Dict[str, Any] = {
         "report_id": report_id,
@@ -975,12 +1157,12 @@ def generate_next_day_picks(
         "universe_screened": len(symbols_to_screen),
         "screened_count": len(symbols_to_screen),
         "qualified_count": len(selected_picks),
-        "information_cutoff_ist": f"{source_date.isoformat()} 16:30:00 IST",
+        "information_cutoff_ist": effective_cutoff.strftime("%Y-%m-%d %H:%M:%S IST"),
         "generated_at": now_ist.isoformat(),
         "generated_at_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
         "data_source": "NSE_EXCHANGE_EOD",
         "is_synthetic": False,
-        "model_version": "NextDay-Confluence-v2.1",
+        "model_version": "NextDay-Confluence-v2.2",
         "benchmark_regime": benchmark_trend,
         "status": status,
         "status_reason": status_reason,
@@ -1176,7 +1358,7 @@ def resolve_report_outcomes(
 
 
 def get_latest_next_day_picks() -> Dict[str, Any]:
-    """Retrieve the latest published Next-Day Picks report, generating on-demand if absent or expired."""
+    """Retrieve the latest published Next-Day Picks report, generating on-demand if absent, stale, or outdated model version."""
     state = get_runtime_state(STATE_KEY_LATEST)
     now_ist = datetime.now(_IST)
     source_date, target_date, _, _ = resolve_next_trading_session(now_ist)
@@ -1184,19 +1366,23 @@ def get_latest_next_day_picks() -> Dict[str, Any]:
     if isinstance(state, dict) and state.get("report_id"):
         state_source = state.get("source_session_date")
         state_target = state.get("target_session_date")
+        cutoff_str = str(state.get("information_cutoff_ist") or "")
+        macro_txt = str(state.get("macro_context_summary") or "")
+        cutoff_future = bool(cutoff_str and cutoff_str > now_ist.strftime("%Y-%m-%d %H:%M:%S IST"))
+        corrupt_macro = "35,050" in macro_txt or "40,590" in macro_txt or "+3" in macro_txt or "+5" in macro_txt
+        needs_upgrade = state.get("model_version") != "NextDay-Confluence-v2.2"
 
-        # 1. Valid active report for current trading session
-        if state_source == source_date.isoformat() and state_target == target_date.isoformat():
-            return state
+        if not cutoff_future and not corrupt_macro and not needs_upgrade:
+            if state_source == source_date.isoformat() and state_target == target_date.isoformat():
+                return state
 
-        # 2. Expired report: target date has passed
-        if state_target and state_target < now_ist.date().isoformat():
-            logger.info("Next-Day Picks target session %s expired (current date: %s). Regenerating...", state_target, now_ist.date())
+        # Expired, corrupted, future-cutoff, or pre-v2.2 report -> regenerate cleanly
+        if needs_upgrade or cutoff_future or corrupt_macro or (state_target and state_target < now_ist.date().isoformat()):
+            logger.info("Regenerating Next-Day Picks report (version=%s, cutoff_future=%s, target=%s)...", state.get("model_version"), cutoff_future, state_target)
             return generate_next_day_picks(ref_dt=now_ist, force_refresh=True)
 
-        # 3. New EOD session available (e.g. post-close after 15:30 IST today and cached report was previous day)
         if state_source and state_source != source_date.isoformat():
-            if now_ist.time() >= dtime(15, 30) or now_ist.date() > date.fromisoformat(state_source):
+            if now_ist.time() >= _MARKET_CLOSE_IST or now_ist.date() > date.fromisoformat(state_source):
                 logger.info("New EOD session available (%s vs cached %s). Regenerating Next-Day Picks...", source_date, state_source)
                 return generate_next_day_picks(ref_dt=now_ist, force_refresh=True)
 

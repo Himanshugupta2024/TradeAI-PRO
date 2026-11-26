@@ -88,6 +88,77 @@ class _NoopLogger:
 
 
 
+def validate_trade_geometry(direction: str, entry: float, stop_loss: float, target: float) -> tuple[bool, str]:
+    """Enforce strict directional stop/target geometry (LONG: SL < entry < TP, SHORT: TP < entry < SL)."""
+    for name, val in (("entry", entry), ("stop_loss", stop_loss), ("target", target)):
+        if val is None or not math.isfinite(float(val)) or float(val) <= 0.0:
+            return False, f"Non-positive or non-finite {name}={val}"
+    d = str(direction or "").strip().upper()
+    if d in ("LONG", "BUY"):
+        if not (stop_loss < entry < target):
+            return False, f"LONG geometry violation: stop_loss ({stop_loss}) < entry ({entry}) < target ({target}) required"
+        return True, ""
+    if d in ("SHORT", "SELL"):
+        if not (target < entry < stop_loss):
+            return False, f"SHORT geometry violation: target ({target}) < entry ({entry}) < stop_loss ({stop_loss}) required"
+        return True, ""
+    return False, f"Invalid direction '{direction}'"
+
+
+def classify_legacy_trade(trade: Any) -> tuple[str, str]:
+    """
+    Classify historical/loaded trade integrity so compromised pre-fix rows
+    (inverted stops without initial stop provenance, extreme outlier R:R / breached stops,
+    unconverted non-INR FX, or uncosted zeroed-net legacy rows) are quarantined as LEGACY_EXCLUDED.
+    """
+    if isinstance(trade, dict):
+        get = trade.get
+    else:
+        get = lambda k, default=None: getattr(trade, k, default)
+
+    if str(get("data_quality") or "").upper() == "LEGACY_EXCLUDED":
+        return "LEGACY_EXCLUDED", str(get("exclusion_reason") or "LEGACY_EXCLUDED")
+
+    qc = get("quote_currency") or ("USDT" if "/" in str(get("symbol") or "") else "INR")
+    if str(get("fx_status") or "ACTIVE").upper() == "LEGACY_UNCONVERTED" and qc != "INR":
+        return "LEGACY_EXCLUDED", "LEGACY_UNCONVERTED_FX"
+
+    status = str(get("status") or "").upper()
+    if status == "OPEN":
+        return "VALID", ""
+
+    entry = float(get("entry_price") or 0.0)
+    sl = float(get("stop_loss") or 0.0)
+    tp = float(get("target") or 0.0)
+    stop_raw = float(get("stop_raw") or 0.0)
+    init_sl = float(get("initial_stop_loss") or 0.0)
+    direction = str(get("direction") or "LONG").upper()
+    has_initial_sl = (stop_raw > 0.0) or (init_sl > 0.0)
+
+    if entry > 0 and sl > 0:
+        if not has_initial_sl:
+            # Missing stop_raw + stop on wrong side of entry (or past target) -> indistinguishable from inverted entry SL
+            if direction in ("LONG", "BUY") and (sl >= entry or (tp > 0 and sl >= tp)):
+                return "LEGACY_EXCLUDED", "INVERTED_OR_CROSSED_STOP_LEGACY"
+            if direction in ("SHORT", "SELL") and (sl <= entry or (tp > 0 and sl <= tp)):
+                return "LEGACY_EXCLUDED", "INVERTED_OR_CROSSED_STOP_LEGACY"
+
+            # Un-reconciled midnight EOD breach or outlier 10+ R:R legacy anomaly (e.g. INDUSINDBK id 34)
+            risk = abs(entry - sl)
+            reward = abs(tp - entry) if tp > 0 else 0.0
+            if risk > 0 and (reward / risk) > 10.0:
+                return "LEGACY_EXCLUDED", "OUTLIER_RR_OR_UNENFORCED_STOP_LEGACY"
+            exit_p = float(get("exit_price") or 0.0)
+            exit_t = str(get("exit_time") or "")
+            if status == "CLOSED_SL" and exit_p > 0 and exit_t.endswith("T00:00:00"):
+                breach = ((entry - exit_p) / entry) if direction in ("LONG", "BUY") else ((exit_p - entry) / entry)
+                sl_dist = abs(entry - sl) / entry
+                if breach > sl_dist + 0.02:
+                    return "LEGACY_EXCLUDED", "UNENFORCED_STOP_EOD_BREACH_LEGACY"
+
+    return "VALID", ""
+
+
 @dataclass
 class PaperTrade:
     """A single paper trade."""
@@ -157,6 +228,10 @@ class PaperTrade:
     mae_r: float = 0.0
     # ── Dynamic sizing audit (post regime/ATR/Kelly adjustment) ───────────
     risk_pct_applied: float = 0.0
+    # ── Initial stop preservation & legacy quarantine audit ───────────────
+    initial_stop_loss: float = 0.0
+    data_quality: str = "VALID"  # VALID | LEGACY_EXCLUDED
+    exclusion_reason: str = ""
 
 
 class PaperTradingEngine:
@@ -451,7 +526,13 @@ class PaperTradingEngine:
         adjusted_tp = self._scale_target(entry=entry, target=tp, direction=direction, multiplier=target_multiplier)
         adjusted_tp = normalize_price_to_tick(symbol, adjusted_tp, "CEIL" if direction == "LONG" else "FLOOR")
 
-        # Recompute and validate RR after regime target scaling (never allow target to shrink below required RR)
+        # Recompute and validate RR & geometry after regime target scaling
+        geom_ok, geom_msg = validate_trade_geometry(direction, entry, sl, adjusted_tp)
+        if not geom_ok:
+            self.last_rejection_reason = f"SKIP_INVALID_GEOMETRY: {geom_msg}"
+            log.warning("BLOCKED: %s", self.last_rejection_reason)
+            return None
+
         if direction == "LONG":
             adjusted_reward = adjusted_tp - entry
         else:
@@ -575,6 +656,11 @@ class PaperTradingEngine:
             )
             return None
 
+        # Hard invariant check right before creating PaperTrade
+        assert (direction == "LONG" and sl < entry < adjusted_tp) or (
+            direction == "SHORT" and adjusted_tp < entry < sl
+        ), f"Entry geometry assertion failed for {symbol} {direction}: sl={sl}, entry={entry}, tp={adjusted_tp}"
+
         # Execute
         self._trade_counter += 1
         trade = PaperTrade(
@@ -600,6 +686,9 @@ class PaperTradingEngine:
             entry_raw=entry_raw,
             stop_raw=sl_raw,
             target_raw=tp_raw,
+            initial_stop_loss=sl,
+            data_quality="VALID",
+            exclusion_reason="",
             asset_class=asset_class,
             quote_currency=quote_curr,
             base_currency=base_curr,
@@ -756,8 +845,11 @@ class PaperTradingEngine:
                     current_high=high,
                     current_low=low,
                     atr=atr,
+                    target=trade.target,
                 )
                 if new_sl is not None and new_sl != trade.stop_loss:
+                    if not (getattr(trade, "initial_stop_loss", 0.0) or getattr(trade, "stop_raw", 0.0)):
+                        trade.initial_stop_loss = trade.stop_loss
                     trade.stop_loss = new_sl
                     state_changed = True
 
@@ -1081,11 +1173,13 @@ class PaperTradingEngine:
 
         total_equity = self.capital + unrealized_pnl
         closed = [t for t in self.trades if t.status != "OPEN"]
-        def _is_unconverted_legacy(t):
+        def _is_excluded_trade(t):
+            if getattr(t, "data_quality", "VALID") == "LEGACY_EXCLUDED":
+                return True
             qc = getattr(t, "quote_currency", None) or ("USDT" if "/" in str(getattr(t, "symbol", "")) else "INR")
             return getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and qc != "INR"
 
-        inr_closed = [t for t in closed if not _is_unconverted_legacy(t)]
+        inr_closed = [t for t in closed if not _is_excluded_trade(t)]
         realized_pnl = sum(self._trade_total_pnl(t) for t in inr_closed)
 
         return {
@@ -1139,13 +1233,22 @@ class PaperTradingEngine:
                 "unconverted_legacy_trades": [],
             }
 
-        # Quarantine unconverted non-INR legacy trades from INR totals (F05)
-        def _is_unconverted_legacy(t):
+        # Quarantine unconverted FX and corrupted/anomalous legacy rows from all statistics
+        def _is_excluded_legacy(t):
+            if getattr(t, "data_quality", "VALID") == "LEGACY_EXCLUDED":
+                return True
+            dq, _ = classify_legacy_trade(t)
+            if dq == "LEGACY_EXCLUDED":
+                return True
             qc = getattr(t, "quote_currency", None) or ("USDT" if "/" in str(getattr(t, "symbol", "")) else "INR")
             return getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED" and qc != "INR"
 
-        inr_closed = [t for t in closed if not _is_unconverted_legacy(t)]
-        unconverted_legacy = [t for t in closed if _is_unconverted_legacy(t)]
+        inr_closed = [t for t in closed if not _is_excluded_legacy(t)]
+        excluded_legacy = [t for t in closed if _is_excluded_legacy(t)]
+        unconverted_legacy = [
+            t for t in excluded_legacy
+            if getattr(t, "fx_status", "ACTIVE") == "LEGACY_UNCONVERTED"
+        ]
 
         pnls = [self._trade_total_pnl(t) for t in inr_closed]
         wins = [t for t in inr_closed if self._trade_total_pnl(t) > 1e-6]
@@ -1196,13 +1299,14 @@ class PaperTradingEngine:
             sortino = None
 
         return {
-            "total_trades": len(closed),
-            "sample_size": len(closed),
+            "total_trades": len(inr_closed),
+            "sample_size": len(inr_closed),
+            "raw_closed_trades": len(closed),
             "winning_trades": len(wins),
             "losing_trades": len(losses),
             "breakeven_trades": len(breakevens),
             "eligible_trades": len(inr_closed),
-            "excluded_legacy_trades_count": len(unconverted_legacy),
+            "excluded_legacy_trades_count": len(excluded_legacy),
             "win_rate": round(len(wins) / len(inr_closed) * 100, 1) if inr_closed else None,
             "capital": round(self.capital, 2),
             "total_equity": equity_info["total_equity"],
@@ -1224,6 +1328,15 @@ class PaperTradingEngine:
             "max_drawdown_pct": round(max_dd_pct, 1),
             "profit_factor": profit_factor,
             "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
+            "excluded_legacy_trades": [
+                {
+                    "id": t.id,
+                    "symbol": t.symbol,
+                    "data_quality": "LEGACY_EXCLUDED",
+                    "exclusion_reason": getattr(t, "exclusion_reason", "") or classify_legacy_trade(t)[1],
+                }
+                for t in excluded_legacy
+            ],
             "unconverted_legacy_trades": [
                 {
                     "id": t.id,
@@ -1391,6 +1504,8 @@ class PaperTradingEngine:
         pnls: list[float] = []
         for trade in self.trades:
             if trade.status == "OPEN":
+                continue
+            if getattr(trade, "data_quality", "VALID") == "LEGACY_EXCLUDED" or classify_legacy_trade(trade)[0] == "LEGACY_EXCLUDED":
                 continue
             quote_ccy = getattr(trade, "quote_currency", None) or (
                 "USDT" if "/" in str(getattr(trade, "symbol", "")) else "INR"
@@ -1571,7 +1686,7 @@ class PaperTradingEngine:
             else:
                 trade.stop_loss = min(trade.stop_loss, trade.entry_price)
             try:
-                self.trailing_manager.tighten_to(trade.id, trade.stop_loss)
+                self.trailing_manager.tighten_to(trade.id, trade.stop_loss, direction=trade.direction)
             except Exception:
                 pass
 
@@ -1869,6 +1984,11 @@ class PaperTradingEngine:
                 td.setdefault("pnl_native", td.get("pnl", 0.0))
                 td.setdefault("realized_pnl_native", td.get("realized_pnl", 0.0))
                 td.setdefault("fx_status", "ACTIVE")
+            if not td.get("initial_stop_loss") and float(td.get("stop_raw") or 0.0) > 0.0:
+                td["initial_stop_loss"] = float(td["stop_raw"])
+            dq, reason = classify_legacy_trade(td)
+            td["data_quality"] = dq
+            td["exclusion_reason"] = reason
             from dataclasses import fields as _dc_fields
             _valid_trade_fields = {f.name for f in _dc_fields(PaperTrade)}
             td_clean = {k: v for k, v in td.items() if k in _valid_trade_fields}
