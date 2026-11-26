@@ -1234,8 +1234,9 @@ SENTIMENT_GATE_ENABLED: bool = os.getenv("SENTIMENT_GATE_ENABLED", "true").lower
 def validate_runtime_config() -> None:
     """Fail fast on invalid runtime settings that can break refresh/signals."""
     errors: list[str] = []
+    service_role = os.getenv("SERVICE_ROLE", "").strip().lower()
 
-    if not DATABASE_URL or "://" not in DATABASE_URL:
+    if service_role != "feed_service" and (not DATABASE_URL or "://" not in DATABASE_URL):
         errors.append("DATABASE_URL must be a valid SQLAlchemy URL")
 
     if not NSE_SYMBOLS and not CRYPTO_SYMBOLS:
@@ -1401,10 +1402,11 @@ def validate_runtime_config() -> None:
     if (CONTEXT_NEWS_WEIGHT_24HR + CONTEXT_NEWS_WEIGHT_7D) > 1.0:
         errors.append("CONTEXT_NEWS_WEIGHT_24HR + CONTEXT_NEWS_WEIGHT_7D must be <= 1.0")
 
-    if IS_PRODUCTION:
+    render_flag = os.getenv("RENDER", "").strip().lower() in ("1", "true", "yes", "on")
+    if (IS_PRODUCTION or ON_RENDER or render_flag) and service_role != "feed_service":
         if not DATABASE_URL or not any(DATABASE_URL.startswith(p) for p in ("postgresql://", "postgres://", "postgresql+psycopg://", "postgresql+psycopg2://")):
             errors.append(f"In production, DATABASE_URL must be set and must point to persistent PostgreSQL (got: {DATABASE_URL})")
-        if not ADMIN_API_KEY:
+        if service_role != "ml_sidecar" and not ADMIN_API_KEY:
             errors.append("In production, ADMIN_API_KEY must be configured for API security")
 
     if errors:

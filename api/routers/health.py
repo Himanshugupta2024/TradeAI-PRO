@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional, Dict, Any
 
-from fastapi import APIRouter, Response, HTTPException, status
+from fastapi import APIRouter, Response, HTTPException, Header, status
 from fastapi.responses import JSONResponse, FileResponse
 
 from config import settings
@@ -45,6 +45,7 @@ router = APIRouter(tags=["health"])
 
 import asyncio
 import hashlib
+import hmac
 import subprocess
 from db.connection import check_db_connectivity
 
@@ -151,7 +152,7 @@ async def health_check(response: Response = None):
 
         from agents.ai_engine.ensemble import get_model_status
 
-        ai_engine_info = get_model_status()
+        ai_engine_info = await asyncio.to_thread(get_model_status)
 
     except Exception as _e:
 
@@ -168,7 +169,7 @@ async def health_check(response: Response = None):
         db_ok = await _check_db_connectivity_with_retry()
     except Exception:
         db_ok = False
-    feed_status = svc._get_feed_status()
+    feed_status = await asyncio.to_thread(svc._get_feed_status)
     api_health = "API_UP" if db_ok else "API_DEGRADED"
 
     symbols_loaded = len(svc._market_data)
@@ -221,8 +222,9 @@ async def health_check(response: Response = None):
                 try:
                     import db.intraday_store as ids
                     latest_scan = await asyncio.to_thread(ids.load_latest_scan)
-                    if latest_scan and latest_scan.get("results"):
-                        signals_count = len(latest_scan["results"])
+                    if latest_scan:
+                        sigs = latest_scan.get("signals") or []
+                        signals_count = len(sigs) if sigs else int(latest_scan.get("signal_count") or 0)
                 except Exception:
                     pass
 
@@ -404,7 +406,7 @@ async def get_system_data_health():
         db_ok = False
 
     # 1. Feed / Market Snapshot
-    feed_status = svc._get_feed_status()
+    feed_status = await asyncio.to_thread(svc._get_feed_status)
 
     # 2. Intraday Scanner Store
     intraday_status = {"status": "UNAVAILABLE", "age_seconds": None, "last_scan": None}
@@ -413,12 +415,14 @@ async def get_system_data_health():
         latest_iscan = await asyncio.to_thread(intraday_store.load_latest_scan)
         if latest_iscan and latest_iscan.get("scan_time"):
             st = latest_iscan["scan_time"]
+            freshness = latest_iscan.get("freshness_status")
             intraday_status = {
                 "status": "HEALTHY",
                 "last_scan": st,
                 "age_seconds": latest_iscan.get("scan_age_seconds"),
-                "signal_count": latest_iscan.get("signal_count", 0),
-                "data_status": latest_iscan.get("data_status"),
+                "signal_count": latest_iscan.get("signal_count", len(latest_iscan.get("signals") or [])),
+                "freshness_status": freshness,
+                "data_status": freshness,
             }
     except Exception as exc:
         intraday_status["error"] = str(exc)
@@ -643,22 +647,57 @@ class ProbeTelemetryPayload(BaseModel):
     box: str = Field(default="edge", description="Source identifier: edge, box_a, box_b")
     status: str = Field(default="HEALTHY", description="Status code: HEALTHY, DEGRADED, CRITICAL, ALIVE")
     latency_ms: Optional[float] = Field(default=None, description="Round-trip latency in ms")
+    sidecar_active: Optional[bool] = Field(default=None, description="Optional ML sidecar active state")
     details: Optional[Dict[str, Any]] = Field(default=None, description="Optional diagnostic details")
 
 
 @router.post("/api/telemetry/probe")
-async def record_edge_telemetry_probe(payload: ProbeTelemetryPayload):
+async def record_edge_telemetry_probe(
+    payload: ProbeTelemetryPayload,
+    x_cron_secret: Optional[str] = Header(default=None, alias="X-Cron-Secret"),
+):
     """
     Ingest a health/latency probe from Cloudflare Worker cron or monitoring agent.
+    Enforces X-Cron-Secret via constant-time comparison when CRON_SECRET is configured
+    (and fails closed in production/Render if CRON_SECRET is missing).
     Non-blocking: records into database asynchronously.
     """
+    configured_secret = (os.getenv("CRON_SECRET") or "").strip()
+    is_prod = bool(
+        getattr(settings, "IS_PRODUCTION", False)
+        or os.getenv("RENDER")
+        or os.getenv("ENVIRONMENT", "").strip().lower() in ("production", "prod")
+    )
+    if configured_secret:
+        if not x_cron_secret or not hmac.compare_digest(x_cron_secret, configured_secret):
+            raise HTTPException(status_code=403, detail="Invalid cron authorization secret")
+    elif is_prod:
+        raise HTTPException(
+            status_code=503,
+            detail="CRON_SECRET not configured — telemetry probe disabled (fail-closed)",
+        )
+
     from db.health_store import record_health_probe
     from utils.memory_profiler import get_process_rss_mb
 
     uptime_sec = round(time.time() - getattr(svc, "_SERVER_START_TIME", time.time()), 1)
     rss_mb = get_process_rss_mb(collect_gc=False)
-    feed_status = svc._get_feed_status()
+    feed_status = await asyncio.to_thread(svc._get_feed_status)
     feed_lag = feed_status.get("bar_age_seconds") if feed_status.get("bar_age_seconds") is not None else feed_status.get("age_seconds")
+
+    if payload.sidecar_active is not None:
+        sidecar_active = bool(payload.sidecar_active)
+    elif isinstance(payload.details, dict) and "sidecar_active" in payload.details:
+        sidecar_active = bool(payload.details["sidecar_active"])
+    else:
+        try:
+            from agents.ai_engine.ensemble import get_model_status
+            ai_info = await asyncio.to_thread(get_model_status)
+            sidecar_active = bool(
+                ai_info.get("sidecar_active", False) or ai_info.get("sidecar_models", {})
+            )
+        except Exception:
+            sidecar_active = bool(os.environ.get("ML_SIDECAR_URL", "").strip())
 
     asyncio.create_task(
         asyncio.to_thread(
@@ -669,7 +708,7 @@ async def record_edge_telemetry_probe(payload: ProbeTelemetryPayload):
             memory_rss_mb=rss_mb,
             uptime_seconds=uptime_sec,
             feed_lag_seconds=feed_lag,
-            sidecar_active=True,
+            sidecar_active=sidecar_active,
             build_sha=_get_build_sha(),
             config_hash=_get_config_hash(),
             details=payload.details,
@@ -678,6 +717,7 @@ async def record_edge_telemetry_probe(payload: ProbeTelemetryPayload):
 
     return {
         "recorded": True,
+        "sidecar_active": sidecar_active,
         "build_sha": _get_build_sha(),
         "config_hash": _get_config_hash(),
         "timestamp": datetime.now(timezone.utc).isoformat(),

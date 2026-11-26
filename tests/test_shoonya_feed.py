@@ -234,20 +234,26 @@ async def test_shoonya_feed_provider_quote(monkeypatch):
 
 def test_feed_server_oauth_callback(monkeypatch):
     monkeypatch.setenv("FEED_INTERNAL_TOKEN", "test-feed-token-2026")
+    headers = {"X-Internal-Token": "test-feed-token-2026"}
     with TestClient(app) as client:
-        # Missing code parameter
-        r_fail = client.get("/oauth/callback")
+        # Unauthenticated request fails closed with 403
+        r_unauth = client.get("/oauth/callback?code=test_code_123")
+        assert r_unauth.status_code == 403
+
+        # Missing code parameter (authenticated)
+        r_fail = client.get("/oauth/callback", headers=headers)
         assert r_fail.status_code == 400
 
-        # Successful exchange mock
+        # Successful exchange mock (authenticated; no token prefix leaked)
         with patch("feed_server.feed_manager.exchange_auth_code", return_value="mock_susertoken_12345678"):
             with patch("feed_server.feed_manager.login_with_token", return_value=True):
                 with patch("feed_server.feed_manager._start_websocket"):
-                    r_ok = client.get("/oauth/callback?code=test_code_123")
+                    r_ok = client.get("/oauth/callback?code=test_code_123", headers=headers)
                     assert r_ok.status_code == 200
                     data = r_ok.json()
                     assert data["status"] == "ok"
-                    assert "mock_sus" in data["susertoken_prefix"]
+                    assert data["token_acquired"] is True
+                    assert "susertoken_prefix" not in data
 
 
 def test_fetch_ohlcv_shoonya_box_c_priority(monkeypatch):

@@ -5,6 +5,7 @@ Runs completely isolated from Core API (Box A) to eliminate Yahoo latency and me
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -118,7 +119,7 @@ def _verify_auth(x_internal_token: Optional[str]) -> None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Feed auth misconfigured: FEED_INTERNAL_TOKEN environment variable is not set",
         )
-    if x_internal_token != expected_token:
+    if not x_internal_token or not hmac.compare_digest(x_internal_token, expected_token):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid internal authorization token",
@@ -229,12 +230,16 @@ def update_fno_chain(
 
 @app.get("/oauth/callback")
 @app.post("/oauth/callback")
-def oauth_callback(code: Optional[str] = Query(None)) -> Dict[str, Any]:
+def oauth_callback(
+    code: Optional[str] = Query(None),
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
     """
     OAuth redirect callback endpoint.
     Receives auth_code from Shoonya browser login redirect, exchanges it for susertoken,
-    and initiates the live WebSocket feed.
+    and initiates the live WebSocket feed. Protected by fail-closed X-Internal-Token auth.
     """
+    _verify_auth(x_internal_token)
     if not code:
         raise HTTPException(status_code=400, detail="Missing authorization code parameter 'code'")
 
@@ -251,7 +256,7 @@ def oauth_callback(code: Optional[str] = Query(None)) -> Dict[str, Any]:
         return {
             "status": "ok",
             "message": "Shoonya OAuth authentication successful! Live WebSocket connected.",
-            "susertoken_prefix": token[:8] + "...",
+            "token_acquired": True,
         }
     raise HTTPException(status_code=500, detail="Failed to start WebSocket session with token")
 

@@ -167,7 +167,7 @@ async def get_risk_state():
 
     engine = svc._get_engine()
 
-    return engine.get_risk_state()
+    return await asyncio.to_thread(engine.get_risk_state)
 
 @router.get("/api/ai/weights")
 
@@ -199,7 +199,7 @@ async def reset_risk_circuit(rebase_capital: bool = Query(False)):
 
     engine = svc._get_engine()
 
-    state = engine.reset_circuit_breaker(rebase_capital=rebase_capital)
+    state = await asyncio.to_thread(engine.reset_circuit_breaker, rebase_capital=rebase_capital)
 
     return {"ok": True, "risk": state}
 
@@ -309,13 +309,34 @@ async def resolve_paper_trades():
 
         prices = {}
 
-        for sym, d in svc._market_data.items():
+        for sym, d in list(svc._market_data.items()):
 
             if isinstance(d, dict) and "close" in d:
 
-                prices[sym] = {"high": d.get("high", d["close"]), "low": d.get("low", d["close"]), "close": d["close"]}
+                close_v = _safe_float(d.get("close"), 0.0)
+                if close_v > 0 and math.isfinite(close_v):
+                    high_v = _safe_float(d.get("high"), close_v)
+                    low_v = _safe_float(d.get("low"), close_v)
+                    prices[sym] = {
+                        "high": high_v if high_v > 0 and math.isfinite(high_v) else close_v,
+                        "low": low_v if low_v > 0 and math.isfinite(low_v) else close_v,
+                        "close": close_v,
+                    }
 
-        closed = engine.update_prices(prices)
+            elif hasattr(d, "iloc") and not d.empty and "close" in d.columns:
+
+                last_row = d.iloc[-1]
+                close_v = _safe_float(last_row.get("close"), 0.0)
+                if close_v > 0 and math.isfinite(close_v):
+                    high_v = _safe_float(last_row.get("high"), close_v) if "high" in d.columns else close_v
+                    low_v = _safe_float(last_row.get("low"), close_v) if "low" in d.columns else close_v
+                    prices[sym] = {
+                        "high": high_v if high_v > 0 and math.isfinite(high_v) else close_v,
+                        "low": low_v if low_v > 0 and math.isfinite(low_v) else close_v,
+                        "close": close_v,
+                    }
+
+        closed = await asyncio.to_thread(engine.update_prices, prices)
 
         return {
 
@@ -575,7 +596,7 @@ async def close_paper_trade_endpoint(trade_id: int, payload: dict | None = None,
 
                 break
 
-    trade = engine.close_manual(trade_id=trade_id, exit_price=exit_price)
+    trade = await asyncio.to_thread(engine.close_manual, trade_id=trade_id, exit_price=exit_price)
 
     if not trade:
 
@@ -589,7 +610,8 @@ async def close_paper_trade_endpoint(trade_id: int, payload: dict | None = None,
 
     trade_dict = trade.__dict__ if hasattr(trade, "__dict__") else dict(trade)
 
-    return {"status": "closed", "trade": trade_dict, "stats": engine.get_stats()}
+    stats = await asyncio.to_thread(engine.get_stats)
+    return {"status": "closed", "trade": trade_dict, "stats": stats}
 
 @router.post("/api/paper/close-bulk", dependencies=[Depends(require_admin)])
 async def close_paper_trades_bulk(payload: dict | None = None, account_id: str = Depends(get_authenticated_account)):
@@ -631,7 +653,7 @@ async def close_paper_trades_bulk(payload: dict | None = None, account_id: str =
             })
             continue
 
-        result = engine.close_manual(trade_id=getattr(trade, "id", 0), exit_price=exit_price)
+        result = await asyncio.to_thread(engine.close_manual, trade_id=getattr(trade, "id", 0), exit_price=exit_price)
         if result is None:
             continue
         pnl = float(getattr(result, "total_pnl", 0.0) or 0.0)
@@ -701,80 +723,6 @@ def invalidate_autonomous_status_cache() -> None:
     global _AUTONOMOUS_STATUS_CACHE, _AUTONOMOUS_STATUS_CACHE_TS
     _AUTONOMOUS_STATUS_CACHE = None
     _AUTONOMOUS_STATUS_CACHE_TS = 0.0
-
-
-def _fetch_autonomous_status_sync():
-    """Fetch status and lock info in a thread to keep DB I/O off the event loop."""
-    from agents.execution.autonomous_daemon import get_autonomous_daemon
-    from agents.execution.distributed_lock import DistributedLockManager
-    from agents.execution.session_guard import is_nse_market_open, get_current_ist_time
-    from db.runtime_state import get_runtime_state
-
-    daemon = get_autonomous_daemon()
-    engine = svc._get_engine()
-    daemon_status = daemon.get_status(engine)
-
-    # The daemon keeps the review date in memory only, so a restart made the
-    # status look like learning had never run. Prefer the durable marker.
-    if not daemon_status.get("last_eod_review"):
-        review_marker = get_runtime_state("eod_review:last_run:v1", {}) or {}
-        if isinstance(review_marker, dict) and review_marker.get("last_review_date"):
-            daemon_status["last_eod_review"] = review_marker["last_review_date"]
-
-    worker_status = get_runtime_state("autonomous_worker:latest_status", {}) or {}
-
-    lock_mgr = DistributedLockManager()
-    lock_info = lock_mgr.get_lock_info("autonomous_paper_worker")
-
-    now_ist = get_current_ist_time()
-    is_nse_open, nse_reason = is_nse_market_open(now_ist)
-
-    watchdog_status = "HEALTHY"
-    watchdog_message = "Autonomous worker operating normally."
-    age_minutes = None
-
-    if lock_info and lock_info.get("is_active"):
-        watchdog_status = "RUNNING"
-        watchdog_message = f"Worker cycle currently executing (run_id: {lock_info.get('run_id')})."
-    elif worker_status and worker_status.get("timestamp"):
-        try:
-            ts_str = worker_status["timestamp"]
-            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            age_sec = (datetime.now(timezone.utc) - ts).total_seconds()
-            age_minutes = round(age_sec / 60.0, 1)
-
-            if is_nse_open and age_minutes > 35.0:
-                watchdog_status = "WORKER_STALE"
-                watchdog_message = f"Last cycle completed {age_minutes:.1f}m ago during active market hours (>35m threshold)."
-            elif not is_nse_open:
-                watchdog_status = "MARKET_CLOSED"
-                watchdog_message = f"NSE cash market is closed ({nse_reason}). Worker in off-hours standby."
-            else:
-                watchdog_status = "HEALTHY"
-                watchdog_message = f"Worker healthy. Last cycle completed {age_minutes:.1f}m ago."
-        except Exception:
-            pass
-    elif not is_nse_open:
-        watchdog_status = "MARKET_CLOSED"
-        watchdog_message = f"NSE cash market is closed ({nse_reason}). Worker in off-hours standby."
-    else:
-        watchdog_status = "IDLE"
-        watchdog_message = "No worker cycle runs recorded yet today."
-
-    return {
-        "daemon_status": daemon_status,
-        "worker_status": worker_status,
-        "lock_info": lock_info,
-        "watchdog": {
-            "status": watchdog_status,
-            "message": watchdog_message,
-            "age_minutes": age_minutes,
-            "is_nse_market_open": is_nse_open,
-            "nse_reason": nse_reason,
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-        },
-    }
-
 
 
 @router.get("/api/portfolio")

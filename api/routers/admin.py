@@ -132,7 +132,8 @@ async def toggle_market_control_route(
                 }
             )
 
-    success, message, state = set_market_control_state(
+    success, message, state = await asyncio.to_thread(
+        set_market_control_state,
         enabled=req.enabled,
         password=candidate_key,
         client_id=client_ip,
@@ -511,7 +512,7 @@ async def get_autonomous_feed(response: Response, limit: int = 25):
 
     daemon = get_autonomous_daemon()
 
-    feed = get_runtime_state("autonomous_feed:v1", []) or []
+    feed = await asyncio.to_thread(get_runtime_state, "autonomous_feed:v1", []) or []
 
     if not feed:
         feed = await asyncio.to_thread(_fetch_feed_db_sync, limit)
@@ -678,7 +679,7 @@ async def toggle_autonomous(payload: dict | None = None):
         daemon.enabled = not daemon.enabled
     try:
         from db.runtime_state import set_runtime_state
-        set_runtime_state("autonomous_trading_enabled", daemon.enabled)
+        await asyncio.to_thread(set_runtime_state, "autonomous_trading_enabled", daemon.enabled)
     except Exception as state_err:
         log.warning("[Autonomous] Could not persist enabled state to DB: %s", state_err)
     engine = svc._get_engine()
@@ -715,10 +716,10 @@ async def get_model_bundle_status():
 
     try:
         from db.runtime_state import get_runtime_state
-        published = get_runtime_state(BUNDLE_KEY)
+        published = await asyncio.to_thread(get_runtime_state, BUNDLE_KEY)
     except Exception:
         published = None
-    status = current_status()
+    status = await asyncio.to_thread(current_status)
     if isinstance(published, dict):
         status["published"] = {
             "version": published.get("version"),
@@ -749,7 +750,7 @@ async def get_learning_stats_endpoint():
     """Return AI self-learning insights + current learned weights."""
     try:
         from agents.analytics.feedback_loop import get_learning_stats
-        return get_learning_stats()
+        return await asyncio.to_thread(get_learning_stats)
     except Exception as exc:
         logger.error("Learning stats error: %s", exc)
         from agents.analytics.feedback_loop import DEFAULT_REGIME_WEIGHTS_2D
@@ -804,7 +805,7 @@ async def get_learning_outcomes(limit: int = Query(100, le=500)):
     """Return recent raw trade outcomes logged to the feedback loop."""
     try:
         from agents.analytics.feedback_loop import get_recent_outcomes
-        return {"outcomes": get_recent_outcomes(limit=limit)}
+        return {"outcomes": await asyncio.to_thread(get_recent_outcomes, limit=limit)}
     except Exception as exc:
         logger.error("Learning outcomes error: %s", exc)
         return {"outcomes": [], "error": str(exc)}
@@ -958,7 +959,7 @@ async def ensemble_status():
     # Sentiment (Fear & Greed)
     try:
         from agents.ai_engine.crypto_sentiment import get_fear_greed_index
-        fg = get_fear_greed_index(timeout=3)
+        fg = await asyncio.to_thread(get_fear_greed_index, timeout=3)
         status["sentiment"] = {
             "active": True,
             "fear_greed_value": fg["value"],
@@ -990,10 +991,12 @@ async def retrain_xgboost(
     ),
     timeframe: str = Query(default="4h", description="Candle timeframe"),
     days: int = Query(default=365, description="Days of historical data"),
+    forward_bars: int = Query(default=5, ge=1, le=50, description="Forward bars for label evaluation"),
+    min_return_pct: float = Query(default=1.0, ge=0.0, le=50.0, description="Minimum return % threshold"),
 ):
     """
     Retrain the XGBoost model on fresh crypto data.
-    Runs asynchronously in a background thread.
+    Runs asynchronously in a background thread via asyncio.to_thread.
     Returns a job_id that can be polled at /api/retrain/status.
     """
     is_lightweight = os.getenv("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes")
@@ -1003,12 +1006,7 @@ async def retrain_xgboost(
             detail="Model retraining is disabled in LIGHTWEIGHT_API_MODE to respect the Render 512MB RAM cap. Retraining must run in a dedicated worker or batch training environment.",
         )
 
-    from concurrent.futures import ThreadPoolExecutor
-
-    def _retrain_sync(sym_list, tf, d):
-        from agents.ai_engine.train import train_xgboost
-        return train_xgboost(symbols=sym_list, timeframe=tf, days=d)
-
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
     job_id = f"retrain_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     svc._retrain_jobs[job_id] = {
         "status": "running",
@@ -1018,16 +1016,15 @@ async def retrain_xgboost(
     }
 
     async def _background():
-        loop = asyncio.get_event_loop()
         try:
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                result = await loop.run_in_executor(
-                    pool,
-                    _retrain_sync,
-                    symbols.split(","),
-                    timeframe,
-                    days,
-                )
+            result = await asyncio.to_thread(
+                svc._train_xgboost_sync,
+                sym_list,
+                timeframe,
+                days,
+                forward_bars,
+                min_return_pct,
+            )
             svc._retrain_jobs[job_id] = {
                 "status": "completed",
                 "result": result,
@@ -1048,7 +1045,7 @@ async def retrain_xgboost(
         "status": "started",
         "job_id": job_id,
         "message": "Retraining started in background. Poll /api/retrain/status for progress.",
-        "symbols": symbols.split(","),
+        "symbols": sym_list,
         "timeframe": timeframe,
         "days": days,
     }

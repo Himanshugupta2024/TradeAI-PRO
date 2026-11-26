@@ -10,7 +10,9 @@ Routes:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -45,6 +47,46 @@ async def get_prediction_engine_status() -> Dict[str, Any]:
             "L6_dashboard_delivery": "ACTIVE (Deterministic Templated Rationales & Structured Contract)",
         },
     }
+
+
+@router.get("/validation-metrics")
+async def get_walk_forward_metrics(
+    symbol: str = Query("RELIANCE", description="Symbol to run walk-forward backtest evaluation on"),
+) -> Dict[str, Any]:
+    """
+    Run walk-forward validation with zero-leakage embargo gap on historical data.
+    Returns Multi-class Brier score, directional accuracy, profit factor, and max drawdown.
+    """
+    is_lightweight = os.getenv("LIGHTWEIGHT_API_MODE", "false").strip().lower() in (
+        "1", "true", "yes", "on"
+    )
+    if is_lightweight:
+        raise HTTPException(
+            status_code=409,
+            detail="Walk-forward validation backtest is disabled in LIGHTWEIGHT_API_MODE to protect the 512MB RAM budget.",
+        )
+
+    clean_sym = symbol.strip().upper().replace(".NS", "")
+    from data.providers.yahoo import YahooProvider
+
+    provider = YahooProvider(timeout=10.0)
+    ohlcv_map = await provider.get_batch_ohlcv([clean_sym], period="1y", interval="1d")
+    df = ohlcv_map.get(clean_sym)
+
+    if df is None or df.empty or len(df) < 120:
+        return {
+            "symbol": clean_sym,
+            "status": "INSUFFICIENT_DATA",
+            "message": "At least 120 daily bars required for walk-forward validation.",
+        }
+
+    from agents.ai_engine.backtest_validator import run_walk_forward_backtest
+
+    metrics = await asyncio.to_thread(
+        run_walk_forward_backtest, df, n_splits=4, embargo_bars=5, forward_bars=3
+    )
+    metrics["symbol"] = clean_sym
+    return metrics
 
 
 @router.get("/{symbol}")
@@ -86,32 +128,3 @@ async def get_batch_stock_predictions(
         "count": len(preds),
         "predictions": preds,
     }
-
-
-@router.get("/validation-metrics")
-async def get_walk_forward_metrics(
-    symbol: str = Query("RELIANCE", description="Symbol to run walk-forward backtest evaluation on"),
-) -> Dict[str, Any]:
-    """
-    Run walk-forward validation with zero-leakage embargo gap on historical data.
-    Returns Multi-class Brier score, directional accuracy, profit factor, and max drawdown.
-    """
-    clean_sym = symbol.strip().upper().replace(".NS", "")
-    from data.providers.yahoo import YahooProvider
-
-    provider = YahooProvider(timeout=10.0)
-    ohlcv_map = await provider.get_batch_ohlcv([clean_sym], period="1y", interval="1d")
-    df = ohlcv_map.get(clean_sym)
-
-    if df is None or df.empty or len(df) < 120:
-        return {
-            "symbol": clean_sym,
-            "status": "INSUFFICIENT_DATA",
-            "message": "At least 120 daily bars required for walk-forward validation.",
-        }
-
-    from agents.ai_engine.backtest_validator import run_walk_forward_backtest
-
-    metrics = run_walk_forward_backtest(df, n_splits=4, embargo_bars=5, forward_bars=3)
-    metrics["symbol"] = clean_sym
-    return metrics

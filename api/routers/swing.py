@@ -668,7 +668,7 @@ async def intraday_latest():
     feed_is_realtime = bool(
         row.get("freshness_status") == "FRESH"
         and "Delayed" not in str(row.get("provider_freshness") or "")
-        and row.get("data_status") == "LIVE"
+        and row.get("data_status") in (None, "LIVE")
     )
     if not feed_is_realtime:
         session_dict["allows_new_entries"] = False
@@ -995,7 +995,7 @@ async def get_swing_for_symbol(symbol: str):
 
                 )
 
-            df = calculate_indicators(df_fetched)
+            df = await asyncio.to_thread(calculate_indicators, df_fetched)
 
             merged[raw] = df
 
@@ -1033,7 +1033,7 @@ async def get_swing_for_symbol(symbol: str):
 
             ):
 
-                df = calculate_indicators(df_refetch)
+                df = await asyncio.to_thread(calculate_indicators, df_refetch)
 
                 merged[raw] = df
 
