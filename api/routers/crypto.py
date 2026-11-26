@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from config import settings
 import api.service as svc
 from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
+from api.routers.market import get_market_mood_api
 
 logger = logging.getLogger(__name__)
 
@@ -2016,180 +2017,62 @@ async def get_crypto_prediction(timeframe: str = Query(default="1h")):
         return float((closes[-1] - lower) / band)
 
     def _sentiment_from_titles(items: list[dict]) -> tuple[float, int, int]:
-
-        titles = [
-
-            str(row.get("title") or "").strip() for row in items if row.get("title")
-
-        ]
-
-        if not titles:
-
+        if not items or not any(row.get("title") for row in items):
             return 0.0, 0, 0
 
-        try:
-
-            # We initialize and run FinBERT locally
-
-            import logging
-
-            from transformers import pipeline
-
-            # Use module level caching for the pipeline if possible
-
-            global _FINBERT_PIPELINE
-
-            if "_FINBERT_PIPELINE" not in globals():
-
-                global _FINBERT_PIPELINE
-
-                _FINBERT_PIPELINE = None
-
-            if _FINBERT_PIPELINE is None:
-
-                _FINBERT_PIPELINE = pipeline(
-
-                    "text-classification", model="ProsusAI/finbert"
-
-                )
-
-            results = _FINBERT_PIPELINE(titles)
-
-            score = 0.0
-
-            hits_pos = 0
-
-            hits_neg = 0
-
-            for res in results:
-
-                label = res["label"]
-
-                s = res["score"]
-
-                if label == "positive":
-
-                    hits_pos += 1
-
-                    score += s
-
-                elif label == "negative":
-
-                    hits_neg += 1
-
-                    score -= s
-
-            return score / max(len(results), 1), hits_pos, hits_neg
-
-        except Exception as e:
-
-            # Fallback to simple word counting if transformers fails
-
-            pos_words = {
-
-                "surge",
-
-                "rally",
-
-                "breakout",
-
-                "adoption",
-
-                "approval",
-
-                "launch",
-
-                "partnership",
-
-                "bull",
-
-                "bullish",
-
-                "upgrade",
-
-                "rebound",
-
-                "inflow",
-
-                "record",
-
-                "gain",
-
-                "recovery",
-
-                "accumulate",
-
-            }
-
-            neg_words = {
-
-                "crash",
-
-                "dump",
-
-                "selloff",
-
-                "hack",
-
-                "ban",
-
-                "lawsuit",
-
-                "liquidation",
-
-                "bear",
-
-                "bearish",
-
-                "outflow",
-
-                "downgrade",
-
-                "risk",
-
-                "warning",
-
-                "fraud",
-
-                "decline",
-
-                "drop",
-
-            }
-
-            score = 0.0
-
-            hits_pos = 0
-
-            hits_neg = 0
-
-            for row in items:
-
-                title = str(row.get("title") or "").lower()
-
-                if not title:
-
-                    continue
-
-                pw = sum(1 for w in pos_words if w in title)
-
-                nw = sum(1 for w in neg_words if w in title)
-
-                if pw > nw:
-
-                    hits_pos += 1
-
-                    score += 1.0
-
-                elif nw > pw:
-
-                    hits_neg += 1
-
-                    score -= 1.0
-
-            denom = max(len(items), 1)
-
-            return score / denom, hits_pos, hits_neg
+        pos_words = {
+            "surge",
+            "rally",
+            "breakout",
+            "adoption",
+            "approval",
+            "launch",
+            "partnership",
+            "bull",
+            "bullish",
+            "upgrade",
+            "rebound",
+            "inflow",
+            "record",
+            "gain",
+            "recovery",
+            "accumulate",
+        }
+        neg_words = {
+            "crash",
+            "dump",
+            "selloff",
+            "hack",
+            "ban",
+            "lawsuit",
+            "liquidation",
+            "bear",
+            "bearish",
+            "outflow",
+            "downgrade",
+            "risk",
+            "warning",
+            "fraud",
+            "decline",
+            "drop",
+        }
+        score = 0.0
+        hits_pos = 0
+        hits_neg = 0
+        for row in items:
+            title = str(row.get("title") or "").lower()
+            if not title:
+                continue
+            pw = sum(1 for w in pos_words if w in title)
+            nw = sum(1 for w in neg_words if w in title)
+            if pw > nw:
+                hits_pos += 1
+                score += 1.0
+            elif nw > pw:
+                hits_neg += 1
+                score -= 1.0
+        denom = max(len(items), 1)
+        return score / denom, hits_pos, hits_neg
 
     def _hero_signal(
 

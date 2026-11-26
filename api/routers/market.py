@@ -71,7 +71,7 @@ import numpy as np
 
 import pandas as pd
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.requests import Request as FastApiRequest
@@ -689,12 +689,25 @@ async def get_all_signals(response: Response):
                 try:
                     import db.intraday_store as ids
                     latest_scan = ids.load_latest_scan()
-                    if latest_scan and latest_scan.get("results"):
-                        for s in latest_scan["results"]:
+                    if isinstance(latest_scan, dict):
+                        scan_freshness = latest_scan.get("freshness_status")
+                        scan_ts = latest_scan.get("scan_time")
+                        scan_signals = (
+                            latest_scan.get("signals")
+                            or latest_scan.get("active_signals")
+                            or []
+                        )
+                        for s in scan_signals:
                             if isinstance(s, dict) and s.get("symbol"):
                                 k = s["symbol"].upper().replace(".NS", "")
                                 if k not in loaded:
-                                    loaded[k] = s
+                                    item = dict(s)
+                                    if scan_freshness:
+                                        item.setdefault("freshness_status", scan_freshness)
+                                        item.setdefault("data_status", scan_freshness)
+                                    if scan_ts:
+                                        item.setdefault("timestamp", scan_ts)
+                                    loaded[k] = item
                 except Exception:
                     pass
             return loaded
@@ -868,7 +881,7 @@ async def get_market_data(
     # Guard against route shadowing: /api/market/mood can be captured here
     # when dynamic routes are registered before static ones.
     if symbol.lower() == "mood":
-        return svc._compute_market_mood()
+        return await asyncio.to_thread(svc._compute_market_mood)
 
     raw_sym = symbol.strip()
     clean_sym = raw_sym.replace("-", "/")
@@ -886,7 +899,7 @@ async def get_market_data(
         cached_df = svc._market_data[clean_sym]
         if isinstance(cached_df, pd.DataFrame) and not cached_df.empty:
             df = cached_df.tail(limit)
-            return _build_market_response(clean_sym, df, interval)
+            return await asyncio.to_thread(_build_market_response, clean_sym, df, interval)
 
     # Asset class routing: Crypto, Forex, or NSE
     try:
@@ -904,9 +917,9 @@ async def get_market_data(
                     "message": f"No data for {clean_sym} on Forex feed.",
                     "hint": "Check symbol spelling or Twelve Data availability.",
                 })
-            df = calculate_indicators(df)
+            df = await asyncio.to_thread(calculate_indicators, df)
             df = df.tail(limit)
-            return _build_market_response(clean_sym, df, interval)
+            return await asyncio.to_thread(_build_market_response, clean_sym, df, interval)
 
         if is_crypto:
             from agents.data_ingestion.binance_fetcher import fetch_historical
@@ -920,9 +933,9 @@ async def get_market_data(
                     "message": f"No data for {clean_sym} on Binance/CCXT.",
                     "hint": "Check symbol format (e.g. DOGE/USDT or DOGE-USDT).",
                 })
-            df = calculate_indicators(df)
+            df = await asyncio.to_thread(calculate_indicators, df)
             df = df.tail(limit)
-            return _build_market_response(clean_sym, df, interval)
+            return await asyncio.to_thread(_build_market_response, clean_sym, df, interval)
 
         # Check negative symbol cache (30s TTL) to short-circuit repeated misses on unknown symbols
         _now_neg = time.time()
@@ -984,7 +997,7 @@ async def get_market_data(
                 "message": f"No data for {clean_sym} on NSE or Yahoo.",
                 "hint": f"Ticker may have been renamed. Try {clean_sym}.NS or the new symbol.",
             })
-        df = calculate_indicators(df)
+        df = await asyncio.to_thread(calculate_indicators, df)
     except HTTPException:
         raise
     except Exception as e:
@@ -998,7 +1011,7 @@ async def get_market_data(
         })
 
     df = df.tail(limit)
-    return _build_market_response(clean_sym, df, interval)
+    return await asyncio.to_thread(_build_market_response, clean_sym, df, interval)
 
 
 def _generate_technical_rationale(sig: dict, signal_val: str, sym: str) -> str:
@@ -1345,8 +1358,6 @@ async def run_backtest(
                         regime = detect_regime(s_df)
                         return generate_signals(s_df, regime=regime, symbol=clean_sym, offline=True)
                     df = await asyncio.to_thread(_compute_backtest_pipeline, slice_df)
-            except Exception as exc:
-                logger.error("Backtest on-demand fetch failed for %s (%sd): %s", clean_sym, days, exc)
             except Exception as exc:
                 logger.error("Backtest on-demand fetch failed for %s (%sd): %s", clean_sym, days, exc)
 
@@ -2211,78 +2222,334 @@ async def search_symbol_list(q: str = Query("", min_length=0, max_length=30)):
 
     return {"results": results[:50], "query": q}
 
+_SCREENER_INDEX_EXCLUDES = frozenset(
+    {"NIFTY 50", "BANKNIFTY", "SENSEX", "NIFTY BANK", "NIFTY IT", "INDIA VIX"}
+)
+
+
+def _screener_atr_bracket(
+    entry: float,
+    atr: float,
+    direction: str,
+    support: float = 0.0,
+    resistance: float = 0.0,
+) -> tuple[float, float]:
+    """Compute fallback stop-loss and target levels from ATR and S/R bounds."""
+    eff_atr = atr if atr > 0 else entry * 0.012
+    if direction == "LONG":
+        sl = round(entry - 1.5 * eff_atr, 2)
+        tp = round(
+            resistance if resistance > entry + 1.2 * eff_atr else entry + 2.3 * eff_atr,
+            2,
+        )
+    else:
+        sl = round(entry + 1.5 * eff_atr, 2)
+        tp = round(
+            support if 0 < support < entry - 1.2 * eff_atr else entry - 2.3 * eff_atr,
+            2,
+        )
+    return sl, tp
+
+
+def _collect_db_screener_candidates() -> list[dict]:
+    """Read and rank candidate setups from durable runtime_state snapshots (no network/pandas)."""
+    from db.runtime_state import get_runtime_state
+
+    ranked: list[dict] = []
+
+    try:
+        sig_snap = get_runtime_state("latest_signals:v1")
+        if isinstance(sig_snap, dict):
+            for s in sig_snap.get("signals") or []:
+                if not isinstance(s, dict):
+                    continue
+                sym = str(s.get("symbol") or "").upper().replace(".NS", "").strip()
+                if not sym or sym in _SCREENER_INDEX_EXCLUDES:
+                    continue
+                sig_raw = str(s.get("signal") or s.get("direction") or "HOLD").upper()
+                if sig_raw not in ("LONG", "SHORT", "BUY", "SELL"):
+                    continue
+                sig_dir = "LONG" if sig_raw in ("LONG", "BUY") else "SHORT"
+                entry_val = float(s.get("entry") or s.get("close") or s.get("price") or 0.0)
+                if entry_val <= 0:
+                    continue
+                conf_val = float(
+                    s.get("quality_score")
+                    or s.get("quant_score")
+                    or s.get("confluence_score")
+                    or s.get("confidence")
+                    or 65.0
+                )
+                sl_val = float(s.get("stop_loss") or 0.0)
+                tp_val = float(s.get("target") or 0.0)
+                if sl_val <= 0 or tp_val <= 0:
+                    sl_val, tp_val = _screener_atr_bracket(
+                        entry_val, float(s.get("atr") or 0.0), sig_dir
+                    )
+                rsi_raw = s.get("rsi")
+                rsi_val = round(float(rsi_raw), 1) if rsi_raw is not None else None
+                ranked.append({
+                    "symbol": sym,
+                    "direction": sig_dir,
+                    "signal": sig_dir,
+                    "strategy": s.get("strategy", "WORKER_CYCLE"),
+                    "confidence": round(conf_val, 1),
+                    "entry": round(entry_val, 2),
+                    "price": round(entry_val, 2),
+                    "close": round(entry_val, 2),
+                    "target": round(tp_val, 2),
+                    "stop_loss": round(sl_val, 2),
+                    "rsi": rsi_val,
+                    "rationale": s.get("rationale")
+                    or s.get("reason")
+                    or f"{s.get('strategy', 'Signal')} {sig_dir} in {s.get('regime', 'TREND')}",
+                    "source": "LATEST_SIGNALS",
+                    "_rank": (conf_val + 15.0, 2),
+                })
+    except Exception as exc:
+        logger.debug("Screener latest_signals:v1 fallback failed: %s", exc)
+
+    try:
+        mkt_snap = get_runtime_state("latest_market_snapshot")
+        prices = mkt_snap.get("prices") if isinstance(mkt_snap, dict) else None
+        if isinstance(prices, dict):
+            for raw_sym, p in prices.items():
+                if not isinstance(p, dict):
+                    continue
+                sym = str(raw_sym).upper().replace(".NS", "").strip()
+                if not sym or sym in _SCREENER_INDEX_EXCLUDES:
+                    continue
+                close_val = float(p.get("close") or 0.0)
+                if close_val <= 0:
+                    continue
+                high_val = float(p.get("high") or close_val)
+                low_val = float(p.get("low") or close_val)
+                atr_val = float(p.get("atr") or 0.0)
+                raw_rsi = p.get("rsi")
+                rsi_val = round(float(raw_rsi), 1) if raw_rsi is not None else None
+                regime = str(p.get("regime") or "").upper()
+                range_pct = ((high_val - low_val) / close_val) * 100.0 if high_val > low_val else 0.0
+                atr_pct = (atr_val / close_val) * 100.0 if atr_val > 0 else 0.0
+                range_atr_ratio = (
+                    (high_val - low_val) / atr_val
+                    if atr_val > 0 and high_val >= low_val
+                    else 0.0
+                )
+                ratio_val = round(
+                    range_atr_ratio if range_atr_ratio > 0 else (atr_pct if atr_pct > 0 else range_pct),
+                    2,
+                )
+
+                sig_raw = str(p.get("signal") or "").upper()
+                if sig_raw in ("LONG", "SHORT", "BUY", "SELL"):
+                    sig_dir = "LONG" if sig_raw in ("LONG", "BUY") else "SHORT"
+                    sig_label = sig_dir
+                    strategy = "WORKER_CYCLE"
+                    conf_val = 65.0
+                    rank_score = 75.0
+                    rationale = f"Market snapshot signal {sig_raw} in regime {regime or 'TREND'}"
+                elif rsi_val is not None and rsi_val <= 38.0:
+                    sig_dir = "LONG"
+                    sig_label = "OVERSOLD_BUY"
+                    strategy = "OVERSOLD_SNAP"
+                    conf_val = round(min(90.0, 62.0 + max(0.0, 38.0 - rsi_val) * 1.4), 1)
+                    rank_score = conf_val
+                    rationale = f"Oversold RSI {rsi_val:.1f} <= 38 ({regime or 'MEAN_REVERSION'})"
+                elif rsi_val is not None and rsi_val >= 65.0:
+                    sig_dir = "SHORT"
+                    sig_label = "OVERBOUGHT_SELL"
+                    strategy = "OVERBOUGHT_SNAP"
+                    conf_val = round(min(90.0, 62.0 + max(0.0, rsi_val - 65.0) * 1.4), 1)
+                    rank_score = conf_val
+                    rationale = f"Overbought RSI {rsi_val:.1f} >= 65 ({regime or 'EXTENDED'})"
+                elif (
+                    (regime == "TRENDING" and (atr_pct >= 1.0 or range_pct >= 1.0 or range_atr_ratio >= 0.8))
+                    or range_atr_ratio >= 1.2
+                    or atr_pct >= 1.8
+                    or range_pct >= 2.0
+                ):
+                    sig_dir = "LONG" if (rsi_val is None or rsi_val >= 50.0) else "SHORT"
+                    sig_label = "BREAKOUT" if (range_atr_ratio >= 1.2 or range_pct >= 2.0) else "TREND_MOVER"
+                    strategy = "ATR_RANGE_MOVER"
+                    strength = max(atr_pct * 5.0, range_pct * 4.5, range_atr_ratio * 8.0)
+                    conf_val = round(min(88.0, 56.0 + strength), 1)
+                    rank_score = conf_val
+                    rationale = (
+                        f"Trending high-ATR/range mover (ratio {ratio_val:.2f}, "
+                        f"RSI {rsi_val if rsi_val is not None else '-'})"
+                    )
+                else:
+                    continue
+
+                p_target = float(p.get("target") or 0.0)
+                p_sl = float(p.get("stop_loss") or 0.0)
+                if p_target > 0 and p_sl > 0:
+                    target_val = round(p_target, 2)
+                    sl_val = round(p_sl, 2)
+                else:
+                    sl_val, target_val = _screener_atr_bracket(
+                        close_val,
+                        atr_val,
+                        sig_dir,
+                        float(p.get("support") or 0.0),
+                        float(p.get("resistance") or 0.0),
+                    )
+
+                ranked.append({
+                    "symbol": sym,
+                    "direction": sig_dir,
+                    "signal": sig_label,
+                    "strategy": strategy,
+                    "confidence": conf_val,
+                    "entry": round(close_val, 2),
+                    "price": round(close_val, 2),
+                    "close": round(close_val, 2),
+                    "target": target_val,
+                    "stop_loss": sl_val,
+                    "rsi": rsi_val,
+                    "ratio": ratio_val,
+                    "rationale": rationale,
+                    "source": "MARKET_SNAPSHOT",
+                    "_rank": (rank_score, 1),
+                })
+    except Exception as exc:
+        logger.debug("Screener opportunities snapshot fallback failed: %s", exc)
+
+    try:
+        swing_snap = get_runtime_state("latest_swing_scan")
+        if isinstance(swing_snap, dict):
+            for s in swing_snap.get("setups") or []:
+                if not isinstance(s, dict):
+                    continue
+                sym = str(s.get("symbol") or "").upper().replace(".NS", "").strip()
+                if not sym or sym in _SCREENER_INDEX_EXCLUDES:
+                    continue
+                sig_raw = str(s.get("direction") or s.get("signal") or "LONG").upper()
+                sig_dir = "SHORT" if sig_raw in ("SHORT", "SELL") else "LONG"
+                entry_val = float(s.get("entry_zone") or s.get("entry") or s.get("close") or 0.0)
+                if entry_val <= 0:
+                    continue
+                conf_val = float(
+                    s.get("composite_score")
+                    or s.get("strength")
+                    or s.get("quality_score")
+                    or s.get("confidence")
+                    or 60.0
+                )
+                rsi_raw = s.get("rsi")
+                if rsi_raw is None and isinstance(s.get("indicators"), dict):
+                    rsi_raw = s["indicators"].get("RSI") or s["indicators"].get("rsi")
+                rsi_val = round(float(rsi_raw), 1) if rsi_raw is not None else None
+                ranked.append({
+                    "symbol": sym,
+                    "direction": sig_dir,
+                    "signal": sig_dir,
+                    "strategy": s.get("pattern", "SWING"),
+                    "confidence": round(conf_val, 1),
+                    "entry": round(entry_val, 2),
+                    "price": round(entry_val, 2),
+                    "close": round(entry_val, 2),
+                    "target": s.get("target_1") or s.get("target"),
+                    "stop_loss": s.get("stop_loss"),
+                    "rsi": rsi_val,
+                    "rationale": s.get("rationale")
+                    or s.get("description")
+                    or f"Swing setup: {s.get('pattern', 'SWING')}",
+                    "source": "SWING_SCAN",
+                    "_rank": (conf_val, 0),
+                })
+    except Exception as exc:
+        logger.debug("Screener latest_swing_scan fallback failed: %s", exc)
+
+    return ranked
+
+
 @router.get("/api/screener/opportunities")
 async def get_screener_opportunities():
     """Return top 5 stock opportunities found by the screener or durable store."""
     if opportunity_stocks:
-        return {"opportunities": opportunity_stocks}
+        top_live = list(opportunity_stocks[:5])
+        return {"opportunities": top_live, "status": "ok", "count": len(top_live)}
 
-    # Fallback to latest intraday scan or market snapshot
-    opps = []
+    opps: list[dict] = []
+    seen_syms: set[str] = set()
+
     try:
         latest_scan = await asyncio.to_thread(intraday_store.load_latest_scan)
-        if latest_scan and latest_scan.get("signals"):
-            for s in latest_scan["signals"][:5]:
-                opps.append({
-                    "symbol": s.get("symbol"),
-                    "direction": s.get("direction", "LONG"),
-                    "signal": s.get("direction", "LONG"),
-                    "strategy": s.get("strategy", "INTRADAY"),
-                    "confidence": float(s.get("confluence_score") or s.get("score") or 60.0),
-                    "entry": s.get("entry"),
-                    "price": float(s.get("entry") or 0.0),
-                    "target": s.get("target"),
-                    "stop_loss": s.get("stop_loss"),
-                    "rationale": s.get("rationale", ""),
-                    "source": "INTRADAY_STORE",
-                })
+        scan_signals = (
+            (latest_scan.get("signals") or latest_scan.get("active_signals") or [])
+            if isinstance(latest_scan, dict)
+            else []
+        )
+        intraday_candidates: list[dict] = []
+        for s in scan_signals:
+            if not isinstance(s, dict) or not s.get("symbol"):
+                continue
+            sig_raw = str(s.get("signal") or s.get("direction") or "HOLD").upper()
+            if sig_raw not in ("LONG", "SHORT", "BUY", "SELL"):
+                continue
+            sig_dir = "LONG" if sig_raw in ("LONG", "BUY") else "SHORT"
+            entry_val = float(s.get("entry") or s.get("close") or s.get("price") or 0.0)
+            if entry_val <= 0:
+                continue
+            conf_val = float(
+                s.get("confluence_score")
+                or s.get("quant_score")
+                or s.get("quality_score")
+                or s.get("score")
+                or s.get("confidence")
+                or 60.0
+            )
+            sym = str(s["symbol"]).upper().replace(".NS", "").strip()
+            rsi_raw = s.get("rsi")
+            intraday_candidates.append({
+                "symbol": sym,
+                "direction": sig_dir,
+                "signal": sig_dir,
+                "strategy": s.get("strategy", "INTRADAY"),
+                "confidence": round(conf_val, 1),
+                "entry": round(entry_val, 2),
+                "price": round(entry_val, 2),
+                "close": round(entry_val, 2),
+                "target": s.get("target"),
+                "stop_loss": s.get("stop_loss"),
+                "rsi": round(float(rsi_raw), 1) if rsi_raw is not None else None,
+                "rationale": s.get("rationale")
+                or s.get("reason")
+                or f"{s.get('strategy', 'INTRADAY')} {sig_dir} setup",
+                "source": "INTRADAY_STORE",
+            })
+        intraday_candidates.sort(key=lambda c: c["confidence"], reverse=True)
+        for cand in intraday_candidates:
+            if cand["symbol"] not in seen_syms:
+                seen_syms.add(cand["symbol"])
+                opps.append(cand)
+                if len(opps) >= 5:
+                    break
     except Exception as exc:
         logger.debug("Screener opportunities intraday fallback failed: %s", exc)
 
-    if not opps:
-        try:
-            from db.runtime_state import get_runtime_state
-            snap = await asyncio.to_thread(get_runtime_state, "latest_market_snapshot")
-            if snap and isinstance(snap, dict) and "prices" in snap:
-                for sym, p in list(snap["prices"].items())[:5]:
-                    sig = p.get("signal", "HOLD")
-                    if sig in ("LONG", "SHORT", "BUY", "SELL"):
-                        sig_direction = "LONG" if sig in ("LONG", "BUY") else "SHORT"
-                        entry_val = float(p.get("close") or 0.0)
-                        p_target = float(p.get("target") or 0.0)
-                        p_sl = float(p.get("stop_loss") or 0.0)
-                        if p_target > 0 and p_sl > 0:
-                            target_val = round(p_target, 2)
-                            sl_val = round(p_sl, 2)
-                        else:
-                            atr_val = float(p.get("atr") or (entry_val * 0.012))
-                            if sig_direction == "LONG":
-                                sl_val = round(entry_val - 1.5 * atr_val, 2)
-                                res = float(p.get("resistance") or 0.0)
-                                target_val = round(res if res > entry_val + 1.2 * atr_val else entry_val + 2.3 * atr_val, 2)
-                            else:
-                                sl_val = round(entry_val + 1.5 * atr_val, 2)
-                                sup = float(p.get("support") or 0.0)
-                                target_val = round(sup if 0 < sup < entry_val - 1.2 * atr_val else entry_val - 2.3 * atr_val, 2)
-                        opps.append({
-                            "symbol": sym,
-                            "direction": sig_direction,
-                            "signal": sig_direction,
-                            "strategy": "WORKER_CYCLE",
-                            "confidence": 65.0,
-                            "entry": entry_val,
-                            "price": entry_val,
-                            "target": target_val,
-                            "stop_loss": sl_val,
-                            "rationale": f"Market snapshot signal {sig} in regime {p.get('regime', 'TREND')}",
-                            "source": "MARKET_SNAPSHOT",
-                        })
-        except Exception as exc:
-            logger.debug("Screener opportunities snapshot fallback failed: %s", exc)
+    if len(opps) < 5:
+        db_candidates = await asyncio.to_thread(_collect_db_screener_candidates)
+        best_by_sym: dict[str, dict] = {}
+        for cand in db_candidates:
+            sym = cand["symbol"]
+            if sym in seen_syms:
+                continue
+            prev = best_by_sym.get(sym)
+            if prev is None or cand["_rank"] > prev["_rank"]:
+                best_by_sym[sym] = cand
+        sorted_db = sorted(best_by_sym.values(), key=lambda c: c["_rank"], reverse=True)
+        for cand in sorted_db:
+            cand.pop("_rank", None)
+            opps.append(cand)
+            seen_syms.add(cand["symbol"])
+            if len(opps) >= 5:
+                break
 
     if not opps:
-        return empty_scan_payload("screener_opportunities", "no_candidates")
-    return {"opportunities": opps, "status": "ok", "count": len(opps)}
+        return empty_scan_payload("screener_opportunities", "no_candidates", extra={"count": 0})
+    return {"opportunities": opps[:5], "status": "ok", "count": len(opps[:5])}
 
 @router.get("/api/search/latency")
 async def get_search_latency_stats():
@@ -2906,160 +3173,56 @@ async def get_nse_prediction():
     """Calculated Indian market prediction with NSE news + top BUY/SELL results."""
 
     def _sentiment_from_titles(items: list[dict]) -> tuple[float, int, int]:
-
-        titles = [
-
-            str(row.get("title") or "").strip() for row in items if row.get("title")
-
-        ]
-
-        if not titles:
-
+        if not items or not any(row.get("title") for row in items):
             return 0.0, 0, 0
 
-        try:
-
-            from transformers import pipeline
-
-            global _FINBERT_PIPELINE
-
-            if "_FINBERT_PIPELINE" not in globals():
-
-                global _FINBERT_PIPELINE
-
-                _FINBERT_PIPELINE = None
-
-            if _FINBERT_PIPELINE is None:
-
-                _FINBERT_PIPELINE = pipeline(
-
-                    "text-classification", model="ProsusAI/finbert"
-
-                )
-
-            results = _FINBERT_PIPELINE(titles)
-
-            score = 0.0
-
-            hits_pos = 0
-
-            hits_neg = 0
-
-            for res in results:
-
-                label = res["label"]
-
-                s = res["score"]
-
-                if label == "positive":
-
-                    hits_pos += 1
-
-                    score += s
-
-                elif label == "negative":
-
-                    hits_neg += 1
-
-                    score -= s
-
-            return score / max(len(results), 1), hits_pos, hits_neg
-
-        except Exception as e:
-
-            pos_words = {
-
-                "rally",
-
-                "surge",
-
-                "gain",
-
-                "bullish",
-
-                "breakout",
-
-                "upbeat",
-
-                "record high",
-
-                "strong",
-
-                "buy",
-
-                "upgrade",
-
-                "inflow",
-
-                "beats",
-
-                "jumps",
-
-            }
-
-            neg_words = {
-
-                "falls",
-
-                "drop",
-
-                "selloff",
-
-                "bearish",
-
-                "crash",
-
-                "downgrade",
-
-                "outflow",
-
-                "weak",
-
-                "misses",
-
-                "warning",
-
-                "decline",
-
-                "slides",
-
-                "slump",
-
-            }
-
-            score = 0.0
-
-            hits_pos = 0
-
-            hits_neg = 0
-
-            for row in items:
-
-                title = str(row.get("title") or "").lower()
-
-                if not title:
-
-                    continue
-
-                pw = sum(1 for w in pos_words if w in title)
-
-                nw = sum(1 for w in neg_words if w in title)
-
-                if pw > nw:
-
-                    hits_pos += 1
-
-                    score += 1.0
-
-                elif nw > pw:
-
-                    hits_neg += 1
-
-                    score -= 1.0
-
-            denom = max(len(items), 1)
-
-            return score / denom, hits_pos, hits_neg
+        pos_words = {
+            "rally",
+            "surge",
+            "gain",
+            "bullish",
+            "breakout",
+            "upbeat",
+            "record high",
+            "strong",
+            "buy",
+            "upgrade",
+            "inflow",
+            "beats",
+            "jumps",
+        }
+        neg_words = {
+            "falls",
+            "drop",
+            "selloff",
+            "bearish",
+            "crash",
+            "downgrade",
+            "outflow",
+            "weak",
+            "misses",
+            "warning",
+            "decline",
+            "slides",
+            "slump",
+        }
+        score = 0.0
+        hits_pos = 0
+        hits_neg = 0
+        for row in items:
+            title = str(row.get("title") or "").lower()
+            if not title:
+                continue
+            pw = sum(1 for w in pos_words if w in title)
+            nw = sum(1 for w in neg_words if w in title)
+            if pw > nw:
+                hits_pos += 1
+                score += 1.0
+            elif nw > pw:
+                hits_neg += 1
+                score -= 1.0
+        denom = max(len(items), 1)
+        return score / denom, hits_pos, hits_neg
 
     def _pct_change(df: pd.DataFrame) -> float:
 
@@ -3948,7 +4111,7 @@ async def get_fno_symbol_analytics(symbol: str, spot: float = 0.0, atr: float = 
     if resolved_spot <= 0:
         try:
             from db.runtime_state import get_runtime_state
-            snap = get_runtime_state("latest_market_snapshot")
+            snap = await asyncio.to_thread(get_runtime_state, "latest_market_snapshot")
             if snap and isinstance(snap, dict) and "prices" in snap and sym in snap["prices"]:
                 resolved_spot = float(snap["prices"][sym].get("close", 0.0))
                 resolved_atr = float(snap["prices"][sym].get("atr", 0.0))
@@ -3967,7 +4130,7 @@ async def get_fno_overview():
     spots_map: Dict[str, Tuple[float, float]] = {}
     try:
         from db.runtime_state import get_runtime_state
-        snap = get_runtime_state("latest_market_snapshot")
+        snap = await asyncio.to_thread(get_runtime_state, "latest_market_snapshot")
         if snap and isinstance(snap, dict) and "prices" in snap:
             for s, p_data in snap["prices"].items():
                 if isinstance(p_data, dict):

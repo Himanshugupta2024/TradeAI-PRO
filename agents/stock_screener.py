@@ -428,12 +428,12 @@ def scan_opportunities():
 
     if new_opportunities:
         # Sort by most interesting: breakout + vol spike -> deep oversold -> deep overbought
-        opportunity_stocks = sorted(
-            new_opportunities, 
+        opportunity_stocks[:] = sorted(
+            new_opportunities,
             key=lambda x: (
-                0 if x['breakout'] and x['vol_spike'] else 
+                0 if x['breakout'] and x['vol_spike'] else
                 1 if x['rsi'] and x['rsi'] < 30 else
-                2 if x['rsi'] and x['rsi'] > 75 else 
+                2 if x['rsi'] and x['rsi'] > 75 else
                 3
             )
         )[:5]
