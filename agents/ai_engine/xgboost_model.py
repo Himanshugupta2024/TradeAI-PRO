@@ -335,6 +335,41 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     return feat[FEATURE_COLS_XGB]
 
 
+def prepare_training_data(
+    df: pd.DataFrame,
+    forward_bars: int = 12,
+    min_return_pct: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Build forward-return feature matrix X and binary labels y for XGBoost training.
+
+    Guards short frames and zero/non-finite close prices before filtering bars
+    whose forward return exceeds +/-min_return_pct.
+    """
+    if df is None or forward_bars <= 0 or len(df) <= forward_bars or "close" not in df.columns:
+        return np.empty((0, len(FEATURE_COLS_XGB)), dtype=np.float64), np.empty(0, dtype=int)
+
+    close = df["close"].values.astype(float)
+    n = len(close)
+    base = close[: n - forward_bars]
+    future = close[forward_bars:]
+    safe_base = np.where(base == 0.0, np.nan, base)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        fwd_ret = (future - base) / safe_base * 100.0
+
+    valid = np.isfinite(fwd_ret)
+    up_mask = valid & (fwd_ret > min_return_pct)
+    down_mask = valid & (fwd_ret < -min_return_pct)
+    keep_mask = up_mask | down_mask
+    if not keep_mask.any():
+        return np.empty((0, len(FEATURE_COLS_XGB)), dtype=np.float64), np.empty(0, dtype=int)
+
+    df_filtered = df.iloc[: n - forward_bars][keep_mask].copy()
+    y = up_mask[keep_mask].astype(int)
+    X = extract_features(df_filtered).values.astype(np.float64)
+    return X, y
+
+
 # ── Optuna Hyperparameter Tuning ───────────────────────────────────────────────
 
 def _tune_xgboost(X: np.ndarray, y: np.ndarray, n_trials: int = 30) -> dict:
@@ -485,19 +520,10 @@ class XGBoostPredictor:
         if not MODEL_AVAILABLE:
             return {"error": "No ML library available (install xgboost or scikit-learn)"}
 
-        # ── Generate outcome labels ────────────────────────────────────────
+        # ── Generate outcome labels & extract features ─────────────────────
         # Fast path: forward-return labels when 'signal' column is absent
         if "signal" not in df.columns:
-            forward_bars = 12
-            min_ret = 0.5
-            close = df["close"].values.astype(float)
-            n = len(close)
-            fwd_ret = (close[forward_bars:] - close[:n - forward_bars]) / close[:n - forward_bars] * 100
-            up_mask   = fwd_ret >  min_ret
-            down_mask = fwd_ret < -min_ret
-            keep_mask = up_mask | down_mask
-            df_filtered = df.iloc[:n - forward_bars][keep_mask].copy()
-            y = up_mask[keep_mask].astype(int)
+            X, y = prepare_training_data(df)
         else:
             from agents.feature_engine.label_generator import label_1r2r_outcome
             labels = label_1r2r_outcome(df, round_trip_cost_pct=round_trip_cost_pct)
@@ -508,16 +534,13 @@ class XGBoostPredictor:
                 mask = labels != 0
                 df_filtered = df[mask].copy()
                 y = (labels[mask] == 1).astype(int).values  # 1=WIN, 0=LOSS
+            X = extract_features(df_filtered).values.astype(np.float64)
 
-        if len(df_filtered) < 50:
-            return {"error": f"Insufficient labeled samples: {len(df_filtered)} (need >=50)"}
+        if len(X) < 50:
+            return {"error": f"Insufficient labeled samples: {len(X)} (need >=50)"}
 
         log.info("Training XGBoost: %d samples (WIN=%d, LOSS=%d)",
-                 len(df_filtered), y.sum(), (y == 0).sum())
-
-        # ── Extract features ───────────────────────────────────────────────
-        features = extract_features(df_filtered)
-        X = features.values.astype(np.float64)
+                 len(X), y.sum(), (y == 0).sum())
 
         # Replace inf/-inf with NaN, then fill NaN with column medians
         X = np.where(np.isinf(X), np.nan, X)
@@ -606,13 +629,13 @@ class XGBoostPredictor:
 
         log.info(
             "XGBoost trained: accuracy=%.1f%%, AUC=%.4f, samples=%d, features=%d",
-            val_accuracy, val_auc, len(df_filtered), len(FEATURE_COLS_XGB),
+            val_accuracy, val_auc, len(X), len(FEATURE_COLS_XGB),
         )
 
         return {
             "val_accuracy":       round(val_accuracy, 2),
             "val_auc":            round(val_auc, 4),
-            "n_samples":          len(df_filtered),
+            "n_samples":          len(X),
             "n_features":         len(FEATURE_COLS_XGB),
             "n_train":            len(X_train),
             "n_val":              len(X_val),

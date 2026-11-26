@@ -114,9 +114,10 @@ def test_prune_old_probes():
     assert pruned >= 0
 
 
-def test_health_endpoints_schema_contract():
+def test_health_endpoints_schema_contract(monkeypatch):
     """Test /api/health/live and /api/telemetry routes via TestClient."""
     from fastapi import FastAPI
+    monkeypatch.setenv("CRON_SECRET", "test-cron-secret")
     app = FastAPI()
     app.include_router(router)
     client = TestClient(app)
@@ -138,7 +139,11 @@ def test_health_endpoints_schema_contract():
         "latency_ms": 88.5,
         "details": {"source": "test_client"},
     }
-    probe_res = client.post("/api/telemetry/probe", json=probe_payload)
+    probe_res = client.post(
+        "/api/telemetry/probe",
+        json=probe_payload,
+        headers={"X-Cron-Secret": "test-cron-secret"},
+    )
     assert probe_res.status_code == 200
     probe_data = probe_res.json()
     assert probe_data["recorded"] is True

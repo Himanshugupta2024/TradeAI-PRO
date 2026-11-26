@@ -1933,7 +1933,7 @@
         const status = await apiCall('/api/market-control/status');
         const nextState = !Boolean(status.crypto_forex_enabled);
         const res = await apiCall('/api/market-control/toggle', 'POST', { enabled: nextState, password: adminKey });
-        logMessage(`Section 6A Focus Mode is now: ${res.crypto_forex_enabled ? 'UNLOCKED' : 'LOCKED (NSE Focus)'}`, 'ok');
+        logMessage(`Section 6A Focus Mode is now: ${res.state?.crypto_forex_enabled ? 'UNLOCKED' : 'LOCKED (NSE Focus)'}`, 'ok');
         fetchAllTelemetry();
       } catch (e) {
         logMessage(`Section 6A toggle failed: ${e.message}`, 'err');

@@ -454,3 +454,55 @@ def test_validate_runtime_config_on_render_and_service_roles(monkeypatch):
     monkeypatch.setenv("SERVICE_ROLE", "feed_service")
     monkeypatch.setattr(settings, "DATABASE_URL", "")
     settings.validate_runtime_config()
+
+
+# ── 8. XGBoost Model: prepare_training_data Contract & Short/Zero Guards ─────
+
+
+def test_xgboost_prepare_training_data_contract():
+    from agents.ai_engine.xgboost_model import FEATURE_COLS_XGB, prepare_training_data
+
+    n = 60
+    idx = pd.date_range("2026-01-01", periods=n, freq="1h")
+    # Oscillating close ensures both positive and negative 5-bar returns > 0.5%
+    close = 100.0 + 4.0 * np.sin(np.linspace(0, 6 * np.pi, n))
+    df = pd.DataFrame(
+        {
+            "open": close - 0.5,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "volume": np.linspace(1000.0, 2000.0, n),
+            "RSI_14": np.linspace(30.0, 70.0, n),
+            "MACD": np.linspace(-1.0, 1.0, n),
+            "MACD_signal": np.zeros(n),
+            "MACD_hist": np.linspace(-0.5, 0.5, n),
+            "ADX_14": np.full(n, 25.0),
+            "ATR_14": np.full(n, 1.5),
+            "EMA_20": close * 0.99,
+            "EMA_50": close * 0.98,
+            "EMA_200": close * 0.95,
+        },
+        index=idx,
+    )
+
+    X, y = prepare_training_data(df, forward_bars=5, min_return_pct=0.5)
+    assert X.ndim == 2
+    assert X.shape[1] == len(FEATURE_COLS_XGB)
+    assert X.shape[0] == len(y) > 0
+    assert X.dtype == np.float64
+    assert set(np.unique(y)) == {0, 1}
+    assert np.isfinite(X).all()
+
+    # Short DataFrame guard (len(df) <= forward_bars)
+    X_short, y_short = prepare_training_data(df.iloc[:5], forward_bars=5, min_return_pct=0.5)
+    assert X_short.shape == (0, len(FEATURE_COLS_XGB))
+    assert X_short.dtype == np.float64
+    assert len(y_short) == 0
+
+    # Zero close prices must not crash or yield non-finite labels
+    df_zero = df.copy()
+    df_zero["close"] = 0.0
+    X_zero, y_zero = prepare_training_data(df_zero, forward_bars=5, min_return_pct=0.5)
+    assert X_zero.shape == (0, len(FEATURE_COLS_XGB))
+    assert len(y_zero) == 0

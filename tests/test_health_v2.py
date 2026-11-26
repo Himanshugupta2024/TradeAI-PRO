@@ -354,6 +354,7 @@ def test_probe_supplies_bar_time_when_snapshot_lacks_it(monkeypatch):
 
 def test_probe_write_is_throttled(monkeypatch):
     import api.routes as routes
+    import api.routers.market as market_mod
     from api.routes import _build_market_response
     import pandas as pd
 
@@ -362,7 +363,8 @@ def test_probe_write_is_throttled(monkeypatch):
         writes.append((key, val))
 
     monkeypatch.setattr("db.runtime_state.set_runtime_state", mock_set_runtime_state)
-    routes._LAST_BAR_PROBE_WRITE = 0.0
+    monkeypatch.setattr(routes, "_LAST_BAR_PROBE_WRITE", 0.0, raising=False)
+    monkeypatch.setattr(market_mod, "_LAST_BAR_PROBE_WRITE", 0.0)
 
     df = pd.DataFrame([{"timestamp": pd.to_datetime("2026-11-06T15:25:00+05:30"), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000}])
 
