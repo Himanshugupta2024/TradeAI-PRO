@@ -678,7 +678,7 @@ async def get_all_signals(response: Response):
                 snap_raw = get_runtime_state("latest_signals_snapshot")
                 sigs_v1 = snap_v1.get("signals", []) if isinstance(snap_v1, dict) else []
                 sigs_raw = snap_raw.get("signals", []) if isinstance(snap_raw, dict) else []
-                for s in sigs_raw + sigs_v1:
+                for s in sigs_v1 + sigs_raw:
                     if isinstance(s, dict) and s.get("symbol"):
                         k = s["symbol"].upper().replace(".NS", "")
                         if k not in loaded:

@@ -66,11 +66,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("autonomous_cycle")
 
-# Default Tier-1 liquid universes
+# Default Tier-1 liquid universes (aligned with NSE_SYMBOLS top 30 equities for broad sector rotation)
 TIER1_NSE = [
     "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
-    "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT",
-    "AXISBANK", "TATAMOTORS", "MARUTI", "SUNPHARMA", "TITAN",
+    "SBIN", "BHARTIARTL", "KOTAKBANK", "LT", "ITC",
+    "AXISBANK", "HINDUNILVR", "BAJFINANCE", "MARUTI", "TITAN",
+    "WIPRO", "TATAMOTORS", "SUNPHARMA", "ULTRACEMCO", "ADANIENT",
+    "ADANIPORTS", "TATASTEEL", "JSWSTEEL", "HINDALCO", "COALINDIA",
+    "NTPC", "POWERGRID", "ONGC", "TECHM", "HCLTECH",
 ]
 TIER1_CRYPTO = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 
@@ -122,13 +125,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-symbols",
         type=int,
-        default=20,
+        default=35,
         help="Maximum number of symbols to evaluate per cycle.",
     )
     return parser.parse_args()
 
 
-def resolve_universe(universe_arg: str, max_symbols: int = 20) -> list[str]:
+def resolve_universe(universe_arg: str, max_symbols: int = 35) -> list[str]:
     from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_schedule_active
     import agents.execution.session_guard as sg
     crypto_enabled = is_crypto_forex_enabled()
@@ -233,7 +236,7 @@ async def run_single_autonomous_cycle(
     run_id: Optional[str] = None,
     force_scan: bool = False,
     dry_run: bool = False,
-    max_symbols: int = 20,
+    max_symbols: int = 35,
     settlement_sweep: bool = False,
     premarket_prep: bool = False,
 ) -> dict[str, Any]:

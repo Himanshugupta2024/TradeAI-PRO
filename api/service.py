@@ -1816,7 +1816,7 @@ async def _refresh_lightweight_state_inner() -> None:
         from api.feed_client import fetch_feed_snapshot, is_feed_configured
 
         if is_feed_configured() and TOP_NSE_SYMBOLS:
-            snap = await fetch_feed_snapshot(TOP_NSE_SYMBOLS[:16])
+            snap = await fetch_feed_snapshot(TOP_NSE_SYMBOLS)
             if isinstance(snap, dict) and isinstance(snap.get("quotes"), dict) and snap["quotes"]:
                 now_utc = datetime.now(timezone.utc)
                 _last_feed_update = datetime.now()

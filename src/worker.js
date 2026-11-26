@@ -1068,6 +1068,19 @@ export function shouldWarmEdgeCache(env, now = new Date()) {
   return { warm: true, reason: "pre_open_window" };
 }
 
+/** Sidecar keep-warm policy: when SIDECAR_MARKET_HOURS_ONLY=true, only wake Box B/C during 08:30-16:30 IST Mon-Fri. */
+export function shouldPingSidecars(env, now = new Date()) {
+  const gated = env && String(env.SIDECAR_MARKET_HOURS_ONLY || "").toLowerCase() === "true";
+  if (!gated) return { ping: true, reason: "always_warm" };
+
+  const { weekday, minutesOfDay } = istClock(now);
+  if (weekday === 0 || weekday === 6) return { ping: false, reason: "weekend" };
+  if (minutesOfDay < 8 * 60 + 30 || minutesOfDay >= 16 * 60 + 30) {
+    return { ping: false, reason: "outside_market_window" };
+  }
+  return { ping: true, reason: "market_window" };
+}
+
 export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = new Date()) {
   // Keep-warm ping. Probe the cheap liveness route, not /api/health: the rich
   // health endpoint walks the DB, model registry and feed state, so a 2-minute
@@ -1109,8 +1122,10 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = ne
       );
     }
 
-    // Keep-warm ping for Box B (ML Sidecar) if configured in worker environment
-    if (env && env.ML_BACKEND_ORIGIN) {
+    const sidecarDecision = shouldPingSidecars(env, now);
+
+    // Keep-warm ping for Box B (ML Sidecar) if configured and within active sidecar window
+    if (env && env.ML_BACKEND_ORIGIN && sidecarDecision.ping) {
       try {
         await fetchFn(`${env.ML_BACKEND_ORIGIN.replace(/\/+$/, "")}/health/live`, {
           method: "GET",
@@ -1124,8 +1139,8 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = ne
       }
     }
 
-    // Keep-warm ping for Box C (Market Data Feed) if configured in worker environment
-    if (env && env.FEED_BACKEND_ORIGIN) {
+    // Keep-warm ping for Box C (Market Data Feed) if configured and within active sidecar window
+    if (env && env.FEED_BACKEND_ORIGIN && sidecarDecision.ping) {
       try {
         await fetchFn(`${env.FEED_BACKEND_ORIGIN.replace(/\/+$/, "")}/health/live`, {
           method: "GET",

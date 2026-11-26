@@ -69,86 +69,83 @@ router = APIRouter(tags=["swing", "intraday", "scanners"])
 
 async def get_swing_shortlist():
 
-    """Returns the pre-computed morning shortlist of A/B grade setups."""
+    """Returns the pre-computed swing shortlist, preferring live DB scans over static JSON."""
 
     import json
-
     import os
 
-    shortlist_path = os.path.abspath(
-
-        os.path.join(
-
-            os.path.dirname(__file__), "..", "..", "data", "swing_shortlist_latest.json"
-
-        )
-
-    )
-
-    if os.path.exists(shortlist_path):
-
-        try:
-
-            with open(shortlist_path, "r", encoding="utf-8") as f:
-
-                raw = json.load(f)
-
-            # JSON stores setups under 'shortlist' key; UI expects 'setups'
-
-            setups = raw.get("shortlist") or raw.get("raw_setups") or []
-
-            return {
-
-                "setups": setups,
-
-                "scan_date": raw.get("scan_date"),
-
-                "generated_at": raw.get("scan_timestamp"),
-
-                "symbols_scanned": raw.get("symbols_scanned", 0),
-
-                "setups_found": raw.get("setups_found", len(setups)),
-
-                "grade_summary": raw.get("grade_summary", {}),
-
-                "message": f"{len(setups)} setups from scan on {raw.get('scan_date', 'unknown')}",
-
-            }
-
-        except Exception as e:
-
-            logger.error("Failed to load swing shortlist: %s", e)
-
-            return {"setups": [], "error": str(e)}
-
+    db_payload = None
+    db_scan_date = ""
     try:
         from db import swing_store
         latest = await asyncio.to_thread(swing_store.load_latest_scan)
         if latest is not None and "setups" in latest:
             setups = latest.get("setups") or []
+            db_scan_date = str(latest.get("scan_date") or "")
+            grade_summary = latest.get("grade_summary") or {
+                "A": int(latest.get("grade_a_count", 0)),
+                "B": int(latest.get("grade_b_count", 0)),
+                "C": int(latest.get("grade_c_count", 0)),
+            }
             msg = (
-                f"{len(setups)} setups loaded from central database ({latest.get('scan_date', 'unknown')})"
+                f"{len(setups)} setups loaded from central database ({db_scan_date or 'unknown'})"
                 if setups
-                else f"Database scan ({latest.get('scan_date', 'today')}): 0 setups passed strict R:R/regime filters."
+                else f"Database scan ({db_scan_date or 'today'}): 0 setups passed strict R:R/regime filters."
             )
-            return {
+            db_payload = {
                 "setups": setups,
-                "scan_date": latest.get("scan_date"),
+                "scan_date": db_scan_date or None,
                 "generated_at": latest.get("scan_time") or latest.get("created_at"),
                 "symbols_scanned": latest.get("symbols_scanned", 0),
                 "setups_found": len(setups),
-                "grade_summary": latest.get("grade_summary", {}),
+                "grade_summary": grade_summary,
+                "source": "database",
                 "message": msg,
             }
     except Exception as db_exc:
         logger.debug("Database swing scan lookup skipped: %s", db_exc)
 
+    shortlist_path = os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__), "..", "..", "data", "swing_shortlist_latest.json"
+        )
+    )
+
+    json_payload = None
+    json_scan_date = ""
+    if os.path.exists(shortlist_path):
+        try:
+            with open(shortlist_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            setups = raw.get("shortlist") or raw.get("raw_setups") or []
+            json_scan_date = str(raw.get("scan_date") or "")
+            json_payload = {
+                "setups": setups,
+                "scan_date": json_scan_date or None,
+                "generated_at": raw.get("scan_timestamp"),
+                "symbols_scanned": raw.get("symbols_scanned", 0),
+                "setups_found": raw.get("setups_found", len(setups)),
+                "grade_summary": raw.get("grade_summary", {}),
+                "source": "local_json",
+                "message": f"{len(setups)} setups from scan on {json_scan_date or 'unknown'}",
+            }
+        except Exception as e:
+            logger.error("Failed to load swing shortlist: %s", e)
+            if db_payload is None:
+                return {"setups": [], "error": str(e)}
+
+    # Prefer DB scan whenever present, unless local JSON is strictly newer by scan_date
+    if db_payload is not None:
+        if json_payload is not None and json_scan_date > db_scan_date:
+            return json_payload
+        return db_payload
+
+    if json_payload is not None:
+        return json_payload
+
     return {
-
         "setups": [],
-
         "message": "Shortlist not generated yet. Run: python scripts/nightly_swing_scan.py",
-
     }
 
 @router.get("/api/swing/history/{symbol}")

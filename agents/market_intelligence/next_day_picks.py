@@ -44,12 +44,15 @@ STATE_KEY_LATEST = "next_day_picks:latest"
 STATE_KEY_INDEX = "next_day_picks:index"
 STATE_KEY_ARCHIVE_PREFIX = "next_day_picks:archive:"
 
-# Benchmark liquid universe for Next-Day equity research (Top liquid NSE large-caps)
+# Benchmark liquid universe for Next-Day equity research (32 diversified NSE large/mid-caps)
 TIER1_RESEARCH_UNIVERSE = [
     "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK",
     "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT",
     "AXISBANK", "TATAMOTORS", "MARUTI", "SUNPHARMA", "TITAN",
-    "BAJFINANCE", "ASIANPAINT", "M&M", "HCLTECH", "NTPC"
+    "BAJFINANCE", "ASIANPAINT", "M&M", "HCLTECH", "NTPC",
+    "HAL", "BEL", "TATASTEEL", "JSWSTEEL", "TRENT",
+    "DIXON", "CIPLA", "DRREDDY", "ADANIPORTS", "POWERGRID",
+    "COALINDIA", "INDIGO",
 ]
 
 COMPANY_NAME_MAP = {
@@ -72,7 +75,19 @@ COMPANY_NAME_MAP = {
     "ASIANPAINT": "Asian Paints Ltd.",
     "M&M": "Mahindra & Mahindra Ltd.",
     "HCLTECH": "HCL Technologies Ltd.",
-    "NTPC": "NTPC Ltd."
+    "NTPC": "NTPC Ltd.",
+    "HAL": "Hindustan Aeronautics Ltd.",
+    "BEL": "Bharat Electronics Ltd.",
+    "TATASTEEL": "Tata Steel Ltd.",
+    "JSWSTEEL": "JSW Steel Ltd.",
+    "TRENT": "Trent Ltd.",
+    "DIXON": "Dixon Technologies (India) Ltd.",
+    "CIPLA": "Cipla Ltd.",
+    "DRREDDY": "Dr. Reddy's Laboratories Ltd.",
+    "ADANIPORTS": "Adani Ports & SEZ Ltd.",
+    "POWERGRID": "Power Grid Corp. of India Ltd.",
+    "COALINDIA": "Coal India Ltd.",
+    "INDIGO": "InterGlobe Aviation Ltd.",
 }
 
 SECTOR_MAP = {
@@ -95,7 +110,19 @@ SECTOR_MAP = {
     "ASIANPAINT": "Paints & Consumer Discretionary",
     "M&M": "Automobile & Farm Equipment",
     "HCLTECH": "Information Technology",
-    "NTPC": "Power & Energy Utilities"
+    "NTPC": "Power & Energy Utilities",
+    "HAL": "Aerospace & Defence",
+    "BEL": "Aerospace & Defence",
+    "TATASTEEL": "Metals & Mining",
+    "JSWSTEEL": "Metals & Mining",
+    "TRENT": "Consumer Durables / Retail",
+    "DIXON": "Electronics Manufacturing",
+    "CIPLA": "Pharmaceuticals & Healthcare",
+    "DRREDDY": "Pharmaceuticals & Healthcare",
+    "ADANIPORTS": "Infrastructure & Logistics",
+    "POWERGRID": "Power & Energy Utilities",
+    "COALINDIA": "Metals & Mining",
+    "INDIGO": "Aviation & Travel",
 }
 
 

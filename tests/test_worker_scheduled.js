@@ -14,6 +14,7 @@ import worker, {
   hasCrossedNseSessionBoundary,
   warmEdgeCache,
   shouldWarmEdgeCache,
+  shouldPingSidecars,
   EDGE_WARM_PATHS,
 } from '../src/worker.js';
 
@@ -713,6 +714,47 @@ async function runTests() {
     assert.strictEqual(feedHealthCalls.length, 1, 'Feed service /health/live must be pinged exactly once');
     assert.strictEqual(feedHealthCalls[0].options.headers['User-Agent'], 'TradeAI-Cloudflare-Cron-KeepAlive/1.0');
     console.log('✓ Test 18 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 19: SIDECAR_MARKET_HOURS_ONLY gates Box B & C pings to 08:30-16:30 IST Mon-Fri
+    // ------------------------------------------------------------------------
+    console.log('Test 19: SIDECAR_MARKET_HOURS_ONLY saves Render hours outside NSE hours...');
+    assert.deepStrictEqual(
+      shouldPingSidecars({ SIDECAR_MARKET_HOURS_ONLY: 'true' }, at(3, 0)), // 08:30 IST Thu
+      { ping: true, reason: 'market_window' }
+    );
+    assert.deepStrictEqual(
+      shouldPingSidecars({ SIDECAR_MARKET_HOURS_ONLY: 'true' }, at(10, 59)), // 16:29 IST Thu
+      { ping: true, reason: 'market_window' }
+    );
+    assert.deepStrictEqual(
+      shouldPingSidecars({ SIDECAR_MARKET_HOURS_ONLY: 'true' }, at(12, 0)), // 17:30 IST Thu
+      { ping: false, reason: 'outside_market_window' }
+    );
+    assert.deepStrictEqual(
+      shouldPingSidecars({ SIDECAR_MARKET_HOURS_ONLY: 'true' }, at(4, 0, 7)), // Saturday 09:30 IST
+      { ping: false, reason: 'weekend' }
+    );
+
+    const offHourUrls = [];
+    await handleScheduled(
+      { cron: '*/10 * * * *' },
+      {
+        SIDECAR_MARKET_HOURS_ONLY: 'true',
+        ML_BACKEND_ORIGIN: 'https://trading-ml-8umr.onrender.com',
+        FEED_BACKEND_ORIGIN: 'https://trading-feed.onrender.com',
+      },
+      {},
+      async (url) => {
+        offHourUrls.push(String(url));
+        return { ok: true, status: 200 };
+      },
+      at(12, 0) // 17:30 IST (off-hours)
+    );
+    assert.ok(offHourUrls.some((u) => u.includes('trading-api-n1wt.onrender.com/api/health/live')));
+    assert.strictEqual(offHourUrls.some((u) => u.includes('trading-ml-8umr.onrender.com')), false);
+    assert.strictEqual(offHourUrls.some((u) => u.includes('trading-feed.onrender.com')), false);
+    console.log('✓ Test 19 passed.');
 
   } finally {
     // Restore global fetch and caches
