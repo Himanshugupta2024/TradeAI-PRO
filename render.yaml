@@ -19,6 +19,8 @@ services:
     # produces a restart loop (server_failed -> server_available every few minutes).
     healthCheckPath: /api/health/live
     envVars:
+      - key: ENVIRONMENT
+        value: production
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: PYTHONWARNINGS
@@ -76,7 +78,7 @@ services:
       - key: SELF_PING_ENABLED
         value: "false"
       - key: NSE_SYMBOL_LIMIT
-        value: 34
+        value: 40
       - key: MAX_NSE_CONCURRENCY
         value: 1
       - key: ENABLE_PYTORCH_MODELS
@@ -89,12 +91,12 @@ services:
       - key: ML_SIDECAR_URL
         value: "https://trading-ml-8umr.onrender.com"
       - key: ML_INTERNAL_TOKEN
-        value: "tradeai-secret-ml-2026"
+        sync: false
       # Market Data Feed Service (Box C) connection
       - key: FEED_SERVICE_URL
         value: "https://trading-feed.onrender.com"
       - key: FEED_INTERNAL_TOKEN
-        value: "tradeai-secret-feed-2026"
+        sync: false
 
   # ── Box B: Dedicated ML Inference Sidecar (Render Free ~420MB) ──
   - type: web
@@ -106,6 +108,8 @@ services:
     startCommand: uvicorn ml_server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health/live
     envVars:
+      - key: ENVIRONMENT
+        value: production
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: SERVICE_ROLE
@@ -127,7 +131,7 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: ML_INTERNAL_TOKEN
-        value: "tradeai-secret-ml-2026"
+        sync: false
 
   # ── Box C: Dedicated Market Data Feed Service (Shoonya WebSocket ~150MB) ──
   - type: web
@@ -139,6 +143,8 @@ services:
     startCommand: uvicorn feed_server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health/live
     envVars:
+      - key: ENVIRONMENT
+        value: production
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: SERVICE_ROLE
@@ -146,7 +152,7 @@ services:
       - key: MALLOC_ARENA_MAX
         value: "2"
       - key: FEED_INTERNAL_TOKEN
-        value: "tradeai-secret-feed-2026"
+        sync: false
       - key: SHOONYA_USERID
         sync: false
       - key: SHOONYA_PASSWORD

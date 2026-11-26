@@ -181,7 +181,7 @@ class AutonomousExecutionDaemon:
         Check whether the price feed timestamp is excessively stale for live autonomous execution.
         """
         if not timestamp_val:
-            return False, "NO_TIMESTAMP"
+            return True, "STALE_UNKNOWN (missing timestamp)"
         try:
             ts_str = str(timestamp_val).strip()
             if ts_str.isdigit():
@@ -191,7 +191,7 @@ class AutonomousExecutionDaemon:
             if bar_dt.tzinfo is None:
                 bar_dt = bar_dt.replace(tzinfo=_IST if "/" not in symbol else timezone.utc)
         except Exception:
-            return False, "UNPARSEABLE_TIMESTAMP"
+            return True, "STALE_UNKNOWN (unparseable timestamp)"
 
         now_utc = datetime.now(timezone.utc)
         bar_utc = bar_dt.astimezone(timezone.utc)
@@ -346,7 +346,7 @@ class AutonomousExecutionDaemon:
             eff_min_qs, eff_min_conf = self._get_regime_thresholds(cand_regime)
 
             # Threshold validation
-            if qs_score > 0 and qs_score < eff_min_qs:
+            if qs_score < eff_min_qs:
                 self._record_gate_block(symbol, norm_dir, entry, sl, tp, "GATE_LOW_QS_SCORE", cand_regime)
                 continue
             if ai_conf < eff_min_conf:

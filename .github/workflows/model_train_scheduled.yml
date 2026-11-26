@@ -49,21 +49,23 @@ jobs:
       - name: Train Models & Publish Bundle
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          INPUT_ASSET_TYPE: ${{ github.event.inputs.asset_type }}
+          INPUT_SYMBOLS: ${{ github.event.inputs.symbols }}
+          INPUT_QUICK: ${{ github.event.inputs.quick }}
         run: |
-          ASSET_TYPE="${{ github.event.inputs.asset_type || 'nse' }}"
-          SYMBOLS_ARG=""
-          if [ -n "${{ github.event.inputs.symbols }}" ]; then
-            SYMBOLS_ARG="--symbols ${{ github.event.inputs.symbols }}"
+          ASSET_TYPE="${INPUT_ASSET_TYPE:-nse}"
+          ARGS=(--asset-type "$ASSET_TYPE")
+          if [ -n "$INPUT_SYMBOLS" ]; then
+            ARGS+=(--symbols "$INPUT_SYMBOLS")
           fi
-          QUICK_FLAG="--quick"
-          if [ "${{ github.event.inputs.quick }}" = "false" ]; then
-            QUICK_FLAG="--optuna --trials 15"
+          if [ "$INPUT_QUICK" = "false" ]; then
+            ARGS+=(--optuna --trials 15)
+          else
+            ARGS+=(--quick)
           fi
 
           echo "🚀 Launching model training pipeline..."
           python scripts/train_and_publish.py \
-            --asset-type "$ASSET_TYPE" \
-            $SYMBOLS_ARG \
-            $QUICK_FLAG \
+            "${ARGS[@]}" \
             --publish \
             --source github_actions

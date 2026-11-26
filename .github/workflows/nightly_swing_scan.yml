@@ -48,10 +48,11 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          INPUT_IGNORE_HOLIDAY: ${{ github.event.inputs.ignore_holiday }}
+          INPUT_UNIVERSE: ${{ github.event.inputs.universe }}
         run: |
-          EXTRA_ARGS=""
-          if [ "${{ github.event.inputs.ignore_holiday }}" = "true" ]; then
-            EXTRA_ARGS="--ignore-holiday"
+          ARGS=(--telegram --universe "${INPUT_UNIVERSE:-nifty500}")
+          if [ "$INPUT_IGNORE_HOLIDAY" = "true" ]; then
+            ARGS+=(--ignore-holiday)
           fi
-          UNIVERSE="${{ github.event.inputs.universe || 'nifty500' }}"
-          python scripts/nightly_swing_scan.py --telegram --universe "$UNIVERSE" $EXTRA_ARGS
+          python scripts/nightly_swing_scan.py "${ARGS[@]}"

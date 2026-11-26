@@ -110,18 +110,71 @@ def _risk_wrapped_signal(
         logger.debug("intraday %s rejected: ATR %% too low (%.4f)", symbol, atr / entry)
         return None
 
-    stop_loss, target_2 = calculate_sl_tp(
-        entry=float(entry), atr=atr, direction=direction, target_atr_multiplier=3.0
+    entry_f = float(entry)
+    stop_loss, _ = calculate_sl_tp(
+        entry=entry_f, atr=atr, direction=direction
     )
-    _, target_1 = calculate_sl_tp(
-        entry=float(entry), atr=atr, direction=direction, target_atr_multiplier=1.5
-    )
-
-    if stop_loss <= 0 or target_2 <= 0:
+    risk = abs(entry_f - float(stop_loss))
+    if stop_loss <= 0 or risk <= 0:
         return None
 
-    rr = calculate_risk_reward(entry=float(entry), stop_loss=float(stop_loss), target=float(target_2))
     min_rr = float(getattr(settings, "INTRADAY_MIN_RISK_REWARD", 1.5) or 1.5)
+
+    # Volatility & RSI-modulated baseline R:R (avoids constant 2.000 target formula)
+    close_series = pd.to_numeric(df["close"], errors="coerce").dropna() if "close" in df.columns else pd.Series(dtype=float)
+    rsi_val = compute_rsi(close_series, 14) if len(close_series) >= 16 else None
+    if rsi_val is None:
+        rsi_val = 50.0
+    is_long = str(direction or "LONG").upper() == "LONG"
+    rsi_signed = (rsi_val - 50.0) if is_long else (50.0 - rsi_val)
+    rsi_factor = max(-0.4, min(0.8, rsi_signed / 25.0))
+    atr_pct = atr / max(entry_f, 1e-9)
+    vol_factor = max(-0.15, min(0.35, (atr_pct - 0.004) * 25.0))
+    modulated_rr = max(min_rr + 0.05, min(3.2, 1.85 + 0.45 * rsi_factor + vol_factor))
+
+    # Structural swing-high/low, CPR & VWAP band barriers beyond minimum R:R
+    structural_candidates: list[float] = []
+    min_dist = min_rr * risk
+    max_dist = 3.8 * risk
+
+    if "high" in df.columns and "low" in df.columns and len(df) >= 3:
+        if is_long:
+            recent_swing_high = float(pd.to_numeric(df["high"], errors="coerce").max())
+            if pd.notna(recent_swing_high):
+                structural_candidates.append(recent_swing_high)
+        else:
+            recent_swing_low = float(pd.to_numeric(df["low"], errors="coerce").min())
+            if pd.notna(recent_swing_low) and recent_swing_low > 0:
+                structural_candidates.append(recent_swing_low)
+
+    if prev_day_df is not None and not prev_day_df.empty:
+        cpr = compute_cpr_levels(prev_day_df)
+        if cpr:
+            if is_long:
+                structural_candidates.extend([cpr["r1"], cpr["r2"], cpr["prev_high"], cpr["tc"]])
+            else:
+                structural_candidates.extend([cpr["s1"], cpr["s2"], cpr["prev_low"], cpr["bc"]])
+
+    vwap_bands = compute_session_vwap_bands(df)
+    if vwap_bands:
+        if is_long:
+            structural_candidates.extend([vwap_bands["upper_1"], vwap_bands["upper_2"]])
+        else:
+            structural_candidates.extend([vwap_bands["lower_1"], vwap_bands["lower_2"]])
+
+    if is_long:
+        qualified = [lvl for lvl in structural_candidates if (entry_f + min_dist) <= lvl <= (entry_f + max_dist)]
+        target_2 = round(min(qualified), 4) if qualified else round(entry_f + modulated_rr * risk, 4)
+        target_1 = round(entry_f + 0.5 * (target_2 - entry_f), 4)
+    else:
+        qualified = [lvl for lvl in structural_candidates if 0 < (entry_f - max_dist) <= lvl <= (entry_f - min_dist)]
+        target_2 = round(max(qualified), 4) if qualified else round(entry_f - modulated_rr * risk, 4)
+        target_1 = round(entry_f - 0.5 * (entry_f - target_2), 4)
+
+    if stop_loss <= 0 or target_2 <= 0 or target_1 <= 0:
+        return None
+
+    rr = calculate_risk_reward(entry=entry_f, stop_loss=float(stop_loss), target=float(target_2))
     if rr < min_rr:
         return None
 

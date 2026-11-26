@@ -9,7 +9,7 @@ on:
       target_url:
         description: 'Endpoint URL to ping'
         required: true
-        default: 'https://trading-api-n1wt.onrender.com/api/health'
+        default: 'https://trading-api-n1wt.onrender.com/api/health/live'
 
 concurrency:
   group: backend-keep-alive
@@ -23,8 +23,10 @@ jobs:
 
     steps:
       - name: Ping Backend Health Endpoint
+        env:
+          INPUT_TARGET_URL: ${{ github.event.inputs.target_url }}
         run: |
-          TARGET="${{ github.event.inputs.target_url || 'https://trading-api-n1wt.onrender.com/api/health' }}"
+          TARGET="${INPUT_TARGET_URL:-https://trading-api-n1wt.onrender.com/api/health/live}"
           echo "Pinging target: $TARGET"
           
           # 90s max-time to gracefully accommodate Render cold-boot if asleep

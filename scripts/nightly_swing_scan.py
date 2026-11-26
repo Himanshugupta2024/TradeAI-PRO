@@ -26,6 +26,7 @@ import time
 from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # ── Project root sys.path fix ────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +35,7 @@ sys.path.insert(0, str(ROOT))
 from agents.data_ingestion.context_fetcher import ContextFetcher
 from agents.feature_engine.indicators import calculate_indicators
 from agents.market_intelligence.nse_fetcher import NSE_SYMBOLS, fetch_arbitrary_symbol
+from agents.market_intelligence.nse_holidays import is_holiday
 from agents.market_intelligence.swing_scanner import scan_swing_setups
 from db import swing_store
 from db.swing_outcome_tracker import run_outcome_evaluation_once
@@ -57,21 +59,20 @@ RATE_LIMIT_SLEEP = 1.2      # yFinance throttle se bachne ke liye (seconds)
 # Index symbols skip karein — yeh scanner ke liye relevant nahi
 SKIP_SYMBOLS = {"NIFTY 50", "BANKNIFTY", "SENSEX", "NIFTY IT"}
 
-# NSE Gazetted Trading Holidays 2026
-NSE_HOLIDAYS_2026 = {
-    "2026-01-26", "2026-02-17", "2026-03-03", "2026-03-20", "2026-04-03",
-    "2026-04-14", "2026-04-26", "2026-05-01", "2026-05-27", "2026-06-25",
-    "2026-08-15", "2026-08-25", "2026-10-02", "2026-10-20", "2026-11-08",
-    "2026-11-24", "2026-12-25"
-}
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def _today_ist() -> date:
+    return datetime.now(_IST).date()
+
 
 def is_nse_trading_day(target_date: date | None = None) -> bool:
-    """Check if given date is an active NSE trading day (not weekend or gazetted holiday)."""
+    """Check if given IST date is an active NSE trading day (not weekend or gazetted holiday)."""
     if target_date is None:
-        target_date = date.today()
+        target_date = _today_ist()
     if target_date.weekday() >= 5:  # Saturday or Sunday
         return False
-    if target_date.isoformat() in NSE_HOLIDAYS_2026:
+    if is_holiday(target_date):
         return False
     return True
 
@@ -186,7 +187,7 @@ def _print_shortlist(results: list[dict], top_n: int = 15) -> None:
 
     shown = results[:top_n]
     print(f"\n{'='*65}")
-    print(f"  [SWING] SwingSpectrum Morning Shortlist -- {date.today().isoformat()}")
+    print(f"  [SWING] SwingSpectrum Morning Shortlist -- {_today_ist().isoformat()}")
     print(f"  Top {len(shown)} setups out of {len(results)} qualifying symbols")
     print(f"{'='*65}")
 
@@ -379,8 +380,9 @@ def run_scan(
 
     # ── Save to JSON ─────────────────────────────────────────────────────────
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    today_str = date.today().isoformat()
-    run_ts = datetime.now().isoformat()
+    now_ist = datetime.now(_IST)
+    today_str = now_ist.date().isoformat()
+    run_ts = now_ist.isoformat()
 
     payload = {
         "scan_date": today_str,
@@ -560,7 +562,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if not args.ignore_holiday and not is_nse_trading_day():
-        logger.info("Today (%s) is an NSE weekend or gazetted holiday. Skipping scan to conserve runner compute.", date.today().isoformat())
+        logger.info("Today (%s) is an NSE weekend or gazetted holiday. Skipping scan to conserve runner compute.", _today_ist().isoformat())
         sys.exit(0)
 
     if args.quiet:

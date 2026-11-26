@@ -11,7 +11,10 @@ import urllib.request
 from datetime import datetime, timedelta
 import pandas as pd
 
-token = os.environ.get("ML_INTERNAL_TOKEN", "tradeai-secret-ml-2026")
+token = os.environ.get("ML_INTERNAL_TOKEN", "").strip()
+if not token:
+    print("ERROR: ML_INTERNAL_TOKEN environment variable is required.", file=sys.stderr)
+    sys.exit(1)
 base_url = os.environ.get("BOX_B_URL", "https://trading-ml-8umr.onrender.com").rstrip("/")
 
 print(f"=== Verifying Box B: {base_url} ===")

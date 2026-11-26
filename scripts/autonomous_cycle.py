@@ -33,6 +33,8 @@ _IST = ZoneInfo("Asia/Kolkata")
 from pathlib import Path
 from typing import Any, Optional
 
+import pandas as pd
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
@@ -57,6 +59,7 @@ from agents.market_intelligence.nse_fetcher import fetch_ohlcv
 from agents.data_ingestion.binance_fetcher import fetch_historical
 from agents.feature_engine.indicators import calculate_indicators
 from agents.feature_engine.regime_detector import detect_regime
+from agents.feature_engine.trend import classify_trend, propagate_trend_to_ltf
 from agents.signal_engine.signal_generator import generate_signals
 
 logging.basicConfig(
@@ -265,11 +268,11 @@ async def run_single_autonomous_cycle(
         logger.error("[AutonomousWorker] Database initialization failed: %s", exc)
 
     # 2. Acquire Distributed Lock
-    lock_mgr = DistributedLockManager(default_duration_sec=480, heartbeat_timeout_sec=180)
+    lock_mgr = DistributedLockManager(default_duration_sec=660, heartbeat_timeout_sec=180)
     lock_acquired = lock_mgr.acquire(
         job_name="autonomous_paper_worker",
         run_id=run_id,
-        duration_sec=480,
+        duration_sec=660,
         meta={"source": "autonomous_cycle.py", "start_time": now_iso},
     )
 
@@ -399,24 +402,100 @@ async def run_single_autonomous_cycle(
         all_scanned_signals: list[dict[str, Any]] = []
         max_bar_dt: datetime | None = None
 
-        # 5. Data Ingestion, Freshness Verification & Feature Computation
-        for sym in active_symbols:
-            try:
-                # Maintain lock heartbeat
-                lock_mgr.heartbeat("autonomous_paper_worker", run_id)
+        # 5. Data Ingestion, Freshness Verification & Feature Computation (bounded concurrency)
+        sem = asyncio.Semaphore(4)
+        last_hb_ts = time.monotonic()
 
-                is_crypto = "/" in sym
-                if is_crypto:
-                    df = await asyncio.to_thread(fetch_historical, sym, "5m", 3)
-                else:
-                    df = await asyncio.to_thread(fetch_ohlcv, sym, "5d", "5m")
+        def _compute_symbol_signals(
+            sym: str,
+            raw_df: pd.DataFrame,
+            htf_df: Optional[pd.DataFrame],
+        ) -> tuple[pd.DataFrame, Any, pd.DataFrame]:
+            enriched = calculate_indicators(raw_df)
+            if (
+                htf_df is not None
+                and not htf_df.empty
+                and len(htf_df) >= 20
+                and "timestamp" in enriched.columns
+                and "timestamp" in htf_df.columns
+            ):
+                htf_enriched = calculate_indicators(htf_df)
+                htf_classified = classify_trend(htf_enriched)
+                enriched = propagate_trend_to_ltf(enriched, htf_classified)
+            else:
+                enriched = classify_trend(enriched)
+            regime = detect_regime(enriched)
+            sig_df = generate_signals(enriched, symbol=sym, regime=regime)
+            return enriched, regime, sig_df
 
-                if df is None or df.empty or len(df) < 15:
-                    logger.debug("[Fetch] Insufficient data for %s", sym)
-                    continue
+        async def _scan_symbol(sym: str) -> dict[str, Any]:
+            nonlocal last_hb_ts
+            async with sem:
+                try:
+                    is_crypto = "/" in sym
+                    if is_crypto:
+                        df = await asyncio.to_thread(fetch_historical, sym, "5m", 3)
+                    else:
+                        df = await asyncio.to_thread(fetch_ohlcv, sym, "5d", "5m")
 
-                # Freshness Check
-                freshness, age_sec = evaluate_data_freshness(df, sym)
+                    if df is None or df.empty or len(df) < 15:
+                        logger.debug("[Fetch] Insufficient data for %s", sym)
+                        return {"symbol": sym, "status": "insufficient"}
+
+                    freshness, age_sec = await asyncio.to_thread(evaluate_data_freshness, df, sym)
+                    if freshness in ("STALE", "IMPOSSIBLE_SESSION_TIME") or (freshness == "EOD" and not is_crypto):
+                        return {
+                            "symbol": sym,
+                            "status": "freshness_skip",
+                            "freshness": freshness,
+                            "age_sec": age_sec,
+                        }
+
+                    htf_df = None
+                    try:
+                        if is_crypto:
+                            htf_df = await asyncio.to_thread(fetch_historical, sym, "1h", 30)
+                        else:
+                            htf_df = await asyncio.to_thread(fetch_ohlcv, sym, "60d", "1d")
+                    except Exception:
+                        htf_df = None
+
+                    df, regime, sig_df = await asyncio.to_thread(_compute_symbol_signals, sym, df, htf_df)
+
+                    now_mono = time.monotonic()
+                    if now_mono - last_hb_ts >= 30.0:
+                        last_hb_ts = now_mono
+                        await asyncio.to_thread(
+                            lock_mgr.heartbeat, "autonomous_paper_worker", run_id, 660
+                        )
+
+                    return {
+                        "symbol": sym,
+                        "status": "ok",
+                        "is_crypto": is_crypto,
+                        "df": df,
+                        "freshness": freshness,
+                        "age_sec": age_sec,
+                        "regime": regime,
+                        "sig_df": sig_df,
+                    }
+                except Exception as sym_err:
+                    return {"symbol": sym, "status": "error", "error": str(sym_err)}
+
+        scan_results = await asyncio.gather(*(_scan_symbol(sym) for sym in active_symbols))
+
+        for res in scan_results:
+            sym = res["symbol"]
+            status = res.get("status")
+            if status == "insufficient":
+                continue
+            if status == "error":
+                logger.debug("[Scan] Error scanning %s: %s", sym, res["error"])
+                summary["errors"].append({"symbol": sym, "error": res["error"]})
+                continue
+            if status == "freshness_skip":
+                freshness = res["freshness"]
+                age_sec = res["age_sec"]
                 if freshness == "STALE":
                     logger.warning("[Freshness] Symbol %s data is STALE (age: %.1fm). Skipping entry.", sym, age_sec / 60.0)
                     record_autonomous_decision_to_db(
@@ -429,7 +508,6 @@ async def run_single_autonomous_cycle(
                         reason=f"Market data age is {age_sec/60.0:.1f}m, exceeding 60m threshold",
                     )
                     summary["decisions_recorded"] += 1
-                    continue
                 elif freshness == "IMPOSSIBLE_SESSION_TIME":
                     logger.warning("[Freshness] Symbol %s has IMPOSSIBLE_SESSION_TIME. Skipping entry.", sym)
                     record_autonomous_decision_to_db(
@@ -442,172 +520,216 @@ async def run_single_autonomous_cycle(
                         reason="Candle timestamp is outside valid NSE market trading session (09:15-15:30 IST)",
                     )
                     summary["decisions_recorded"] += 1
-                    continue
-                elif freshness == "EOD" and not is_crypto:
+                else:
                     logger.debug("[Freshness] Symbol %s returned prior EOD bar during intraday. Skipping entry.", sym)
-                    continue
+                continue
 
-                summary["symbols_scanned"] += 1
+            df = res["df"]
+            freshness = res["freshness"]
+            age_sec = res["age_sec"]
+            regime = res["regime"]
+            sig_df = res["sig_df"]
 
+            summary["symbols_scanned"] += 1
+
+            try:
+                c_ts = df["timestamp"].iloc[-1] if "timestamp" in df.columns and len(df["timestamp"]) > 0 else df.index[-1]
+                c_bar_dt = None
+                if isinstance(c_ts, str):
+                    c_bar_dt = datetime.fromisoformat(c_ts.replace("Z", "+00:00"))
+                elif hasattr(c_ts, "to_pydatetime"):
+                    c_bar_dt = c_ts.to_pydatetime()
+                elif isinstance(c_ts, datetime):
+                    c_bar_dt = c_ts
+                if c_bar_dt is not None:
+                    if c_bar_dt.tzinfo is None:
+                        c_bar_dt = c_bar_dt.replace(tzinfo=_IST)
+                    if max_bar_dt is None or c_bar_dt > max_bar_dt:
+                        max_bar_dt = c_bar_dt
+            except Exception:
+                pass
+
+            regimes[sym] = regime.value
+            last = df.iloc[-1]
+            close_price = float(last["close"])
+            atr_val = float(last.get("ATR_14", 0.0))
+            rsi_val = float(last.get("RSI_14", 50.0))
+
+            market_prices[sym] = {
+                "close": round(close_price, 2),
+                "high": round(float(last["high"]), 2),
+                "low": round(float(last["low"]), 2),
+                "atr": round(atr_val, 2),
+                "rsi": round(rsi_val, 1),
+                "regime": regime.value,
+                "data_status": freshness,
+                "freshness_sec": int(age_sec),
+            }
+            atr_lookup[sym] = atr_val
+            symbol_dfs[sym] = df
+
+            if sig_df is not None and not sig_df.empty:
+                sig_last = sig_df.iloc[-1]
+                sig_action = str(sig_last.get("signal", "HOLD")).upper()
+                c_time = last.get("timestamp", now_iso)
                 try:
-                    c_ts = df["timestamp"].iloc[-1] if "timestamp" in df.columns and len(df["timestamp"]) > 0 else df.index[-1]
-                    c_bar_dt = None
-                    if isinstance(c_ts, str):
-                        c_bar_dt = datetime.fromisoformat(c_ts.replace("Z", "+00:00"))
-                    elif hasattr(c_ts, "to_pydatetime"):
-                        c_bar_dt = c_ts.to_pydatetime()
-                    elif isinstance(c_ts, datetime):
-                        c_bar_dt = c_ts
-                    if c_bar_dt is not None:
-                        if c_bar_dt.tzinfo is None:
-                            c_bar_dt = c_bar_dt.replace(tzinfo=_IST)
-                        if max_bar_dt is None or c_bar_dt > max_bar_dt:
-                            max_bar_dt = c_bar_dt
-                except Exception:
-                    pass
+                    ev_days = int(sig_last.get("days_to_next_event", 99) or 99)
+                except (TypeError, ValueError):
+                    ev_days = 99
+                if ev_days == 99 and "/" not in sym:
+                    try:
+                        from agents.data_ingestion.corporate_events import get_symbol_days_to_next_event
+                        ev_days = get_symbol_days_to_next_event(sym)
+                    except Exception:
+                        ev_days = 99
 
-                # Feature indicators & quantitative regime
-                df = calculate_indicators(df)
-                regime = detect_regime(df)
-                regimes[sym] = regime.value
+                ctx_warn = sig_last.get("context_warning")
+                if sig_action in ("LONG", "SHORT", "BUY", "SELL"):
+                    norm_dir = "LONG" if sig_action in ("LONG", "BUY") else "SHORT"
+                    quant_score = float(sig_last.get("quant_score", sig_last.get("confidence", 65.0)))
+                    ai_conf = float(sig_last.get("confidence", 65.0))
+                    entry_pr = float(sig_last.get("close", close_price))
+                    sl_pr = float(sig_last.get("stop_loss", 0.0))
+                    tp_pr = float(sig_last.get("target", 0.0))
+                    strategy_name = str(sig_last.get("signal_type", "AUTONOMOUS_V1"))
 
-                last = df.iloc[-1]
-                close_price = float(last["close"])
-                atr_val = float(last.get("ATR_14", 0.0))
-                rsi_val = float(last.get("RSI_14", 50.0))
+                    risk = abs(entry_pr - sl_pr)
+                    reward = abs(tp_pr - entry_pr)
+                    rr = reward / risk if risk > 0 else 0.0
 
-                market_prices[sym] = {
-                    "close": round(close_price, 2),
-                    "high": round(float(last["high"]), 2),
-                    "low": round(float(last["low"]), 2),
-                    "atr": round(atr_val, 2),
-                    "rsi": round(rsi_val, 1),
-                    "regime": regime.value,
-                    "data_status": freshness,
-                    "freshness_sec": int(age_sec),
-                }
-                atr_lookup[sym] = atr_val
-                symbol_dfs[sym] = df
-
-                # Signal Generation
-                sig_df = generate_signals(df, symbol=sym)
-                if sig_df is not None and not sig_df.empty:
-                    sig_last = sig_df.iloc[-1]
-                    sig_action = str(sig_last.get("signal", "HOLD")).upper()
-                    if sig_action in ("LONG", "SHORT", "BUY", "SELL"):
-                        norm_dir = "LONG" if sig_action in ("LONG", "BUY") else "SHORT"
-                        quant_score = float(sig_last.get("quant_score", sig_last.get("confidence", 65.0)))
-                        ai_conf = float(sig_last.get("confidence", 65.0))
-                        entry_pr = float(sig_last.get("close", close_price))
-                        sl_pr = float(sig_last.get("stop_loss", 0.0))
-                        tp_pr = float(sig_last.get("target", 0.0))
-                        strategy_name = str(sig_last.get("signal_type", "AUTONOMOUS_V1"))
-
-                        # Compute Risk-Reward
-                        risk = abs(entry_pr - sl_pr)
-                        reward = abs(tp_pr - entry_pr)
-                        rr = reward / risk if risk > 0 else 0.0
-
-                        # Candle time & context/event enrichment
-                        c_time = last.get("timestamp", now_iso)
+                    if not ctx_warn:
                         try:
-                            ev_days = int(sig_last.get("days_to_next_event", 99) or 99)
-                        except (TypeError, ValueError):
-                            ev_days = 99
-                        if ev_days == 99 and "/" not in sym:
-                            try:
-                                from agents.data_ingestion.corporate_events import get_symbol_days_to_next_event
-                                ev_days = get_symbol_days_to_next_event(sym)
-                            except Exception:
-                                ev_days = 99
-                        ctx_warn = sig_last.get("context_warning")
-                        if not ctx_warn:
-                            try:
-                                from api.service import _get_news_spike_warning
-                                ctx_warn = _get_news_spike_warning(sym, cache_only=True)
-                            except Exception:
-                                ctx_warn = None
+                            from api.service import _get_news_spike_warning
+                            ctx_warn = _get_news_spike_warning(sym, cache_only=True)
+                        except Exception:
+                            ctx_warn = None
 
-                        sig_dict = {
-                            "symbol": sym,
-                            "signal": norm_dir,
-                            "direction": norm_dir,
-                            "signal_status": "ACTIVE",
-                            "actionable": True,
-                            "quant_score": quant_score,
-                            "quality_score": quant_score,
-                            "confidence": ai_conf,
-                            "entry": entry_pr,
-                            "close": close_price,
-                            "stop_loss": sl_pr,
-                            "target": tp_pr,
-                            "risk_reward": rr,
-                            "atr": atr_val,
-                            "rsi": rsi_val,
-                            "regime": regime.value,
-                            "trend": str(sig_last.get("htf_trend", "NEUTRAL")),
-                            "strategy": strategy_name,
-                            "candle_time": c_time,
-                            "timestamp": c_time,
-                            "data_status": freshness,
-                            "days_to_next_event": ev_days,
-                            "event_risk_active": bool(sig_last.get("event_risk_active", False)),
-                            "context_score": float(sig_last.get("context_score", 0.0) or 0.0),
-                            "context_warning": ctx_warn,
-                            "news_sentiment_24hr": float(sig_last.get("news_sentiment_24hr", 0.0) or 0.0),
-                            "news_sentiment_7d": float(sig_last.get("news_sentiment_7d", 0.0) or 0.0),
-                            # Calibrated probability provenance, when the signal
-                            # pipeline actually carries one. Never derived from
-                            # the 0-100 `confidence` heuristic.
-                            "p_calibrated": sig_last.get("p_calibrated"),
-                            "p_source": sig_last.get("p_source"),
-                            "calibration_active": sig_last.get("calibration_active"),
-                        }
-                        candidate_signals.append(sig_dict)
-                        all_scanned_signals.append(sig_dict)
-                        summary["signals_generated"] += 1
+                    sig_dict = {
+                        "symbol": sym,
+                        "signal": norm_dir,
+                        "direction": norm_dir,
+                        "signal_status": "ACTIVE",
+                        "actionable": True,
+                        "quant_score": quant_score,
+                        "quality_score": quant_score,
+                        "confidence": ai_conf,
+                        "entry": entry_pr,
+                        "close": close_price,
+                        "stop_loss": sl_pr,
+                        "target": tp_pr,
+                        "risk_reward": rr,
+                        "atr": atr_val,
+                        "rsi": rsi_val,
+                        "regime": regime.value,
+                        "trend": str(sig_last.get("htf_trend", "NEUTRAL")),
+                        "strategy": strategy_name,
+                        "candle_time": c_time,
+                        "timestamp": c_time,
+                        "data_status": freshness,
+                        "days_to_next_event": ev_days,
+                        "event_risk_active": bool(sig_last.get("event_risk_active", False)),
+                        "context_score": float(sig_last.get("context_score", 0.0) or 0.0),
+                        "context_warning": ctx_warn,
+                        "news_sentiment_24hr": float(sig_last.get("news_sentiment_24hr", 0.0) or 0.0),
+                        "news_sentiment_7d": float(sig_last.get("news_sentiment_7d", 0.0) or 0.0),
+                        # Calibrated probability provenance, when the signal
+                        # pipeline actually carries one. Never derived from
+                        # the 0-100 `confidence` heuristic.
+                        "p_calibrated": sig_last.get("p_calibrated"),
+                        "p_source": sig_last.get("p_source"),
+                        "calibration_active": sig_last.get("calibration_active"),
+                    }
+                    candidate_signals.append(sig_dict)
+                    all_scanned_signals.append(sig_dict)
+                    summary["signals_generated"] += 1
+                elif sig_action == "SKIP":
+                    raw_dir = str(sig_last.get("_raw_direction") or sig_last.get("direction") or "HOLD").upper()
+                    if raw_dir in ("BUY", "SELL"):
+                        raw_dir = "LONG" if raw_dir == "BUY" else "SHORT"
+                    elif raw_dir not in ("LONG", "SHORT"):
+                        raw_dir = "HOLD"
+
+                    raw_sl = sig_last.get("stop_loss")
+                    raw_tp = sig_last.get("target")
+                    sl_pr = float(raw_sl) if raw_sl is not None and pd.notna(raw_sl) else None
+                    tp_pr = float(raw_tp) if raw_tp is not None and pd.notna(raw_tp) else None
+                    entry_pr = float(sig_last.get("close", close_price))
+                    if sl_pr is not None and tp_pr is not None and abs(entry_pr - sl_pr) > 0:
+                        rr = abs(tp_pr - entry_pr) / abs(entry_pr - sl_pr)
                     else:
-                        c_time = last.get("timestamp", now_iso)
-                        try:
-                            ev_days = int(sig_last.get("days_to_next_event", 99) or 99)
-                        except (TypeError, ValueError):
-                            ev_days = 99
-                        if ev_days == 99 and "/" not in sym:
-                            try:
-                                from agents.data_ingestion.corporate_events import get_symbol_days_to_next_event
-                                ev_days = get_symbol_days_to_next_event(sym)
-                            except Exception:
-                                ev_days = 99
-                        all_scanned_signals.append({
-                            "symbol": sym,
-                            "signal": "HOLD",
-                            "direction": "HOLD",
-                            "signal_status": "NO_SIGNAL",
-                            "actionable": False,
-                            "quant_score": 0.0,
-                            "confidence": 0.0,
-                            "entry": close_price,
-                            "close": close_price,
-                            "stop_loss": None,
-                            "target": None,
-                            "risk_reward": 1.0,
-                            "atr": atr_val,
-                            "rsi": rsi_val,
-                            "regime": regime.value,
-                            "trend": str(sig_last.get("htf_trend", "NEUTRAL")),
-                            "strategy": "HOLD",
-                            "candle_time": c_time,
-                            "timestamp": c_time,
-                            "data_status": freshness,
-                            "days_to_next_event": ev_days,
-                            "event_risk_active": bool(sig_last.get("event_risk_active", False)),
-                            "context_score": float(sig_last.get("context_score", 0.0) or 0.0),
-                            "context_warning": sig_last.get("context_warning"),
-                        })
+                        rr = 0.0
 
-            except Exception as sym_err:
-                logger.debug("[Scan] Error scanning %s: %s", sym, sym_err)
-                summary["errors"].append({"symbol": sym, "error": str(sym_err)})
+                    skip_reason = str(
+                        sig_last.get("skip_reason")
+                        or sig_last.get("quality_hard_gate")
+                        or sig_last.get("signal_conflict")
+                        or "SKIP — Filtered by quality or safety gates"
+                    ).strip()
+                    quant_score = float(
+                        sig_last.get("quality_score", sig_last.get("quant_score", 0.0)) or 0.0
+                    )
+                    ai_conf = float(
+                        sig_last.get("confidence", sig_last.get("ai_confidence", 0.0)) or 0.0
+                    )
+
+                    all_scanned_signals.append({
+                        "symbol": sym,
+                        "signal": "SKIP",
+                        "direction": raw_dir,
+                        "signal_status": "SKIP",
+                        "skip_reason": skip_reason,
+                        "quality_hard_gate": str(sig_last.get("quality_hard_gate") or ""),
+                        "quality_grade": str(sig_last.get("quality_grade") or ""),
+                        "signal_conflict": str(sig_last.get("signal_conflict") or ""),
+                        "actionable": False,
+                        "quant_score": quant_score,
+                        "quality_score": quant_score,
+                        "confidence": ai_conf,
+                        "entry": entry_pr,
+                        "close": close_price,
+                        "stop_loss": sl_pr,
+                        "target": tp_pr,
+                        "risk_reward": rr,
+                        "atr": atr_val,
+                        "rsi": rsi_val,
+                        "regime": regime.value,
+                        "trend": str(sig_last.get("htf_trend", "NEUTRAL")),
+                        "strategy": str(sig_last.get("signal_type", "SKIP")),
+                        "candle_time": c_time,
+                        "timestamp": c_time,
+                        "data_status": freshness,
+                        "days_to_next_event": ev_days,
+                        "event_risk_active": bool(sig_last.get("event_risk_active", False)),
+                        "context_score": float(sig_last.get("context_score", 0.0) or 0.0),
+                        "context_warning": ctx_warn,
+                    })
+                else:
+                    all_scanned_signals.append({
+                        "symbol": sym,
+                        "signal": "HOLD",
+                        "direction": "HOLD",
+                        "signal_status": "NO_SIGNAL",
+                        "actionable": False,
+                        "quant_score": 0.0,
+                        "confidence": 0.0,
+                        "entry": close_price,
+                        "close": close_price,
+                        "stop_loss": None,
+                        "target": None,
+                        "risk_reward": 1.0,
+                        "atr": atr_val,
+                        "rsi": rsi_val,
+                        "regime": regime.value,
+                        "trend": str(sig_last.get("htf_trend", "NEUTRAL")),
+                        "strategy": "HOLD",
+                        "candle_time": c_time,
+                        "timestamp": c_time,
+                        "data_status": freshness,
+                        "days_to_next_event": ev_days,
+                        "event_risk_active": bool(sig_last.get("event_risk_active", False)),
+                        "context_score": float(sig_last.get("context_score", 0.0) or 0.0),
+                        "context_warning": ctx_warn,
+                    })
 
         # 6. Manage Open Trades (Trailing Stops, +1R breakeven, +1.5R partial profit, 15:15 IST EOD)
         if market_prices:

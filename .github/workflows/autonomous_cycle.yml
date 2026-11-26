@@ -61,7 +61,7 @@ jobs:
   run-cycle:
     name: Execute Autonomous Paper Worker Cycle
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
 
     steps:
       - name: Checkout Code
@@ -86,39 +86,46 @@ jobs:
           AUTONOMOUS_TRADING_ENABLED: "true"
           AUTONOMOUS_MAX_POSITIONS: "8"
           PYTHONUNBUFFERED: "1"
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_UNIVERSE: ${{ github.event.inputs.universe }}
+          INPUT_FORCE_SCAN: ${{ github.event.inputs.force_scan }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          INPUT_SETTLEMENT_SWEEP: ${{ github.event.inputs.settlement_sweep }}
+          INPUT_PREMARKET_PREP: ${{ github.event.inputs.premarket_prep }}
+          PAYLOAD_UNIVERSE: ${{ github.event.client_payload.universe }}
+          PAYLOAD_FORCE_SCAN: ${{ github.event.client_payload.force_scan }}
         run: |
-          ARGS=""
-          
+          ARGS=()
+
           # Handle workflow_dispatch inputs
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ -n "${{ github.event.inputs.universe }}" ]; then
-              ARGS="$ARGS --universe ${{ github.event.inputs.universe }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT_UNIVERSE" ]; then
+              ARGS+=(--universe "$INPUT_UNIVERSE")
             fi
-            if [ "${{ github.event.inputs.force_scan }}" = "true" ]; then
-              ARGS="$ARGS --force-scan"
+            if [ "$INPUT_FORCE_SCAN" = "true" ]; then
+              ARGS+=(--force-scan)
             fi
-            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-              ARGS="$ARGS --dry-run"
+            if [ "$INPUT_DRY_RUN" = "true" ]; then
+              ARGS+=(--dry-run)
             fi
-            if [ "${{ github.event.inputs.settlement_sweep }}" = "true" ]; then
-              ARGS="$ARGS --settlement-sweep"
+            if [ "$INPUT_SETTLEMENT_SWEEP" = "true" ]; then
+              ARGS+=(--settlement-sweep)
             fi
-            if [ "${{ github.event.inputs.premarket_prep }}" = "true" ]; then
-              ARGS="$ARGS --premarket-prep"
+            if [ "$INPUT_PREMARKET_PREP" = "true" ]; then
+              ARGS+=(--premarket-prep)
             fi
-          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+          elif [ "$EVENT_NAME" = "repository_dispatch" ]; then
             # Handle client_payload from repository_dispatch
-            CLIENT_UNIVERSE="${{ github.event.client_payload.universe }}"
-            if [ -n "$CLIENT_UNIVERSE" ]; then
-              ARGS="$ARGS --universe $CLIENT_UNIVERSE"
+            if [ -n "$PAYLOAD_UNIVERSE" ]; then
+              ARGS+=(--universe "$PAYLOAD_UNIVERSE")
             fi
-            if [ "${{ github.event.client_payload.force_scan }}" = "true" ]; then
-              ARGS="$ARGS --force-scan"
+            if [ "$PAYLOAD_FORCE_SCAN" = "true" ]; then
+              ARGS+=(--force-scan)
             fi
           else
             # Default scheduled cron execution: tier-1 universe
-            ARGS="--universe tier1"
+            ARGS=(--universe tier1)
           fi
 
-          echo "Executing: python scripts/autonomous_cycle.py $ARGS"
-          python scripts/autonomous_cycle.py $ARGS
+          echo "Executing: python scripts/autonomous_cycle.py ${ARGS[*]}"
+          python scripts/autonomous_cycle.py "${ARGS[@]}"
