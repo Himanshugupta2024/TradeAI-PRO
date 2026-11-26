@@ -17,7 +17,6 @@ from typing import Generator
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import TimeSeriesSplit
 
 from agents.feature_engine.label_generator import label_1r2r_outcome
 
@@ -72,7 +71,9 @@ class TimeSeriesSplitWithEmbargo:
                 f"with embargo_bars={self.embargo_bars}"
             )
 
-        # Use scikit-learn's native TimeSeriesSplit with gap parameter if applicable
+        # Use scikit-learn's native TimeSeriesSplit with gap parameter if applicable (lazy import saves ~50MB RSS on API boot)
+        from sklearn.model_selection import TimeSeriesSplit
+
         tscv = TimeSeriesSplit(
             n_splits=self.n_splits,
             max_train_size=self.max_train_size,

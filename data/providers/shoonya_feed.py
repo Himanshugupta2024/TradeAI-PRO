@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from api.feed_client import (
+    FEED_TIMEOUT_SEC,
     convert_feed_bars_to_df,
     fetch_feed_snapshot,
     is_simulated_snapshot,
@@ -30,9 +31,9 @@ class ShoonyaFeedProvider(MarketDataProvider):
 
     name: str = "shoonya_feed"
 
-    def __init__(self, feed_url: Optional[str] = None, timeout: float = 3.0):
+    def __init__(self, feed_url: Optional[str] = None, timeout: Optional[float] = None):
         super().__init__()
-        self.timeout = timeout
+        self.timeout = float(timeout) if timeout is not None else FEED_TIMEOUT_SEC
         if feed_url:
             import os
             os.environ["FEED_SERVICE_URL"] = feed_url.rstrip("/")
@@ -156,7 +157,9 @@ class ShoonyaFeedProvider(MarketDataProvider):
         if interval != "5m" or not symbols:
             return {}
 
+        t0 = time.perf_counter()
         snap = await fetch_feed_snapshot(symbols, timeout=self.timeout)
+        latency_ms = (time.perf_counter() - t0) * 1000.0
         if not snap or is_simulated_snapshot(snap):
             self.health.record_failure()
             return {}
@@ -179,5 +182,5 @@ class ShoonyaFeedProvider(MarketDataProvider):
                     results[sym] = df
 
         if results:
-            self.health.record_success(0.0)
+            self.health.record_success(latency_ms)
         return results

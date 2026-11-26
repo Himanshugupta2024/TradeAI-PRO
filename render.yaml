@@ -68,7 +68,7 @@ services:
       - key: LIGHTWEIGHT_API_MODE
         value: "true"
       - key: ALLOW_LOCAL_AUTONOMOUS_CYCLE
-        value: "true"
+        value: "false"
       - key: SCREENER_TASK_ENABLED
         value: false
       - key: MORNING_SCAN_TASK_ENABLED
@@ -79,11 +79,7 @@ services:
         value: 8
       - key: MAX_NSE_CONCURRENCY
         value: 1
-      - key: MALLOC_ARENA_MAX
-        value: "2"
       - key: ENABLE_PYTORCH_MODELS
-        value: "false"
-      - key: INITIAL_LOAD_ENABLED
         value: "false"
       - key: SYMBOL_FETCH_TIMEOUT_SECONDS
         value: 20

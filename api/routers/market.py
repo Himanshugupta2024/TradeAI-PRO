@@ -670,32 +670,39 @@ async def get_all_signals(response: Response):
                 fallback_signals[s["symbol"].upper().replace(".NS", "")] = s
 
     if len(fallback_signals) < 10:
-        try:
-            from db.runtime_state import get_runtime_state
-            snap_v1 = get_runtime_state("latest_signals:v1")
-            snap_raw = get_runtime_state("latest_signals_snapshot")
-            sigs_v1 = snap_v1.get("signals", []) if isinstance(snap_v1, dict) else []
-            sigs_raw = snap_raw.get("signals", []) if isinstance(snap_raw, dict) else []
-            for s in sigs_raw + sigs_v1:
-                if isinstance(s, dict) and s.get("symbol"):
-                    k = s["symbol"].upper().replace(".NS", "")
-                    if k not in fallback_signals:
-                        fallback_signals[k] = s
-        except Exception:
-            pass
-
-    if len(fallback_signals) < 10:
-        try:
-            import db.intraday_store as ids
-            latest_scan = ids.load_latest_scan()
-            if latest_scan and latest_scan.get("results"):
-                for s in latest_scan["results"]:
+        def _load_persisted_signals_from_db() -> dict[str, dict]:
+            loaded: dict[str, dict] = {}
+            try:
+                from db.runtime_state import get_runtime_state
+                snap_v1 = get_runtime_state("latest_signals:v1")
+                snap_raw = get_runtime_state("latest_signals_snapshot")
+                sigs_v1 = snap_v1.get("signals", []) if isinstance(snap_v1, dict) else []
+                sigs_raw = snap_raw.get("signals", []) if isinstance(snap_raw, dict) else []
+                for s in sigs_raw + sigs_v1:
                     if isinstance(s, dict) and s.get("symbol"):
                         k = s["symbol"].upper().replace(".NS", "")
-                        if k not in fallback_signals:
-                            fallback_signals[k] = s
-        except Exception:
-            pass
+                        if k not in loaded:
+                            loaded[k] = s
+            except Exception:
+                pass
+            if len(loaded) + len(fallback_signals) < 10:
+                try:
+                    import db.intraday_store as ids
+                    latest_scan = ids.load_latest_scan()
+                    if latest_scan and latest_scan.get("results"):
+                        for s in latest_scan["results"]:
+                            if isinstance(s, dict) and s.get("symbol"):
+                                k = s["symbol"].upper().replace(".NS", "")
+                                if k not in loaded:
+                                    loaded[k] = s
+                except Exception:
+                    pass
+            return loaded
+
+        db_fallback = await asyncio.to_thread(_load_persisted_signals_from_db)
+        for k, s in db_fallback.items():
+            if k not in fallback_signals:
+                fallback_signals[k] = s
 
     # 3. If live_signals covers the full tracked NSE universe (and no extra active crypto remains),
     # live cache supersedes baseline. Otherwise overlay live onto filtered baseline.

@@ -2,17 +2,29 @@ import asyncio
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 import pandas as pd
-try:
-    import warnings
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=".*mode.copy_on_write.*")
-        import pandas_ta as ta
-except Exception:  # pragma: no cover - runtime environment dependency guard
-    ta = None
 import yfinance as yf
 from config.logger import get_logger
 from db.connection import SessionLocal
 from db.models import MorningScan
+
+# Defer importing pandas_ta (which pulls numba + scipy, ~45-70MB RSS) until screener math actually runs.
+ta = None
+_ta_import_attempted = False
+
+
+def _get_ta():
+    global ta, _ta_import_attempted
+    if ta is None and not _ta_import_attempted:
+        _ta_import_attempted = True
+        try:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*mode.copy_on_write.*")
+                import pandas_ta as _pandas_ta
+                ta = _pandas_ta
+        except Exception:  # pragma: no cover - runtime environment dependency guard
+            ta = None
+    return ta
 
 log = get_logger(__name__)
 
@@ -93,7 +105,8 @@ def _safe_float(value) -> float | None:
 
 
 def _prepare_indicator_frame(df: pd.DataFrame) -> pd.DataFrame:
-    if ta is None:
+    ta_lib = _get_ta()
+    if ta_lib is None:
         return pd.DataFrame()
 
     frame = df.copy()

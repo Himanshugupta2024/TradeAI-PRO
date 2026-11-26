@@ -1102,9 +1102,25 @@ async def cron_refresh_market_data(
             "dispatched": False,
         }
 
+    is_lightweight = (
+        str(os.getenv("LIGHTWEIGHT_API_MODE", "false")).strip().lower() in ("1", "true", "yes", "on")
+        or not (str(os.getenv("BACKGROUND_REFRESH_ENABLED", "true")).strip().lower() in ("1", "true", "yes", "on"))
+    )
+    if is_lightweight:
+        sync_fn = getattr(svc, "_refresh_lightweight_state", svc._refresh_signals_or_hydrate if hasattr(svc, "_refresh_signals_or_hydrate") else svc._hydrate_signals_cache_from_db)
+        background_tasks.add_task(sync_fn)
+        return {
+            "status": "DISPATCHED",
+            "mode": "lightweight_sync",
+            "market_open": True,
+            "dispatched": True,
+            "triggered_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     background_tasks.add_task(svc._refresh_market_data)
     return {
         "status": "DISPATCHED",
+        "mode": "full_refresh",
         "market_open": True,
         "dispatched": True,
         "triggered_at": datetime.now(timezone.utc).isoformat(),

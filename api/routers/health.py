@@ -409,6 +409,7 @@ async def get_system_data_health():
     # 2. Intraday Scanner Store
     intraday_status = {"status": "UNAVAILABLE", "age_seconds": None, "last_scan": None}
     try:
+        from db import intraday_store
         latest_iscan = await asyncio.to_thread(intraday_store.load_latest_scan)
         if latest_iscan and latest_iscan.get("scan_time"):
             st = latest_iscan["scan_time"]
@@ -502,6 +503,7 @@ async def get_system_data_health():
     # 7. Signal Scorecard
     scorecard_status = {"status": "UNAVAILABLE", "total_signals": 0, "win_rate": None}
     try:
+        from agents.analytics.trade_journal import get_journal
         sc = await asyncio.to_thread(get_journal().get_scorecard)
         if sc:
             scorecard_status = {
@@ -604,17 +606,26 @@ async def warmup_check():
     """
     Dedicated warm-up endpoint for edge workers / cron jobs.
     Returns WARMING_UP if market cache is empty and container is booting.
-    Returns READY if market cache is hydrated.
-    Triggers background refresh if cache is empty and lock is free.
+    Returns READY if market cache or lightweight DB snapshot is hydrated.
+    In LIGHTWEIGHT_API_MODE skips heavy web-tier _refresh_market_data() scraping.
     """
     symbols_loaded = len(getattr(svc, "_market_data", {}))
-    is_ready = bool(getattr(svc, "_loading_status", {}).get("ready", False)) or symbols_loaded >= 5
+    persisted_count = len(getattr(svc, "_persisted_signals_snapshot", None) or [])
+    is_lightweight = str(os.getenv("LIGHTWEIGHT_API_MODE", "false")).strip().lower() in ("1", "true", "yes", "on")
+    is_ready = (
+        bool(getattr(svc, "_loading_status", {}).get("ready", False))
+        or symbols_loaded >= 5
+        or (is_lightweight and persisted_count > 0)
+    )
 
-    # If not ready, ensure background refresh is initiated
-    if not is_ready and hasattr(svc, "_get_refresh_lock"):
-        lock = svc._get_refresh_lock()
-        if lock and not lock.locked():
-            asyncio.create_task(svc._refresh_market_data())
+    if not is_ready:
+        if is_lightweight:
+            if hasattr(svc, "_hydrate_signals_cache_from_db"):
+                asyncio.create_task(svc._hydrate_signals_cache_from_db())
+        elif hasattr(svc, "_get_refresh_lock"):
+            lock = svc._get_refresh_lock()
+            if lock and not lock.locked():
+                asyncio.create_task(svc._refresh_market_data())
 
     status_str = "READY" if is_ready else "WARMING_UP"
     return {

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 FEED_SERVICE_URL = os.environ.get("FEED_SERVICE_URL", "").rstrip("/")
 FEED_INTERNAL_TOKEN = os.environ.get("FEED_INTERNAL_TOKEN", "")
-FEED_TIMEOUT_SEC = float(os.environ.get("FEED_TIMEOUT_SEC", "3.0"))
+FEED_TIMEOUT_SEC = float(os.environ.get("FEED_TIMEOUT_SEC", "5.0"))
 MAX_SINGLE_SESSION_TICK_DEVIATION = float(os.environ.get("MAX_SINGLE_SESSION_TICK_DEVIATION", "0.20"))
 
 # Persistent HTTP client with connection pooling
@@ -140,25 +140,36 @@ async def fetch_feed_snapshot(
     token = os.environ.get("FEED_INTERNAL_TOKEN", FEED_INTERNAL_TOKEN)
     headers = {"X-Internal-Token": token} if token else {}
 
-    try:
-        client = _get_async_client(to)
-        resp = await client.get(
-            f"{url}/snapshot",
-            params={"symbols": ",".join(symbols)},
-            headers=headers,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            if isinstance(data, dict):
-                if not allow_simulated and is_simulated_snapshot(data):
-                    _log_simulated_rejected(str(data.get("source") or data.get("feed_source") or "SIMULATED"))
-                    return None
-                return data
-        logger.debug("[FeedClient] Feed returned status %s: %s", resp.status_code, resp.text)
-        return None
-    except Exception as exc:
-        _log_feed_failure(exc)
-        return None
+    client = _get_async_client(to)
+    last_exc: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            resp = await client.get(
+                f"{url}/snapshot",
+                params={"symbols": ",".join(symbols)},
+                headers=headers,
+                timeout=to,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict):
+                    if not allow_simulated and is_simulated_snapshot(data):
+                        _log_simulated_rejected(str(data.get("source") or data.get("feed_source") or "SIMULATED"))
+                        return None
+                    return data
+            logger.debug("[FeedClient] Feed returned status %s: %s", resp.status_code, resp.text)
+            return None
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            last_exc = exc
+            if attempt == 0:
+                continue
+        except Exception as exc:
+            _log_feed_failure(exc)
+            return None
+
+    if last_exc is not None:
+        _log_feed_failure(last_exc)
+    return None
 
 
 def fetch_feed_snapshot_sync(
@@ -182,6 +193,7 @@ def fetch_feed_snapshot_sync(
             f"{url}/snapshot",
             params={"symbols": ",".join(symbols)},
             headers=headers,
+            timeout=to,
         )
         if resp.status_code == 200:
             data = resp.json()

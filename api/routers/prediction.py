@@ -16,9 +16,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from agents.ai_engine.prediction_engine import batch_predict_stocks, predict_stock_price
-from agents.ai_engine.backtest_validator import run_walk_forward_backtest
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/prediction", tags=["prediction"])
@@ -62,6 +59,8 @@ async def get_single_stock_prediction(
       - Calibrated confidence score
       - Data delay transparency (15 minutes)
     """
+    from agents.ai_engine.prediction_engine import predict_stock_price
+
     clean_sym = symbol.strip().upper()
     if not clean_sym:
         raise HTTPException(status_code=400, detail="Stock symbol must be specified")
@@ -79,6 +78,8 @@ async def get_batch_stock_predictions(
     """Batch evaluate 6-layer predictions for multiple NSE stocks."""
     if not req.symbols:
         return {"count": 0, "predictions": {}}
+
+    from agents.ai_engine.prediction_engine import batch_predict_stocks
 
     preds = await batch_predict_stocks(req.symbols, force_refresh=req.force_refresh)
     return {
@@ -108,6 +109,8 @@ async def get_walk_forward_metrics(
             "status": "INSUFFICIENT_DATA",
             "message": "At least 120 daily bars required for walk-forward validation.",
         }
+
+    from agents.ai_engine.backtest_validator import run_walk_forward_backtest
 
     metrics = run_walk_forward_backtest(df, n_splits=4, embargo_bars=5, forward_bars=3)
     metrics["symbol"] = clean_sym

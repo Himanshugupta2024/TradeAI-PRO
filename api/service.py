@@ -1783,6 +1783,9 @@ async def _fetch_nse_symbol(
 
 _refresh_task: asyncio.Task | None = None
 _refresh_task_lock: asyncio.Lock | None = None
+_lightweight_task: asyncio.Task | None = None
+_lightweight_task_lock: asyncio.Lock | None = None
+_last_lightweight_refresh: datetime = datetime.min
 
 
 def _get_refresh_task_lock() -> asyncio.Lock:
@@ -1790,6 +1793,79 @@ def _get_refresh_task_lock() -> asyncio.Lock:
     if _refresh_task_lock is None:
         _refresh_task_lock = asyncio.Lock()
     return _refresh_task_lock
+
+
+def _get_lightweight_task_lock() -> asyncio.Lock:
+    global _lightweight_task_lock
+    if _lightweight_task_lock is None:
+        _lightweight_task_lock = asyncio.Lock()
+    return _lightweight_task_lock
+
+
+async def _refresh_lightweight_state_inner() -> None:
+    """
+    Lightweight market-hours sync for LIGHTWEIGHT_API_MODE=true (Render 512 MB API tier).
+    Hydrates persisted DB signals + pulls lightweight JSON ticks from Box C without
+    downloading OHLCV batches or allocating pandas/indicator frames in the API worker.
+    """
+    global _last_lightweight_refresh, _last_feed_update, _persisted_signals_updated_at
+
+    await _hydrate_signals_cache_from_db()
+
+    try:
+        from api.feed_client import fetch_feed_snapshot, is_feed_configured
+
+        if is_feed_configured() and TOP_NSE_SYMBOLS:
+            snap = await fetch_feed_snapshot(TOP_NSE_SYMBOLS[:16])
+            if isinstance(snap, dict) and isinstance(snap.get("quotes"), dict) and snap["quotes"]:
+                now_utc = datetime.now(timezone.utc)
+                _last_feed_update = datetime.now()
+                quotes = snap["quotes"]
+                if _persisted_signals_snapshot:
+                    for sig in _persisted_signals_snapshot:
+                        if not isinstance(sig, dict):
+                            continue
+                        sym = str(sig.get("symbol") or "").upper().replace(".NS", "")
+                        q = quotes.get(sym)
+                        if not isinstance(q, dict) or not q.get("lp"):
+                            continue
+                        lp = float(q["lp"])
+                        if lp > 0:
+                            sig["close"] = round(lp, 2)
+                            prev_c = q.get("prev_close")
+                            if prev_c and float(prev_c) > 0:
+                                sig["change_pct"] = round(((lp - float(prev_c)) / float(prev_c)) * 100.0, 2)
+                    _persisted_signals_updated_at = now_utc.isoformat()
+    except Exception as exc:
+        logger.debug("[LightweightSync] Box C overlay skipped: %s", exc)
+
+    try:
+        from utils.memory_profiler import get_process_rss_mb
+
+        rss = get_process_rss_mb(collect_gc=False)
+        if rss is not None and rss >= 420.0:
+            _force_free_memory()
+    except Exception:
+        pass
+
+    _last_lightweight_refresh = datetime.now()
+
+
+async def _refresh_lightweight_state() -> None:
+    """Single-flight wrapper for lightweight Box A state sync (min 45s cooldown)."""
+    global _lightweight_task
+    now = datetime.now()
+    if _last_lightweight_refresh != datetime.min and (now - _last_lightweight_refresh).total_seconds() < 45.0:
+        return
+
+    async with _get_lightweight_task_lock():
+        if _lightweight_task is not None and not _lightweight_task.done():
+            task = _lightweight_task
+        else:
+            task = asyncio.create_task(_refresh_lightweight_state_inner())
+            _lightweight_task = task
+
+    return await asyncio.shield(task)
 
 
 async def _refresh_market_data():
@@ -5960,7 +6036,12 @@ class SnapshotBroadcaster:
 broadcaster = SnapshotBroadcaster()
 
 async def warmup_priority_quotes() -> None:
-    """Pre-warm in-memory quotes for top priority NIFTY symbols so search_quote responds instantly."""
+    """Pre-warm in-memory quotes for top priority NIFTY symbols when full web-tier loading is enabled."""
+    is_lightweight = os.environ.get("LIGHTWEIGHT_API_MODE", "false").lower() in ("1", "true", "yes", "on")
+    initial_load_enabled = os.environ.get("INITIAL_LOAD_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    if is_lightweight or not initial_load_enabled:
+        logger.debug("[Warmup] Skipping heavy priority quote warmup in lightweight/on-demand mode.")
+        return
     priority = ["RELIANCE", "HDFCBANK", "TCS", "INFY", "ICICIBANK", "VEDL"]
     logger.info("[Warmup] Pre-warming %d priority NIFTY quotes in background...", len(priority))
     for sym in priority:

@@ -358,10 +358,41 @@ def _lifespan_context():
 
         async def _warm_bar_probe():
             try:
-                from agents.market_intelligence.nse_fetcher import fetch_ohlcv
-                from db.runtime_state import set_runtime_state
+                from db.runtime_state import get_runtime_state, set_runtime_state
                 from api.data_honesty import IST
                 from datetime import datetime, timezone
+
+                # In lightweight mode, check Box C or recent persisted bar probe before scraping Yahoo
+                if is_lightweight:
+                    existing_probe = await asyncio.to_thread(get_runtime_state, "last_bar_probe:v1")
+                    if isinstance(existing_probe, dict) and existing_probe.get("last_bar_at"):
+                        try:
+                            dt_existing = datetime.fromisoformat(str(existing_probe["last_bar_at"]).replace("Z", "+00:00"))
+                            if (datetime.now(timezone.utc) - dt_existing.astimezone(timezone.utc)).total_seconds() < 1800:
+                                return
+                        except Exception:
+                            pass
+
+                    from api.feed_client import fetch_feed_snapshot, is_feed_configured
+                    if is_feed_configured():
+                        snap = await fetch_feed_snapshot(["NIFTY 50"])
+                        bars = (snap or {}).get("bars", {}).get("NIFTY 50") if isinstance(snap, dict) else None
+                        if bars:
+                            last_t = bars[-1].get("t")
+                            if last_t:
+                                ts_dt = datetime.fromisoformat(str(last_t).replace("Z", "+00:00"))
+                                if ts_dt.tzinfo is None:
+                                    ts_dt = ts_dt.replace(tzinfo=IST)
+                                await asyncio.to_thread(set_runtime_state, "last_bar_probe:v1", {
+                                    "last_bar_at": ts_dt.isoformat(),
+                                    "symbol": "NIFTY 50",
+                                    "interval": "5m",
+                                    "written_at": datetime.now(timezone.utc).isoformat(),
+                                })
+                                svc.logger.info("Warm bar probe recorded from Box C last_bar_at: %s", ts_dt.isoformat())
+                                return
+
+                from agents.market_intelligence.nse_fetcher import fetch_ohlcv
                 df = await asyncio.to_thread(fetch_ohlcv, "NIFTY 50", "1d", "5m")
                 if df is not None and not df.empty:
                     last_bar = df.iloc[-1]
@@ -380,7 +411,7 @@ def _lifespan_context():
                         if ts_dt is not None:
                             if ts_dt.tzinfo is None:
                                 ts_dt = ts_dt.replace(tzinfo=IST)
-                            set_runtime_state("last_bar_probe:v1", {
+                            await asyncio.to_thread(set_runtime_state, "last_bar_probe:v1", {
                                 "last_bar_at": ts_dt.isoformat(),
                                 "symbol": "NIFTY 50",
                                 "interval": "5m",
@@ -391,7 +422,7 @@ def _lifespan_context():
                 svc.logger.debug("Warm bar probe non-blocking failure: %s", e)
 
         _spawn_task(_warm_bar_probe(), name="warm_bar_probe")
-        if hasattr(svc, "warmup_priority_quotes"):
+        if not is_lightweight and _env_flag("INITIAL_LOAD_ENABLED", True) and hasattr(svc, "warmup_priority_quotes"):
             _spawn_task(svc.warmup_priority_quotes(), name="warmup_priority_quotes")
 
         # Reliable market-hours dispatch for the autonomous cycle. GitHub's own

@@ -237,7 +237,7 @@ def create_default_router() -> MarketDataRouter:
     feed_url = os.environ.get("FEED_SERVICE_URL", "").strip()
     if feed_url:
         from data.providers.shoonya_feed import ShoonyaFeedProvider
-        providers.append(ShoonyaFeedProvider(feed_url=feed_url, timeout=3.0))
+        providers.append(ShoonyaFeedProvider(feed_url=feed_url))
 
     tv = TradingViewProvider(timeout=6.0)
     yahoo = YahooProvider(timeout=8.0)

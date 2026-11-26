@@ -538,6 +538,30 @@ async def get_macro_sector_impact(symbol: str = Query(..., description="Stock sy
         logger.error("Failed to evaluate macro sector impact: %s", e)
         return {"allowed": True, "block_reason": None, "error": str(e)}
 
+_RISK_GAUGE_REFRESH_TASK: Optional[asyncio.Task] = None
+
+
+def _get_or_start_risk_gauge_refresh(cache_ttl_seconds: int) -> asyncio.Task:
+    """Coalesce RiskGauge refreshes into a single background thread task so the event loop never blocks."""
+    global _RISK_GAUGE_REFRESH_TASK
+    if _RISK_GAUGE_REFRESH_TASK is not None and not _RISK_GAUGE_REFRESH_TASK.done():
+        return _RISK_GAUGE_REFRESH_TASK
+
+    from agents.macro.risk_gauge import RiskGauge
+
+    async def _run_refresh():
+        try:
+            bg_gauge = RiskGauge(cache_ttl_seconds=cache_ttl_seconds)
+            return await asyncio.to_thread(bg_gauge.fetch_risk_indicators)
+        except Exception as exc:
+            logger.warning("Background RiskGauge refresh failed: %s", exc)
+            return None
+
+    task = asyncio.create_task(_run_refresh())
+    _RISK_GAUGE_REFRESH_TASK = task
+    return task
+
+
 @router.get("/api/edge/risk-gauge")
 
 async def get_edge_risk_gauge(
@@ -584,14 +608,26 @@ async def get_edge_risk_gauge(
 
         is_mkt_open = False
         try:
-            from agents.data_ingestion.market_hours import is_nse_market_open
-            is_mkt_open = is_nse_market_open()
+            from agents.execution.session_guard import is_nse_market_open
+            res_open = is_nse_market_open()
+            is_mkt_open = bool(res_open[0]) if isinstance(res_open, tuple) else bool(res_open)
         except Exception:
             pass
         active_ttl = 0 if force_refresh else (60 if is_mkt_open else 300)
         gauge = RiskGauge(cache_ttl_seconds=active_ttl)
 
-        indicators = gauge.fetch_risk_indicators()
+        cached = None if force_refresh else await asyncio.to_thread(gauge._load_cache)
+        if cached is not None and gauge._is_cache_fresh(cached):
+            indicators = cached
+        elif cached is not None:
+            # Stale-While-Revalidate: serve cached snapshot immediately and refresh off-loop in background
+            _get_or_start_risk_gauge_refresh(active_ttl)
+            indicators = cached
+        else:
+            indicators = await asyncio.wait_for(
+                asyncio.to_thread(gauge.fetch_risk_indicators),
+                timeout=35.0,
+            )
 
         breakdown = gauge.get_risk_breakdown(indicators)
         risk_score = breakdown["score"]

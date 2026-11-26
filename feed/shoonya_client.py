@@ -13,11 +13,13 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from feed.bar_builder import BarBuilder
 from feed.token_master import TokenMaster
 
 logger = logging.getLogger(__name__)
+_IST = ZoneInfo("Asia/Kolkata")
 
 # Default host and websocket endpoints for Shoonya (Finvasia)
 SHOONYA_HOST = "https://api.shoonya.com/NorenWClientAPI/"
@@ -59,6 +61,10 @@ class ShoonyaFeedManager:
         self.api = None
         self._sim_task = None
         self._stop_event = threading.Event()
+        self._reconnect_lock = threading.Lock()
+        self._reconnecting = False
+        self._reconnect_attempts = 0
+        self._watchdog_started = False
 
     def has_credentials(self) -> bool:
         """Check if all required Shoonya credentials are present."""
@@ -163,13 +169,17 @@ class ShoonyaFeedManager:
         logged_in = False
         if self.usertoken:
             logged_in = self.login_with_token(self.usertoken)
-        elif self.has_credentials():
+        # Fall back to automated TOTP login whenever credentials exist and usertoken is missing/invalid.
+        if not logged_in and self.has_credentials():
             logged_in = self.login()
 
         if logged_in and self.api is not None:
             self._start_websocket()
         else:
             self._start_simulation()
+
+        if self.has_credentials():
+            self._start_session_watchdog()
 
     def stop(self) -> None:
         """Stop all feed threads and close socket."""
@@ -193,11 +203,16 @@ class ShoonyaFeedManager:
             )
         except Exception as exc:
             logger.error("[Shoonya] Failed to start WebSocket: %s", exc)
-            self._start_simulation()
+            if self.has_credentials():
+                self._schedule_reconnect()
+            else:
+                self._start_simulation()
 
     def _on_open(self) -> None:
         """Callback when WebSocket connection opens successfully."""
         self.is_connected = True
+        self.is_simulated = False
+        self._reconnect_attempts = 0
         logger.info("[Shoonya] WebSocket connection opened. Subscribing to watchlist...")
         tokens_to_sub = []
         for sym in self.watchlist:
@@ -215,7 +230,112 @@ class ShoonyaFeedManager:
     def _on_close(self) -> None:
         """Callback when WebSocket closes."""
         self.is_connected = False
-        logger.warning("[Shoonya] WebSocket closed. Reconnect scheduled.")
+        if self._stop_event.is_set():
+            return
+        logger.warning("[Shoonya] WebSocket closed. Scheduling automated reconnect...")
+        self._schedule_reconnect()
+
+    def _schedule_reconnect(self) -> None:
+        """Spawn a deduplicated daemon reconnect loop with exponential backoff and TOTP re-login."""
+        if self._stop_event.is_set() or (not self.has_credentials() and not self.usertoken):
+            return
+
+        with self._reconnect_lock:
+            if self._reconnecting:
+                return
+            self._reconnecting = True
+
+        def _reconnect_worker():
+            backoffs = (2.0, 5.0, 15.0, 30.0, 60.0)
+            try:
+                while not self._stop_event.is_set() and not self.is_connected:
+                    delay = backoffs[min(self._reconnect_attempts, len(backoffs) - 1)]
+                    self._reconnect_attempts += 1
+                    logger.info("[Shoonya] Reconnect attempt #%d in %.1fs...", self._reconnect_attempts, delay)
+                    if self._stop_event.wait(delay):
+                        return
+
+                    # Re-authenticate via TOTP whenever session may be missing, old, or repeated WS closes occurred
+                    need_fresh_login = (
+                        self.api is None
+                        or self._reconnect_attempts >= 2
+                        or self.last_login_time is None
+                        or (datetime.now(timezone.utc) - self.last_login_time).total_seconds() > 36000
+                    )
+                    ok = True
+                    if need_fresh_login and self.has_credentials():
+                        ok = self.login()
+                    elif need_fresh_login and self.usertoken:
+                        ok = self.login_with_token(self.usertoken)
+
+                    if ok and self.api is not None:
+                        try:
+                            self.api.start_websocket(
+                                subscribe_callback=self._on_message,
+                                socket_open_callback=self._on_open,
+                                socket_close_callback=self._on_close,
+                                socket_error_callback=self._on_error,
+                            )
+                            # Give socket_open_callback a moment to fire before deciding to retry
+                            if self._stop_event.wait(3.0):
+                                return
+                            if self.is_connected:
+                                logger.info("[Shoonya] Live WebSocket reconnected cleanly.")
+                                return
+                        except Exception as exc:
+                            logger.warning("[Shoonya] Reconnect WebSocket start failed: %s", exc)
+            finally:
+                with self._reconnect_lock:
+                    self._reconnecting = False
+
+        t = threading.Thread(target=_reconnect_worker, daemon=True, name="ShoonyaReconnect")
+        t.start()
+
+    def _needs_daily_relogin(self, now_utc: Optional[datetime] = None) -> bool:
+        """Return True on weekdays from 08:45 IST onward if session was acquired on an earlier IST day."""
+        if not self.has_credentials():
+            return False
+        now_u = now_utc or datetime.now(timezone.utc)
+        now_ist = now_u.astimezone(_IST)
+        if now_ist.weekday() >= 5:
+            return False
+        if (now_ist.hour, now_ist.minute) < (8, 45):
+            return False
+        if self.last_login_time is None:
+            return True
+        last_ist = self.last_login_time.astimezone(_IST)
+        return last_ist.date() < now_ist.date()
+
+    def _start_session_watchdog(self) -> None:
+        """Daily morning TOTP refresh and stalled-feed recovery watchdog."""
+        if self._watchdog_started:
+            return
+        self._watchdog_started = True
+
+        def _watchdog_loop():
+            while not self._stop_event.wait(60.0):
+                try:
+                    if self._needs_daily_relogin():
+                        logger.info("[Shoonya] Performing daily IST pre-market TOTP session refresh...")
+                        self.stop_ws_only()
+                        if self.login() and self.api is not None:
+                            self._start_websocket()
+                    elif self.has_credentials() and (self.is_simulated or not self.is_connected):
+                        self._schedule_reconnect()
+                except Exception as exc:
+                    logger.debug("[Shoonya] Watchdog tick error: %s", exc)
+
+        t = threading.Thread(target=_watchdog_loop, daemon=True, name="ShoonyaSessionWatchdog")
+        t.start()
+
+    def stop_ws_only(self) -> None:
+        """Close active WebSocket without tripping permanent shutdown stop_event."""
+        if self.api and self.is_connected:
+            try:
+                self.api.close_websocket()
+            except Exception:
+                pass
+        self.is_connected = False
 
     def _on_error(self, err: Any) -> None:
         """Callback on WebSocket error."""

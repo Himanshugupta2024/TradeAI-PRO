@@ -139,7 +139,8 @@ def apply_signal_freshness(signal: dict, now: Any = None) -> dict:
     is_mkt_open = False
     try:
         from agents.execution.session_guard import is_nse_market_open
-        is_mkt_open = is_nse_market_open()
+        res_open = is_nse_market_open(now_ist)
+        is_mkt_open = bool(res_open[0]) if isinstance(res_open, tuple) else bool(res_open)
     except Exception:
         pass
 

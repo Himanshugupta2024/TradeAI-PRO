@@ -16,6 +16,7 @@ Implements 1-hour cache with fallback to stale data.
 
 import json
 import logging
+import threading
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -91,6 +92,21 @@ class RiskIndicators:
                     dt_val = dt_val.replace(tzinfo=timezone.utc)
                 d[dt_field] = dt_val
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+_EDGE_MEM_CACHE_LOCK = threading.Lock()
+_EDGE_MEM_CACHE: dict[str, tuple[float, "RiskIndicators"]] = {}
+_EDGE_FETCH_LOCKS_LOCK = threading.Lock()
+_EDGE_FETCH_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _get_risk_fetch_lock(cache_key: str) -> threading.Lock:
+    with _EDGE_FETCH_LOCKS_LOCK:
+        lock = _EDGE_FETCH_LOCKS.get(cache_key)
+        if lock is None:
+            lock = threading.Lock()
+            _EDGE_FETCH_LOCKS[cache_key] = lock
+        return lock
 
 
 class RiskGauge:
@@ -459,94 +475,105 @@ class RiskGauge:
         - USD/JPY: Twelve Data API (free tier) or Yahoo Finance
         - Gold: Yahoo Finance (GC=F)
 
+        Uses a per-cache-file single-flight lock so concurrent requests/threads
+        never trigger a parallel Yahoo/RSS stampede.
+
         Returns:
             RiskIndicators dataclass
         """
-        # Try cache first
+        # Fast path before lock
         cached = self._load_cache()
         if cached and self._is_cache_fresh(cached):
             logger.info("Using fresh risk indicators from cache")
             return cached
 
-        # Cache miss or stale — fetch from APIs
-        logger.info("Fetching fresh risk indicators")
+        lock_key = str(self.cache_file.resolve()) if self.cache_file else "default"
+        with _get_risk_fetch_lock(lock_key):
+            # Re-check after acquiring single-flight lock in case another caller just refreshed
+            cached = self._load_cache()
+            if cached and self._is_cache_fresh(cached):
+                logger.info("Using fresh risk indicators from cache (single-flight reuse)")
+                return cached
+
+            # Cache miss or stale — fetch from APIs
+            logger.info("Fetching fresh risk indicators")
 
         # Fetch all indicators
-        vix, vix_1d_change, vix_7d_change, vix_fetched_at = self._fetch_vix()
-        india_vix, iv_1d_change, india_vix_trend, iv_7d_change, india_vix_fetched_at = self._fetch_india_vix()
-        ad_ratio, above_ema20, breadth_regime = self._fetch_market_breadth()
-        btc_trend = self._fetch_btc_trend()
-        nifty_trend = self._fetch_nifty_trend()
-        usdjpy_level, usdjpy_trend = self._fetch_usdjpy()
-        gold_trend = self._fetch_gold_trend()
+            vix, vix_1d_change, vix_7d_change, vix_fetched_at = self._fetch_vix()
+            india_vix, iv_1d_change, india_vix_trend, iv_7d_change, india_vix_fetched_at = self._fetch_india_vix()
+            ad_ratio, above_ema20, breadth_regime = self._fetch_market_breadth()
+            btc_trend = self._fetch_btc_trend()
+            nifty_trend = self._fetch_nifty_trend()
+            usdjpy_level, usdjpy_trend = self._fetch_usdjpy()
+            gold_trend = self._fetch_gold_trend()
 
-        now_utc = datetime.now(timezone.utc)
-        cached_spike_time = getattr(cached, "spike_flag_time", None) if cached else None
+            now_utc = datetime.now(timezone.utc)
+            cached_spike_time = getattr(cached, "spike_flag_time", None) if cached else None
 
-        # Determine risk regime, vetoes, and posture
-        risk_regime, vetoes, posture, data_integrity = self._evaluate_safety_gates(
-            vix=vix,
-            vix_change=vix_7d_change,
-            vix_1d_change=vix_1d_change,
-            btc_trend=btc_trend,
-            nifty_trend=nifty_trend,
-            usdjpy_trend=usdjpy_trend,
-            gold_trend=gold_trend,
-            india_vix=india_vix,
-            india_vix_1d_change=iv_1d_change,
-            ad_ratio=ad_ratio,
-            vix_fetched_at=vix_fetched_at,
-            spike_flag_time=cached_spike_time,
-            now=now_utc,
-        )
+            # Determine risk regime, vetoes, and posture
+            risk_regime, vetoes, posture, data_integrity = self._evaluate_safety_gates(
+                vix=vix,
+                vix_change=vix_7d_change,
+                vix_1d_change=vix_1d_change,
+                btc_trend=btc_trend,
+                nifty_trend=nifty_trend,
+                usdjpy_trend=usdjpy_trend,
+                gold_trend=gold_trend,
+                india_vix=india_vix,
+                india_vix_1d_change=iv_1d_change,
+                ad_ratio=ad_ratio,
+                vix_fetched_at=vix_fetched_at,
+                spike_flag_time=cached_spike_time,
+                now=now_utc,
+            )
 
-        spike_flag_time = cached_spike_time
-        if data_integrity == "UNCONFIRMED_VOL_SPIKE" and not spike_flag_time:
-            spike_flag_time = now_utc
-        elif data_integrity in ("CONFIRMED", "VOL_SPIKE_EXPIRED", "VIX_SOURCE_STALE"):
-            spike_flag_time = None
+            spike_flag_time = cached_spike_time
+            if data_integrity == "UNCONFIRMED_VOL_SPIKE" and not spike_flag_time:
+                spike_flag_time = now_utc
+            elif data_integrity in ("CONFIRMED", "VOL_SPIKE_EXPIRED", "VIX_SOURCE_STALE"):
+                spike_flag_time = None
 
-        cautions = self._derive_cautions(
-            vix=vix,
-            india_vix=india_vix,
-            ad_ratio=ad_ratio,
-            above_ema20=above_ema20,
-            vetoes=vetoes,
-        )
-        if not vetoes and cautions and posture in ("OPEN", "SELECTIVE"):
-            posture = "OPEN_WITH_CAUTION"
+            cautions = self._derive_cautions(
+                vix=vix,
+                india_vix=india_vix,
+                ad_ratio=ad_ratio,
+                above_ema20=above_ema20,
+                vetoes=vetoes,
+            )
+            if not vetoes and cautions and posture in ("OPEN", "SELECTIVE"):
+                posture = "OPEN_WITH_CAUTION"
 
-        indicators = RiskIndicators(
-            vix=vix,
-            vix_change_pct=vix_7d_change,
-            vix_1d_change_pct=vix_1d_change,
-            btc_trend=btc_trend,
-            nifty_trend=nifty_trend,
-            usdjpy_level=usdjpy_level,
-            usdjpy_trend=usdjpy_trend,
-            gold_trend=gold_trend,
-            risk_regime=risk_regime,
-            timestamp=now_utc,
-            india_vix=india_vix,
-            india_vix_change_pct=iv_1d_change,
-            india_vix_7d_change_pct=iv_7d_change,
-            india_vix_trend=india_vix_trend,
-            ad_ratio=ad_ratio,
-            above_ema20_pct=above_ema20,
-            breadth_regime=breadth_regime,
-            posture=posture,
-            vetoes=vetoes,
-            cautions=cautions,
-            data_integrity=data_integrity,
-            vix_fetched_at=vix_fetched_at,
-            india_vix_fetched_at=india_vix_fetched_at,
-            spike_flag_time=spike_flag_time,
-        )
+            indicators = RiskIndicators(
+                vix=vix,
+                vix_change_pct=vix_7d_change,
+                vix_1d_change_pct=vix_1d_change,
+                btc_trend=btc_trend,
+                nifty_trend=nifty_trend,
+                usdjpy_level=usdjpy_level,
+                usdjpy_trend=usdjpy_trend,
+                gold_trend=gold_trend,
+                risk_regime=risk_regime,
+                timestamp=now_utc,
+                india_vix=india_vix,
+                india_vix_change_pct=iv_1d_change,
+                india_vix_7d_change_pct=iv_7d_change,
+                india_vix_trend=india_vix_trend,
+                ad_ratio=ad_ratio,
+                above_ema20_pct=above_ema20,
+                breadth_regime=breadth_regime,
+                posture=posture,
+                vetoes=vetoes,
+                cautions=cautions,
+                data_integrity=data_integrity,
+                vix_fetched_at=vix_fetched_at,
+                india_vix_fetched_at=india_vix_fetched_at,
+                spike_flag_time=spike_flag_time,
+            )
 
-        # Save to cache
-        self._save_cache(indicators)
+            # Save to cache
+            self._save_cache(indicators)
 
-        return indicators
+            return indicators
 
     def calculate_trend(self, prices: list[float]) -> str:
         """
@@ -1131,24 +1158,45 @@ class RiskGauge:
         return cautions
 
     def _load_cache(self) -> Optional[RiskIndicators]:
-        """Load risk indicators from cache file"""
+        """Load risk indicators from process memory cache (when disk mtime unchanged) or JSON file."""
+        cache_key = str(self.cache_file.resolve()) if self.cache_file else "default"
+        try:
+            disk_mtime = self.cache_file.stat().st_mtime if self.cache_file.exists() else None
+        except OSError:
+            disk_mtime = None
+
+        with _EDGE_MEM_CACHE_LOCK:
+            mem_entry = _EDGE_MEM_CACHE.get(cache_key)
+            if mem_entry is not None and (disk_mtime is None or mem_entry[0] == disk_mtime):
+                return mem_entry[1]
+
         if not self.cache_file.exists():
             return None
 
         try:
             with open(self.cache_file, "r") as f:
                 data = json.load(f)
-            return RiskIndicators.from_dict(data)
+            indicators = RiskIndicators.from_dict(data)
+            with _EDGE_MEM_CACHE_LOCK:
+                _EDGE_MEM_CACHE[cache_key] = (disk_mtime or 0.0, indicators)
+            return indicators
         except Exception as e:
             logger.error(f"Failed to load cache: {e}")
             return None
 
     def _save_cache(self, indicators: RiskIndicators) -> None:
-        """Save risk indicators to cache file"""
+        """Save risk indicators to cache file and process memory cache."""
+        cache_key = str(self.cache_file.resolve()) if self.cache_file else "default"
         try:
             self.cache_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.cache_file, "w") as f:
                 json.dump(indicators.to_dict(), f, indent=2)
+            try:
+                disk_mtime = self.cache_file.stat().st_mtime
+            except OSError:
+                disk_mtime = 0.0
+            with _EDGE_MEM_CACHE_LOCK:
+                _EDGE_MEM_CACHE[cache_key] = (disk_mtime, indicators)
             logger.info(f"Saved risk indicators to cache: {self.cache_file}")
         except Exception as e:
             logger.error(f"Failed to save cache: {e}")
@@ -1164,7 +1212,9 @@ class RiskGauge:
         effective_ttl = self.cache_ttl_seconds
         try:
             from agents.execution.session_guard import is_nse_market_open
-            if is_nse_market_open():
+            is_open_res = is_nse_market_open()
+            is_open = bool(is_open_res[0]) if isinstance(is_open_res, tuple) else bool(is_open_res)
+            if is_open:
                 effective_ttl = min(self.cache_ttl_seconds, 60.0)
         except Exception:
             pass
