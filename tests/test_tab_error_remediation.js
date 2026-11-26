@@ -82,7 +82,7 @@ async function testWorkerDegradedFallback() {
     assert.strictEqual(resMacro.status, 200, 'Degraded fallback must return status 200');
     assert.strictEqual(resMacro.headers.get('CF-Cache-Status'), 'DEGRADED-FALLBACK');
     const dataMacro = await resMacro.json();
-    assert.strictEqual(dataMacro.status, 'ok');
+    assert.strictEqual(dataMacro.status, 'degraded');
     assert.strictEqual(dataMacro.degraded, true);
     assert.ok(dataMacro.macro.brent_crude, 'Macro payload must contain brent_crude');
     assert.strictEqual(dataMacro.macro.feed_source, 'DEGRADED_EDGE_FALLBACK');

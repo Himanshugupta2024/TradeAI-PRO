@@ -60,7 +60,28 @@ const API = (() => {
 async function fetchSafeJSON(url, options = {}, timeoutMs = 12000, _retries = 2) {
     const method = (options.method || 'GET').toUpperCase();
     if (method === 'GET' && typeof _inFlightRequests !== 'undefined' && _inFlightRequests.has(url)) {
-        return _inFlightRequests.get(url).then(r => ({ ok: r.ok, status: r.status, data: r._cachedData || {} }));
+        try {
+            const r = await _inFlightRequests.get(url).then(res => res.clone());
+            const ct = (r.headers.get('content-type') || '').toLowerCase();
+            let dedupData = {};
+            if (ct.includes('application/json')) {
+                try { dedupData = await r.json(); } catch (_) {}
+            }
+            if (!r.ok) {
+                return {
+                    ok: false,
+                    status: r.status,
+                    error: dedupData.error || (r.status === 429 ? 'Rate limit cooling down. Re-syncing shortly...' : `HTTP ${r.status}`),
+                    detail: dedupData,
+                    data: dedupData,
+                };
+            }
+            return ct.includes('application/json')
+                ? { ok: true, status: r.status, data: dedupData }
+                : { ok: false, status: r.status, error: 'Non-JSON response' };
+        } catch (err) {
+            return { ok: false, status: 0, error: err.name === 'AbortError' || err.name === 'TimeoutError' ? 'Timeout' : (err.message || 'Network error') };
+        }
     }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -163,7 +184,13 @@ const _STATIC_CRYPTO_SYMBOLS = [
 function _symCurr(sym) {
     if (!sym) return '₹';
     const s = String(sym).toUpperCase();
+    if (s.includes('/INR') || s.endsWith('INR')) return '₹';
     if (s.includes('/USDT') || s.includes('/USD') || s.endsWith('USDT') || s.endsWith('USD')) return '$';
+    if (s.includes('/JPY')) return '¥';
+    if (s.includes('/EUR')) return '€';
+    if (s.includes('/GBP')) return '£';
+    if (s.includes('/CAD')) return 'C$';
+    if (s.includes('/')) return '';
     return '₹';
 }
 
@@ -1082,16 +1109,25 @@ document.addEventListener('visibilitychange', () => {
 
     if (!document.hidden && !_isRefreshing) {
 
-
-
         loadAllData({ background: true });
 
+    }
 
+    if (!document.hidden && (!priceWs || priceWs.readyState !== WebSocket.OPEN)) {
+
+        connectPriceWebSocket();
 
     }
 
 
 
+});
+
+window.addEventListener('beforeunload', () => {
+    if (priceWs && priceWs.readyState < 2) {
+        priceWs.onclose = null;
+        priceWs.close();
+    }
 });
 
 
@@ -1114,7 +1150,8 @@ document.addEventListener('visibilitychange', () => {
 
 function connectPriceWebSocket() {
 
-
+    // Pause reconnect while tab is hidden
+    if (document.hidden) return;
 
     // Only skip when the socket is actually open — treating CONNECTING as "busy"
 
@@ -1435,9 +1472,9 @@ function connectPriceWebSocket() {
 
             priceWs = null;
 
-
-
-            wsReconnectTimer = setTimeout(connectPriceWebSocket, delay);
+            if (!document.hidden) {
+                wsReconnectTimer = setTimeout(connectPriceWebSocket, delay);
+            }
 
 
 
@@ -1769,11 +1806,7 @@ function updateLivePrices(prices) {
 
 
 
-            const isCrypto = symbol.includes('/');
-
-
-
-            const curr = isCrypto ? '$' : '₹';
+            const curr = _symCurr(symbol);
 
 
 
@@ -3370,7 +3403,7 @@ async function loadAllData({ background = false } = {}) {
 
         fetchWithTimeout(`${API}/api/nse/dashboard`, {}, 25000).then((r) => parseJsonResponse(r)),
 
-        shouldFetchOpps ? fetchWithTimeout(`${API}/api/screener/opportunities`, {}, 25000).then((r) => { _lastOppsFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
+        shouldFetchOpps ? fetchWithTimeout(`${API}/api/screener/opportunities`, {}, 25000).then((r) => { if (r.ok) _lastOppsFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
 
         fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 60000).then((r) => parseJsonResponse(r)).catch(() => null),
 
@@ -3622,7 +3655,7 @@ async function loadAllData({ background = false } = {}) {
 
 
 
-    await loadMacroIntelligence();
+    loadMacroIntelligence();
     if (openTradesResult && openTradesResult.status === 'fulfilled' && openTradesResult.value) {
 
 
@@ -3700,6 +3733,10 @@ async function loadAllData({ background = false } = {}) {
         updateOpportunitiesGrid(_lastOppsData.opportunities, { status: _lastOppsData.status, reason: _lastOppsData.reason });
 
 
+
+    } else if (shouldFetchOpps) {
+
+        updateOpportunitiesGrid([], { status: 'error', reason: 'request_failed' });
 
     } else {
 
@@ -9914,7 +9951,7 @@ function renderSignals(signals) {
 
 
 
-        const filteredCount = signals.filter(sig => String(sig.signal || '').toUpperCase() === 'SKIP').length;
+        const filteredCount = scopedSignals.filter(sig => String(sig.signal || '').toUpperCase() === 'SKIP').length;
 
 
 
@@ -9970,7 +10007,7 @@ function renderSignals(signals) {
 
 
 
-            filterNote.textContent = `Showing ${visibleSignals.length}/${signals.length} · SKIP hidden by default · Filter: ${filterMap[_signalTypeFilter] || 'All'} · Sort: ${_signalSortMode}`;
+            filterNote.textContent = `Showing ${visibleSignals.length}/${scopedSignals.length} · SKIP hidden by default · Filter: ${filterMap[_signalTypeFilter] || 'All'} · Sort: ${_signalSortMode}`;
 
 
 
@@ -10035,11 +10072,7 @@ function renderSignals(signals) {
 
 
 
-        const isCrypto = sig.symbol.includes('/');
-
-
-
-        const curr = isCrypto ? '$' : '₹';
+        const curr = _symCurr(sig.symbol);
 
 
 
@@ -10139,7 +10172,8 @@ function renderSignals(signals) {
 
 
 
-        const isMarketClosed = !_isNseMarketOpen();
+        const _isCryptoSig = String(sig.symbol || '').toUpperCase().includes('USDT');
+        const isMarketClosed = !_isCryptoSig && !_isNseMarketOpen();
 
 
 
@@ -10310,11 +10344,11 @@ function renderSignals(signals) {
 
 
 
-        const signalDate = new Date(sig.timestamp);
+        const signalDate = sig.timestamp ? new Date(sig.timestamp) : null;
 
 
 
-        const timeStr = signalDate.toLocaleTimeString('en-IN', {hour: '2-digit', minute:'2-digit'});
+        const timeStr = signalDate && !isNaN(signalDate.getTime()) ? signalDate.toLocaleTimeString('en-IN', {hour: '2-digit', minute:'2-digit'}) : '--';
 
 
 
@@ -11165,9 +11199,10 @@ function updateOpportunitiesGrid(opportunities, meta) {
 
     if (!opportunities || opportunities.length === 0) {
         const _scanStatus = meta && meta.status;
-        if (_scanStatus === 'disabled' || _scanStatus === 'empty') {
-            const _scanReason = meta.reason ? String(meta.reason).replace(/_/g, ' ') : 'no candidates';
-            const _scanLabel = (_scanStatus === 'disabled' ? 'Scan disabled' : 'No opportunities') + ' — ' + _scanReason + '.';
+        if (_scanStatus === 'disabled' || _scanStatus === 'empty' || _scanStatus === 'error') {
+            const _scanReason = meta.reason ? _escHtml(String(meta.reason).replace(/_/g, ' ')) : 'no candidates';
+            const _scanPrefix = _scanStatus === 'error' ? 'Opportunities unavailable' : (_scanStatus === 'disabled' ? 'Scan disabled' : 'No opportunities');
+            const _scanLabel = _scanPrefix + ' — ' + _scanReason + '.';
             grid.innerHTML = '<div style="font-size:0.8rem;color:var(--text-muted);grid-column:1/-1;">' + _scanLabel + '</div>';
             return;
         }
@@ -11218,22 +11253,25 @@ function updateOpportunitiesGrid(opportunities, meta) {
         // Strip .NS for display
         const symbol = String(opp.symbol || 'UNKNOWN').replace('.NS', '');
         const priceVal = Number(opp.price ?? opp.entry ?? opp.close ?? 0);
-        const rsiVal = opp.rsi ? opp.rsi : '-';
+        const leftMeta = opp.rsi != null ? `RSI: ${_escHtml(opp.rsi)}` : (opp.confidence != null ? `Conf: ${Math.round(Number(opp.confidence))}%` : 'RSI: -');
         const volVal = opp.vol != null ? `${(Number(opp.vol) / 1000).toFixed(0)}k` : '-';
         const volSpike = Boolean(opp.vol_spike);
+        const rightMeta = opp.vol != null
+            ? `Vol: ${volVal} <span style="font-size:0.6rem;color:${volSpike ? 'var(--green)' : 'inherit'}">${volSpike ? '▲' : ''}</span>`
+            : (opp.strategy ? _escHtml(opp.strategy) : 'Vol: -');
 
         return `
             <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);padding:0.6rem;border-radius:6px;display:flex;flex-direction:column;gap:0.25rem;">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="font-weight:bold;font-size:0.85rem">${symbol}</span>
-                    <span style="font-size: 0.72rem;color:${sigColor};border:1px solid ${sigColor};padding:1px 4px;border-radius:3px;">${sigText}</span>
+                    <span style="font-weight:bold;font-size:0.85rem">${_escHtml(symbol)}</span>
+                    <span style="font-size: 0.72rem;color:${sigColor};border:1px solid ${sigColor};padding:1px 4px;border-radius:3px;">${_escHtml(sigText)}</span>
                 </div>
                 <div style="font-size:0.8rem;">
-                    <span style="color:var(--text-muted);">₹${priceVal.toFixed(2)}</span>
+                    <span style="color:var(--text-muted);">${_symCurr(opp.symbol)}${priceVal.toFixed(2)}</span>
                 </div>
                 <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--text-muted);">
-                    <span>RSI: ${rsiVal}</span>
-                    <span>Vol: ${volVal} <span style="font-size:0.6rem;color:${volSpike ? 'var(--green)' : 'inherit'}">${volSpike ? '▲' : ''}</span></span>
+                    <span>${leftMeta}</span>
+                    <span>${rightMeta}</span>
                 </div>
             </div>
         `;
@@ -20720,7 +20758,7 @@ async function loadMorningShortlist() {
 
         const res = await fetchWithTimeout(`${API}/api/swing/shortlist`, {}, 15000);
 
-
+        if (!res.ok) throw new Error('HTTP ' + res.status);
 
         let data = {};
 
@@ -20738,7 +20776,7 @@ async function loadMorningShortlist() {
 
 
 
-            tsEl.textContent = data.generated_at ? `Scan: ${new Date(data.generated_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : (data.scan_date || '');
+            tsEl.textContent = data.generated_at ? (() => { const d = new Date(data.generated_at); return !isNaN(d.getTime()) ? `Scan: ${d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : (data.scan_date || ''); })() : (data.scan_date || '');
 
 
 
@@ -20750,7 +20788,7 @@ async function loadMorningShortlist() {
 
 
 
-            grid.innerHTML = `<div class="loading-state" style="padding:1.5rem;"><p style="font-size:0.85rem;color:var(--text-muted);">${data.message || 'No shortlist setups available yet.'}</p></div>`;
+            grid.innerHTML = `<div class="loading-state" style="padding:1.5rem;"><p style="font-size:0.85rem;color:var(--text-muted);">${_escHtml(data.message || 'No shortlist setups available yet.')}</p></div>`;
 
 
 
@@ -20846,7 +20884,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                        <span style="font-weight:800;font-size:1.05rem;color:var(--text-primary);">${s.symbol}</span>
+                        <span style="font-weight:800;font-size:1.05rem;color:var(--text-primary);">${_escHtml(s.symbol)}</span>
 
 
 
@@ -20862,7 +20900,7 @@ function renderMorningShortlist(setups) {
 
 
 
-                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${s.pattern || 'Swing Setup'}</div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${_escHtml(s.pattern || 'Swing Setup')}</div>
 
 
 
@@ -24147,7 +24185,7 @@ async function loadEdgeRiskGauge() {
 
         const data = await resp.json();
 
-
+        if (data.error) throw new Error(data.error);
 
         const score = Number(data.risk_score || 0);
 
@@ -24402,13 +24440,19 @@ async function loadEdgeRiskGauge() {
 
         console.error('[loadEdgeRiskGauge] error:', err);
 
-
-
-        label.textContent = 'ERROR';
-
-
+        label.textContent = 'UNAVAILABLE';
 
         label.style.color = 'var(--red)';
+
+        if (scoreVal) { scoreVal.textContent = '--'; scoreVal.style.color = 'var(--text-muted)'; }
+
+        const postureBadge = document.getElementById('riskPostureBadge');
+
+        if (postureBadge) { postureBadge.style.display = 'inline-block'; postureBadge.textContent = 'POSTURE: UNAVAILABLE'; postureBadge.style.background = 'rgba(239, 68, 68, 0.15)'; postureBadge.style.color = '#ef4444'; }
+
+        const vetoesBox = document.getElementById('riskVetoesList');
+
+        if (vetoesBox) vetoesBox.innerHTML = '';
 
 
 
@@ -24737,12 +24781,7 @@ function renderInrStrip(rates, statusPill = null) {
     if (!row) return;
 
     const inrPairs = ['USD/INR', 'EUR/INR', 'GBP/INR', 'JPY/INR'];
-    const referenceRates = {
-        'USD/INR': 86.85,
-        'EUR/INR': 91.40,
-        'GBP/INR': 110.10,
-        'JPY/INR': 0.565
-    };
+    const referenceRates = {};
 
     let effectiveRates = null;
     let rateSourceLabel = '';
@@ -24763,7 +24802,7 @@ function renderInrStrip(rates, statusPill = null) {
 
     if (!effectiveRates) {
         effectiveRates = referenceRates;
-        rateSourceLabel = 'Indicative';
+        rateSourceLabel = 'Unavailable';
     }
 
     const renderPair = (sym) => {
@@ -24788,7 +24827,7 @@ function renderInrStrip(rates, statusPill = null) {
         pillHtml = '<div style="margin-left:auto;display:flex;align-items:center;"><span class="live-pill" style="background:rgba(245,158,11,0.12);color:#f59e0b;border:1px solid rgba(245,158,11,0.25);font-size:0.7rem;padding:2px 8px;font-weight:700;">RATE LIMIT COOLING</span></div>';
     }
 
-    row.innerHTML = (inrHtml ? `${inrHtml}${pillHtml}` : '<span style="color:var(--text-muted);font-size:0.82rem;">Reference INR benchmarks active</span>');
+    row.innerHTML = (inrHtml ? `${inrHtml}${pillHtml}` : '<span style="color:var(--text-muted);font-size:0.82rem;">Live INR rates unavailable</span>');
 }
 
 function renderForexSessions(sessions, currentIst) {
@@ -25635,7 +25674,7 @@ async function loadSwingOutcomeStats() {
         const is429 = err.status === 429 || (err.message && err.message.includes('429'));
         if (is429) {
             panel.innerHTML = `<span style="color:var(--amber,#f59e0b)">⏳ Outcome stats syncing shortly...</span>`;
-            setTimeout(() => loadOutcomeStats(), 3500);
+            setTimeout(() => loadSwingOutcomeStats(), 3500);
         } else {
             panel.innerHTML = `<span style="color:var(--red)">Failed to load outcome stats (${_escHtml(err.message)})</span>`;
         }
@@ -26502,8 +26541,8 @@ async function fetchMarketControlStatus() {
         const res = await fetchWithTimeout(`${API}/api/market-control/status`, {}, 12000);
         if (res.ok) {
             const data = await res.json();
-            _marketControlState = data;
-            renderMarketControlUI(data);
+            _marketControlState = { ...data, _loaded: true };
+            renderMarketControlUI(_marketControlState);
         }
     } catch (e) {
         console.debug("Market control status check skipped:", e);
@@ -26511,6 +26550,7 @@ async function fetchMarketControlStatus() {
 }
 
 let _lastMarketFocusFetchTs = 0;
+let _marketFocusLoaded = false;
 async function fetchMarketFocusConfig(force = false) {
     const now = Date.now();
     if (!force && (now - _lastMarketFocusFetchTs) < 60000) return;
@@ -26521,6 +26561,7 @@ async function fetchMarketFocusConfig(force = false) {
             const data = await res.json();
             if (data && typeof data === 'object') {
                 _marketFocusConfig = data;
+                _marketFocusLoaded = true;
                 applyMarketFocusToDashboard(data);
             }
         }
@@ -26592,11 +26633,19 @@ function applyMarketFocusToDashboard(config) {
             badge.textContent = "Focus: NSE Equities";
             badge.style.background = "rgba(59, 130, 246, 0.2)";
             badge.style.color = "#60a5fa";
-        } else {
-            const isEnabled = Boolean(_marketControlState && _marketControlState.crypto_forex_enabled);
+        } else if (_marketControlState && _marketControlState._loaded) {
+            const isEnabled = Boolean(_marketControlState.crypto_forex_enabled);
             badge.textContent = isEnabled ? "Multi-Asset" : "NSE Focus";
             badge.style.background = isEnabled ? "rgba(16, 185, 129, 0.2)" : "rgba(59, 130, 246, 0.2)";
             badge.style.color = isEnabled ? "#34d399" : "#60a5fa";
+        } else if (cryptoOn || forexOn) {
+            badge.textContent = "Multi-Asset";
+            badge.style.background = "rgba(16, 185, 129, 0.2)";
+            badge.style.color = "#34d399";
+        } else {
+            badge.textContent = "NSE Focus";
+            badge.style.background = "rgba(59, 130, 246, 0.2)";
+            badge.style.color = "#60a5fa";
         }
     }
 
@@ -26637,7 +26686,7 @@ function renderMarketControlUI(data) {
         badge.style.color = "#60a5fa";
     }
 
-    if (_marketFocusConfig && _marketFocusConfig.active_focus && _marketFocusConfig.active_focus !== 'all') {
+    if (_marketFocusLoaded && _marketFocusConfig) {
         applyMarketFocusToDashboard(_marketFocusConfig);
     }
 }
@@ -26848,14 +26897,14 @@ async function loadNextDayPicks(reportId = null) {
 
         // Render Picks or Empty State
         const picks = report.picks || [];
-        if (picks.length === 0 || report.is_empty) {
+        if (picks.length === 0 || report.status === 'NO_QUALIFIED_SETUPS') {
             if (grid) grid.style.display = 'none';
             if (emptyCard) {
                 emptyCard.style.display = 'block';
                 const emptyTitle = document.getElementById('ndpEmptyTitle');
                 const emptyDesc = document.getElementById('ndpEmptyDesc');
                 if (emptyTitle) emptyTitle.textContent = '🛡️ Capital Preservation Mode: NO QUALIFIED TRADES TODAY';
-                if (emptyDesc) emptyDesc.textContent = report.empty_reason || 'All screened Tier-1 equities failed strict noise-floor gates (≥ 1.30x ATR), statutory delivery friction (0.25%), or structural target reachability. TradeAI PRO preserves capital rather than forcing low-edge trades.';
+                if (emptyDesc) emptyDesc.textContent = report.status_reason || 'All screened Tier-1 equities failed strict noise-floor gates (≥ 1.30x ATR), statutory delivery friction (0.25%), or structural target reachability. TradeAI PRO preserves capital rather than forcing low-edge trades.';
             }
         } else {
             if (emptyCard) emptyCard.style.display = 'none';
@@ -26919,9 +26968,9 @@ function renderNextDayPickCard(pick, index) {
     const netRR = setup.net_risk_reward != null ? `${Number(setup.net_risk_reward).toFixed(2)}x` : rrRatio;
 
     const sizing = setup.position_sizing || {};
-    const qty = sizing.suggested_qty || (hasValidLevels && entryPrice > 0 && Math.abs(entryPrice - stopLoss) > 0 ? Math.max(1, Math.floor(5000 / Math.abs(entryPrice - stopLoss))) : null);
-    const rupeeRisk = sizing.rupee_risk || 5000;
-    const segment = pick.segment || (isLong ? 'CNC / F&O' : 'F&O ONLY');
+    const qty = sizing.suggested_quantity || sizing.suggested_qty || (hasValidLevels && entryPrice > 0 && Math.abs(entryPrice - stopLoss) > 0 ? Math.max(1, Math.floor(5000 / Math.abs(entryPrice - stopLoss))) : null);
+    const rupeeRisk = sizing.standard_rupee_risk || sizing.rupee_risk || 5000;
+    const segment = setup.segment || pick.trade_plan?.segment || pick.segment || (isLong ? 'CNC / F&O' : 'F&O ONLY');
     const rankScore = Number(pick.rank_score || 0);
     const isTier1 = rankScore >= 80 || (pick.rank && pick.rank <= 3);
 
@@ -27068,7 +27117,7 @@ async function loadNextDayPicksHistory() {
         // Update select
         const currentSelected = select.value;
         select.innerHTML = '<option value="">Latest Published Report</option>' +
-            history.map(h => `<option value="${escapeHtml(h.report_id)}">${escapeHtml(h.report_id)} · ${escapeHtml(h.target_date || '')} (${h.picks_count || 0} picks)</option>`).join('');
+            history.map(h => `<option value="${escapeHtml(h.report_id)}">${escapeHtml(h.report_id)} · ${escapeHtml(h.target_session_date || h.target_date || '')} (${h.picks_count || 0} picks)</option>`).join('');
         if (currentSelected) select.value = currentSelected;
 
         // Render Outcome Resolution Table
@@ -27076,24 +27125,77 @@ async function loadNextDayPicksHistory() {
             let allOutcomes = [];
             history.forEach(h => {
                 if (h.outcomes && Array.isArray(h.outcomes)) {
-                    h.outcomes.forEach(o => allOutcomes.push({ report_id: h.report_id, date: h.target_date, ...o }));
+                    h.outcomes.forEach(o => allOutcomes.push({ report_id: h.report_id, date: h.target_session_date || h.target_date, ...o }));
                 }
             });
+
+            const _pushReportOutcomes = (rpt) => {
+                if (!rpt || !Array.isArray(rpt.picks)) return;
+                const rptDate = rpt.target_session_date || rpt.target_session?.date || rpt.target_date;
+                rpt.picks.forEach(p => {
+                    const tp = p.trade_plan || {};
+                    const od = p.outcome_details || {};
+                    let realizedR = p.realized_r;
+                    if (realizedR == null && od.exit_price != null && tp.trigger_price != null && tp.stop_loss != null) {
+                        const riskDist = Math.abs(Number(tp.trigger_price) - Number(tp.stop_loss));
+                        if (riskDist > 0) {
+                            const dir = String(tp.direction || p.directional_bias || 'LONG').toUpperCase();
+                            const diff = dir === 'SHORT'
+                                ? (Number(tp.trigger_price) - Number(od.exit_price))
+                                : (Number(od.exit_price) - Number(tp.trigger_price));
+                            realizedR = diff / riskDist;
+                        }
+                    }
+                    allOutcomes.push({
+                        report_id: rpt.report_id,
+                        date: rptDate,
+                        symbol: p.symbol,
+                        direction: tp.direction || p.directional_bias || 'LONG',
+                        entry: tp.trigger_price ?? tp.entry,
+                        sl: tp.stop_loss,
+                        tp: tp.target_1 ?? tp.target,
+                        rr: tp.risk_reward ?? p.risk_reward_ratio,
+                        status: p.outcome_status || 'PENDING',
+                        realized_r: realizedR,
+                    });
+                });
+            };
+
+            if (allOutcomes.length === 0) {
+                if (_currentNdpReport && Array.isArray(_currentNdpReport.picks) && _currentNdpReport.picks.length > 0) {
+                    _pushReportOutcomes(_currentNdpReport);
+                }
+                if (allOutcomes.length === 0) {
+                    const recentWithPicks = history
+                        .filter(h => (h.picks_count || 0) > 0 && (!_currentNdpReport || h.report_id !== _currentNdpReport.report_id))
+                        .slice(0, 3);
+                    const fetched = await Promise.allSettled(
+                        recentWithPicks.map(h =>
+                            fetchWithTimeout(`${API}/api/research/next-day-picks/${encodeURIComponent(h.report_id)}`, { headers: { 'Accept': 'application/json' } })
+                                .then(r => (r.ok ? r.json() : null))
+                        )
+                    );
+                    fetched.forEach(res => {
+                        if (res.status === 'fulfilled' && res.value) _pushReportOutcomes(res.value);
+                    });
+                }
+            }
 
             if (allOutcomes.length === 0) {
                 outcomeBody.innerHTML = '<tr><td colspan="7" style="padding: 1.25rem; text-align: center; color: var(--text-muted);">Post-session outcome resolutions will appear here after market close.</td></tr>';
             } else {
                 outcomeBody.innerHTML = allOutcomes.slice(0, 15).map(o => {
                     const resColor = o.status === 'RESOLVED_WIN' ? '#10b981' : (o.status === 'RESOLVED_LOSS' ? '#ef4444' : '#64748b');
+                    const rStr = (o.realized_r != null && Number.isFinite(Number(o.realized_r))) ? `${Number(o.realized_r).toFixed(2)}R` : '--';
                     return `
                     <tr style="border-bottom: 1px solid var(--border-color);">
                         <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono, monospace);">${escapeHtml(o.date || o.report_id)}</td>
                         <td style="padding: 0.6rem 0.75rem; font-weight: 700;">${escapeHtml(o.symbol)}</td>
                         <td style="padding: 0.6rem 0.75rem;">${escapeHtml(o.direction || 'LONG')}</td>
-                        <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono, monospace);">₹${o.entry || '--'} / ₹${o.sl || '--'} / ₹${o.tp || '--'}</td>
+                        <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono, monospace);">₹${o.entry ?? '--'} / ₹${o.sl ?? '--'} / ₹${o.tp ?? '--'}</td>
                         <td style="padding: 0.6rem 0.75rem; font-weight: 600; color: #10b981;">${(o.rr != null && Number.isFinite(Number(o.rr))) ? `${Number(o.rr).toFixed(1)}x` : '—'}</td>
                         <td style="padding: 0.6rem 0.75rem;"><span style="color: ${resColor}; font-weight: 700;">${escapeHtml(o.status || 'PENDING')}</span></td>
-                        <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono, monospace);">${o.realized_r !== undefined ? `${o.realized_r.toFixed(2)}R` : '--'}</td>
+                        <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono, monospace);">${rStr}</td>
                     </tr>`;
                 }).join('');
             }
@@ -27117,6 +27219,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ force: true, max_picks: 5 })
                 }, 60000, 1);
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const res = await resp.json();
                 alert(`Research pipeline complete. Generated ${res.picks ? res.picks.length : 0} qualified setups for target session.`);
                 await loadNextDayPicks();
@@ -27253,9 +27356,10 @@ function updateModalPinButton(sym) {
 let _watchlistQuoteCache = {}; // in-memory quote cache: { [sym]: { ltp, changePct, signalLabel, conf, entry, sl, tp, isError, ts } }
 
 function _renderWatchlistCard(sym, q, compName) {
+    const isInsuffData = Boolean(q && (q.status === 'INSUFFICIENT_DATA' || q.signalLabel === 'INSUFFICIENT_DATA'));
     const isErr = Boolean(q && q.isError && !q.isLoading);
-    const isLdg = Boolean(!q || q.isLoading || (!q.ltp && !isErr));
-    if (isErr || isLdg || !q || !q.ltp || q.ltp === 0) {
+    const isLdg = Boolean(!q || q.isLoading || (!q.ltp && !isErr && !isInsuffData));
+    if (isErr || isLdg || !q || ((!q.ltp || q.ltp === 0) && !isInsuffData)) {
         const badgeLabel = isErr ? 'FEED OFFLINE' : 'SYNCING FEED';
         const badgeBg = isErr ? 'rgba(239,68,68,0.12)' : 'rgba(59,130,246,0.12)';
         const badgeCol = isErr ? '#f87171' : '#60a5fa';
@@ -27420,11 +27524,11 @@ function _renderWatchlistCard(sym, q, compName) {
     } else {
         // HOLD or MONITOR - Duality: Key Support, Key Resistance, Breakout Trigger (Real Non-Duplicate Levels)
         const nLtp = Number(ltp) || 0;
-        const suppNum = (q.keySupport && !isNaN(q.keySupport)) ? Number(q.keySupport) : (nLtp > 0 ? Number((nLtp * 0.96).toFixed(1)) : null);
-        const resNum = (q.keyResistance && !isNaN(q.keyResistance)) ? Number(q.keyResistance) : (nLtp > 0 ? Number((nLtp * 1.04).toFixed(1)) : null);
-        const triggerNum = (q.breakoutTrigger && !isNaN(q.breakoutTrigger))
+        const suppNum = (q.keySupport != null && !isNaN(q.keySupport)) ? Number(q.keySupport) : null;
+        const resNum = (q.keyResistance != null && !isNaN(q.keyResistance)) ? Number(q.keyResistance) : null;
+        const triggerNum = (q.breakoutTrigger != null && !isNaN(q.breakoutTrigger))
             ? Number(q.breakoutTrigger)
-            : (resNum ? Number((resNum * 1.001).toFixed(1)) : (nLtp > 0 ? Number((nLtp * 1.05).toFixed(1)) : null));
+            : (resNum ? Number((resNum * 1.001).toFixed(1)) : null);
 
         const suppVal = suppNum ? '₹' + suppNum.toFixed(1) : '—';
         const resVal = resNum ? '₹' + resNum.toFixed(1) : '—';
@@ -27493,7 +27597,7 @@ function _renderWatchlistCard(sym, q, compName) {
     // Rationale HTML
     const rationaleHtml = q.rationale ? `
         <div class="watchlist-rationale" style="margin: 4px 0 8px; font-size: 0.69rem; color: #94a3b8; line-height: 1.35; background: rgba(255,255,255,0.02); padding: 5px 8px; border-radius: 5px; border-left: 2px solid var(--accent, #3b82f6);" title="Deterministic factor analysis">
-            💡 ${q.rationale}
+            💡 ${_escHtml(q.rationale)}
         </div>
     ` : '';
 
@@ -27518,7 +27622,7 @@ function _renderWatchlistCard(sym, q, compName) {
             <div class="watchlist-price-row">
                 <div>
                     <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Mark Price (LTP)</div>
-                    <div class="watchlist-ltp">₹${Number(ltp).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    <div class="watchlist-ltp">${Number(ltp) > 0 ? `₹${Number(ltp).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '—'}</div>
                 </div>
                 <div style="text-align:right;">
                     <div style="font-size: 0.72rem;color:var(--text-muted);text-transform:uppercase;">Day Change %</div>
@@ -27564,9 +27668,9 @@ async function _fetchWatchlistQuote(sym) {
                 entry: ltp,
                 sl: null,
                 tp: null,
-                keySupport: Number((ltp * 0.96).toFixed(1)),
-                keyResistance: Number((ltp * 1.04).toFixed(1)),
-                invalidationLevel: Number((ltp * 0.95).toFixed(1)),
+                keySupport: null,
+                keyResistance: null,
+                invalidationLevel: null,
                 horizon: {
                     short: '5–8 Days (Swing)',
                     barrier_short: 'Max 10 Bars',
@@ -27607,9 +27711,9 @@ async function _fetchWatchlistQuote(sym) {
                     entry: ltp,
                     sl,
                     tp,
-                    keySupport: Number((ltp * 0.96).toFixed(1)),
-                    keyResistance: Number((ltp * 1.04).toFixed(1)),
-                    invalidationLevel: Number((ltp * 0.95).toFixed(1)),
+                    keySupport: null,
+                    keyResistance: null,
+                    invalidationLevel: null,
                     horizon: {
                         short: '5–8 Days (Swing)',
                         barrier_short: 'Max 10 Bars',
@@ -27840,9 +27944,9 @@ async function loadDedicatedWatchlist(options = {}) {
                 sl: (isAct && bQuote.stop_loss !== null) ? Number(bQuote.stop_loss) : null,
                 tp: (isAct && bQuote.target !== null) ? Number(bQuote.target) : null,
                 target2: (isAct && bQuote.target_2 !== null) ? Number(bQuote.target_2) : null,
-                keySupport: (bQuote.key_support !== null && bQuote.key_support !== undefined && !isNaN(bQuote.key_support)) ? Number(bQuote.key_support) : (ltp > 0 ? Number((ltp * 0.96).toFixed(1)) : null),
-                keyResistance: (bQuote.key_resistance !== null && bQuote.key_resistance !== undefined && !isNaN(bQuote.key_resistance)) ? Number(bQuote.key_resistance) : (ltp > 0 ? Number((ltp * 1.04).toFixed(1)) : null),
-                invalidationLevel: (bQuote.invalidation_level !== null && bQuote.invalidation_level !== undefined && !isNaN(bQuote.invalidation_level)) ? Number(bQuote.invalidation_level) : (ltp > 0 ? Number((ltp * 0.95).toFixed(1)) : null),
+                keySupport: (bQuote.key_support !== null && bQuote.key_support !== undefined && !isNaN(bQuote.key_support)) ? Number(bQuote.key_support) : null,
+                keyResistance: (bQuote.key_resistance !== null && bQuote.key_resistance !== undefined && !isNaN(bQuote.key_resistance)) ? Number(bQuote.key_resistance) : null,
+                invalidationLevel: (bQuote.invalidation_level !== null && bQuote.invalidation_level !== undefined && !isNaN(bQuote.invalidation_level)) ? Number(bQuote.invalidation_level) : null,
                 rrRatio: bQuote.rr_ratio !== null ? Number(bQuote.rr_ratio) : null,
                 horizon: bQuote.horizon || { short: '5–8 Days (Swing)', barrier_short: 'Max 10 Bars' },
                 rationale: bQuote.rationale || '',
@@ -27873,9 +27977,9 @@ async function loadDedicatedWatchlist(options = {}) {
                 entry: Number(sig.entry || ltp),
                 sl: (isAct && sig.stop_loss) ? Number(sig.stop_loss) : null,
                 tp: (isAct && sig.target) ? Number(sig.target) : null,
-                keySupport: sig.key_support ? Number(sig.key_support) : (ltp > 0 ? Number((ltp * 0.96).toFixed(1)) : null),
-                keyResistance: sig.key_resistance ? Number(sig.key_resistance) : (ltp > 0 ? Number((ltp * 1.04).toFixed(1)) : null),
-                invalidationLevel: sig.invalidation_level ? Number(sig.invalidation_level) : (ltp > 0 ? Number((ltp * 0.95).toFixed(1)) : null),
+                keySupport: sig.key_support ? Number(sig.key_support) : null,
+                keyResistance: sig.key_resistance ? Number(sig.key_resistance) : null,
+                invalidationLevel: sig.invalidation_level ? Number(sig.invalidation_level) : null,
                 horizon: sig.horizon || { short: '5–8 Days (Swing)', barrier_short: 'Max 10 Bars' },
                 isError: false,
                 isLoading: false,
@@ -27898,9 +28002,9 @@ async function loadDedicatedWatchlist(options = {}) {
                     entry: ltp,
                     sl: null,
                     tp: null,
-                    keySupport: Number((ltp * 0.96).toFixed(1)),
-                    keyResistance: Number((ltp * 1.04).toFixed(1)),
-                    invalidationLevel: Number((ltp * 0.95).toFixed(1)),
+                    keySupport: null,
+                    keyResistance: null,
+                    invalidationLevel: null,
                     horizon: { short: '5–8 Days (Swing)', barrier_short: 'Max 10 Bars' },
                     isError: false,
                     isLoading: false,
@@ -28406,18 +28510,18 @@ function renderFnoSymbolKPIs(d) {
             pcrValEl.textContent = pcrNum.toFixed(2);
             if (pcrNum >= 1.05) {
                 pcrValEl.style.color = "#10b981";
-                if (pcrSubEl) pcrSubEl.textContent = `BULLISH BIAS (Put Writing Base) · Vol PCR: ${d.pcr_volume != null && Number(d.pcr_volume) > 0 ? Number(d.pcr_volume).toFixed(2) : '1.00'}`;
+                if (pcrSubEl) pcrSubEl.textContent = `BULLISH BIAS (Put Writing Base) · Vol PCR: ${d.pcr_volume != null && Number(d.pcr_volume) > 0 ? Number(d.pcr_volume).toFixed(2) : '--'}`;
             } else if (pcrNum <= 0.8) {
                 pcrValEl.style.color = "#ef4444";
-                if (pcrSubEl) pcrSubEl.textContent = `BEARISH BIAS (Call Overhead) · Vol PCR: ${d.pcr_volume != null && Number(d.pcr_volume) > 0 ? Number(d.pcr_volume).toFixed(2) : '1.00'}`;
+                if (pcrSubEl) pcrSubEl.textContent = `BEARISH BIAS (Call Overhead) · Vol PCR: ${d.pcr_volume != null && Number(d.pcr_volume) > 0 ? Number(d.pcr_volume).toFixed(2) : '--'}`;
             } else {
                 pcrValEl.style.color = "#fbbf24";
-                if (pcrSubEl) pcrSubEl.textContent = `NEUTRAL BALANCED · Vol PCR: ${d.pcr_volume != null && Number(d.pcr_volume) > 0 ? Number(d.pcr_volume).toFixed(2) : '1.00'}`;
+                if (pcrSubEl) pcrSubEl.textContent = `NEUTRAL BALANCED · Vol PCR: ${d.pcr_volume != null && Number(d.pcr_volume) > 0 ? Number(d.pcr_volume).toFixed(2) : '--'}`;
             }
         } else {
-            pcrValEl.textContent = "1.00";
-            pcrValEl.style.color = "#fbbf24";
-            if (pcrSubEl) pcrSubEl.textContent = "NEUTRAL (Off-Hours Baseline)";
+            pcrValEl.textContent = "--";
+            pcrValEl.style.color = "#94a3b8";
+            if (pcrSubEl) pcrSubEl.textContent = "PCR unavailable (Off-Hours / No Feed)";
         }
     }
 
@@ -28425,14 +28529,14 @@ function renderFnoSymbolKPIs(d) {
     const moveEl = document.getElementById("fnoImpliedMoveVal");
     const straddleSubEl = document.getElementById("fnoStraddleSub");
     if (moveEl) {
-        const m1 = d.implied_move_1d_pct != null ? `±${Number(d.implied_move_1d_pct).toFixed(2)}% (1D)` : '±1.35% (1D)';
-        const m5 = d.implied_move_5d_pct != null ? `±${Number(d.implied_move_5d_pct).toFixed(2)}% (5D)` : '±3.02% (5D)';
+        const m1 = d.implied_move_1d_pct != null ? `±${Number(d.implied_move_1d_pct).toFixed(2)}% (1D)` : '--';
+        const m5 = d.implied_move_5d_pct != null ? `±${Number(d.implied_move_5d_pct).toFixed(2)}% (5D)` : '--';
         moveEl.textContent = `${m1} · ${m5}`;
     }
     const spot = Number(d.spot_price || 0);
     if (straddleSubEl) {
-        const strPrice = d.straddle_price != null && Number(d.straddle_price) > 0 ? `₹${Number(d.straddle_price).toFixed(1)}` : (spot > 0 ? `~₹${(spot * 0.0135).toFixed(1)}` : '--');
-        const iv = d.straddle_iv != null ? `${(Number(d.straddle_iv) * 100).toFixed(1)}%` : '14.2%';
+        const strPrice = d.straddle_price != null && Number(d.straddle_price) > 0 ? `₹${Number(d.straddle_price).toFixed(1)}` : '--';
+        const iv = d.straddle_iv != null ? `${(Number(d.straddle_iv) * 100).toFixed(1)}%` : '--';
         straddleSubEl.textContent = `ATM Straddle: ${strPrice} · Black-76 IV: ${iv}`;
     }
 
@@ -28492,7 +28596,7 @@ function renderFnoSymbolKPIs(d) {
     if (ladderSpotVal) ladderSpotVal.textContent = spot > 0 ? `₹${spot.toLocaleString('en-IN', {minimumFractionDigits: 1, maximumFractionDigits: 2})}` : '₹--';
     if (ladderStraddleVal) {
         const atm = d.atm_strike != null ? `₹${Number(d.atm_strike).toLocaleString('en-IN')}` : (spot > 0 ? `₹${Math.round(spot).toLocaleString('en-IN')}` : '₹--');
-        const str = d.straddle_price != null && Number(d.straddle_price) > 0 ? `₹${Number(d.straddle_price).toFixed(1)}` : (spot > 0 ? `₹${(spot * 0.0135).toFixed(1)}` : '₹--');
+        const str = d.straddle_price != null && Number(d.straddle_price) > 0 ? `₹${Number(d.straddle_price).toFixed(1)}` : '₹--';
         ladderStraddleVal.textContent = `ATM Strike: ${atm} · Straddle: ${str}`;
     }
 
@@ -28536,7 +28640,7 @@ function renderFnoOverviewTable(data) {
         const spotNum = Number(row.spot_price || 0);
         const spot = spotNum > 0 ? `₹${spotNum.toLocaleString('en-IN', {minimumFractionDigits: 1, maximumFractionDigits: 2})}` : '--';
         
-        let pcrBadge = '<span style="color:#94a3b8;font-size:0.75rem" title="Weekend/Off-Hours Baseline">1.00</span>';
+        let pcrBadge = '<span style="color:#94a3b8;font-size:0.75rem" title="Unavailable">--</span>';
         if (row.pcr_oi != null) {
             const p = Number(row.pcr_oi);
             const color = p >= 1.05 ? '#10b981' : (p <= 0.8 ? '#ef4444' : '#fbbf24');
@@ -28558,10 +28662,10 @@ function renderFnoOverviewTable(data) {
             ceWall = `<span style="color:#ef4444;font-size:0.75rem" title="5-Day Estimated Reachability Ceiling">~₹${estCe.toLocaleString('en-IN')}</span>`;
         }
 
-        const straddle = row.straddle_price ? `₹${Number(row.straddle_price).toFixed(1)}` : (spotNum > 0 ? `~₹${(spotNum * 0.0135).toFixed(1)}` : '--');
+        const straddle = row.straddle_price ? `₹${Number(row.straddle_price).toFixed(1)}` : '--';
         
-        const m1 = row.implied_move_1d_pct != null ? `±${Number(row.implied_move_1d_pct).toFixed(1)}%` : '±1.4%';
-        const m5 = row.implied_move_5d_pct != null ? `±${Number(row.implied_move_5d_pct).toFixed(1)}%` : '±3.1%';
+        const m1 = row.implied_move_1d_pct != null ? `±${Number(row.implied_move_1d_pct).toFixed(1)}%` : '--';
+        const m5 = row.implied_move_5d_pct != null ? `±${Number(row.implied_move_5d_pct).toFixed(1)}%` : '--';
         const moves = `${m1} / ${m5}`;
 
         let maxPain = '--';

@@ -1740,10 +1740,11 @@ const HERO_COINS = [
 let tickerCache    = {};     // sym → 24h ticker data
 let klineCache     = {};     // sym → interval → { opens, highs, lows, closes, volumes, times, fetchedAt }
 let notifEnabled   = false;
-let notifPermission = Notification.permission ?? 'default';
+let notifPermission = (typeof Notification !== 'undefined') ? (Notification.permission ?? 'default') : 'default';
 let prevPrices     = {};     // for flash detect
 let refreshTimer   = null;
 let countdown      = REFRESH_SEC;
+let _isFetchingCrypto = false;
 let fearGreedValue = null;
 let contextMoodCache = null;
 let cryptoIntelCache = null;  // Phase 6: cockpit intelligence cache
@@ -3011,7 +3012,7 @@ function checkPriceAlert(label, sym, pct) {
     const dir = pct > 0 ? '🚀 PUMP' : '💥 DUMP';
     const msg = `${dir}: ${label} moved ${pct > 0 ? '+' : ''}${pct.toFixed(2)}% in 24h!`;
     showToast(msg, 'alert');
-    if (Notification.permission === 'granted') {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       new Notification('TradeAI PRO — Price Alert', {
         body: msg,
         icon: '/favicon.ico',
@@ -3033,7 +3034,7 @@ function checkRuleAlerts(label, sym, price, rsi) {
       alertedRules.add(key);
       const msg = `${label} crossed $${threshold.toLocaleString()} (now $${price.toLocaleString()})`;
       showToast(`🎯 ${msg}`, 'alert');
-      if (Notification.permission === 'granted') {
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         new Notification('TradeAI PRO — Threshold Alert', { body: msg, icon: '/favicon.ico' });
       }
       setTimeout(() => alertedRules.delete(key), 15 * 60 * 1000);
@@ -3048,7 +3049,7 @@ function checkRuleAlerts(label, sym, price, rsi) {
         alertedRules.add(key);
         const msg = `${label} RSI is ${rsi.toFixed(1)} (${side})`;
         showToast(`📉 ${msg}`, 'alert');
-        if (Notification.permission === 'granted') {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
           new Notification('TradeAI PRO — RSI Alert', { body: msg, icon: '/favicon.ico' });
         }
         setTimeout(() => alertedRules.delete(key), 20 * 60 * 1000);
@@ -3059,7 +3060,7 @@ function checkRuleAlerts(label, sym, price, rsi) {
 
 async function toggleNotifications() {
   if (!notifEnabled) {
-    if (Notification.permission === 'default') {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
       const perm = await Notification.requestPermission();
       notifPermission = perm;
     }
@@ -3096,6 +3097,7 @@ function startCountdown() {
   countdown = REFRESH_SEC;
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(() => {
+    if (document.hidden) return; // pause ticks when tab is backgrounded
     countdown--;
     document.getElementById('countdownEl').textContent = countdown + 's';
     if (countdown <= 0) {
@@ -3304,6 +3306,9 @@ function renderCryptoIntelligence(data) {
 
 // ── Main Fetch Cycle ──────────────────────────────────────
 async function fetchAll(manual = false) {
+  if (_isFetchingCrypto) return;
+  _isFetchingCrypto = true;
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   const btn = document.getElementById('refreshBtn');
   if (btn) { btn.textContent = '⟳'; btn.disabled = true; }
 
@@ -3388,6 +3393,7 @@ async function fetchAll(manual = false) {
     const overlay = document.getElementById('loadingOverlay');
     if (!overlay.classList.contains('hidden')) overlay.classList.add('hidden');
 
+    _isFetchingCrypto = false;
     // Reset countdown
     startCountdown();
   }

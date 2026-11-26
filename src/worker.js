@@ -29,7 +29,7 @@ const CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https://api.qrserver.com https://*.githubusercontent.com",
-  "connect-src 'self' wss://tradeai-pro.tradingpro.workers.dev https://tradeai-pro.tradingpro.workers.dev https://trading-api-n1wt.onrender.com wss://trading-api-n1wt.onrender.com https://api.binance.com https://fapi.binance.com https://data-api.binance.vision https://api.coingecko.com",
+  "connect-src 'self' wss://tradeai-pro.tradingpro.workers.dev https://tradeai-pro.tradingpro.workers.dev https://trading-api-n1wt.onrender.com wss://trading-api-n1wt.onrender.com https://api.binance.com https://fapi.binance.com https://data-api.binance.vision https://api.coingecko.com https://api.alternative.me",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -77,8 +77,6 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/morning-scan",
   "/api/market-control/status",
   "/api/market-control/focus",
-  "/api/autonomous/feed",
-  "/api/autonomous/status",
   "/api/signals/all",
   "/api/signals/winrate",
   "/api/signals/leaderboard",
@@ -102,14 +100,10 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/research/next-day-picks",
   "/api/research/next-day-picks/history",
   "/api/nse/prediction",
-  "/api/tradeflow",
-  "/api/performance",
-  "/api/learning/stats",
   "/api/context/v3",
   "/api/intraday/latest",
   "/api/analytics/scorecard",
   "/api/sectors",
-  "/api/learning/outcomes",
   "/api/swing-scanner",
   "/api/section-6b/picks",
 ]);
@@ -439,7 +433,7 @@ export function getDegradedFallbackResponse(pathname) {
     const payload = {
       status: "degraded",
       index: "NIFTY 50",
-      index_level: 25000.0,
+      index_level: null,
       index_change_pts: 0.0,
       index_pct: 0.0,
       movers: [],
@@ -722,7 +716,7 @@ export default {
         }
         const fallback = getDegradedFallbackResponse(url.pathname);
         if (fallback) return fallback;
-      } else if (originResponse.status === 500 || originResponse.status === 429 || originResponse.status === 503) {
+      } else if (originResponse.status === 500 || originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 504 || originResponse.status === 429) {
         const fallback = getDegradedFallbackResponse(url.pathname);
         if (fallback) return fallback;
       }
@@ -965,10 +959,15 @@ export function shouldDispatchCycle(date = new Date()) {
   return { dispatch: true, reason: "session_cadence" };
 }
 
-async function dispatchAutonomousCycle(env, fetchFn, now) {
+async function dispatchAutonomousCycle(env, fetchFn, now, eventCron) {
   if (!env || !env.GH_PAT) return { dispatched: false, reason: "no_token" };
   const decision = shouldDispatchCycle(now);
   if (!decision.dispatch) return { dispatched: false, reason: decision.reason };
+  // Only dispatch from the market-hours cron; the */10 keep-alive cron must not
+  // double-dispatch on minutes where both triggers fire simultaneously.
+  if (eventCron && eventCron !== '*/2 3-10 * * 1-5') {
+    return { dispatched: false, reason: "deduped_cron" };
+  }
   try {
     const res = await fetchFn(
       `https://api.github.com/repos/${CYCLE_REPO}/actions/workflows/${CYCLE_WORKFLOW_FILE}/dispatches`,
@@ -1010,7 +1009,6 @@ export const EDGE_WARM_PATHS = [
   "/api/market-control/status",
   "/api/macro/intelligence",
   "/api/swing/shortlist",
-  "/api/autonomous/status",
 ];
 
 // Pre-open warm window in IST minutes-of-day. Outside this range the cache is
@@ -1194,7 +1192,7 @@ export async function handleScheduled(event, env, ctx, fetchFn = fetch, now = ne
       }
     }
 
-    const cycle = await dispatchAutonomousCycle(env, fetchFn, now);
+    const cycle = await dispatchAutonomousCycle(env, fetchFn, now, event?.cron);
     return { ok: res.ok, status: res.status, url: healthUrl, refresh, warm, cycle };
   } catch (err) {
     console.error(`[cron] Health ping to ${healthUrl} failed:`, err);

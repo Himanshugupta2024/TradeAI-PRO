@@ -1630,6 +1630,8 @@
 
     // ── Telemetry Fetch Loop ─────────────────────────────────
     async function fetchAllTelemetry() {
+      if (_telemetryInFlight) return;
+      _telemetryInFlight = true;
       try {
         // 1. Autonomous Status
         const auto = await apiCall('/api/autonomous/status').catch(() => null);
@@ -1667,7 +1669,7 @@
 
           const cycleVal = auto.status?.recent_decisions_count ?? auto.worker?.symbols_scanned ?? auto.cycle_count ?? 0;
           document.getElementById('valAutoCycle').textContent = `Decisions: ${cycleVal}`;
-          const nextSec = auto.next_cycle_in_sec ?? (isMarketOpen ? '15m' : 'Standby');
+          const nextSec = isMarketOpen ? '15m' : 'Standby';
           document.getElementById('valAutoNext').textContent = typeof nextSec === 'number' ? `${nextSec}s` : nextSec;
           document.getElementById('valAutoSignals').textContent = auto.worker?.signals_generated ?? auto.tracked_signals_count ?? 0;
 
@@ -1740,11 +1742,11 @@
         if (mc) {
           const btn6A = document.getElementById('btnToggleSection6A');
           if (btn6A) {
-            btn6A.textContent = mc.enabled ? 'Unlock Focus Mode' : 'Enable Section 6A Lock';
+            btn6A.textContent = mc.crypto_forex_enabled ? 'Unlock Focus Mode' : 'Enable Section 6A Lock';
           }
           const ctxFocusEl = document.getElementById('ctxFocus');
           if (ctxFocusEl) {
-            ctxFocusEl.textContent = (mc.focus || 'ALL').toUpperCase();
+            ctxFocusEl.textContent = (mc.effective_mode || 'ALL').toUpperCase();
           }
         }
 
@@ -1783,18 +1785,28 @@
 
       } catch (err) {
         logMessage(`Telemetry poll failed: ${err.message}`, 'warn');
+      } finally {
+        _telemetryInFlight = false;
       }
     }
 
+    let _telemetryInFlight = false;
+    let _operatorInFlight = false;
     function startTelemetryLoop() {
       fetchAllTelemetry();
       loadOperatorPanels();
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-      autoRefreshTimer = setInterval(fetchAllTelemetry, 8000);
+      autoRefreshTimer = setInterval(() => {
+        if (document.hidden || _telemetryInFlight) return;
+        fetchAllTelemetry();
+      }, 8000);
       // Operator panels hit heavier endpoints (valuation refresh, model/DB reads),
       // so they poll on a slower cadence than the KPI strip.
       if (operatorRefreshTimer) clearInterval(operatorRefreshTimer);
-      operatorRefreshTimer = setInterval(loadOperatorPanels, 20000);
+      operatorRefreshTimer = setInterval(() => {
+        if (document.hidden || _operatorInFlight) return;
+        loadOperatorPanels();
+      }, 20000);
     }
 
     // ── Confirmation Modal Handlers ──────────────────────────
@@ -1919,9 +1931,9 @@
       logMessage('Checking Section 6A policy lock...', 'info');
       try {
         const status = await apiCall('/api/market-control/status');
-        const nextState = !status.enabled;
+        const nextState = !Boolean(status.crypto_forex_enabled);
         const res = await apiCall('/api/market-control/toggle', 'POST', { enabled: nextState, password: adminKey });
-        logMessage(`Section 6A Focus Mode is now: ${res.state?.enabled ? 'LOCKED (NSE Focus)' : 'UNLOCKED'}`, 'ok');
+        logMessage(`Section 6A Focus Mode is now: ${res.crypto_forex_enabled ? 'UNLOCKED' : 'LOCKED (NSE Focus)'}`, 'ok');
         fetchAllTelemetry();
       } catch (e) {
         logMessage(`Section 6A toggle failed: ${e.message}`, 'err');
@@ -2729,14 +2741,20 @@
 
     // ── Operator panel orchestrator ──────────────────────────
     async function loadOperatorPanels() {
-      await Promise.allSettled([
-        loadRuntimeControls(),
-        loadOpenPositions(),
-        loadModelBundle(),
-        loadRetrainJobs(),
-        loadLearningPanels(),
-        loadAutonomousFeed(),
-      ]);
+      if (_operatorInFlight) return;
+      _operatorInFlight = true;
+      try {
+        await Promise.allSettled([
+          loadRuntimeControls(),
+          loadOpenPositions(),
+          loadModelBundle(),
+          loadRetrainJobs(),
+          loadLearningPanels(),
+          loadAutonomousFeed(),
+        ]);
+      } finally {
+        _operatorInFlight = false;
+      }
     }
 
     // ── Auto-Resume Session ──────────────────────────────────

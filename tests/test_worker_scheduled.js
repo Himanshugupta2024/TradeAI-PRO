@@ -412,7 +412,7 @@ async function runTests() {
     };
 
     const dispatchResult = await handleScheduled(
-      { cron: '*/5 * * * *' },
+      { cron: '*/2 3-10 * * 1-5' },
       { GH_PAT: 'test-token' },
       {},
       dispatchFetch,
@@ -426,6 +426,22 @@ async function runTests() {
     assert.strictEqual(ghCall.options.headers.Authorization, 'Bearer test-token');
     assert.deepStrictEqual(JSON.parse(ghCall.options.body), { ref: 'main' });
     assert.strictEqual(dispatchResult.cycle.dispatched, true);
+
+    // 8b: Keep-alive */10 cron firing on the same :50 collision minute must NOT double-dispatch
+    const dedupCalls = [];
+    const dedupResult = await handleScheduled(
+      { cron: '*/10 * * * *' },
+      { GH_PAT: 'test-token' },
+      {},
+      async (url, options = {}) => {
+        dedupCalls.push({ url, options });
+        return { ok: true, status: 200 };
+      },
+      at(4, 50)
+    );
+    assert.strictEqual(dedupCalls.length, 1, '*/10 keep-alive cron must only ping health, not double-dispatch');
+    assert.strictEqual(dedupResult.cycle.dispatched, false);
+    assert.strictEqual(dedupResult.cycle.reason, 'deduped_cron');
     console.log('✓ Test 8 passed.');
 
     // ------------------------------------------------------------------------
@@ -434,7 +450,7 @@ async function runTests() {
     console.log('Test 9: no workflow dispatch outside the NSE session...');
     const idleCalls = [];
     const idleResult = await handleScheduled(
-      { cron: '*/5 * * * *' },
+      { cron: '*/2 3-10 * * 1-5' },
       { GH_PAT: 'test-token' },
       {},
       async (url, options = {}) => {
@@ -450,7 +466,7 @@ async function runTests() {
     // Without a token the cron stays a pure keep-alive.
     const noTokenCalls = [];
     const noTokenResult = await handleScheduled(
-      { cron: '*/5 * * * *' },
+      { cron: '*/2 3-10 * * 1-5' },
       {},
       {},
       async (url) => {
