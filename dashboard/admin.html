@@ -1577,6 +1577,10 @@
       localStorage.removeItem('tradeai_admin_key');
       localStorage.removeItem('admin_api_key');
       adminKey = '';
+      _telemetryLoopStarted = false;
+      _adminInFlightGets.clear();
+      _adminGetCache.clear();
+      _lastMarketControlStatus = null;
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
       if (operatorRefreshTimer) clearInterval(operatorRefreshTimer);
       document.getElementById('authGate').style.display = 'flex';
@@ -1588,8 +1592,13 @@
       if (e.key === 'Enter') handleUnlock();
     });
 
-    // ── Authenticated API Fetch Helper ───────────────────────
-    async function apiCall(endpoint, method = 'GET', body = null, _retries = 2) {
+    // ── Authenticated API Fetch Helper (with GET Coalescing) ─
+    const _ADMIN_GET_COALESCE_TTL_MS = 3000;
+    const _adminInFlightGets = new Map();
+    const _adminGetCache = new Map();
+    let _lastMarketControlStatus = null;
+
+    async function _rawApiCall(endpoint, method = 'GET', body = null, _retries = 2) {
       const headers = {
         'Accept': 'application/json',
       };
@@ -1618,7 +1627,7 @@
           const waitSec = ra ? parseInt(ra, 10) : 0;
           const delayMs = (waitSec > 0 ? waitSec * 1000 : 1800) + Math.floor(Math.random() * 1200);
           await new Promise(r => setTimeout(r, delayMs));
-          return apiCall(endpoint, method, body, _retries - 1);
+          return _rawApiCall(endpoint, method, body, _retries - 1);
         }
         const isPolicyDenied = res.status === 403 && (
           endpoint.startsWith('/api/market-control/') || endpoint.startsWith('/api/forex/')
@@ -1636,6 +1645,46 @@
       }
 
       return data;
+    }
+
+    async function apiCall(endpoint, method = 'GET', body = null, _retries = 2, options = {}) {
+      const upperMethod = String(method || 'GET').toUpperCase();
+      if (upperMethod !== 'GET') {
+        _adminGetCache.clear();
+        return _rawApiCall(endpoint, upperMethod, body, _retries);
+      }
+
+      const forceRefresh = Boolean(options && (options.forceRefresh || options.isManual));
+      const cacheKey = `${endpoint}::${adminKey || ''}`;
+
+      if (!forceRefresh) {
+        const cached = _adminGetCache.get(cacheKey);
+        if (cached) {
+          if (Date.now() < cached.expiresAt) return cached.data;
+          _adminGetCache.delete(cacheKey);
+        }
+        if (_adminInFlightGets.has(cacheKey)) {
+          return _adminInFlightGets.get(cacheKey);
+        }
+      } else {
+        _adminGetCache.delete(cacheKey);
+      }
+
+      const promise = _rawApiCall(endpoint, 'GET', body, _retries).then((data) => {
+        _adminGetCache.set(cacheKey, { data, expiresAt: Date.now() + _ADMIN_GET_COALESCE_TTL_MS });
+        return data;
+      });
+
+      if (!forceRefresh) {
+        _adminInFlightGets.set(cacheKey, promise);
+        promise.finally(() => {
+          if (_adminInFlightGets.get(cacheKey) === promise) {
+            _adminInFlightGets.delete(cacheKey);
+          }
+        });
+      }
+
+      return promise;
     }
 
     // ── Telemetry Fetch Loop ─────────────────────────────────
@@ -1750,6 +1799,7 @@
         // 5. Section 6A Market Control Status
         const mc = await apiCall('/api/market-control/status').catch(() => null);
         if (mc) {
+          _lastMarketControlStatus = mc;
           const btn6A = document.getElementById('btnToggleSection6A');
           if (btn6A) {
             btn6A.textContent = mc.crypto_forex_enabled ? 'Unlock Focus Mode' : 'Enable Section 6A Lock';
@@ -1802,7 +1852,10 @@
 
     let _telemetryInFlight = false;
     let _operatorInFlight = false;
+    let _telemetryLoopStarted = false;
     function startTelemetryLoop() {
+      if (_telemetryLoopStarted) return;
+      _telemetryLoopStarted = true;
       fetchAllTelemetry();
       loadOperatorPanels();
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
@@ -1941,9 +1994,10 @@
     async function executeToggleSection6A() {
       logMessage('Checking Section 6A policy lock...', 'info');
       try {
-        const status = await apiCall('/api/market-control/status');
+        const status = _lastMarketControlStatus || await apiCall('/api/market-control/status');
         const nextState = !Boolean(status.crypto_forex_enabled);
         const res = await apiCall('/api/market-control/toggle', 'POST', { enabled: nextState, password: adminKey });
+        if (res && res.state) _lastMarketControlStatus = res.state;
         logMessage(`Section 6A Focus Mode is now: ${res.state?.crypto_forex_enabled ? 'UNLOCKED' : 'LOCKED (NSE Focus)'}`, 'ok');
         fetchAllTelemetry();
       } catch (e) {
