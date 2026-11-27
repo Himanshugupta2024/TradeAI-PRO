@@ -772,6 +772,53 @@ async function runTests() {
     assert.strictEqual(offHourUrls.some((u) => u.includes('trading-feed.onrender.com')), false);
     console.log('✓ Test 19 passed.');
 
+    // ------------------------------------------------------------------------
+    // Test 20: /api/market/{symbol} is edge cacheable and serves stale fallback on 429
+    // ------------------------------------------------------------------------
+    console.log('Test 20: /api/market/* edge caching & 429 stale fallback (distinct from /api/market-control/*)...');
+    assert.strictEqual(isPathCacheable('/api/market/RELIANCE'), true);
+    assert.strictEqual(isPathCacheable('/api/market-control/toggle'), false);
+
+    mockCache.reset();
+    let marketOriginCalls = 0;
+    globalThis.fetch = async (req, ...args) => currentOriginFetch(req, ...args);
+    currentOriginFetch = async () => {
+      marketOriginCalls++;
+      if (marketOriginCalls === 1) {
+        return new Response(JSON.stringify({ symbol: 'RELIANCE', data: [{ close: 1382.6 }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ error: 'Rate limited' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const marketPending = [];
+    const marketUrl = 'https://tradeai-pro.tradingpro.workers.dev/api/market/RELIANCE?limit=2&interval=5m';
+    const marketFirst = await worker.fetch(
+      new Request(marketUrl, { method: 'GET' }),
+      {},
+      { waitUntil: (p) => marketPending.push(p) }
+    );
+    await Promise.all(marketPending);
+    assert.strictEqual(marketFirst.status, 200);
+    assert.strictEqual(marketFirst.headers.get('CF-Cache-Status'), 'MISS');
+
+    // Age cached entry past fresh/SWR window or hit origin 429 directly via normalized cache expiry test:
+    const cachedEntry = await mockCache.match(getNormalizedCacheKey(marketUrl));
+    assert.ok(cachedEntry, '/api/market/* 200 response must be stored in edge cache');
+    const agedHeaders = new Headers(cachedEntry.headers);
+    agedHeaders.set('X-SWR-Cached-At', String(Date.now() - 700 * 1000));
+    await mockCache.put(getNormalizedCacheKey(marketUrl), new Response(cachedEntry.body, { status: 200, headers: agedHeaders }));
+
+    const marketOn429 = await worker.fetch(new Request(marketUrl, { method: 'GET' }), {}, { waitUntil: () => {} });
+    assert.strictEqual(marketOn429.status, 200);
+    assert.strictEqual(marketOn429.headers.get('CF-Cache-Status'), 'STALE-FALLBACK-503');
+    console.log('✓ Test 20 passed.');
+
   } finally {
     // Restore global fetch and caches
     globalThis.fetch = originalGlobalFetch;

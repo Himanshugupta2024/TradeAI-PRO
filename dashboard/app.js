@@ -56,55 +56,38 @@ const API = (() => {
     return '';
 })();
 
-// ── Resilient JSON Fetcher with Dual-Origin Fallback & Content-Type Safety ──
-async function fetchSafeJSON(url, options = {}, timeoutMs = 12000, _retries = 2) {
-    const method = (options.method || 'GET').toUpperCase();
-    if (method === 'GET' && typeof _inFlightRequests !== 'undefined' && _inFlightRequests.has(url)) {
-        try {
-            const r = await _inFlightRequests.get(url).then(res => res.clone());
-            const ct = (r.headers.get('content-type') || '').toLowerCase();
-            let dedupData = {};
-            if (ct.includes('application/json')) {
-                try { dedupData = await r.json(); } catch (_) {}
-            }
-            if (!r.ok) {
-                return {
-                    ok: false,
-                    status: r.status,
-                    error: dedupData.error || (r.status === 429 ? 'Rate limit cooling down. Re-syncing shortly...' : `HTTP ${r.status}`),
-                    detail: dedupData,
-                    data: dedupData,
-                };
-            }
-            return ct.includes('application/json')
-                ? { ok: true, status: r.status, data: dedupData }
-                : { ok: false, status: r.status, error: 'Non-JSON response' };
-        } catch (err) {
-            return { ok: false, status: 0, error: err.name === 'AbortError' || err.name === 'TimeoutError' ? 'Timeout' : (err.message || 'Network error') };
-        }
+// Origin fan-out guard & in-flight deduplication shared by fetchWithTimeout and fetchSafeJSON.
+// Caps concurrent /api/* GETs at 4 so page boots and multi-symbol watchlist refreshes
+// do not trip Render/Cloudflare per-IP burst rate limits (HTTP 429).
+const _inFlightRequests = new Map();
+const _apiGate = { active: 0, max: 4, waiters: [] };
+
+function _acquireApiSlot() {
+    if (_apiGate.active < _apiGate.max) {
+        _apiGate.active += 1;
+        return Promise.resolve();
     }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return new Promise(resolve => _apiGate.waiters.push(resolve));
+}
+
+function _releaseApiSlot() {
+    const next = _apiGate.waiters.shift();
+    if (next) {
+        next(); // hand the slot straight to the next waiter, keep the count
+    } else {
+        _apiGate.active = Math.max(0, _apiGate.active - 1);
+    }
+}
+
+function _needsApiSlot(url, isGet) {
+    if (typeof url === 'string' && (url.includes('/api/health') || url.includes('/health/live'))) return false;
+    return isGet && typeof url === 'string' && (url.indexOf('/api/') === 0 || url.includes('/api/'));
+}
+
+// ── Resilient JSON Fetcher with Concurrency Gate, Dedup & Content-Type Safety ──
+async function fetchSafeJSON(url, options = {}, timeoutMs = 12000, _retries = 2) {
     try {
-        const opts = { ...options, signal: controller.signal };
-        let res = await fetch(url, opts);
-
-        // Auto-retry on 429 (Rate Limit) or 503 (Render cold boot) for idempotent requests
-        if ((res.status === 429 || res.status === 503) && _retries > 0 && ['GET', 'HEAD'].includes(method)) {
-            clearTimeout(timer);
-            let delayMs = 1800 + Math.floor(Math.random() * 1500);
-            try {
-                const ra = res.headers && res.headers.get ? res.headers.get('retry-after') : null;
-                if (ra) {
-                    const sec = parseInt(ra, 10);
-                    if (!isNaN(sec) && sec > 0) delayMs = Math.min(sec * 1000, 30000);
-                }
-            } catch (_) {}
-            console.warn(`[fetchSafeJSON] HTTP ${res.status} from ${url} — retrying in ${(delayMs / 1000).toFixed(1)}s (${_retries} left)...`);
-            await new Promise(r => setTimeout(r, delayMs));
-            return fetchSafeJSON(url, options, timeoutMs, _retries - 1);
-        }
-
+        const res = await fetchWithTimeout(url, options, timeoutMs, _retries, 4000);
         const ct = (res.headers.get('content-type') || '').toLowerCase();
         if (!res.ok) {
             let errData = {};
@@ -125,9 +108,11 @@ async function fetchSafeJSON(url, options = {}, timeoutMs = 12000, _retries = 2)
         const data = await res.json();
         return { ok: true, status: res.status, data };
     } catch (err) {
-        return { ok: false, status: 0, error: err.name === 'AbortError' ? 'Timeout' : (err.message || 'Network error') };
-    } finally {
-        clearTimeout(timer);
+        return {
+            ok: false,
+            status: 0,
+            error: err && err.name === 'TimeoutError' ? 'Timeout' : (err && err.message ? err.message : 'Network error')
+        };
     }
 }
 
@@ -2420,117 +2405,42 @@ function switchTab(tab) {
 
 
 // Uses exponential backoff (4s → 8s → 16s). Genuine timeouts still throw.
-
-
-
-const _inFlightRequests = new Map();
-
-// Origin fan-out guard.
-// Measured on the live site: a cold dashboard load fires ~11 /api/* calls in
-// parallel, the Worker proxies each one straight to the single Render origin,
-// and every one of them comes back 429 while the exact same endpoints answer
-// 200 when spaced 3s apart. The browser-facing edge is not the limiter -- eight
-// parallel requests to a cached /api path all return 200 -- so the burst is
-// tripping Render's per-IP limit on the Worker's egress. Cap how many /api
-// requests are in flight at once and the burst never forms.
-const _apiGate = { active: 0, max: 4, waiters: [] };
-
-function _acquireApiSlot() {
-    if (_apiGate.active < _apiGate.max) {
-        _apiGate.active += 1;
-        return Promise.resolve();
-    }
-    return new Promise(resolve => _apiGate.waiters.push(resolve));
-}
-
-function _releaseApiSlot() {
-    const next = _apiGate.waiters.shift();
-    if (next) {
-        next(); // hand the slot straight to the next waiter, keep the count
-    } else {
-        _apiGate.active = Math.max(0, _apiGate.active - 1);
-    }
-}
-
-function _needsApiSlot(url, isGet) {
-    if (typeof url === 'string' && (url.includes('/api/health') || url.includes('/health/live'))) return false;
-    return isGet && typeof url === 'string' && (url.indexOf('/api/') === 0 || url.includes('/api/'));
-}
-
-
-
-
-
-
+// _inFlightRequests, _apiGate, _acquireApiSlot, _releaseApiSlot, _needsApiSlot are declared near top.
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries = 3, _backoffMs = 4000) {
-
-
 
     const isGet = !options.method || options.method.toUpperCase() === 'GET';
     const isSafeMethod = !options.method || ['GET', 'HEAD', 'OPTIONS'].includes(options.method.toUpperCase());
 
-
-
     if (isGet && _inFlightRequests.has(url)) {
-
-
 
         return _inFlightRequests.get(url).then(r => r.clone());
 
-
-
     }
-
-
-
-
-
-
 
     const ac = new AbortController();
 
-
-
-    const tid = setTimeout(() => ac.abort(), timeoutMs);
-
-
-
-
-
-
-
     const fetchPromise = (async () => {
 
-
-
         let resp;
-
-
+        let tid = null;
 
         try {
-
-
 
             const useSlot = _needsApiSlot(url, isGet);
             if (useSlot) await _acquireApiSlot();
             try {
+                // Start abort timer only after slot acquisition so queued calls don't expire waiting in _apiGate
+                tid = setTimeout(() => ac.abort(), timeoutMs);
                 resp = await fetch(url, { ...options, signal: ac.signal });
             } finally {
+                if (tid) clearTimeout(tid);
                 if (useSlot) _releaseApiSlot();
             }
 
-
-
-            clearTimeout(tid);
-
-
-
         } catch (err) {
 
-
-
-            clearTimeout(tid);
+            if (tid) clearTimeout(tid);
 
 
 
@@ -19234,14 +19144,19 @@ async function fetchAndShowQuote(symbol) {
                 showNseHint = false;
             }
 
+            const safeSymJs = _escHtml(symbol).replace(/'/g, "\\'");
             titleEl.textContent = symbol.toUpperCase();
+            const btSec = document.getElementById('modalBacktestSection');
+            if (btSec) btSec.innerHTML = '<p style="color:var(--text-muted);font-size:0.8rem">Backtest unavailable until quote loads.</p>';
+            const newsSec = document.getElementById('modalNewsList');
+            if (newsSec) newsSec.innerHTML = '<p style="color:var(--text-muted);font-size:0.75rem;">News unavailable until quote loads.</p>';
             infoGrid.innerHTML = `
                 <div style="grid-column:1/-1;text-align:center;padding:2rem;">
                     <div style="font-size:2rem;margin-bottom:0.75rem;">⚠️</div>
                     <div style="color:var(--red);font-weight:600;margin-bottom:0.5rem;">${titleText}</div>
                     <div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:0.75rem;">${_escHtml(errMsg)}</div>
                     ${detailMsg ? `<div style="color:var(--text-secondary);font-size:0.75rem;margin-bottom:0.75rem;">${_escHtml(detailMsg)}</div>` : ''}
-                    <button class="btn btn-secondary" onclick="openSymbolModal('${symbol}')" style="margin-bottom:0.75rem;padding:0.35rem 0.9rem;font-size:0.75rem;cursor:pointer;">🔄 Retry Fetch</button>
+                    <button class="btn btn-secondary" onclick="fetchAndShowQuote('${safeSymJs}')" style="margin-bottom:0.75rem;padding:0.35rem 0.9rem;font-size:0.75rem;cursor:pointer;">🔄 Retry Fetch</button>
                     ${showNseHint ? `
                     <div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-muted);">
                         Make sure the NSE symbol is correct (e.g. <code style="color:var(--cyan)">PRECWIRE</code>, <code style="color:var(--cyan)">VEDL</code>)
@@ -27691,7 +27606,7 @@ async function _fetchWatchlistQuote(sym) {
     // 2. Fetch fast lightweight market quote from /api/market/{sym}?limit=2&interval=5m (~1.2s)
     try {
         const cleanSym = encodeURIComponent(sym.replace('.NS', '').trim());
-        const mRes = await fetchSafeJSON(`${API}/api/market/${cleanSym}?limit=2&interval=5m`, {}, 4000);
+        const mRes = await fetchSafeJSON(`${API}/api/market/${cleanSym}?limit=2&interval=5m`, {}, 6000, 1);
         if (mRes.ok && mRes.data && Array.isArray(mRes.data.data) && mRes.data.data.length > 0) {
             const candles = mRes.data.data;
             const last = candles[candles.length - 1];
@@ -27732,9 +27647,9 @@ async function _fetchWatchlistQuote(sym) {
         }
     } catch (_) {}
 
-    // 3. Fallback to /api/search/quote/{sym} (fast 4s timeout)
+    // 3. Fallback to /api/search/quote/{sym} (fast 6s timeout, single retry through _apiGate)
     try {
-        const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 4000);
+        const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 6000, 1);
         if (qRes.ok && qRes.data) {
             const d = qRes.data;
             const ltp = Number(d.close || 0);
