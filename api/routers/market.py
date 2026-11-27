@@ -2967,11 +2967,25 @@ async def serve_legal():
 
 
 
+_NSE_NEWS_CACHE: dict[str, object] = {"ts": 0.0, "payload": None}
+_NSE_NEWS_CACHE_TTL_SEC = 180.0
+_NSE_PRED_CACHE: dict[str, object] = {"ts": 0.0, "payload": None}
+_NSE_PRED_CACHE_TTL_SEC = 120.0
+
+
 @router.get("/api/nse/news")
 
 async def get_nse_news(limit: int = Query(12, ge=3, le=40)):
 
-    """Fetch latest Indian market headlines from free RSS sources."""
+    """Fetch latest Indian market headlines from free RSS sources (concurrent + cached)."""
+
+    now_ts = time.time()
+    cached_news = _NSE_NEWS_CACHE.get("payload")
+    if isinstance(cached_news, dict) and (now_ts - float(_NSE_NEWS_CACHE.get("ts") or 0.0)) < _NSE_NEWS_CACHE_TTL_SEC:
+        return {
+            **cached_news,
+            "items": list((cached_news.get("items") or [])[:limit]),
+        }
 
     feeds = [
 
@@ -3021,109 +3035,48 @@ async def get_nse_news(limit: int = Query(12, ge=3, le=40)):
 
     def _fetch_feed(source: str, url: str) -> list[dict]:
 
-        last_exc: Exception | None = None
-
-        for attempt in range(3):
-
-            try:
-
-                req = Request(
-
-                    url,
-
-                    headers={
-
-                        "User-Agent": (
-
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-
-                            "AppleWebKit/537.36 (KHTML, like Gecko) "
-
-                            "Chrome/124.0.0.0 Safari/537.36"
-
-                        )
-
-                    },
-
+        req = Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
                 )
-
-                with urlopen(req, timeout=10) as resp:
-
-                    payload = resp.read()
-
-                root = ET.fromstring(payload)
-
-                items = root.findall(".//item")
-
-                if not items:
-
-                    items = root.findall(".//{http://www.w3.org/2005/Atom}entry")
-
-                out: list[dict] = []
-
-                for it in items[:20]:
-
-                    title = _norm_text(it.find("title")) or _norm_text(
-
-                        it.find("{http://www.w3.org/2005/Atom}title")
-
-                    )
-
-                    link = _norm_text(it.find("link"))
-
-                    if not link:
-
-                        atom_link = it.find("{http://www.w3.org/2005/Atom}link")
-
-                        if atom_link is not None:
-
-                            link = str(atom_link.attrib.get("href") or "").strip()
-
-                    pub = (
-
-                        _norm_text(it.find("pubDate"))
-
-                        or _norm_text(it.find("published"))
-
-                        or _norm_text(it.find("{http://www.w3.org/2005/Atom}updated"))
-
-                    )
-
-                    if not title or not link:
-
-                        continue
-
-                    out.append(
-
-                        {
-
-                            "title": title,
-
-                            "url": link,
-
-                            "source": source,
-
-                            "published": pub,
-
-                        }
-
-                    )
-
-                return out
-
-            except Exception as exc:
-
-                last_exc = exc
-
-                if attempt < 2:
-
-                    time.sleep(0.35 * (2**attempt))
-
-        if last_exc is not None:
-
-            raise last_exc
-
-        return []
+            },
+        )
+        with urlopen(req, timeout=5) as resp:
+            payload = resp.read()
+        root = ET.fromstring(payload)
+        items = root.findall(".//item")
+        if not items:
+            items = root.findall(".//{http://www.w3.org/2005/Atom}entry")
+        out: list[dict] = []
+        for it in items[:20]:
+            title = _norm_text(it.find("title")) or _norm_text(
+                it.find("{http://www.w3.org/2005/Atom}title")
+            )
+            link = _norm_text(it.find("link"))
+            if not link:
+                atom_link = it.find("{http://www.w3.org/2005/Atom}link")
+                if atom_link is not None:
+                    link = str(atom_link.attrib.get("href") or "").strip()
+            pub = (
+                _norm_text(it.find("pubDate"))
+                or _norm_text(it.find("published"))
+                or _norm_text(it.find("{http://www.w3.org/2005/Atom}updated"))
+            )
+            if not title or not link:
+                continue
+            out.append(
+                {
+                    "title": title,
+                    "url": link,
+                    "source": source,
+                    "published": pub,
+                }
+            )
+        return out
 
     all_news: list[dict] = []
 
@@ -3133,56 +3086,39 @@ async def get_nse_news(limit: int = Query(12, ge=3, le=40)):
 
     now_ts = time.time()
 
-    for source, url in feeds:
-
+    async def _poll_one_nse_feed(source: str, url: str) -> tuple[str, list[dict] | None, Exception | None]:
         key = f"NSE:{source}"
-
-        backoff_until = _NEWS_SOURCE_BACKOFF_UNTIL.get(key, 0.0)
-
-        if now_ts < backoff_until:
-
-            failed_sources.append(source)
-
-            continue
-
+        if time.time() < _NEWS_SOURCE_BACKOFF_UNTIL.get(key, 0.0):
+            return source, None, RuntimeError("backoff")
         try:
-
-            all_news.extend(await asyncio.to_thread(_fetch_feed, source, url))
-
-            sources_ok.append(source)
-
-            _NEWS_SOURCE_FAIL_COUNT.pop(key, None)
-
-            _NEWS_SOURCE_BACKOFF_UNTIL.pop(key, None)
-
+            rows = await asyncio.to_thread(_fetch_feed, source, url)
+            return source, rows, None
         except Exception as exc:
+            return source, None, exc
 
-            fails = _NEWS_SOURCE_FAIL_COUNT.get(key, 0) + 1
-
-            _NEWS_SOURCE_FAIL_COUNT[key] = fails
-
-            backoff_seconds = min(1800, 30 * (2 ** min(fails, 6)))
-
-            _NEWS_SOURCE_BACKOFF_UNTIL[key] = now_ts + backoff_seconds
-
-            last_warn = _NEWS_SOURCE_LAST_WARN_TS.get(key, 0.0)
-
-            if now_ts - last_warn >= 300:
-
-                logger.warning(
-
-                    "NSE news feed failed (%s): %s (backoff %ss)",
-
-                    source,
-
-                    exc,
-
-                    int(backoff_seconds),
-
-                )
-
-                _NEWS_SOURCE_LAST_WARN_TS[key] = now_ts
-
+    feed_results = await asyncio.gather(*(_poll_one_nse_feed(src, url) for src, url in feeds))
+    for source, rows, exc in feed_results:
+        key = f"NSE:{source}"
+        if exc is None and rows is not None:
+            all_news.extend(rows)
+            sources_ok.append(source)
+            _NEWS_SOURCE_FAIL_COUNT.pop(key, None)
+            _NEWS_SOURCE_BACKOFF_UNTIL.pop(key, None)
+        else:
+            if str(exc) != "backoff":
+                fails = _NEWS_SOURCE_FAIL_COUNT.get(key, 0) + 1
+                _NEWS_SOURCE_FAIL_COUNT[key] = fails
+                backoff_seconds = min(1800, 30 * (2 ** min(fails, 6)))
+                _NEWS_SOURCE_BACKOFF_UNTIL[key] = now_ts + backoff_seconds
+                last_warn = _NEWS_SOURCE_LAST_WARN_TS.get(key, 0.0)
+                if now_ts - last_warn >= 300:
+                    logger.warning(
+                        "NSE news feed failed (%s): %s (backoff %ss)",
+                        source,
+                        exc,
+                        int(backoff_seconds),
+                    )
+                    _NEWS_SOURCE_LAST_WARN_TS[key] = now_ts
             failed_sources.append(source)
 
     seen_urls: set[str] = set()
@@ -3201,16 +3137,20 @@ async def get_nse_news(limit: int = Query(12, ge=3, le=40)):
 
         unique_news.append(row)
 
-    return {
-
-        "items": unique_news[:limit],
-
+    full_payload = {
+        "items": unique_news,
         "sources_ok": sources_ok,
-
         "failed_sources": failed_sources,
-
         "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _NSE_NEWS_CACHE["ts"] = time.time()
+    _NSE_NEWS_CACHE["payload"] = full_payload
 
+    return {
+        "items": unique_news[:limit],
+        "sources_ok": sources_ok,
+        "failed_sources": failed_sources,
+        "updated_at": full_payload["updated_at"],
     }
 
 @router.get("/api/nse/prediction")
@@ -3301,15 +3241,26 @@ async def get_nse_prediction():
 
         sell_rows: list[dict] = []
 
-        for symbol, df in svc._signal_cache.items():
+        snap_by_sym: dict[str, dict] = {}
+        if svc._signal_cache:
+            items_iter = []
+            for symbol, df in svc._signal_cache.items():
+                if "/" in symbol or df is None or df.empty:
+                    continue
+                last = df.iloc[-1]
+                items_iter.append((symbol, last))
+        else:
+            items_iter = []
+            for s in getattr(svc, "_persisted_signals_snapshot", []) or []:
+                if not isinstance(s, dict):
+                    continue
+                sym = str(s.get("symbol") or "").upper().replace(".NS", "").strip()
+                if not sym or "/" in sym:
+                    continue
+                snap_by_sym[sym] = s
+                items_iter.append((sym, s))
 
-            # NSE/universe only (exclude crypto symbols like BTC/USDT).
-
-            if "/" in symbol or df is None or df.empty:
-
-                continue
-
-            last = df.iloc[-1]
+        for symbol, last in items_iter:
 
             raw_signal = str(last.get("signal", "HOLD") or "HOLD").upper()
 
@@ -3381,9 +3332,17 @@ async def get_nse_prediction():
 
         bank_df = svc._signal_cache.get("BANKNIFTY")
 
-        nifty_pct = _pct_change(nifty_df) if nifty_df is not None else 0.0
+        nifty_pct = (
+            _pct_change(nifty_df)
+            if nifty_df is not None
+            else float((snap_by_sym.get("NIFTY 50") or {}).get("change_pct") or 0.0)
+        )
 
-        bank_pct = _pct_change(bank_df) if bank_df is not None else 0.0
+        bank_pct = (
+            _pct_change(bank_df)
+            if bank_df is not None
+            else float((snap_by_sym.get("BANKNIFTY") or {}).get("change_pct") or 0.0)
+        )
 
         mood_payload = await get_market_mood_api()
 

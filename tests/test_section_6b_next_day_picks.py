@@ -412,7 +412,10 @@ def test_next_day_picks_rr_varies_across_candidates():
         ("M&M", 3200.0, 0.026, 2.2, 0.072),
     ]
     rrs = []
-    with patch("api.fno_client.fetch_fno_analytics_sync", return_value={"envelope_source": "ATR_FALLBACK", "ce_wall": None, "pe_wall": None}):
+    with (
+        patch("api.fno_client.fetch_fno_analytics_sync", return_value={"envelope_source": "ATR_FALLBACK", "ce_wall": None, "pe_wall": None}),
+        patch("agents.market_intelligence.next_day_picks._discover_catalysts_for_symbol", return_value=[]),
+    ):
         for sym, base, rpct, smult, cap_r1 in specs:
             cand = analyze_candidate(sym, _make_df(base, rpct, smult, cap_r1), date(2026, 11, 25), date(2026, 11, 26), "BULLISH", ref_dt=ref_dt)
             assert cand is not None, f"{sym} unexpectedly filtered out"

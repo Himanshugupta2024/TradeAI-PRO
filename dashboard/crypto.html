@@ -2482,9 +2482,10 @@ async function fetchGlobalStats() {
     const res = await fetch(`${COINGECKO}/global`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const { data } = await res.json();
-    const btcDom = data.market_cap_percentage?.bitcoin?.toFixed(1) ?? '—';
-    const mcap   = data.total_market_cap?.usd ?? 0;
-    const vol    = data.total_volume?.usd ?? 0;
+    const rawDom = data?.market_cap_percentage?.btc ?? data?.market_cap_percentage?.bitcoin;
+    const btcDom = (rawDom != null && Number.isFinite(Number(rawDom))) ? Number(rawDom).toFixed(1) : '—';
+    const mcap   = data?.total_market_cap?.usd ?? 0;
+    const vol    = data?.total_volume?.usd ?? 0;
     document.getElementById('btcDom').textContent = btcDom + '%';
     if (btcEl) btcEl.classList.remove('skeleton');
     document.getElementById('totalMcap').textContent = fmtB(mcap);
@@ -2578,12 +2579,14 @@ function renderNewsPayload(data) {
 
 async function fetchCryptoNews() {
   const nowMs = Date.now();
+  let hadCachedNews = false;
   try {
     const cachedRaw = localStorage.getItem(NEWS_CACHE_KEY);
     if (cachedRaw) {
       const cached = JSON.parse(cachedRaw);
       if (cached && cached.at && nowMs - cached.at < 5 * 60 * 1000 && cached.payload) {
         renderNewsPayload(cached.payload);
+        hadCachedNews = Boolean(Array.isArray(cached.payload?.items) && cached.payload.items.length);
       }
     }
   } catch {
@@ -2591,7 +2594,10 @@ async function fetchCryptoNews() {
   }
 
   try {
-    const res = await fetch(`${API}/api/crypto/news?limit=10`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${API}/api/crypto/news?limit=10`, { signal: controller.signal });
+    clearTimeout(timer);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     renderNewsPayload(data);
@@ -2601,6 +2607,10 @@ async function fetchCryptoNews() {
       // storage quota or privacy mode
     }
   } catch (e) {
+    if (hadCachedNews) {
+      clearSourceWarning('crypto_news');
+      return;
+    }
     setSourceWarning('crypto_news', 'Live news refresh failed');
     const listEl = document.getElementById('newsList');
     const metaEl = document.getElementById('newsSourcesMeta');
@@ -2748,8 +2758,30 @@ function renderPrediction(tickerMap, gainers, losers) {
   if (hitEl) hitEl.textContent = 'Hit rate: —';
 }
 
+let _mcCryptoPredCache = { at: 0, enabled: null };
+
+async function isCryptoPredictionAllowed() {
+  const now = Date.now();
+  if (_mcCryptoPredCache.enabled !== null && (now - _mcCryptoPredCache.at) < 60000) {
+    return _mcCryptoPredCache.enabled;
+  }
+  try {
+    const res = await fetch(`${API}/api/market-control/status`);
+    if (res.ok) {
+      const data = await res.json();
+      const enabled = Boolean(data?.crypto_forex_enabled);
+      _mcCryptoPredCache = { at: now, enabled };
+      return enabled;
+    }
+  } catch { /* ignore status probe failures */ }
+  return true;
+}
+
 async function fetchCalculatedPrediction() {
   try {
+    if (!(await isCryptoPredictionAllowed())) {
+      return null;
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 4000);
     const res = await fetch(`${API}/api/crypto/prediction?timeframe=${encodeURIComponent(signalTimeframe)}`, {

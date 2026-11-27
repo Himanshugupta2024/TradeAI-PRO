@@ -130,3 +130,56 @@ def test_binance_fetch_historical_routes_geo_blocked_to_spot_mirror():
         assert float(df["close"].iloc[0]) == 95200.0
     finally:
         reset_binance_geo_cooldown()
+
+
+def test_slots_max_positions_parity_and_ui_defaults():
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+    from config import settings
+    from server import app
+
+    client = TestClient(app)
+    auto = client.get("/api/autonomous/status").json()
+    stats = client.get("/api/stats").json()
+    risk = client.get("/api/risk/state").json()
+
+    assert auto["status"]["max_positions"] == settings.AUTONOMOUS_MAX_POSITIONS
+    assert stats["max_open_positions"] == risk["max_open_positions"]
+
+    idx_html = Path("dashboard/index.html").read_text(encoding="utf-8")
+    app_js = Path("dashboard/app.js").read_text(encoding="utf-8")
+    assert "Slots: 0/8 Active" not in idx_html
+    assert "st.max_positions || 8" not in app_js
+
+
+def test_crypto_html_dominance_btc_key_and_prediction_guard():
+    from pathlib import Path
+
+    html = Path("dashboard/crypto.html").read_text(encoding="utf-8")
+    assert "market_cap_percentage?.btc" in html
+    assert "isCryptoPredictionAllowed" in html
+
+
+def test_nse_prediction_uses_persisted_signals_fallback():
+    from unittest.mock import AsyncMock, patch
+    from api import service as svc
+    from api.routers import market as market_router
+
+    orig_sig = dict(svc._signal_cache)
+    orig_persisted = list(svc._persisted_signals_snapshot)
+    try:
+        svc._signal_cache = {}
+        svc._persisted_signals_snapshot = [
+            {"symbol": "RELIANCE", "signal": "LONG", "confidence": 72.0, "quality_score": 80, "close": 1300.0},
+            {"symbol": "NIFTY 50", "signal": "HOLD", "close": 25600.0, "change_pct": 1.1},
+        ]
+        fake_news = {"items": [{"title": "Nifty rally jumps on strong buying"}], "sources_ok": ["Mock"], "failed_sources": []}
+        with patch.object(market_router, "get_nse_news", new=AsyncMock(return_value=fake_news)):
+            res = asyncio.run(market_router.get_nse_prediction())
+
+        assert res["prediction"]["direction"] in ("BULLISH_BIAS", "NEUTRAL", "BEARISH_BIAS")
+        assert res["signals"]["buy_count"] == 1
+        assert res["signals"]["top_buy"][0]["symbol"] == "RELIANCE"
+    finally:
+        svc._signal_cache = orig_sig
+        svc._persisted_signals_snapshot = orig_persisted

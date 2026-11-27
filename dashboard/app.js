@@ -2877,7 +2877,9 @@ function renderAutonomousStatusUI(statusData) {
         toggleBtn.textContent = st.enabled ? 'Pause Auto-Trade' : 'Resume Auto-Trade';
     }
     if (slotsBadge) {
-        slotsBadge.textContent = `Slots: ${st.open_positions || 0}/${st.max_positions || 8} Active`;
+        const statsCap = (typeof _lastStatsData !== 'undefined' && _lastStatsData?.max_open_positions) ? _lastStatsData.max_open_positions : null;
+        const maxSlots = statsCap ?? window._maxOpenPositions ?? 3;
+        slotsBadge.textContent = `Slots: ${st.open_positions || 0}/${maxSlots} Active`;
     }
 }
 

@@ -1385,6 +1385,10 @@ async def _compute_meme_signals_raw():
     return payload
 
 
+_CRYPTO_NEWS_CACHE: dict[str, object] = {"ts": 0.0, "payload": None}
+_CRYPTO_NEWS_CACHE_TTL_SEC = 180.0
+
+
 @router.get("/api/crypto/news")
 
 async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
@@ -1395,7 +1399,14 @@ async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
             content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
         )
 
-    """Fetch latest crypto headlines from multiple free/keyless RSS sources."""
+    """Fetch latest crypto headlines concurrently from free/keyless RSS sources with 180s cache."""
+    now_ts = time.time()
+    cached_news = _CRYPTO_NEWS_CACHE.get("payload")
+    if isinstance(cached_news, dict) and (now_ts - float(_CRYPTO_NEWS_CACHE.get("ts") or 0.0)) < _CRYPTO_NEWS_CACHE_TTL_SEC:
+        return {
+            **cached_news,
+            "items": list((cached_news.get("items") or [])[:limit]),
+        }
 
     feeds = [
 
@@ -1425,113 +1436,48 @@ async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
 
     def _fetch_feed(source: str, url: str) -> list[dict]:
 
-        last_exc: Exception | None = None
-
-        # Retry with exponential backoff to reduce transient source failures.
-
-        for attempt in range(3):
-
-            try:
-
-                req = Request(
-
-                    url,
-
-                    headers={
-
-                        "User-Agent": (
-
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-
-                            "AppleWebKit/537.36 (KHTML, like Gecko) "
-
-                            "Chrome/124.0.0.0 Safari/537.36"
-
-                        )
-
-                    },
-
+        req = Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
                 )
-
-                with urlopen(req, timeout=10) as resp:
-
-                    payload = resp.read()
-
-                root = ET.fromstring(payload)
-
-                # Support RSS (<item>) and Atom (<entry>) feeds.
-
-                items = root.findall(".//item")
-
-                if not items:
-
-                    items = root.findall(".//{http://www.w3.org/2005/Atom}entry")
-
-                out: list[dict] = []
-
-                for it in items[:20]:
-
-                    title = _norm_text(it.find("title")) or _norm_text(
-
-                        it.find("{http://www.w3.org/2005/Atom}title")
-
-                    )
-
-                    link = _norm_text(it.find("link"))
-
-                    if not link:
-
-                        atom_link = it.find("{http://www.w3.org/2005/Atom}link")
-
-                        if atom_link is not None:
-
-                            link = str(atom_link.attrib.get("href") or "").strip()
-
-                    pub = (
-
-                        _norm_text(it.find("pubDate"))
-
-                        or _norm_text(it.find("published"))
-
-                        or _norm_text(it.find("{http://www.w3.org/2005/Atom}updated"))
-
-                    )
-
-                    if not title or not link:
-
-                        continue
-
-                    out.append(
-
-                        {
-
-                            "title": title,
-
-                            "url": link,
-
-                            "source": source,
-
-                            "published": pub,
-
-                        }
-
-                    )
-
-                return out
-
-            except Exception as exc:
-
-                last_exc = exc
-
-                if attempt < 2:
-
-                    time.sleep(0.35 * (2**attempt))
-
-        if last_exc is not None:
-
-            raise last_exc
-
-        return []
+            },
+        )
+        with urlopen(req, timeout=5) as resp:
+            payload = resp.read()
+        root = ET.fromstring(payload)
+        items = root.findall(".//item")
+        if not items:
+            items = root.findall(".//{http://www.w3.org/2005/Atom}entry")
+        out: list[dict] = []
+        for it in items[:20]:
+            title = _norm_text(it.find("title")) or _norm_text(
+                it.find("{http://www.w3.org/2005/Atom}title")
+            )
+            link = _norm_text(it.find("link"))
+            if not link:
+                atom_link = it.find("{http://www.w3.org/2005/Atom}link")
+                if atom_link is not None:
+                    link = str(atom_link.attrib.get("href") or "").strip()
+            pub = (
+                _norm_text(it.find("pubDate"))
+                or _norm_text(it.find("published"))
+                or _norm_text(it.find("{http://www.w3.org/2005/Atom}updated"))
+            )
+            if not title or not link:
+                continue
+            out.append(
+                {
+                    "title": title,
+                    "url": link,
+                    "source": source,
+                    "published": pub,
+                }
+            )
+        return out
 
     all_news: list[dict] = []
 
@@ -1539,58 +1485,37 @@ async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
 
     failed_sources: list[str] = []
 
-    now_ts = time.time()
-
-    for source, url in feeds:
-
-        backoff_until = _NEWS_SOURCE_BACKOFF_UNTIL.get(source, 0.0)
-
-        if now_ts < backoff_until:
-
-            failed_sources.append(source)
-
-            continue
-
+    async def _poll_one_crypto_feed(source: str, url: str) -> tuple[str, list[dict] | None, Exception | None]:
+        if time.time() < _NEWS_SOURCE_BACKOFF_UNTIL.get(source, 0.0):
+            return source, None, RuntimeError("backoff")
         try:
-
-            all_news.extend(await asyncio.to_thread(_fetch_feed, source, url))
-
-            sources_ok.append(source)
-
-            _NEWS_SOURCE_FAIL_COUNT.pop(source, None)
-
-            _NEWS_SOURCE_BACKOFF_UNTIL.pop(source, None)
-
+            rows = await asyncio.to_thread(_fetch_feed, source, url)
+            return source, rows, None
         except Exception as exc:
+            return source, None, exc
 
-            fails = _NEWS_SOURCE_FAIL_COUNT.get(source, 0) + 1
-
-            _NEWS_SOURCE_FAIL_COUNT[source] = fails
-
-            backoff_seconds = min(1800, 30 * (2 ** min(fails, 6)))
-
-            _NEWS_SOURCE_BACKOFF_UNTIL[source] = now_ts + backoff_seconds
-
-            last_warn = _NEWS_SOURCE_LAST_WARN_TS.get(source, 0.0)
-
-            # Avoid warning spam for persistently blocked feeds.
-
-            if now_ts - last_warn >= 300:
-
-                logger.warning(
-
-                    "Crypto news feed failed (%s): %s (backoff %ss)",
-
-                    source,
-
-                    exc,
-
-                    int(backoff_seconds),
-
-                )
-
-                _NEWS_SOURCE_LAST_WARN_TS[source] = now_ts
-
+    feed_results = await asyncio.gather(*(_poll_one_crypto_feed(src, url) for src, url in feeds))
+    for source, rows, exc in feed_results:
+        if exc is None and rows is not None:
+            all_news.extend(rows)
+            sources_ok.append(source)
+            _NEWS_SOURCE_FAIL_COUNT.pop(source, None)
+            _NEWS_SOURCE_BACKOFF_UNTIL.pop(source, None)
+        else:
+            if str(exc) != "backoff":
+                fails = _NEWS_SOURCE_FAIL_COUNT.get(source, 0) + 1
+                _NEWS_SOURCE_FAIL_COUNT[source] = fails
+                backoff_seconds = min(1800, 30 * (2 ** min(fails, 6)))
+                _NEWS_SOURCE_BACKOFF_UNTIL[source] = now_ts + backoff_seconds
+                last_warn = _NEWS_SOURCE_LAST_WARN_TS.get(source, 0.0)
+                if now_ts - last_warn >= 300:
+                    logger.warning(
+                        "Crypto news feed failed (%s): %s (backoff %ss)",
+                        source,
+                        exc,
+                        int(backoff_seconds),
+                    )
+                    _NEWS_SOURCE_LAST_WARN_TS[source] = now_ts
             failed_sources.append(source)
 
     # Deduplicate by URL while preserving source diversity.
@@ -1611,16 +1536,20 @@ async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
 
         unique_news.append(row)
 
-    return {
-
-        "items": unique_news[:limit],
-
+    full_payload = {
+        "items": unique_news,
         "sources_ok": sources_ok,
-
         "failed_sources": failed_sources,
-
         "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _CRYPTO_NEWS_CACHE["ts"] = time.time()
+    _CRYPTO_NEWS_CACHE["payload"] = full_payload
 
+    return {
+        "items": unique_news[:limit],
+        "sources_ok": sources_ok,
+        "failed_sources": failed_sources,
+        "updated_at": full_payload["updated_at"],
     }
 
 @router.get("/api/crypto/intelligence")
