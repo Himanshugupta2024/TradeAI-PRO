@@ -258,7 +258,8 @@ function isPrivateStatePath(pathname) {
 }
 
 export function isPathCacheable(pathname) {
-  if (isHealthOrReadinessPath(pathname) || isPrivateStatePath(pathname)) return false;
+  if (isHealthOrReadinessPath(pathname)) return false;
+  if (isPrivateStatePath(pathname)) return false;
   if (PUBLIC_CACHEABLE_PATHS.has(pathname)) return true;
   if (
     pathname.startsWith("/api/market/") ||

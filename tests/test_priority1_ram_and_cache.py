@@ -276,6 +276,7 @@ async def test_health_db_probe_retry_recovers_and_honest_failure(monkeypatch):
     monkeypatch.setattr(health_router, "_HEALTH_RESPONSE_TS", 0.0)
     monkeypatch.setattr(svc, "_get_feed_status", lambda: {"state": "EOD", "market_snapshot_health": "EOD", "worker_health": "WORKER_OK"})
     monkeypatch.setattr("agents.ai_engine.ensemble.get_model_status", lambda: {"sidecar_active": False, "mode": "Heuristic"})
+    monkeypatch.setattr("utils.memory_profiler.get_process_rss_mb", lambda collect_gc=False: 180.0)
     monkeypatch.setattr(health_router, "_fetch_runtime_state_safe", AsyncMock(return_value=None))
 
     probe_state = {"ok": False}
