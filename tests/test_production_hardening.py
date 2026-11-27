@@ -197,3 +197,27 @@ def test_quote_search_latency_telemetry_endpoint(client):
     assert "p50_ms" in data
     assert "p95_ms" in data
     assert "p99_ms" in data
+
+
+def test_degraded_server_liveness_returns_503(monkeypatch):
+    """When primary app bootstrap fails, /api/health/live must return 503 so Render aborts rollout."""
+    import importlib
+    import sys
+
+    orig_server = sys.modules.pop("server", None)
+    try:
+        monkeypatch.setattr("api.app.create_app", lambda: (_ for _ in ()).throw(ValueError("Missing ADMIN_API_KEY")))
+        degraded_server = importlib.import_module("server")
+        degraded_client = TestClient(degraded_server.app)
+
+        live_res = degraded_client.get("/api/health/live")
+        assert live_res.status_code == 503
+        assert live_res.json().get("degraded") is True
+
+        health_res = degraded_client.get("/api/health")
+        assert health_res.status_code == 200
+        assert health_res.json().get("healthy") is False
+    finally:
+        sys.modules.pop("server", None)
+        if orig_server is not None:
+            sys.modules["server"] = orig_server

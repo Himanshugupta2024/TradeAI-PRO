@@ -74,11 +74,16 @@ except Exception as exc:
 
     @app.get("/api/health/live")
     async def degraded_liveness_check():
-        return {
-            "status": "alive",
-            "degraded": True,
-            "message": "Primary app in degraded fallback mode",
-        }
+        # Return 503 so Render's healthCheckPath fails instead of promoting a crashed container.
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "alive": False,
+                "degraded": True,
+                "message": "Primary app in degraded fallback mode",
+            },
+        )
 
     @app.get("/api/ready")
     async def degraded_ready_check():

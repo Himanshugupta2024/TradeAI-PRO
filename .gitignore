@@ -85,11 +85,15 @@ REMEDIATION_REPORT.md
 TOOLING.md
 scripts/patch_*.py
 scripts/clean_supabase_state.py
+scripts/.audit_prev.json
+scripts/audit_report.json
 scripts/migrate_live_to_supabase.py
 scripts/set_render_database_url.py
 scripts/update_worker_spa.py
 scripts/verify_render_supabase.py
 scripts/clean_supabase_state.py
+scripts/.audit_prev.json
+scripts/audit_report.json
 
 # Test coverage
 .coverage
