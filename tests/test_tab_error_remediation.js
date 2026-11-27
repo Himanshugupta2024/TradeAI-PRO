@@ -351,11 +351,81 @@ async function testAutonomousSingleFetch() {
   console.log('  ✓ fetchAutonomousFeed dispatched exactly 1 network request on network error');
 }
 
+async function testFetchSafeJsonApiGateAndModalRetry() {
+  console.log('\n--- [FRONTEND] Test 5: fetchSafeJSON Shared _apiGate Concurrency Cap & Modal Retry ---');
+  const appSource = fs.readFileSync('dashboard/app.js', 'utf8');
+
+  const gateSliceMatch = appSource.match(/const _inFlightRequests = new Map\(\);[\s\S]*?async function fetchSafeJSON[\s\S]*?\r?\n\}/);
+  const fwtMatch = appSource.match(/async function fetchWithTimeout[\s\S]*?return fetchPromise\.then\(r => r\.clone\(\)\);\s*\r?\n\}/);
+  assert(gateSliceMatch, 'Shared _apiGate / fetchSafeJSON block not found');
+  assert(fwtMatch, 'fetchWithTimeout block not found');
+
+  let activeFetches = 0;
+  let maxConcurrentFetches = 0;
+  let totalFetches = 0;
+
+  const sandbox = {
+    Map,
+    Set,
+    Promise,
+    Headers,
+    Response,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    Math,
+    console,
+    parseInt,
+    isNaN,
+    fetch: async (url) => {
+      totalFetches++;
+      activeFetches++;
+      maxConcurrentFetches = Math.max(maxConcurrentFetches, activeFetches);
+      await new Promise((r) => setTimeout(r, 35));
+      activeFetches--;
+      return new Response(JSON.stringify({ ok: true, url }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    },
+  };
+
+  vm.createContext(sandbox);
+  vm.runInContext(`${gateSliceMatch[0]}\n${fwtMatch[0]}`, sandbox);
+
+  // Fire 8 concurrent Watchlist-style distinct /api/search/quote/* calls via fetchSafeJSON
+  const symbols = ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'VEDL', 'ICICIBANK', 'SBIN', 'PREMIERENE'];
+  const results = await Promise.all(
+    symbols.map((s) => sandbox.fetchSafeJSON(`/api/search/quote/${s}`, {}, 6000, 1))
+  );
+  assert.strictEqual(results.filter((r) => r.ok).length, 8);
+  assert(maxConcurrentFetches <= 4, `Expected <= 4 concurrent fetches via _apiGate, observed ${maxConcurrentFetches}`);
+  console.log(`  ✓ 8 concurrent fetchSafeJSON calls capped at ${maxConcurrentFetches} max concurrent fetches (<= 4)`);
+
+  // Verify duplicate GET deduplication through fetchSafeJSON
+  const beforeDup = totalFetches;
+  const dupResults = await Promise.all([
+    sandbox.fetchSafeJSON('/api/market/RELIANCE?limit=2&interval=5m', {}, 6000, 1),
+    sandbox.fetchSafeJSON('/api/market/RELIANCE?limit=2&interval=5m', {}, 6000, 1),
+  ]);
+  assert.strictEqual(dupResults.filter((r) => r.ok).length, 2);
+  assert.strictEqual(totalFetches - beforeDup, 1, 'Identical concurrent fetchSafeJSON GETs must deduplicate to 1 fetch');
+  console.log('  ✓ Concurrent identical fetchSafeJSON GET calls deduplicated cleanly');
+
+  // Verify Retry Fetch button in fetchAndShowQuote calls fetchAndShowQuote cleanly
+  assert(
+    appSource.includes('onclick="fetchAndShowQuote(\'${safeSymJs}\')"'),
+    'Retry Fetch button in fetchAndShowQuote must invoke fetchAndShowQuote with escaped symbol'
+  );
+  console.log('  ✓ Confirmed fetchAndShowQuote Retry Fetch invokes fetchAndShowQuote cleanly');
+}
+
 async function runAll() {
   try {
     await testWorkerDegradedFallback();
     await testFrontendHardening();
     await testAutonomousSingleFetch();
+    await testFetchSafeJsonApiGateAndModalRetry();
     console.log('\n================================================================');
     console.log('ALL TAB ERROR REMEDIATION VERIFICATION TESTS PASSED!');
     console.log('================================================================');

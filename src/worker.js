@@ -124,6 +124,7 @@ export function isPathCacheable(pathname) {
   if (isHealthOrReadinessPath(pathname)) return false;
   if (PUBLIC_CACHEABLE_PATHS.has(pathname)) return true;
   if (
+    pathname.startsWith("/api/market/") ||
     pathname.startsWith("/api/backtest/") ||
     pathname.startsWith("/api/news/") ||
     pathname.startsWith("/api/search/") ||

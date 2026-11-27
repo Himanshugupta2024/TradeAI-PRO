@@ -56,55 +56,244 @@ const API = (() => {
     return '';
 })();
 
-// ── Resilient JSON Fetcher with Dual-Origin Fallback & Content-Type Safety ──
-async function fetchSafeJSON(url, options = {}, timeoutMs = 12000, _retries = 2) {
-    const method = (options.method || 'GET').toUpperCase();
-    if (method === 'GET' && typeof _inFlightRequests !== 'undefined' && _inFlightRequests.has(url)) {
+// Origin fan-out guard & in-flight deduplication shared by fetchWithTimeout and fetchSafeJSON.
+// Caps concurrent /api/* GETs at 4 so page boots and multi-symbol watchlist refreshes
+// do not trip Render/Cloudflare per-IP burst rate limits (HTTP 429).
+const _inFlightRequests = new Map();
+const _apiGate = { active: 0, max: 4, waiters: [] };
+
+function _acquireApiSlot() {
+    if (_apiGate.active < _apiGate.max) {
+        _apiGate.active += 1;
+        return Promise.resolve();
+    }
+    return new Promise(resolve => _apiGate.waiters.push(resolve));
+}
+
+function _releaseApiSlot() {
+    const next = _apiGate.waiters.shift();
+    if (next) {
+        next(); // hand the slot straight to the next waiter, keep the count
+    } else {
+        _apiGate.active = Math.max(0, _apiGate.active - 1);
+    }
+}
+
+function _needsApiSlot(url, isGet) {
+    if (typeof url === 'string' && (url.includes('/api/health') || url.includes('/health/live'))) return false;
+    return isGet && typeof url === 'string' && (url.indexOf('/api/') === 0 || url.includes('/api/'));
+}
+
+const _GET_COALESCE_TTL_MS = 3000;
+const _MAX_GET_CACHE_ENTRIES = 64;
+const _getCoalesceCache = new Map();
+
+function _buildGetCoalesceKey(url, options = {}) {
+    let authPart = '';
+    const hdrs = options && options.headers;
+    if (hdrs) {
         try {
-            const r = await _inFlightRequests.get(url).then(res => res.clone());
-            const ct = (r.headers.get('content-type') || '').toLowerCase();
-            let dedupData = {};
-            if (ct.includes('application/json')) {
-                try { dedupData = await r.json(); } catch (_) {}
+            if (typeof hdrs.get === 'function') {
+                authPart = hdrs.get('X-API-Key') || hdrs.get('x-api-key') || hdrs.get('X-Admin-Key') || hdrs.get('x-admin-key') || hdrs.get('Authorization') || '';
+            } else {
+                authPart = hdrs['X-API-Key'] || hdrs['x-api-key'] || hdrs['X-Admin-Key'] || hdrs['x-admin-key'] || hdrs['Authorization'] || '';
             }
-            if (!r.ok) {
-                return {
-                    ok: false,
-                    status: r.status,
-                    error: dedupData.error || (r.status === 429 ? 'Rate limit cooling down. Re-syncing shortly...' : `HTTP ${r.status}`),
-                    detail: dedupData,
-                    data: dedupData,
-                };
+        } catch (_) {}
+    }
+    return authPart ? `${url}::${authPart}` : String(url);
+}
+
+function invalidateGetCoalesceCache(urlPrefix = '') {
+    if (!urlPrefix) {
+        _getCoalesceCache.clear();
+        return;
+    }
+    for (const key of _getCoalesceCache.keys()) {
+        if (key.includes(urlPrefix)) _getCoalesceCache.delete(key);
+    }
+}
+
+function _raceWithCallerSignal(promise, signal) {
+    if (!signal) return promise;
+    if (signal.aborted) {
+        const abortErr = new Error('The operation was aborted.');
+        abortErr.name = 'AbortError';
+        return Promise.reject(abortErr);
+    }
+    return new Promise((resolve, reject) => {
+        const onAbort = () => {
+            const abortErr = new Error('The operation was aborted.');
+            abortErr.name = 'AbortError';
+            reject(abortErr);
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        promise.then(
+            (val) => {
+                signal.removeEventListener('abort', onAbort);
+                resolve(val);
+            },
+            (err) => {
+                signal.removeEventListener('abort', onAbort);
+                reject(err);
             }
-            return ct.includes('application/json')
-                ? { ok: true, status: r.status, data: dedupData }
-                : { ok: false, status: r.status, error: 'Non-JSON response' };
-        } catch (err) {
-            return { ok: false, status: 0, error: err.name === 'AbortError' || err.name === 'TimeoutError' ? 'Timeout' : (err.message || 'Network error') };
+        );
+    });
+}
+
+function _stripCoalesceOptions(options = {}, keepSignal = false) {
+    if (!options || typeof options !== 'object') return {};
+    const { forceRefresh, isManual, ttlMs, signal, ...rest } = options;
+    if (keepSignal && signal) rest.signal = signal;
+    return rest;
+}
+
+async function _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries, _backoffMs, isGet, isSafeMethod) {
+    const callerSignal = fetchOpts && fetchOpts.signal ? fetchOpts.signal : null;
+    const ac = new AbortController();
+    let timedOut = false;
+    let tid = null;
+
+    const onCallerAbort = () => ac.abort();
+    if (callerSignal) {
+        if (callerSignal.aborted) {
+            const abortErr = new Error('The operation was aborted.');
+            abortErr.name = 'AbortError';
+            throw abortErr;
+        }
+        callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
+
+    let resp;
+    try {
+        const useSlot = _needsApiSlot(url, isGet);
+        if (useSlot) await _acquireApiSlot();
+        try {
+            // Start abort timer only after slot acquisition so queued calls don't expire waiting in _apiGate
+            tid = setTimeout(() => {
+                timedOut = true;
+                ac.abort();
+            }, timeoutMs);
+            resp = await fetch(url, { ...fetchOpts, signal: ac.signal });
+        } finally {
+            if (tid) clearTimeout(tid);
+            if (useSlot) _releaseApiSlot();
+        }
+        if (callerSignal) callerSignal.removeEventListener('abort', onCallerAbort);
+    } catch (err) {
+        if (tid) clearTimeout(tid);
+        if (callerSignal) callerSignal.removeEventListener('abort', onCallerAbort);
+
+        if (timedOut) {
+            const timeoutErr = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+            timeoutErr.name = 'TimeoutError';
+            throw timeoutErr;
+        }
+        if (callerSignal && callerSignal.aborted) {
+            throw err;
+        }
+
+        // Network-level drop (ERR_ABORTED, ERR_CONNECTION_RESET, etc.) → retry
+        if (isSafeMethod && _retries > 0) {
+            const delay = Math.min(_backoffMs, 20000);
+            console.warn(`[fetch] Network error on ${url} — retrying in ${delay / 1000}s (${_retries} left)...`);
+            await new Promise(r => setTimeout(r, delay));
+            return _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries - 1, _backoffMs * 2, isGet, isSafeMethod);
+        }
+
+        throw err;
+    }
+
+    // HTTP-level 503 or 429 → server waking up or edge burst rate-limited, retry with backoff & jitter
+    if (isSafeMethod && (resp.status === 503 || resp.status === 429) && _retries > 0) {
+        let delay = 1500;
+        try {
+            const retryAfterHeader = resp.headers && resp.headers.get ? resp.headers.get('retry-after') : null;
+            if (retryAfterHeader) {
+                const parsedSeconds = parseInt(retryAfterHeader, 10);
+                if (!isNaN(parsedSeconds) && parsedSeconds > 0) {
+                    delay = Math.min(parsedSeconds * 1000 + Math.floor(Math.random() * 600), 65000);
+                }
+            } else if (resp.status === 429) {
+                // 429 = per-IP burst limit on the origin leg, with a measured
+                // cooldown near 60s. A 1.5-3.5s backoff just re-joins the same
+                // hot window and adds load, so wait long enough to fall out of it.
+                delay = 5000 + Math.floor(Math.random() * 4000);
+            } else {
+                // 503 cold boot / wakeup
+                delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
+            }
+        } catch (_) {
+            delay = 2000;
+        }
+        console.warn(`[fetch] HTTP ${resp.status} from ${url} — retrying in ${(delay / 1000).toFixed(1)}s (${_retries} retries left)...`);
+        await new Promise(r => setTimeout(r, delay));
+        return _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries - 1, _backoffMs * 1.5, isGet, isSafeMethod);
+    }
+
+    return resp;
+}
+
+/**
+ * Shared GET coalescing helper: deduplicates concurrent in-flight GETs (including
+ * across 429/503 retries) and serves a short 3s TTL cache for multi-widget / boot
+ * bursts. Explicit manual or force-refresh calls bypass both layers.
+ */
+async function coalescedGetFetch(url, options = {}, timeoutMs = 12000, _retries = 3, _backoffMs = 4000) {
+    const forceRefresh = Boolean(options && (options.forceRefresh || options.isManual));
+    const ttlMs = (options && typeof options.ttlMs === 'number') ? options.ttlMs : _GET_COALESCE_TTL_MS;
+    const cacheKey = _buildGetCoalesceKey(url, options);
+    const callerSignal = options && options.signal ? options.signal : null;
+
+    if (!forceRefresh && ttlMs > 0) {
+        const cached = _getCoalesceCache.get(cacheKey);
+        if (cached) {
+            if (Date.now() < cached.expiresAt) {
+                return _raceWithCallerSignal(Promise.resolve(cached.response.clone()), callerSignal);
+            }
+            _getCoalesceCache.delete(cacheKey);
         }
     }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        const opts = { ...options, signal: controller.signal };
-        let res = await fetch(url, opts);
 
-        // Auto-retry on 429 (Rate Limit) or 503 (Render cold boot) for idempotent requests
-        if ((res.status === 429 || res.status === 503) && _retries > 0 && ['GET', 'HEAD'].includes(method)) {
-            clearTimeout(timer);
-            let delayMs = 1800 + Math.floor(Math.random() * 1500);
-            try {
-                const ra = res.headers && res.headers.get ? res.headers.get('retry-after') : null;
-                if (ra) {
-                    const sec = parseInt(ra, 10);
-                    if (!isNaN(sec) && sec > 0) delayMs = Math.min(sec * 1000, 30000);
+    if (!forceRefresh && _inFlightRequests.has(cacheKey)) {
+        return _raceWithCallerSignal(_inFlightRequests.get(cacheKey).then(r => r.clone()), callerSignal);
+    }
+
+    if (forceRefresh) {
+        _getCoalesceCache.delete(cacheKey);
+    }
+
+    const fetchOpts = _stripCoalesceOptions(options, forceRefresh);
+    const fetchPromise = _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries, _backoffMs, true, true)
+        .then((resp) => {
+            if (resp && resp.ok && ttlMs > 0) {
+                if (_getCoalesceCache.size >= _MAX_GET_CACHE_ENTRIES) {
+                    const oldestKey = _getCoalesceCache.keys().next().value;
+                    if (oldestKey !== undefined) _getCoalesceCache.delete(oldestKey);
                 }
-            } catch (_) {}
-            console.warn(`[fetchSafeJSON] HTTP ${res.status} from ${url} — retrying in ${(delayMs / 1000).toFixed(1)}s (${_retries} left)...`);
-            await new Promise(r => setTimeout(r, delayMs));
-            return fetchSafeJSON(url, options, timeoutMs, _retries - 1);
-        }
+                _getCoalesceCache.set(cacheKey, {
+                    response: resp.clone(),
+                    expiresAt: Date.now() + ttlMs,
+                });
+            }
+            return resp;
+        });
 
+    if (!forceRefresh) {
+        _inFlightRequests.set(cacheKey, fetchPromise);
+        fetchPromise.finally(() => {
+            if (_inFlightRequests.get(cacheKey) === fetchPromise) {
+                _inFlightRequests.delete(cacheKey);
+            }
+        });
+    }
+
+    return _raceWithCallerSignal(fetchPromise.then(r => r.clone()), forceRefresh ? null : callerSignal);
+}
+
+// ── Resilient JSON Fetcher with Concurrency Gate, Dedup & Content-Type Safety ──
+async function fetchSafeJSON(url, options = {}, timeoutMs = 12000, _retries = 2) {
+    try {
+        const res = await fetchWithTimeout(url, options, timeoutMs, _retries, 4000);
         const ct = (res.headers.get('content-type') || '').toLowerCase();
         if (!res.ok) {
             let errData = {};
@@ -125,9 +314,11 @@ async function fetchSafeJSON(url, options = {}, timeoutMs = 12000, _retries = 2)
         const data = await res.json();
         return { ok: true, status: res.status, data };
     } catch (err) {
-        return { ok: false, status: 0, error: err.name === 'AbortError' ? 'Timeout' : (err.message || 'Network error') };
-    } finally {
-        clearTimeout(timer);
+        return {
+            ok: false,
+            status: 0,
+            error: err && err.name === 'TimeoutError' ? 'Timeout' : (err && err.message ? err.message : 'Network error')
+        };
     }
 }
 
@@ -2420,246 +2611,7 @@ function switchTab(tab) {
 
 
 // Uses exponential backoff (4s → 8s → 16s). Genuine timeouts still throw.
-
-
-
-const _inFlightRequests = new Map();
-const _GET_COALESCE_TTL_MS = 3000;
-const _MAX_GET_CACHE_ENTRIES = 64;
-const _getCoalesceCache = new Map();
-
-function _buildGetCoalesceKey(url, options = {}) {
-    let authPart = '';
-    const hdrs = options && options.headers;
-    if (hdrs) {
-        try {
-            if (typeof hdrs.get === 'function') {
-                authPart = hdrs.get('X-API-Key') || hdrs.get('x-api-key') || hdrs.get('X-Admin-Key') || hdrs.get('x-admin-key') || hdrs.get('Authorization') || '';
-            } else {
-                authPart = hdrs['X-API-Key'] || hdrs['x-api-key'] || hdrs['X-Admin-Key'] || hdrs['x-admin-key'] || hdrs['Authorization'] || '';
-            }
-        } catch (_) {}
-    }
-    return authPart ? `${url}::${authPart}` : String(url);
-}
-
-function invalidateGetCoalesceCache(urlPrefix = '') {
-    if (!urlPrefix) {
-        _getCoalesceCache.clear();
-        return;
-    }
-    for (const key of _getCoalesceCache.keys()) {
-        if (key.includes(urlPrefix)) _getCoalesceCache.delete(key);
-    }
-}
-
-function _raceWithCallerSignal(promise, signal) {
-    if (!signal) return promise;
-    if (signal.aborted) {
-        const abortErr = new Error('The operation was aborted.');
-        abortErr.name = 'AbortError';
-        return Promise.reject(abortErr);
-    }
-    return new Promise((resolve, reject) => {
-        const onAbort = () => {
-            const abortErr = new Error('The operation was aborted.');
-            abortErr.name = 'AbortError';
-            reject(abortErr);
-        };
-        signal.addEventListener('abort', onAbort, { once: true });
-        promise.then(
-            (val) => {
-                signal.removeEventListener('abort', onAbort);
-                resolve(val);
-            },
-            (err) => {
-                signal.removeEventListener('abort', onAbort);
-                reject(err);
-            }
-        );
-    });
-}
-
-function _stripCoalesceOptions(options = {}, keepSignal = false) {
-    if (!options || typeof options !== 'object') return {};
-    const { forceRefresh, isManual, ttlMs, signal, ...rest } = options;
-    if (keepSignal && signal) rest.signal = signal;
-    return rest;
-}
-
-// Origin fan-out guard.
-// Measured on the live site: a cold dashboard load fires ~11 /api/* calls in
-// parallel, the Worker proxies each one straight to the single Render origin,
-// and every one of them comes back 429 while the exact same endpoints answer
-// 200 when spaced 3s apart. The browser-facing edge is not the limiter -- eight
-// parallel requests to a cached /api path all return 200 -- so the burst is
-// tripping Render's per-IP limit on the Worker's egress. Cap how many /api
-// requests are in flight at once and the burst never forms.
-const _apiGate = { active: 0, max: 4, waiters: [] };
-
-function _acquireApiSlot() {
-    if (_apiGate.active < _apiGate.max) {
-        _apiGate.active += 1;
-        return Promise.resolve();
-    }
-    return new Promise(resolve => _apiGate.waiters.push(resolve));
-}
-
-function _releaseApiSlot() {
-    const next = _apiGate.waiters.shift();
-    if (next) {
-        next(); // hand the slot straight to the next waiter, keep the count
-    } else {
-        _apiGate.active = Math.max(0, _apiGate.active - 1);
-    }
-}
-
-function _needsApiSlot(url, isGet) {
-    if (typeof url === 'string' && (url.includes('/api/health') || url.includes('/health/live'))) return false;
-    return isGet && typeof url === 'string' && (url.indexOf('/api/') === 0 || url.includes('/api/'));
-}
-
-async function _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries, _backoffMs, isGet, isSafeMethod) {
-    const callerSignal = fetchOpts && fetchOpts.signal ? fetchOpts.signal : null;
-    const ac = new AbortController();
-    let timedOut = false;
-    const tid = setTimeout(() => {
-        timedOut = true;
-        ac.abort();
-    }, timeoutMs);
-
-    const onCallerAbort = () => ac.abort();
-    if (callerSignal) {
-        if (callerSignal.aborted) {
-            clearTimeout(tid);
-            const abortErr = new Error('The operation was aborted.');
-            abortErr.name = 'AbortError';
-            throw abortErr;
-        }
-        callerSignal.addEventListener('abort', onCallerAbort, { once: true });
-    }
-
-    let resp;
-    try {
-        const useSlot = _needsApiSlot(url, isGet);
-        if (useSlot) await _acquireApiSlot();
-        try {
-            resp = await fetch(url, { ...fetchOpts, signal: ac.signal });
-        } finally {
-            if (useSlot) _releaseApiSlot();
-        }
-        clearTimeout(tid);
-        if (callerSignal) callerSignal.removeEventListener('abort', onCallerAbort);
-    } catch (err) {
-        clearTimeout(tid);
-        if (callerSignal) callerSignal.removeEventListener('abort', onCallerAbort);
-
-        if (timedOut) {
-            const timeoutErr = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
-            timeoutErr.name = 'TimeoutError';
-            throw timeoutErr;
-        }
-        if (callerSignal && callerSignal.aborted) {
-            throw err;
-        }
-
-        // Network-level drop (ERR_ABORTED, ERR_CONNECTION_RESET, etc.) → retry
-        if (isSafeMethod && _retries > 0) {
-            const delay = Math.min(_backoffMs, 20000);
-            console.warn(`[fetch] Network error on ${url} — retrying in ${delay / 1000}s (${_retries} left)...`);
-            await new Promise(r => setTimeout(r, delay));
-            return _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries - 1, _backoffMs * 2, isGet, isSafeMethod);
-        }
-
-        throw err;
-    }
-
-    // HTTP-level 503 or 429 → server waking up or edge burst rate-limited, retry with backoff & jitter
-    if (isSafeMethod && (resp.status === 503 || resp.status === 429) && _retries > 0) {
-        let delay = 1500;
-        try {
-            const retryAfterHeader = resp.headers && resp.headers.get ? resp.headers.get('retry-after') : null;
-            if (retryAfterHeader) {
-                const parsedSeconds = parseInt(retryAfterHeader, 10);
-                if (!isNaN(parsedSeconds) && parsedSeconds > 0) {
-                    delay = Math.min(parsedSeconds * 1000 + Math.floor(Math.random() * 600), 65000);
-                }
-            } else if (resp.status === 429) {
-                // 429 = per-IP burst limit on the origin leg, with a measured
-                // cooldown near 60s. A 1.5-3.5s backoff just re-joins the same
-                // hot window and adds load, so wait long enough to fall out of it.
-                delay = 5000 + Math.floor(Math.random() * 4000);
-            } else {
-                // 503 cold boot / wakeup
-                delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
-            }
-        } catch (_) {
-            delay = 2000;
-        }
-        console.warn(`[fetch] HTTP ${resp.status} from ${url} — retrying in ${(delay / 1000).toFixed(1)}s (${_retries} retries left)...`);
-        await new Promise(r => setTimeout(r, delay));
-        return _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries - 1, _backoffMs * 1.5, isGet, isSafeMethod);
-    }
-
-    return resp;
-}
-
-/**
- * Shared GET coalescing helper: deduplicates concurrent in-flight GETs (including
- * across 429/503 retries) and serves a short 3s TTL cache for multi-widget / boot
- * bursts. Explicit manual or force-refresh calls bypass both layers.
- */
-async function coalescedGetFetch(url, options = {}, timeoutMs = 12000, _retries = 3, _backoffMs = 4000) {
-    const forceRefresh = Boolean(options && (options.forceRefresh || options.isManual));
-    const ttlMs = (options && typeof options.ttlMs === 'number') ? options.ttlMs : _GET_COALESCE_TTL_MS;
-    const cacheKey = _buildGetCoalesceKey(url, options);
-    const callerSignal = options && options.signal ? options.signal : null;
-
-    if (!forceRefresh && ttlMs > 0) {
-        const cached = _getCoalesceCache.get(cacheKey);
-        if (cached) {
-            if (Date.now() < cached.expiresAt) {
-                return _raceWithCallerSignal(Promise.resolve(cached.response.clone()), callerSignal);
-            }
-            _getCoalesceCache.delete(cacheKey);
-        }
-    }
-
-    if (!forceRefresh && _inFlightRequests.has(cacheKey)) {
-        return _raceWithCallerSignal(_inFlightRequests.get(cacheKey).then(r => r.clone()), callerSignal);
-    }
-
-    if (forceRefresh) {
-        _getCoalesceCache.delete(cacheKey);
-    }
-
-    const fetchOpts = _stripCoalesceOptions(options, forceRefresh);
-    const fetchPromise = _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries, _backoffMs, true, true)
-        .then((resp) => {
-            if (resp && resp.ok && ttlMs > 0) {
-                if (_getCoalesceCache.size >= _MAX_GET_CACHE_ENTRIES) {
-                    const oldestKey = _getCoalesceCache.keys().next().value;
-                    if (oldestKey !== undefined) _getCoalesceCache.delete(oldestKey);
-                }
-                _getCoalesceCache.set(cacheKey, {
-                    response: resp.clone(),
-                    expiresAt: Date.now() + ttlMs,
-                });
-            }
-            return resp;
-        });
-
-    if (!forceRefresh) {
-        _inFlightRequests.set(cacheKey, fetchPromise);
-        fetchPromise.finally(() => {
-            if (_inFlightRequests.get(cacheKey) === fetchPromise) {
-                _inFlightRequests.delete(cacheKey);
-            }
-        });
-    }
-
-    return _raceWithCallerSignal(fetchPromise.then(r => r.clone()), forceRefresh ? null : callerSignal);
-}
+// _inFlightRequests, _apiGate, coalescedGetFetch, and retry helpers are declared near top.
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries = 3, _backoffMs = 4000) {
     const isGet = !options.method || options.method.toUpperCase() === 'GET';
@@ -2670,11 +2622,12 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries =
     }
 
     const fetchOpts = _stripCoalesceOptions(options, true);
-    const resp = await _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries, _backoffMs, false, isSafeMethod);
-    if (!isSafeMethod) {
-        invalidateGetCoalesceCache();
-    }
-    return resp;
+    const fetchPromise = _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries, _backoffMs, false, isSafeMethod)
+        .finally(() => {
+            if (!isSafeMethod) invalidateGetCoalesceCache();
+        });
+
+    return fetchPromise.then(r => r.clone());
 }
 
 
@@ -19273,14 +19226,19 @@ async function fetchAndShowQuote(symbol) {
                 showNseHint = false;
             }
 
+            const safeSymJs = _escHtml(symbol).replace(/'/g, "\\'");
             titleEl.textContent = symbol.toUpperCase();
+            const btSec = document.getElementById('modalBacktestSection');
+            if (btSec) btSec.innerHTML = '<p style="color:var(--text-muted);font-size:0.8rem">Backtest unavailable until quote loads.</p>';
+            const newsSec = document.getElementById('modalNewsList');
+            if (newsSec) newsSec.innerHTML = '<p style="color:var(--text-muted);font-size:0.75rem;">News unavailable until quote loads.</p>';
             infoGrid.innerHTML = `
                 <div style="grid-column:1/-1;text-align:center;padding:2rem;">
                     <div style="font-size:2rem;margin-bottom:0.75rem;">⚠️</div>
                     <div style="color:var(--red);font-weight:600;margin-bottom:0.5rem;">${titleText}</div>
                     <div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:0.75rem;">${_escHtml(errMsg)}</div>
                     ${detailMsg ? `<div style="color:var(--text-secondary);font-size:0.75rem;margin-bottom:0.75rem;">${_escHtml(detailMsg)}</div>` : ''}
-                    <button class="btn btn-secondary" onclick="openSymbolModal('${symbol}')" style="margin-bottom:0.75rem;padding:0.35rem 0.9rem;font-size:0.75rem;cursor:pointer;">🔄 Retry Fetch</button>
+                    <button class="btn btn-secondary" onclick="fetchAndShowQuote('${safeSymJs}')" style="margin-bottom:0.75rem;padding:0.35rem 0.9rem;font-size:0.75rem;cursor:pointer;">🔄 Retry Fetch</button>
                     ${showNseHint ? `
                     <div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-muted);">
                         Make sure the NSE symbol is correct (e.g. <code style="color:var(--cyan)">PRECWIRE</code>, <code style="color:var(--cyan)">VEDL</code>)
@@ -27730,7 +27688,7 @@ async function _fetchWatchlistQuote(sym) {
     // 2. Fetch fast lightweight market quote from /api/market/{sym}?limit=2&interval=5m (~1.2s)
     try {
         const cleanSym = encodeURIComponent(sym.replace('.NS', '').trim());
-        const mRes = await fetchSafeJSON(`${API}/api/market/${cleanSym}?limit=2&interval=5m`, {}, 4000);
+        const mRes = await fetchSafeJSON(`${API}/api/market/${cleanSym}?limit=2&interval=5m`, {}, 6000, 1);
         if (mRes.ok && mRes.data && Array.isArray(mRes.data.data) && mRes.data.data.length > 0) {
             const candles = mRes.data.data;
             const last = candles[candles.length - 1];
@@ -27771,9 +27729,9 @@ async function _fetchWatchlistQuote(sym) {
         }
     } catch (_) {}
 
-    // 3. Fallback to /api/search/quote/{sym} (fast 4s timeout)
+    // 3. Fallback to /api/search/quote/{sym} (fast 6s timeout, single retry through _apiGate)
     try {
-        const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 4000);
+        const qRes = await fetchSafeJSON(`${API}/api/search/quote/${encodeURIComponent(sym)}`, {}, 6000, 1);
         if (qRes.ok && qRes.data) {
             const d = qRes.data;
             const ltp = Number(d.close || 0);
