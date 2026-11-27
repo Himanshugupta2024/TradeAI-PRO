@@ -824,7 +824,7 @@ async function triggerManualRefresh() {
 
 
 
-        await loadAllData({ background: false });
+        await loadAllData({ background: false, forceRefresh: true });
 
 
 
@@ -2424,6 +2424,68 @@ function switchTab(tab) {
 
 
 const _inFlightRequests = new Map();
+const _GET_COALESCE_TTL_MS = 3000;
+const _MAX_GET_CACHE_ENTRIES = 64;
+const _getCoalesceCache = new Map();
+
+function _buildGetCoalesceKey(url, options = {}) {
+    let authPart = '';
+    const hdrs = options && options.headers;
+    if (hdrs) {
+        try {
+            if (typeof hdrs.get === 'function') {
+                authPart = hdrs.get('X-API-Key') || hdrs.get('x-api-key') || hdrs.get('X-Admin-Key') || hdrs.get('x-admin-key') || hdrs.get('Authorization') || '';
+            } else {
+                authPart = hdrs['X-API-Key'] || hdrs['x-api-key'] || hdrs['X-Admin-Key'] || hdrs['x-admin-key'] || hdrs['Authorization'] || '';
+            }
+        } catch (_) {}
+    }
+    return authPart ? `${url}::${authPart}` : String(url);
+}
+
+function invalidateGetCoalesceCache(urlPrefix = '') {
+    if (!urlPrefix) {
+        _getCoalesceCache.clear();
+        return;
+    }
+    for (const key of _getCoalesceCache.keys()) {
+        if (key.includes(urlPrefix)) _getCoalesceCache.delete(key);
+    }
+}
+
+function _raceWithCallerSignal(promise, signal) {
+    if (!signal) return promise;
+    if (signal.aborted) {
+        const abortErr = new Error('The operation was aborted.');
+        abortErr.name = 'AbortError';
+        return Promise.reject(abortErr);
+    }
+    return new Promise((resolve, reject) => {
+        const onAbort = () => {
+            const abortErr = new Error('The operation was aborted.');
+            abortErr.name = 'AbortError';
+            reject(abortErr);
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        promise.then(
+            (val) => {
+                signal.removeEventListener('abort', onAbort);
+                resolve(val);
+            },
+            (err) => {
+                signal.removeEventListener('abort', onAbort);
+                reject(err);
+            }
+        );
+    });
+}
+
+function _stripCoalesceOptions(options = {}, keepSignal = false) {
+    if (!options || typeof options !== 'object') return {};
+    const { forceRefresh, isManual, ttlMs, signal, ...rest } = options;
+    if (keepSignal && signal) rest.signal = signal;
+    return rest;
+}
 
 // Origin fan-out guard.
 // Measured on the live site: a cold dashboard load fires ~11 /api/* calls in
@@ -2457,188 +2519,162 @@ function _needsApiSlot(url, isGet) {
     return isGet && typeof url === 'string' && (url.indexOf('/api/') === 0 || url.includes('/api/'));
 }
 
+async function _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries, _backoffMs, isGet, isSafeMethod) {
+    const callerSignal = fetchOpts && fetchOpts.signal ? fetchOpts.signal : null;
+    const ac = new AbortController();
+    let timedOut = false;
+    const tid = setTimeout(() => {
+        timedOut = true;
+        ac.abort();
+    }, timeoutMs);
 
+    const onCallerAbort = () => ac.abort();
+    if (callerSignal) {
+        if (callerSignal.aborted) {
+            clearTimeout(tid);
+            const abortErr = new Error('The operation was aborted.');
+            abortErr.name = 'AbortError';
+            throw abortErr;
+        }
+        callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    }
 
+    let resp;
+    try {
+        const useSlot = _needsApiSlot(url, isGet);
+        if (useSlot) await _acquireApiSlot();
+        try {
+            resp = await fetch(url, { ...fetchOpts, signal: ac.signal });
+        } finally {
+            if (useSlot) _releaseApiSlot();
+        }
+        clearTimeout(tid);
+        if (callerSignal) callerSignal.removeEventListener('abort', onCallerAbort);
+    } catch (err) {
+        clearTimeout(tid);
+        if (callerSignal) callerSignal.removeEventListener('abort', onCallerAbort);
 
+        if (timedOut) {
+            const timeoutErr = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+            timeoutErr.name = 'TimeoutError';
+            throw timeoutErr;
+        }
+        if (callerSignal && callerSignal.aborted) {
+            throw err;
+        }
 
+        // Network-level drop (ERR_ABORTED, ERR_CONNECTION_RESET, etc.) → retry
+        if (isSafeMethod && _retries > 0) {
+            const delay = Math.min(_backoffMs, 20000);
+            console.warn(`[fetch] Network error on ${url} — retrying in ${delay / 1000}s (${_retries} left)...`);
+            await new Promise(r => setTimeout(r, delay));
+            return _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries - 1, _backoffMs * 2, isGet, isSafeMethod);
+        }
 
+        throw err;
+    }
+
+    // HTTP-level 503 or 429 → server waking up or edge burst rate-limited, retry with backoff & jitter
+    if (isSafeMethod && (resp.status === 503 || resp.status === 429) && _retries > 0) {
+        let delay = 1500;
+        try {
+            const retryAfterHeader = resp.headers && resp.headers.get ? resp.headers.get('retry-after') : null;
+            if (retryAfterHeader) {
+                const parsedSeconds = parseInt(retryAfterHeader, 10);
+                if (!isNaN(parsedSeconds) && parsedSeconds > 0) {
+                    delay = Math.min(parsedSeconds * 1000 + Math.floor(Math.random() * 600), 65000);
+                }
+            } else if (resp.status === 429) {
+                // 429 = per-IP burst limit on the origin leg, with a measured
+                // cooldown near 60s. A 1.5-3.5s backoff just re-joins the same
+                // hot window and adds load, so wait long enough to fall out of it.
+                delay = 5000 + Math.floor(Math.random() * 4000);
+            } else {
+                // 503 cold boot / wakeup
+                delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
+            }
+        } catch (_) {
+            delay = 2000;
+        }
+        console.warn(`[fetch] HTTP ${resp.status} from ${url} — retrying in ${(delay / 1000).toFixed(1)}s (${_retries} retries left)...`);
+        await new Promise(r => setTimeout(r, delay));
+        return _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries - 1, _backoffMs * 1.5, isGet, isSafeMethod);
+    }
+
+    return resp;
+}
+
+/**
+ * Shared GET coalescing helper: deduplicates concurrent in-flight GETs (including
+ * across 429/503 retries) and serves a short 3s TTL cache for multi-widget / boot
+ * bursts. Explicit manual or force-refresh calls bypass both layers.
+ */
+async function coalescedGetFetch(url, options = {}, timeoutMs = 12000, _retries = 3, _backoffMs = 4000) {
+    const forceRefresh = Boolean(options && (options.forceRefresh || options.isManual));
+    const ttlMs = (options && typeof options.ttlMs === 'number') ? options.ttlMs : _GET_COALESCE_TTL_MS;
+    const cacheKey = _buildGetCoalesceKey(url, options);
+    const callerSignal = options && options.signal ? options.signal : null;
+
+    if (!forceRefresh && ttlMs > 0) {
+        const cached = _getCoalesceCache.get(cacheKey);
+        if (cached) {
+            if (Date.now() < cached.expiresAt) {
+                return _raceWithCallerSignal(Promise.resolve(cached.response.clone()), callerSignal);
+            }
+            _getCoalesceCache.delete(cacheKey);
+        }
+    }
+
+    if (!forceRefresh && _inFlightRequests.has(cacheKey)) {
+        return _raceWithCallerSignal(_inFlightRequests.get(cacheKey).then(r => r.clone()), callerSignal);
+    }
+
+    if (forceRefresh) {
+        _getCoalesceCache.delete(cacheKey);
+    }
+
+    const fetchOpts = _stripCoalesceOptions(options, forceRefresh);
+    const fetchPromise = _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries, _backoffMs, true, true)
+        .then((resp) => {
+            if (resp && resp.ok && ttlMs > 0) {
+                if (_getCoalesceCache.size >= _MAX_GET_CACHE_ENTRIES) {
+                    const oldestKey = _getCoalesceCache.keys().next().value;
+                    if (oldestKey !== undefined) _getCoalesceCache.delete(oldestKey);
+                }
+                _getCoalesceCache.set(cacheKey, {
+                    response: resp.clone(),
+                    expiresAt: Date.now() + ttlMs,
+                });
+            }
+            return resp;
+        });
+
+    if (!forceRefresh) {
+        _inFlightRequests.set(cacheKey, fetchPromise);
+        fetchPromise.finally(() => {
+            if (_inFlightRequests.get(cacheKey) === fetchPromise) {
+                _inFlightRequests.delete(cacheKey);
+            }
+        });
+    }
+
+    return _raceWithCallerSignal(fetchPromise.then(r => r.clone()), forceRefresh ? null : callerSignal);
+}
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 12000, _retries = 3, _backoffMs = 4000) {
-
-
-
     const isGet = !options.method || options.method.toUpperCase() === 'GET';
     const isSafeMethod = !options.method || ['GET', 'HEAD', 'OPTIONS'].includes(options.method.toUpperCase());
 
-
-
-    if (isGet && _inFlightRequests.has(url)) {
-
-
-
-        return _inFlightRequests.get(url).then(r => r.clone());
-
-
-
+    if (isGet) {
+        return coalescedGetFetch(url, options, timeoutMs, _retries, _backoffMs);
     }
 
-
-
-
-
-
-
-    const ac = new AbortController();
-
-
-
-    const tid = setTimeout(() => ac.abort(), timeoutMs);
-
-
-
-
-
-
-
-    const fetchPromise = (async () => {
-
-
-
-        let resp;
-
-
-
-        try {
-
-
-
-            const useSlot = _needsApiSlot(url, isGet);
-            if (useSlot) await _acquireApiSlot();
-            try {
-                resp = await fetch(url, { ...options, signal: ac.signal });
-            } finally {
-                if (useSlot) _releaseApiSlot();
-            }
-
-
-
-            clearTimeout(tid);
-
-
-
-        } catch (err) {
-
-
-
-            clearTimeout(tid);
-
-
-
-            // Our own timeout fired → do not retry, propagate immediately
-
-
-
-            if (ac.signal.aborted) {
-                const timeoutErr = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
-                timeoutErr.name = 'TimeoutError';
-                throw timeoutErr;
-            }
-
-
-
-            // Network-level drop (ERR_ABORTED, ERR_CONNECTION_RESET, etc.) → retry
-
-
-
-            if (isSafeMethod && _retries > 0) {
-
-
-
-                const delay = Math.min(_backoffMs, 20000);
-
-
-
-                console.warn(`[fetch] Network error on ${url} — retrying in ${delay / 1000}s (${_retries} left)...`);
-
-
-
-                await new Promise(r => setTimeout(r, delay));
-
-
-
-                return fetchWithTimeout(url, options, timeoutMs, _retries - 1, _backoffMs * 2);
-
-
-
-            }
-
-
-
-            throw err;
-
-
-
-        } finally {
-
-
-
-            if (isGet) _inFlightRequests.delete(url);
-
-
-
-        }
-
-
-
-        // HTTP-level 503 or 429 → server waking up or edge burst rate-limited, retry with backoff & jitter
-        if (isSafeMethod && (resp.status === 503 || resp.status === 429) && _retries > 0) {
-            let delay = 1500;
-            try {
-                const retryAfterHeader = resp.headers && resp.headers.get ? resp.headers.get('retry-after') : null;
-                if (retryAfterHeader) {
-                    const parsedSeconds = parseInt(retryAfterHeader, 10);
-                    if (!isNaN(parsedSeconds) && parsedSeconds > 0) {
-                        delay = Math.min(parsedSeconds * 1000 + Math.floor(Math.random() * 600), 65000);
-                    }
-                } else if (resp.status === 429) {
-                    // 429 = per-IP burst limit on the origin leg, with a measured
-                    // cooldown near 60s. A 1.5-3.5s backoff just re-joins the same
-                    // hot window and adds load, so wait long enough to fall out of it.
-                    delay = 5000 + Math.floor(Math.random() * 4000);
-                } else {
-                    // 503 cold boot / wakeup
-                    delay = Math.min(_backoffMs + Math.floor(Math.random() * 1000), 20000);
-                }
-            } catch (_) {
-                delay = 2000;
-            }
-            console.warn(`[fetch] HTTP ${resp.status} from ${url} — retrying in ${(delay / 1000).toFixed(1)}s (${_retries} retries left)...`);
-            await new Promise(r => setTimeout(r, delay));
-            return fetchWithTimeout(url, options, timeoutMs, _retries - 1, _backoffMs * 1.5);
-        }
-
-
-
-        return resp;
-
-
-
-    })();
-
-
-
-
-
-
-
-    if (isGet) _inFlightRequests.set(url, fetchPromise);
-
-
-
-    return fetchPromise.then(r => r.clone());
-
-
-
+    const fetchOpts = _stripCoalesceOptions(options, true);
+    const resp = await _executeFetchWithRetries(url, fetchOpts, timeoutMs, _retries, _backoffMs, false, isSafeMethod);
+    if (!isSafeMethod) {
+        invalidateGetCoalesceCache();
+    }
+    return resp;
 }
 
 
@@ -2798,6 +2834,7 @@ async function fetchAutonomousStatus({ isManual = false } = {}) {
         const res = await fetchWithTimeout(targetUrl, {
             signal: _autonomousStatusController.signal,
             headers: reqHeaders,
+            isManual,
         }, 10000, 0);
 
 
@@ -2915,6 +2952,7 @@ async function fetchAutonomousFeed({ isManual = false } = {}) {
         const res = await fetchWithTimeout(targetUrl, {
             signal: _autonomousFeedController.signal,
             headers: reqHeaders,
+            isManual,
         }, 10000, 0);
 
 
@@ -3349,7 +3387,7 @@ async function _allSettledLimited(tasks, limit = 3) {
     return results;
 }
 
-async function loadAllData({ background = false } = {}) {
+async function loadAllData({ background = false, forceRefresh = false } = {}) {
 
 
 
@@ -3397,23 +3435,24 @@ async function loadAllData({ background = false } = {}) {
 
 
 
+    const reqOpts = forceRefresh ? { forceRefresh: true } : {};
     const promises = [
 
-        fetchWithTimeout(`${API}/api/signals/all`, {}, 60000).then((r) => parseJsonResponse(r)),
+        fetchWithTimeout(`${API}/api/signals/all`, reqOpts, 60000).then((r) => parseJsonResponse(r)),
 
-        fetchWithTimeout(`${API}/api/stats`, {}, 25000).then((r) => parseJsonResponse(r)),
+        fetchWithTimeout(`${API}/api/stats`, reqOpts, 25000).then((r) => parseJsonResponse(r)),
 
-        fetchWithTimeout(`${API}/api/nse/dashboard`, {}, 25000).then((r) => parseJsonResponse(r)),
+        fetchWithTimeout(`${API}/api/nse/dashboard`, reqOpts, 25000).then((r) => parseJsonResponse(r)),
 
-        shouldFetchOpps ? fetchWithTimeout(`${API}/api/screener/opportunities`, {}, 25000).then((r) => { if (r.ok) _lastOppsFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
+        shouldFetchOpps ? fetchWithTimeout(`${API}/api/screener/opportunities`, reqOpts, 25000).then((r) => { if (r.ok) _lastOppsFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
 
-        fetchWithTimeout(`${API}/api/overview/intelligence`, {}, 60000).then((r) => parseJsonResponse(r)).catch(() => null),
+        fetchWithTimeout(`${API}/api/overview/intelligence`, reqOpts, 60000).then((r) => parseJsonResponse(r)).catch(() => null),
 
-        shouldFetchMorning ? fetchWithTimeout(`${API}/api/morning-scan`, {}, 20000).then((r) => { _lastMorningFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
+        shouldFetchMorning ? fetchWithTimeout(`${API}/api/morning-scan`, reqOpts, 20000).then((r) => { _lastMorningFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
 
-        shouldFetchCrypto ? fetchWithTimeout(`${API}/api/crypto/intelligence`, {}, 25000).then((r) => { _lastCryptoFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
+        shouldFetchCrypto ? fetchWithTimeout(`${API}/api/crypto/intelligence`, reqOpts, 25000).then((r) => { _lastCryptoFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
 
-        fetchWithTimeout(`${API}/api/paper/open`, {}, 15000).then((r) => parseJsonResponse(r)).catch(() => null),
+        fetchWithTimeout(`${API}/api/paper/open`, reqOpts, 15000).then((r) => parseJsonResponse(r)).catch(() => null),
 
     ];
 
@@ -7318,7 +7357,7 @@ function phase5Keydown(e) {
 
 
 
-        loadAllData({ background: false });
+        loadAllData({ background: false, forceRefresh: true });
 
 
 
@@ -11950,7 +11989,7 @@ async function bulkClosePaperTrades(mode) {
         if (!res.ok) throw new Error(data.error || 'Bulk close failed');
 
         alert(`Closed ${data.closed} of ${data.matched} position(s).\nP&L: ₹${Number(data.total_pnl || 0).toFixed(2)}`);
-        await loadAllData();
+        await loadAllData({ forceRefresh: true });
     } catch (err) {
         alert('Bulk close failed: ' + err.message);
     }
@@ -22904,7 +22943,7 @@ async function refreshMoodStrip(force = false) {
 
 
     try {
-        const res = await fetchWithTimeout(`${API}/api/context/market-mood`, {}, 15000, 0);
+        const res = await fetchWithTimeout(`${API}/api/context/market-mood`, { forceRefresh: Boolean(force) }, 15000, 0);
         if (res && res.ok) {
             const data = await parseJsonResponse(res);
             updateMoodStripUI(data);
