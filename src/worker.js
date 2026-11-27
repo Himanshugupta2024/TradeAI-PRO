@@ -11,13 +11,64 @@
 const BACKEND_HOST = "trading-api-n1wt.onrender.com";
 const BACKEND_ORIGIN = `https://${BACKEND_HOST}`;
 
-// Unified Cache Policy (Seconds)
+// Unified Default Cache Policy (Seconds)
 const BROWSER_TTL_SEC = 5;
 const EDGE_FRESH_TTL_SEC = 15;
 const EDGE_SWR_WINDOW_SEC = 30;
 const PHYSICAL_EDGE_TTL_SEC = 600; // 600 seconds (10 minutes) total edge retention
 
 const UNIFIED_CACHE_CONTROL = `public, max-age=${BROWSER_TTL_SEC}, s-maxage=${EDGE_FRESH_TTL_SEC}, stale-while-revalidate=${EDGE_SWR_WINDOW_SEC}`;
+
+const DEFAULT_CACHE_POLICY = {
+  tier: "fast",
+  browserTtlSec: BROWSER_TTL_SEC,
+  freshTtlSec: EDGE_FRESH_TTL_SEC,
+  swrWindowSec: EDGE_SWR_WINDOW_SEC,
+  physicalTtlSec: PHYSICAL_EDGE_TTL_SEC,
+  cacheControl: UNIFIED_CACHE_CONTROL,
+};
+
+const INDEX_MOVER_CACHE_POLICY = {
+  tier: "index-mover",
+  browserTtlSec: 5,
+  freshTtlSec: 15,
+  swrWindowSec: 15,
+  physicalTtlSec: 30,
+  cacheControl: "public, max-age=5, s-maxage=15, stale-while-revalidate=15",
+};
+
+// Heavy public analytics, intelligence, macro & prediction endpoints (5-23s origin compute).
+// 60s fresh edge TTL + 180s SWR + 900s retention shields Box A's 512MB container from multi-tab bursts.
+const HEAVY_ANALYTICS_CACHE_POLICY = {
+  tier: "heavy-analytics",
+  browserTtlSec: 15,
+  freshTtlSec: 60,
+  swrWindowSec: 180,
+  physicalTtlSec: 900,
+  cacheControl: "public, max-age=15, s-maxage=60, stale-while-revalidate=180",
+};
+
+// Slow-moving news feeds, EOD research, swing scans & reference endpoints.
+const NEWS_AND_EOD_CACHE_POLICY = {
+  tier: "news-eod",
+  browserTtlSec: 30,
+  freshTtlSec: 120,
+  swrWindowSec: 300,
+  physicalTtlSec: 1800,
+  cacheControl: "public, max-age=30, s-maxage=120, stale-while-revalidate=300",
+};
+
+const MAX_COALESCE_MAP_SIZE = 256;
+const REVAL_ERROR_BACKOFF_MS = 15000;
+const REVAL_MAX_BACKOFF_MS = 60000;
+
+// Per-isolate burst protection state:
+// - inFlightOriginFetches coalesces concurrent cold/expired public GETs for the same key.
+// - revalInFlight ensures at most one background SWR revalidation per key at any time.
+// - originBackoffUntil pauses background SWR revalidations briefly after origin 429/5xx.
+const inFlightOriginFetches = new Map();
+const revalInFlight = new Map();
+const originBackoffUntil = new Map();
 
 // Security headers applied to every static asset response.
 // NOTE: the dashboard ships inline <script> blocks and inline event handlers, so
@@ -74,6 +125,11 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/nse/dashboard",
   "/api/stats",
   "/api/crypto/intelligence",
+  "/api/crypto/news",
+  "/api/crypto/meme",
+  "/api/crypto/prediction",
+  "/api/crypto/proxy/binance/24hr",
+  "/api/crypto/proxy/binance/klines",
   "/api/morning-scan",
   "/api/market-control/status",
   "/api/market-control/focus",
@@ -89,23 +145,74 @@ const PUBLIC_CACHEABLE_PATHS = new Set([
   "/api/breakouts",
   "/api/swing/shortlist",
   "/api/swing/stats",
+  "/api/swing/history",
   "/api/forex/signals",
   "/api/forex/rates",
   "/api/forex/intelligence",
   "/api/forex/sessions",
   "/api/macro/intelligence",
+  "/api/macro/sector-impact",
   "/api/edge/top-setups",
   "/api/edge/macro-heatmap",
   "/api/edge/risk-gauge",
+  "/api/fno/overview",
+  "/api/regime/all",
   "/api/research/next-day-picks",
   "/api/research/next-day-picks/history",
   "/api/nse/prediction",
+  "/api/nse/news",
   "/api/context/v3",
   "/api/intraday/latest",
+  "/api/intraday/stats",
   "/api/analytics/scorecard",
+  "/api/analytics/signals",
+  "/api/ai/ensemble/status",
+  "/api/ensemble/status",
+  "/api/models/status",
+  "/api/symbols",
+  "/api/nlp/summary",
   "/api/sectors",
   "/api/swing-scanner",
   "/api/section-6b/picks",
+]);
+
+const HEAVY_ANALYTICS_PATHS = new Set([
+  "/api/edge/risk-gauge",
+  "/api/edge/top-setups",
+  "/api/edge/macro-heatmap",
+  "/api/crypto/intelligence",
+  "/api/crypto/prediction",
+  "/api/crypto/meme",
+  "/api/nse/dashboard",
+  "/api/nse/prediction",
+  "/api/context/v3",
+  "/api/macro/intelligence",
+  "/api/macro/sector-impact",
+  "/api/forex/intelligence",
+  "/api/fno/overview",
+  "/api/regime/all",
+  "/api/analytics/scorecard",
+  "/api/analytics/signals",
+  "/api/sectors",
+  "/api/nlp/summary",
+]);
+
+const NEWS_AND_EOD_PATHS = new Set([
+  "/api/nse/news",
+  "/api/crypto/news",
+  "/api/context/events",
+  "/api/morning-scan",
+  "/api/swing/shortlist",
+  "/api/swing/stats",
+  "/api/swing/history",
+  "/api/swing-scanner",
+  "/api/research/next-day-picks",
+  "/api/research/next-day-picks/history",
+  "/api/section-6b/picks",
+  "/api/symbols",
+  "/api/ai/ensemble/status",
+  "/api/ensemble/status",
+  "/api/models/status",
 ]);
 
 // Health and readiness routes must NEVER be cached by Cloudflare edge.
@@ -116,12 +223,42 @@ function isHealthOrReadinessPath(pathname) {
     pathname.startsWith("/api/health/") ||
     pathname === "/api/ready" ||
     pathname.startsWith("/api/ready/") ||
-    pathname === "/api/system/data-health"
+    pathname === "/api/system/data-health" ||
+    pathname === "/api/system/memory" ||
+    pathname === "/api/warmup"
+  );
+}
+
+// User state, paper book, autonomous engine & admin controls must never enter the
+// shared edge cache. Caching them publicly leaks state or masks admin changes.
+function isPrivateStatePath(pathname) {
+  return (
+    pathname === "/api/paper" ||
+    pathname.startsWith("/api/paper/") ||
+    pathname.startsWith("/api/portfolio") ||
+    pathname.startsWith("/api/trades") ||
+    pathname.startsWith("/api/track-record") ||
+    pathname.startsWith("/api/performance") ||
+    pathname.startsWith("/api/learning/") ||
+    pathname === "/api/tradeflow" ||
+    pathname.startsWith("/api/positions") ||
+    pathname.startsWith("/api/orders") ||
+    pathname.startsWith("/api/journal") ||
+    pathname.startsWith("/api/capital") ||
+    pathname.startsWith("/api/risk") ||
+    pathname === "/api/admin" ||
+    pathname.startsWith("/api/admin/") ||
+    pathname.startsWith("/api/autonomous/") ||
+    pathname.startsWith("/api/retrain") ||
+    pathname.startsWith("/api/telegram/") ||
+    pathname.startsWith("/api/telemetry/") ||
+    pathname.startsWith("/api/cron/") ||
+    pathname === "/api/refresh"
   );
 }
 
 export function isPathCacheable(pathname) {
-  if (isHealthOrReadinessPath(pathname)) return false;
+  if (isHealthOrReadinessPath(pathname) || isPrivateStatePath(pathname)) return false;
   if (PUBLIC_CACHEABLE_PATHS.has(pathname)) return true;
   if (
     pathname.startsWith("/api/market/") ||
@@ -129,30 +266,51 @@ export function isPathCacheable(pathname) {
     pathname.startsWith("/api/news/") ||
     pathname.startsWith("/api/search/") ||
     pathname.startsWith("/api/swing/symbol/") ||
+    pathname.startsWith("/api/swing/history/") ||
     pathname.startsWith("/api/forex/ohlcv/") ||
+    pathname.startsWith("/api/forex/signal/") ||
     pathname.startsWith("/api/watchlist/quotes") ||
     pathname.startsWith("/api/prediction/") ||
-    pathname.startsWith("/api/index-mover/")
+    pathname.startsWith("/api/index-mover/") ||
+    pathname.startsWith("/api/edge/score/") ||
+    pathname.startsWith("/api/edge/research/") ||
+    pathname.startsWith("/api/fno/symbol/") ||
+    pathname.startsWith("/api/regime/") ||
+    pathname.startsWith("/api/intraday/symbol/") ||
+    pathname.startsWith("/api/research/next-day-picks/") ||
+    pathname.startsWith("/api/context/")
   ) {
     return true;
   }
   return false;
 }
 
-// User state must never enter the shared edge cache. Portfolio, paper book and
-// trade history are per-account data: caching them publicly (or copying them
-// into a shared cache keyed only by URL) leaks one user's positions to another.
-function isPrivateStatePath(pathname) {
-  return (
-    pathname.startsWith("/api/paper/") ||
-    pathname.startsWith("/api/portfolio") ||
-    pathname.startsWith("/api/trades") ||
-    pathname.startsWith("/api/positions") ||
-    pathname.startsWith("/api/orders") ||
-    pathname.startsWith("/api/journal") ||
-    pathname.startsWith("/api/capital") ||
-    pathname.startsWith("/api/risk")
-  );
+export function getCachePolicy(pathname) {
+  if (pathname.startsWith("/api/index-mover/")) {
+    return INDEX_MOVER_CACHE_POLICY;
+  }
+  if (
+    NEWS_AND_EOD_PATHS.has(pathname) ||
+    pathname.startsWith("/api/news/") ||
+    pathname.startsWith("/api/backtest/") ||
+    pathname.startsWith("/api/swing/symbol/") ||
+    pathname.startsWith("/api/swing/history/") ||
+    pathname.startsWith("/api/research/next-day-picks/")
+  ) {
+    return NEWS_AND_EOD_CACHE_POLICY;
+  }
+  if (
+    HEAVY_ANALYTICS_PATHS.has(pathname) ||
+    pathname.startsWith("/api/prediction/") ||
+    pathname.startsWith("/api/edge/score/") ||
+    pathname.startsWith("/api/edge/research/") ||
+    pathname.startsWith("/api/fno/symbol/") ||
+    pathname.startsWith("/api/regime/") ||
+    (pathname.startsWith("/api/context/") && pathname !== "/api/context/market-mood")
+  ) {
+    return HEAVY_ANALYTICS_CACHE_POLICY;
+  }
+  return DEFAULT_CACHE_POLICY;
 }
 
 // Helper to sanitize headers forwarded to Render origin.
@@ -460,7 +618,7 @@ export function getDegradedFallbackResponse(pathname) {
   return null;
 }
 
-// Helper to strip anti-cache query parameters (_ts, _, timestamp, t) and canonicalize parameters so edge cache keys are uniform
+// Helper to strip anti-cache query parameters (_ts, _, timestamp, t, cb) and canonicalize parameters so edge cache keys are uniform
 export function getNormalizedCacheKey(rawUrl) {
   try {
     const u = new URL(rawUrl);
@@ -468,6 +626,7 @@ export function getNormalizedCacheKey(rawUrl) {
     u.searchParams.delete("_");
     u.searchParams.delete("timestamp");
     u.searchParams.delete("t");
+    u.searchParams.delete("cb");
 
     // Guardrail 2: Normalize symbols parameter (split, trim, uppercase, dedup, sort)
     if (u.searchParams.has("symbols")) {
@@ -494,6 +653,27 @@ export function getNormalizedCacheKey(rawUrl) {
   }
 }
 
+/**
+ * Honor explicit `cb=` cache-buster bypass ONLY for intended verification/audit
+ * harnesses (`audit_full.py` UA="audit", `verify_fixes.py` UA="fixcheck", `TradeAI-*`)
+ * or authenticated operator headers so public clients cannot bust edge cache via `?cb=`.
+ */
+export function shouldHonorCacheBuster(request, url) {
+  if (!url || !url.searchParams.has("cb")) return false;
+  const cbVal = (url.searchParams.get("cb") || "").trim();
+  if (!cbVal) return false;
+  const ua = (request.headers.get("User-Agent") || "").trim();
+  if (/^(audit|fixcheck|TradeAI-)/i.test(ua)) return true;
+  if (
+    request.headers.has("X-API-Key") ||
+    request.headers.has("X-Admin-Key") ||
+    request.headers.has("Authorization")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /** Check whether an instant in milliseconds has crossed an NSE session boundary (09:15 open, 15:30 close, or calendar day in IST). */
 export function hasCrossedNseSessionBoundary(cachedAtMs, nowMs = Date.now()) {
   const cachedIst = new Date(cachedAtMs + 5.5 * 3600 * 1000);
@@ -516,16 +696,19 @@ export function hasCrossedNseSessionBoundary(cachedAtMs, nowMs = Date.now()) {
   return false;
 }
 
-// Helper to store response in Cloudflare edge cache using exact request.url string
-async function storeInEdgeCache(cache, urlStr, originResponse) {
+// Helper to store response in Cloudflare edge cache using canonical request.url string
+async function storeInEdgeCache(cache, urlStr, originResponse, policy = null) {
   if (!originResponse.ok || originResponse.status !== 200) return; // strictly cache only HTTP 200
   if (!cache || typeof cache.put !== "function") return;
+  const originCc = (originResponse.headers.get("cache-control") || "").toLowerCase();
+  if (originCc.includes("no-store") || originCc.includes("private")) return;
   try {
     const normUrl = getNormalizedCacheKey(urlStr);
+    const resolvedPolicy = policy || getCachePolicy(new URL(normUrl).pathname);
     const now = Date.now();
     const cacheHeaders = new Headers(originResponse.headers);
     cacheHeaders.set("X-SWR-Cached-At", String(now));
-    const retentionSec = normUrl.includes("/api/index-mover/") ? 30 : PHYSICAL_EDGE_TTL_SEC;
+    const retentionSec = resolvedPolicy.physicalTtlSec;
     // Physical retention for full fresh + SWR window
     cacheHeaders.set("Cache-Control", `public, max-age=${retentionSec}, s-maxage=${retentionSec}`);
     // Delete vary on public JSON so cache matches across all user-agents/headers
@@ -541,6 +724,73 @@ async function storeInEdgeCache(cache, urlStr, originResponse) {
   } catch (err) {
     // Non-fatal cache store failure
   }
+}
+
+function recordOriginBackoff(cacheKey, originResponse) {
+  if (!originResponse) return;
+  if (originResponse.status === 429 || originResponse.status >= 500) {
+    if (originBackoffUntil.size >= MAX_COALESCE_MAP_SIZE) {
+      originBackoffUntil.clear();
+    }
+    const retryAfterRaw = parseInt(originResponse.headers.get("retry-after") || "0", 10);
+    const retryAfterMs = Number.isFinite(retryAfterRaw) && retryAfterRaw > 0
+      ? Math.min(REVAL_MAX_BACKOFF_MS, retryAfterRaw * 1000)
+      : REVAL_ERROR_BACKOFF_MS;
+    originBackoffUntil.set(cacheKey, Date.now() + Math.max(REVAL_ERROR_BACKOFF_MS, retryAfterMs));
+  } else if (originResponse.status === 200) {
+    originBackoffUntil.delete(cacheKey);
+  }
+}
+
+/**
+ * Coalesce concurrent GET requests to public cacheable endpoints within the same isolate
+ * so multi-tab refreshes and overlapping SWR revalidations trigger at most one origin fetch.
+ */
+async function coalescePublicOriginFetch(coalesceKey, targetUrl, originHeaders, backoffKey = coalesceKey) {
+  let shared = inFlightOriginFetches.get(coalesceKey);
+  let wasCoalesced = Boolean(shared);
+  if (!shared) {
+    if (inFlightOriginFetches.size >= MAX_COALESCE_MAP_SIZE) {
+      inFlightOriginFetches.clear();
+    }
+    shared = (async () => {
+      const originRes = await fetch(
+        new Request(targetUrl, {
+          method: "GET",
+          headers: originHeaders,
+          redirect: "follow",
+        })
+      );
+      recordOriginBackoff(backoffKey, originRes);
+      const bodyBuffer = await originRes.arrayBuffer();
+      return {
+        status: originRes.status,
+        statusText: originRes.statusText,
+        headersEntries: Array.from(originRes.headers.entries()),
+        bodyBuffer,
+      };
+    })().finally(() => {
+      inFlightOriginFetches.delete(coalesceKey);
+    });
+    inFlightOriginFetches.set(coalesceKey, shared);
+  }
+
+  const snapshot = await shared;
+  const response = new Response(snapshot.bodyBuffer.slice(0), {
+    status: snapshot.status,
+    statusText: snapshot.statusText,
+    headers: new Headers(snapshot.headersEntries),
+  });
+  return { response, coalesced: wasCoalesced };
+}
+
+function cancelBodySafely(response) {
+  try {
+    if (response && response.body && !response.bodyUsed) {
+      const p = response.body.cancel();
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    }
+  } catch (_) {}
 }
 
 export default {
@@ -578,9 +828,7 @@ export default {
           if (originResponse.status === 101 || originResponse.webSocket) {
             return originResponse;
           }
-          try {
-            if (originResponse.body) await originResponse.body.cancel();
-          } catch (_) {}
+          cancelBodySafely(originResponse);
           return wsUnavailable(
             `Origin refused upgrade (HTTP ${originResponse.status})`,
             originResponse.status
@@ -594,14 +842,20 @@ export default {
 
     // 2. Handle API routes (/api/*)
     if (url.pathname.startsWith("/api/")) {
-      const targetUrl = new URL(url.pathname + url.search, BACKEND_ORIGIN);
       const isGet = request.method === "GET";
       const isPublicCacheable = isGet && isPathCacheable(url.pathname);
+      const cachePolicy = isPublicCacheable ? getCachePolicy(url.pathname) : DEFAULT_CACHE_POLICY;
       const cache = typeof caches !== "undefined" ? caches.default : null;
 
       // Check Edge Cache only for approved public GET endpoints
       const cacheKey = isPublicCacheable ? getNormalizedCacheKey(request.url) : request.url;
-      if (isPublicCacheable && cache) {
+      const bypassCacheRead = isPublicCacheable && shouldHonorCacheBuster(request, url);
+      const canonicalPathUrl = new URL(cacheKey);
+      const targetUrl = isPublicCacheable && !bypassCacheRead
+        ? new URL(canonicalPathUrl.pathname + canonicalPathUrl.search, BACKEND_ORIGIN)
+        : new URL(url.pathname + url.search, BACKEND_ORIGIN);
+
+      if (isPublicCacheable && !bypassCacheRead && cache) {
         const cachedResponse = await cache.match(cacheKey);
         if (cachedResponse) {
           const cachedAt = parseInt(cachedResponse.headers.get("X-SWR-Cached-At") || "0", 10);
@@ -610,74 +864,99 @@ export default {
           const isPredictionPath = url.pathname.startsWith("/api/prediction/") || url.pathname === "/api/nse/prediction";
           const isIndexMoverPath = url.pathname.startsWith("/api/index-mover/");
           const sessionCrossed = (isPredictionPath || isIndexMoverPath) && hasCrossedNseSessionBoundary(cachedAt, nowMs);
-          const maxRetentionSec = isIndexMoverPath ? 30 : PHYSICAL_EDGE_TTL_SEC;
 
-          if (!sessionCrossed && ageSec <= EDGE_FRESH_TTL_SEC) {
-            // Case A: FRESH HIT (0 - 15s)
+          if (!sessionCrossed && ageSec <= cachePolicy.freshTtlSec) {
+            // Case A: FRESH HIT (0 - freshTtlSec)
             const res = new Response(cachedResponse.body, cachedResponse);
             res.headers.set("CF-Cache-Status", "HIT");
             res.headers.set("Age", String(ageSec));
-            res.headers.set("Cache-Control", UNIFIED_CACHE_CONTROL);
+            res.headers.set("Cache-Control", cachePolicy.cacheControl);
             res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+            res.headers.set("X-Edge-Cache-Tier", cachePolicy.tier);
             res.headers.set("Access-Control-Allow-Origin", "*");
             return res;
-          } else if (!sessionCrossed && ageSec <= maxRetentionSec) {
-            // Case B: STALE HIT (16s - maxRetentionSec) -> True RFC 5861 Stale-While-Revalidate!
-            // 1. Spawn asynchronous revalidation in background
-            const revalTask = (async () => {
-              try {
-                const revalHeaders = createCleanOriginHeaders(request.headers);
-
-                const revalReq = new Request(targetUrl, {
-                  method: "GET",
-                  headers: revalHeaders,
-                });
-                const revalRes = await fetch(revalReq);
-                if (revalRes.status === 200) {
-                  await storeInEdgeCache(cache, cacheKey, revalRes);
-                }
-              } catch (revalErr) {
-                // Background fetch failed, stale entry remains until physical expiry
+          } else if (!sessionCrossed && ageSec <= cachePolicy.physicalTtlSec) {
+            // Case B: STALE HIT -> True RFC 5861 Stale-While-Revalidate with single-flight revalidation dedup
+            const backoffUntil = originBackoffUntil.get(cacheKey) || 0;
+            if (!revalInFlight.has(cacheKey) && nowMs >= backoffUntil) {
+              if (revalInFlight.size >= MAX_COALESCE_MAP_SIZE) {
+                revalInFlight.clear();
               }
-            })();
-            if (ctx && typeof ctx.waitUntil === "function") {
-              ctx.waitUntil(revalTask);
+              const revalTask = (async () => {
+                try {
+                  const revalHeaders = createCleanOriginHeaders(request.headers);
+                  const { response: revalRes } = await coalescePublicOriginFetch(
+                    cacheKey,
+                    targetUrl,
+                    revalHeaders,
+                    cacheKey
+                  );
+                  if (revalRes.status === 200) {
+                    await storeInEdgeCache(cache, cacheKey, revalRes, cachePolicy);
+                  } else {
+                    cancelBodySafely(revalRes);
+                  }
+                } catch (revalErr) {
+                  // Background fetch failed, stale entry remains until physical expiry
+                } finally {
+                  revalInFlight.delete(cacheKey);
+                }
+              })();
+              revalInFlight.set(cacheKey, revalTask);
+              if (ctx && typeof ctx.waitUntil === "function") {
+                ctx.waitUntil(revalTask);
+              }
             }
 
-            // 2. Return stale cached data immediately to client (<20ms!)
+            // Return stale cached data immediately to client (<20ms!)
             const res = new Response(cachedResponse.body, cachedResponse);
             res.headers.set("CF-Cache-Status", "STALE");
             res.headers.set("Age", String(ageSec));
-            res.headers.set("Cache-Control", UNIFIED_CACHE_CONTROL);
+            res.headers.set("Cache-Control", cachePolicy.cacheControl);
             res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+            res.headers.set("X-Edge-Cache-Tier", cachePolicy.tier);
             res.headers.set("Access-Control-Allow-Origin", "*");
             return res;
           }
-          // Case C: ageSec > 45s falls through to synchronous origin fetch
+          // Case C: expired physical retention or session boundary crossed -> foreground origin fetch
+          cancelBodySafely(cachedResponse);
         }
       }
 
       // Forward request to Render Origin with clean headers
       const originHeaders = createCleanOriginHeaders(request.headers);
 
-      const originRequest = new Request(targetUrl, {
-        method: request.method,
-        headers: originHeaders,
-        body: request.method !== "GET" && request.method !== "HEAD" ? request.body : undefined,
-        redirect: "follow",
-      });
-
       let originResponse;
+      let wasCoalesced = false;
       try {
-        originResponse = await fetch(originRequest);
+        if (isPublicCacheable) {
+          const coalesceKey = bypassCacheRead ? targetUrl.toString() : cacheKey;
+          const fetched = await coalescePublicOriginFetch(
+            coalesceKey,
+            targetUrl,
+            originHeaders,
+            cacheKey
+          );
+          originResponse = fetched.response;
+          wasCoalesced = fetched.coalesced;
+        } else {
+          const originRequest = new Request(targetUrl, {
+            method: request.method,
+            headers: originHeaders,
+            body: request.method !== "GET" && request.method !== "HEAD" ? request.body : undefined,
+            redirect: "follow",
+          });
+          originResponse = await fetch(originRequest);
+        }
       } catch (err) {
-        if (isPublicCacheable && cache) {
+        if (isPublicCacheable && !bypassCacheRead && cache) {
           try {
             const stale = await cache.match(cacheKey);
             if (stale) {
               const res = new Response(stale.body, stale);
               res.headers.set("CF-Cache-Status", "STALE-FALLBACK-ERR");
               res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+              res.headers.set("X-Edge-Cache-Tier", cachePolicy.tier);
               res.headers.set("Access-Control-Allow-Origin", "*");
               res.headers.set("Cache-Control", "public, max-age=0, must-revalidate, stale-while-revalidate=10");
               return res;
@@ -702,13 +981,15 @@ export default {
       // If origin returns 500, 502, 503, 429, or 504, fallback to stale edge cache if available.
       // NOTE: 403 (Section 6A Focus Mode / admin lock) is strictly excluded so administrative locks are honored immediately.
       if (isPublicCacheable && (originResponse.status === 500 || originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 429 || originResponse.status === 504)) {
-        if (cache) {
+        if (!bypassCacheRead && cache) {
           try {
             const stale = await cache.match(cacheKey);
             if (stale) {
+              cancelBodySafely(originResponse);
               const res = new Response(stale.body, stale);
               res.headers.set("CF-Cache-Status", "STALE-FALLBACK-503");
               res.headers.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+              res.headers.set("X-Edge-Cache-Tier", cachePolicy.tier);
               res.headers.set("Access-Control-Allow-Origin", "*");
               res.headers.set("Cache-Control", "public, max-age=0, must-revalidate, stale-while-revalidate=10");
               return res;
@@ -716,16 +997,22 @@ export default {
           } catch (_) {}
         }
         const fallback = getDegradedFallbackResponse(url.pathname);
-        if (fallback) return fallback;
+        if (fallback) {
+          cancelBodySafely(originResponse);
+          return fallback;
+        }
       } else if (originResponse.status === 500 || originResponse.status === 502 || originResponse.status === 503 || originResponse.status === 504 || originResponse.status === 429) {
         const fallback = getDegradedFallbackResponse(url.pathname);
-        if (fallback) return fallback;
+        if (fallback) {
+          cancelBodySafely(originResponse);
+          return fallback;
+        }
       }
 
-      // Public Cacheable: Store in cache and return MISS with unified headers
+      // Public Cacheable: Store in cache and return MISS (or BYPASS-CB) with policy headers
       if (isPublicCacheable && originResponse.status === 200) {
         if (cache) {
-          const storePromise = storeInEdgeCache(cache, cacheKey, originResponse.clone());
+          const storePromise = storeInEdgeCache(cache, cacheKey, originResponse.clone(), cachePolicy);
           if (ctx && typeof ctx.waitUntil === "function") {
             ctx.waitUntil(storePromise);
           } else {
@@ -734,9 +1021,13 @@ export default {
         }
 
         const clientHeaders = new Headers(originResponse.headers);
-        clientHeaders.set("CF-Cache-Status", "MISS");
-        clientHeaders.set("Cache-Control", UNIFIED_CACHE_CONTROL);
+        clientHeaders.set("CF-Cache-Status", bypassCacheRead ? "BYPASS" : "MISS");
+        clientHeaders.set("Cache-Control", cachePolicy.cacheControl);
         clientHeaders.set("X-Edge-Proxy", "TradeAI-Cloudflare-Worker");
+        clientHeaders.set("X-Edge-Cache-Tier", cachePolicy.tier);
+        if (wasCoalesced) {
+          clientHeaders.set("X-Edge-Coalesced", "1");
+        }
         clientHeaders.set("Access-Control-Allow-Origin", "*");
 
         return new Response(originResponse.body, {
@@ -749,6 +1040,7 @@ export default {
       // Ensure API endpoints NEVER return HTML challenge pages to JSON consumers
       const originContentType = (originResponse.headers.get("content-type") || "").toLowerCase();
       if (!originContentType.includes("application/json") && originResponse.status >= 400) {
+        cancelBodySafely(originResponse);
         const errorHeaders = new Headers({
           "Content-Type": "application/json",
           "Access-Control-Allow-Origin": "*",
@@ -1005,11 +1297,14 @@ const DEFAULT_PUBLIC_ORIGIN = "https://tradeai-pro.tradingpro.workers.dev";
 export const EDGE_WARM_PATHS = [
   "/api/stats",
   "/api/dashboard/overview",
+  "/api/nse/dashboard",
   "/api/signals/all",
   "/api/screener/opportunities",
   "/api/market-control/status",
+  "/api/context/v3",
   "/api/macro/intelligence",
   "/api/swing/shortlist",
+  "/api/nse/news",
 ];
 
 // Pre-open warm window in IST minutes-of-day. Outside this range the cache is
