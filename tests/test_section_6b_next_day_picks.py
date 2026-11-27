@@ -439,3 +439,40 @@ def test_catalyst_filter_rejects_seo_spam_aged_and_opposing_bias():
         {"title": "Client budget cut warning", "category": "CONFIRMED_DISCLOSURE", "impact": "BEARISH", "age_days": 3},
     ]
     assert _score_catalysts_for_bias(bearish_on_long, "LONG") < 50.0
+
+
+def test_analyze_candidate_excludes_opposing_catalysts_and_caps_mixed_score():
+    """Mixed catalysts must cap score and LONG picks must never expose BEARISH news_catalysts."""
+    from datetime import date, datetime
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+    import numpy as np
+    import pandas as pd
+    from agents.market_intelligence.next_day_picks import _score_catalysts_for_bias, analyze_candidate
+
+    mixed = [
+        {"headline": "JSWSTEEL rallies on expansion", "category": "FINANCIAL_NEWS", "impact": "BULLISH", "age_days": 0},
+        {"headline": "Nifty down 1% broad selloff", "category": "FINANCIAL_NEWS", "impact": "BEARISH", "age_days": 0},
+    ]
+    assert _score_catalysts_for_bias(mixed, "LONG") <= 55.0
+
+    ist = ZoneInfo("Asia/Kolkata")
+    ref_dt = datetime(2026, 11, 27, 17, 0, tzinfo=ist)
+    dates = pd.date_range("2026-07-01", "2026-11-27", freq="B")
+    n = len(dates)
+    c = 900.0 + np.linspace(0.0, 120.0, n)
+    c[-5:] = np.linspace(c[-6], c[-6] * 1.03, 5)
+    df = pd.DataFrame({
+        "timestamp": dates,
+        "open": c - 4.0,
+        "high": c + 12.0,
+        "low": c - 12.0,
+        "close": c,
+        "volume": np.full(n, 900_000.0),
+    })
+
+    with patch("api.fno_client.fetch_fno_analytics_sync", return_value={"envelope_source": "ATR_FALLBACK", "ce_wall": None, "pe_wall": None}), \
+         patch("agents.market_intelligence.next_day_picks._discover_catalysts_for_symbol", return_value=mixed):
+        cand = analyze_candidate("JSWSTEEL", df, date(2026, 11, 27), date(2026, 11, 30), "BULLISH", ref_dt=ref_dt)
+        assert cand is not None
+        assert all(cat.get("impact") != "BEARISH" for cat in cand["news_catalysts"])

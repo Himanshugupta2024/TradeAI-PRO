@@ -24,7 +24,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: PYTHONWARNINGS
-        value: "ignore:::yfinance,ignore::DeprecationWarning"
+        value: "ignore:::yfinance,ignore::DeprecationWarning,ignore:The inplace keyword"
       # Small Render instances: avoid BLAS oversubscription during numpy/scipy import.
       - key: OMP_NUM_THREADS
         value: "1"

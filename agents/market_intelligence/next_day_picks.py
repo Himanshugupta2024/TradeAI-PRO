@@ -438,6 +438,8 @@ def _score_catalysts_for_bias(catalysts: List[Dict[str, Any]], bias: str) -> flo
 
     if opp_cnt > aligned_cnt:
         return 42.0
+    if opp_cnt > 0:
+        return 52.0
     if has_confirmed_aligned and aligned_cnt > 0:
         return 86.0
     if has_confirmed_aligned:
@@ -484,6 +486,20 @@ def _discover_catalysts_for_symbol(symbol: str, cutoff_date: date) -> List[Dict[
                 source = title.split(" - ")[-1].strip() if " - " in title else "Financial Media"
                 if _is_seo_spam_item(headline, source, link):
                     continue
+                h_check = headline.lower()
+                sym_l = symbol.lower()
+                if sym_l not in h_check and any(
+                    w in h_check
+                    for w in (
+                        "top gainers & losers",
+                        "top gainers and losers",
+                        "india stocks lower at close",
+                        "india stocks higher at close",
+                        "markets at close",
+                        "stock market highlights",
+                    )
+                ):
+                    continue
 
                 pub_dt = _parse_pub_date(pub_date)
                 if pub_dt is None:
@@ -517,7 +533,7 @@ def _discover_catalysts_for_symbol(symbol: str, cutoff_date: date) -> List[Dict[
                     "url": link,
                     "impact": impact,
                 })
-                if len(real_catalysts) >= 2:
+                if len(real_catalysts) >= 6:
                     break
     except Exception as exc:
         logger.debug("Live RSS catalyst discovery skipped for %s: %s", symbol, exc)
@@ -663,6 +679,23 @@ def analyze_candidate(
     # 2. Catalysts (strictly fresh <=7d & direction-aligned)
     catalysts = _discover_catalysts_for_symbol(symbol, min(bar_date, now_ist.date()))
     catalyst_score = _score_catalysts_for_bias(catalysts, bias)
+    if catalyst_score < 50.0:
+        logger.debug("%s disqualified: net opposing news catalysts (score=%.1f, bias=%s)", symbol, catalyst_score, bias)
+        return None
+    opp_dir = "BEARISH" if bias == "LONG" else "BULLISH"
+    display_catalysts = [c for c in catalysts if c.get("impact") != opp_dir][:2]
+    if not display_catalysts:
+        display_catalysts = [
+            {
+                "headline": f"No conflicting directional trigger; setup driven by {bias} EOD price structure",
+                "source": "Market Context Filter",
+                "published_at": f"{min(bar_date, now_ist.date()).isoformat()}T14:45:00+05:30",
+                "age_days": 0,
+                "category": "CONTEXT_SUMMARY",
+                "url": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}",
+                "impact": "NEUTRAL",
+            }
+        ]
 
     # 3. Fundamentals & Sector Context
     sector = SECTOR_MAP.get(symbol, "Equities")
@@ -888,7 +921,7 @@ def analyze_candidate(
             "vol_ratio": vol_ratio,
         },
         "why_this_stock": why_this_stock,
-        "news_catalysts": catalysts,
+        "news_catalysts": display_catalysts,
         "scenarios": {
             "bull": bull_scenario,
             "base": base_scenario,
@@ -1189,7 +1222,7 @@ def generate_next_day_picks(
         "generated_at_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
         "data_source": "NSE_EXCHANGE_EOD",
         "is_synthetic": False,
-        "model_version": "NextDay-Confluence-v2.2",
+        "model_version": "NextDay-Confluence-v2.3",
         "benchmark_regime": benchmark_trend,
         "status": status,
         "status_reason": status_reason,
@@ -1397,7 +1430,7 @@ def get_latest_next_day_picks() -> Dict[str, Any]:
         macro_txt = str(state.get("macro_context_summary") or "")
         cutoff_future = bool(cutoff_str and cutoff_str > now_ist.strftime("%Y-%m-%d %H:%M:%S IST"))
         corrupt_macro = "35,050" in macro_txt or "40,590" in macro_txt or "+3" in macro_txt or "+5" in macro_txt
-        needs_upgrade = state.get("model_version") != "NextDay-Confluence-v2.2"
+        needs_upgrade = state.get("model_version") != "NextDay-Confluence-v2.3"
 
         if not cutoff_future and not corrupt_macro and not needs_upgrade:
             if state_source == source_date.isoformat() and state_target == target_date.isoformat():

@@ -61,7 +61,10 @@ for ep in EPS:
     deg = isinstance(body, dict) and (
         body.get("degraded") is True or str(body.get("source", "")).startswith("EDGE_DEGRADED")
     )
-    chk("AVAIL", ep, st == 200 and not deg, "status=%s lat=%ss degraded=%s" % (st, lat, deg))
+    if ep == "forex/rates" and st == 403 and isinstance(body, dict) and "Section 6A" in str(body.get("error", "")):
+        chk("AVAIL", ep, True, "status=403 (Section 6A NSE Focus guard intentional)")
+    else:
+        chk("AVAIL", ep, st == 200 and not deg, "status=%s lat=%ss degraded=%s" % (st, lat, deg))
 
 H = D["health"][2] if isinstance(D["health"][2], dict) else {}
 S = D["signals/all"][2] if isinstance(D["signals/all"][2], dict) else {}
