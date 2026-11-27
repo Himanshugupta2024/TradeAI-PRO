@@ -5202,6 +5202,9 @@ def _compute_overview_intelligence(force_refresh: bool = False) -> dict:
         set_runtime_state("latest_overview_intelligence:v1", result)
     except Exception as exc:
         logger.debug("[Service] DB overview snapshot save skipped: %s", exc)
+    del signals_to_process
+    if os.getenv("LIGHTWEIGHT_API_MODE", "false").strip().lower() in ("1", "true", "yes", "on"):
+        _force_free_memory()
     return result
 
 
@@ -5436,6 +5439,8 @@ def _compute_crypto_intelligence() -> dict:
                 mood_label = "CAUTIOUS_BULLISH"
             elif btc_pct < -1 or breadth_ratio < -0.1:
                 mood_label = "CAUTIOUS_BEARISH"
+            del usdt
+        del raw_t
     except Exception as exc:
         logger.warning("Crypto mood fetch failed in intelligence: %s", exc)
 
@@ -5797,7 +5802,7 @@ def _compute_crypto_intelligence() -> dict:
         f"({f'{mood_score:.0f}/100' if mood_score is not None else '—'})."
     )
 
-    return {
+    payload_out = {
         "top_setups": top_setups[:5],
         "avoid_list": avoid_list[:5],
         "market_guardrails": {
@@ -5844,6 +5849,10 @@ def _compute_crypto_intelligence() -> dict:
         },
         "updated_at": now_iso,
     }
+    if os.getenv("LIGHTWEIGHT_API_MODE", "false").strip().lower() in ("1", "true", "yes", "on"):
+        del premium_pool, exploratory_pool, themes
+        _force_free_memory()
+    return payload_out
 
 
 async def _refresh_crypto_futures_context() -> None:

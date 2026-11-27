@@ -42,6 +42,7 @@ Routes:
 from __future__ import annotations
 import sys
 import asyncio
+import weakref
 
 import json
 
@@ -2969,8 +2970,20 @@ async def serve_legal():
 
 _NSE_NEWS_CACHE: dict[str, object] = {"ts": 0.0, "payload": None}
 _NSE_NEWS_CACHE_TTL_SEC = 180.0
-_NSE_PRED_CACHE: dict[str, object] = {"ts": 0.0, "payload": None}
+_NSE_PRED_CACHE: dict[str, object] = {"ts": 0.0, "payload": None, "fp": None}
 _NSE_PRED_CACHE_TTL_SEC = 120.0
+_NSE_NEWS_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+_NSE_PRED_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+_CONTEXT_MOOD_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+
+
+def _get_market_lock(locks_map: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = locks_map.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks_map[loop] = lock
+    return lock
 
 
 @router.get("/api/nse/news")
@@ -2986,6 +2999,19 @@ async def get_nse_news(limit: int = Query(12, ge=3, le=40)):
             **cached_news,
             "items": list((cached_news.get("items") or [])[:limit]),
         }
+
+    async with _get_market_lock(_NSE_NEWS_LOCKS):
+        now_ts = time.time()
+        cached_news = _NSE_NEWS_CACHE.get("payload")
+        if isinstance(cached_news, dict) and (now_ts - float(_NSE_NEWS_CACHE.get("ts") or 0.0)) < _NSE_NEWS_CACHE_TTL_SEC:
+            return {
+                **cached_news,
+                "items": list((cached_news.get("items") or [])[:limit]),
+            }
+        return await _fetch_nse_news_locked(limit, now_ts)
+
+
+async def _fetch_nse_news_locked(limit: int, now_ts: float) -> dict:
 
     feeds = [
 
@@ -3153,11 +3179,50 @@ async def get_nse_news(limit: int = Query(12, ge=3, le=40)):
         "updated_at": full_payload["updated_at"],
     }
 
+def _nse_prediction_fingerprint() -> tuple:
+    persisted = getattr(svc, "_persisted_signals_snapshot", None) or []
+    first_persisted = (
+        persisted[0].get("symbol")
+        if persisted and isinstance(persisted[0], dict)
+        else None
+    )
+    return (
+        len(svc._signal_cache),
+        tuple(sorted(svc._signal_cache.keys())[:3]),
+        len(persisted),
+        first_persisted,
+    )
+
+
 @router.get("/api/nse/prediction")
 
-async def get_nse_prediction():
+async def get_nse_prediction(force_refresh: bool = Query(False, description="Bypass 120s TTL cache")):
 
     """Calculated Indian market prediction with NSE news + top BUY/SELL results."""
+    fp = _nse_prediction_fingerprint()
+    if not force_refresh:
+        cached_pred = _NSE_PRED_CACHE.get("payload")
+        if (
+            isinstance(cached_pred, dict)
+            and _NSE_PRED_CACHE.get("fp") == fp
+            and (time.monotonic() - float(_NSE_PRED_CACHE.get("ts") or 0.0)) < _NSE_PRED_CACHE_TTL_SEC
+        ):
+            return cached_pred
+
+    async with _get_market_lock(_NSE_PRED_LOCKS):
+        fp = _nse_prediction_fingerprint()
+        if not force_refresh:
+            cached_pred = _NSE_PRED_CACHE.get("payload")
+            if (
+                isinstance(cached_pred, dict)
+                and _NSE_PRED_CACHE.get("fp") == fp
+                and (time.monotonic() - float(_NSE_PRED_CACHE.get("ts") or 0.0)) < _NSE_PRED_CACHE_TTL_SEC
+            ):
+                return cached_pred
+        return await _compute_nse_prediction_locked(fp)
+
+
+async def _compute_nse_prediction_locked(fp: tuple) -> dict:
 
     def _sentiment_from_titles(items: list[dict]) -> tuple[float, int, int]:
         if not items or not any(row.get("title") for row in items):
@@ -3522,7 +3587,7 @@ async def get_nse_prediction():
 
             )
 
-        return {
+        pred_payload = {
 
             "prediction": {
 
@@ -3599,6 +3664,10 @@ async def get_nse_prediction():
             "real_data": True,
 
         }
+        _NSE_PRED_CACHE["ts"] = time.monotonic()
+        _NSE_PRED_CACHE["fp"] = fp
+        _NSE_PRED_CACHE["payload"] = pred_payload
+        return pred_payload
 
     except Exception as exc:
 
@@ -3828,6 +3897,16 @@ async def get_market_mood_api():
     if _CONTEXT_MOOD_CACHE and (now_ts - _CONTEXT_MOOD_CACHE_TS) < _CONTEXT_MOOD_CACHE_TTL:
 
         return _CONTEXT_MOOD_CACHE
+
+    async with _get_market_lock(_CONTEXT_MOOD_LOCKS):
+        now_ts = time.time()
+        if _CONTEXT_MOOD_CACHE and (now_ts - _CONTEXT_MOOD_CACHE_TS) < _CONTEXT_MOOD_CACHE_TTL:
+            return _CONTEXT_MOOD_CACHE
+        return await _compute_market_mood_api_locked(now_ts)
+
+
+async def _compute_market_mood_api_locked(now_ts: float) -> dict:
+    global _CONTEXT_MOOD_CACHE, _CONTEXT_MOOD_CACHE_TS, _BTC_DOM_BACKOFF_UNTIL, _BTC_DOM_LAST_WARN_TS
 
     indices_data = await asyncio.to_thread(_get_major_indices_sync)
     nifty_close, nifty_change = indices_data.get("nifty", (None, None))

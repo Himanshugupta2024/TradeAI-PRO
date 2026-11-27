@@ -14,8 +14,10 @@ Risk-Off: VIX high, BTC falling, Nifty falling, USD/JPY rising, Gold rising
 Implements 1-hour cache with fallback to stale data.
 """
 
+import gc
 import json
 import logging
+import os
 import threading
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone, timedelta
@@ -572,6 +574,9 @@ class RiskGauge:
 
             # Save to cache
             self._save_cache(indicators)
+
+            if os.getenv("LIGHTWEIGHT_API_MODE", "false").strip().lower() in ("1", "true", "yes", "on"):
+                gc.collect()
 
             return indicators
 

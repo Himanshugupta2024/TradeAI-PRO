@@ -20,10 +20,13 @@ Guarantees:
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import math
 import os
 import time
+import weakref
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -52,8 +55,36 @@ _IST = ZoneInfo("Asia/Kolkata")
 
 _BENCHMARK_SYMBOL = "^NSEI"      # NIFTY 50
 _VIX_SYMBOL = "^INDIAVIX"        # India VIX
-_PREDICTION_CACHE: Dict[str, Dict[str, Any]] = {}
-_PREDICTION_CACHE_TTL_SEC: float = 60.0
+_PREDICTION_CACHE: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+_PREDICTION_CACHE_TTL_SEC: float = 120.0
+_PREDICTION_CACHE_MAX_ENTRIES: int = 64
+_PREDICTION_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, asyncio.Lock]] = weakref.WeakKeyDictionary()
+
+
+def _get_prediction_lock(symbol: str) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    sym_locks = _PREDICTION_LOCKS.get(loop)
+    if sym_locks is None:
+        sym_locks = {}
+        _PREDICTION_LOCKS[loop] = sym_locks
+    lock = sym_locks.get(symbol)
+    if lock is None:
+        lock = asyncio.Lock()
+        sym_locks[symbol] = lock
+    return lock
+
+
+def _store_prediction_cache(symbol: str, payload: Dict[str, Any]) -> None:
+    if symbol in _PREDICTION_CACHE:
+        _PREDICTION_CACHE.move_to_end(symbol)
+    _PREDICTION_CACHE[symbol] = payload
+    while len(_PREDICTION_CACHE) > _PREDICTION_CACHE_MAX_ENTRIES:
+        _PREDICTION_CACHE.popitem(last=False)
+
+
+def _trim_memory_if_lightweight() -> None:
+    if os.getenv("LIGHTWEIGHT_API_MODE", "false").strip().lower() in ("1", "true", "yes", "on"):
+        gc.collect()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -374,6 +405,21 @@ async def predict_stock_price(
         if cached and (now_ts - cached.get("_cached_at", 0)) < _PREDICTION_CACHE_TTL_SEC:
             return cached
 
+    async with _get_prediction_lock(clean_sym):
+        now_ts = time.time()
+        if not force_refresh:
+            cached = _PREDICTION_CACHE.get(clean_sym)
+            if cached and (now_ts - cached.get("_cached_at", 0)) < _PREDICTION_CACHE_TTL_SEC:
+                return cached
+        return await _predict_stock_price_locked(clean_sym, now_ts, force_refresh=force_refresh)
+
+
+async def _predict_stock_price_locked(
+    clean_sym: str,
+    now_ts: float,
+    force_refresh: bool = False,
+) -> Dict[str, Any]:
+
     # ── Layer 1: Market Data & Latency Tracking ──────────────────────────────
     from data.providers.yahoo import YahooProvider
 
@@ -565,7 +611,9 @@ async def predict_stock_price(
             "rationale": rationale_msg,
             "_cached_at": now_ts,
         }
-        _PREDICTION_CACHE[clean_sym] = res
+        _store_prediction_cache(clean_sym, res)
+        del ohlcv_map, df
+        _trim_memory_if_lightweight()
         return res
 
     # Extract NIFTY 50 and India VIX data with robust fallback
@@ -715,6 +763,9 @@ async def predict_stock_price(
     except Exception as exc:
         logger.debug("[PredictionEngine] ML ensemble query failed for %s: %s", clean_sym, exc)
         prediction_source = "LOCAL_HEURISTIC"
+    finally:
+        if "df_for_ml" in locals():
+            del df_for_ml
 
     if ml_res and prediction_source == "ML_SIDECAR":
         # Synthesize ML probabilities with 3-class distribution
@@ -851,7 +902,31 @@ async def predict_stock_price(
         "_cached_at": now_ts,
     }
 
-    _PREDICTION_CACHE[clean_sym] = payload
+    _store_prediction_cache(clean_sym, payload)
+    del (
+        ohlcv_map,
+        df,
+        nifty_df,
+        vix_df,
+        nifty_close,
+        close_s,
+        high_s,
+        low_s,
+        vol_s,
+        ema20_s,
+        ema50_s,
+        ema200_s,
+        rsi_s,
+        macd_line,
+        macd_sig,
+        macd_hist,
+        atr_s,
+        adx_s,
+        bb_width_s,
+        st_values,
+        st_dirs,
+    )
+    _trim_memory_if_lightweight()
     return payload
 
 

@@ -16,6 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import time
+import weakref
+from collections import OrderedDict
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional, List, Dict, Any
@@ -31,6 +35,29 @@ import api.service as svc
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["research"])
+
+_RISK_GAUGE_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+_MACRO_INTEL_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+_MACRO_HEATMAP_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+
+_RISK_GAUGE_PAYLOAD_CACHE: OrderedDict[tuple[str, bool], tuple[float, dict]] = OrderedDict()
+_RISK_GAUGE_PAYLOAD_CACHE_MAX = 4
+
+_MACRO_HEATMAP_CACHE: dict[str, Any] = {"ts": 0.0, "payload": None}
+_MACRO_HEATMAP_CACHE_TTL_SEC = 60.0
+
+
+def _get_loop_lock(locks_map: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = locks_map.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks_map[loop] = lock
+    return lock
+
+
+def _is_lightweight_mode() -> bool:
+    return os.getenv("LIGHTWEIGHT_API_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
 
 # ── Section 6B: Next Trading Day Picks Research Endpoints ─────────────────────
 
@@ -415,94 +442,112 @@ async def get_edge_macro_heatmap(
     and falls back to durable state snapshot to prevent UI blanking.
     """
     try:
-        from agents.macro.edge_score_engine import EdgeScoreEngine
-        from config.settings import CRYPTO_SYMBOLS, FOREX_SYMBOLS, NSE_SYMBOLS
-        from db.runtime_state import get_runtime_state, set_runtime_state
+        if not force_refresh:
+            cached_hm = _MACRO_HEATMAP_CACHE.get("payload")
+            if isinstance(cached_hm, dict) and (time.monotonic() - float(_MACRO_HEATMAP_CACHE.get("ts") or 0.0)) < _MACRO_HEATMAP_CACHE_TTL_SEC:
+                return dict(cached_hm)
 
-        engine = (
-            EdgeScoreEngine(cache_ttl_seconds=0) if force_refresh else EdgeScoreEngine()
-        )
+        async with _get_loop_lock(_MACRO_HEATMAP_LOCKS):
+            if not force_refresh:
+                cached_hm = _MACRO_HEATMAP_CACHE.get("payload")
+                if isinstance(cached_hm, dict) and (time.monotonic() - float(_MACRO_HEATMAP_CACHE.get("ts") or 0.0)) < _MACRO_HEATMAP_CACHE_TTL_SEC:
+                    return dict(cached_hm)
 
-        # Load durable snapshot for fallback
-        durable_cached = {}
-        try:
-            raw_cached = await asyncio.to_thread(get_runtime_state, "latest_macro_heatmap")
-            if raw_cached and isinstance(raw_cached, dict) and "heatmap" in raw_cached:
-                durable_cached = raw_cached["heatmap"]
-        except Exception:
-            pass
+            from agents.macro.edge_score_engine import EdgeScoreEngine
+            from config.settings import CRYPTO_SYMBOLS, FOREX_SYMBOLS, NSE_SYMBOLS
+            from db.runtime_state import get_runtime_state, set_runtime_state
 
-        asset_samples = {
-            "forex": FOREX_SYMBOLS[0] if FOREX_SYMBOLS else "EUR/USD",
-            "crypto": CRYPTO_SYMBOLS[0] if CRYPTO_SYMBOLS else "BTC/USDT",
-            "nse": NSE_SYMBOLS[0] if NSE_SYMBOLS else "RELIANCE",
-            "index": "NIFTY",
-        }
+            engine = (
+                EdgeScoreEngine(cache_ttl_seconds=0) if force_refresh else EdgeScoreEngine()
+            )
 
-        async def _fetch_asset_class(asset_class: str, symbol: str) -> tuple[str, dict]:
+            # Load durable snapshot for fallback
+            durable_cached = {}
             try:
-                # 2.5s strict timeout per asset class to keep overall route responsive
-                breakdown = await asyncio.wait_for(
-                    asyncio.to_thread(engine.get_edge_score, symbol, asset_class),
-                    timeout=2.5,
-                )
-                cache_age_seconds = max(
-                    0,
-                    int((datetime.now(timezone.utc) - breakdown.timestamp).total_seconds()),
-                )
-                return asset_class, {
-                    "macro_score": breakdown.macro_score,
-                    "cot_score": breakdown.cot_score,
-                    "sentiment_score": breakdown.sentiment_score,
-                    "risk_score": breakdown.risk_score,
-                    "momentum_score": breakdown.momentum_score,
-                    "edge_score": breakdown.edge_score,
-                    "sample_symbol": symbol,
-                    "cache_hit": breakdown.cache_hit,
-                    "cache_age_seconds": cache_age_seconds,
-                    "status": "LIVE" if not breakdown.cache_hit else "CACHED",
-                }
-            except Exception as exc:
-                logger.warning("Fast macro fetch timeout/error for %s: %s", asset_class, exc)
-                # Fallback to durable cached snapshot if available
-                if asset_class in durable_cached:
-                    fallback_item = dict(durable_cached[asset_class])
-                    fallback_item["status"] = "DURABLE_FALLBACK"
-                    fallback_item["sample_symbol"] = symbol
-                    return asset_class, fallback_item
+                raw_cached = await asyncio.to_thread(get_runtime_state, "latest_macro_heatmap")
+                if raw_cached and isinstance(raw_cached, dict) and "heatmap" in raw_cached:
+                    durable_cached = raw_cached["heatmap"]
+            except Exception:
+                pass
 
-                # Neutral baseline rather than zero (neutral edge is 50.0)
-                return asset_class, {
-                    "macro_score": 50.0,
-                    "cot_score": 50.0,
-                    "sentiment_score": 50.0,
-                    "risk_score": 50.0,
-                    "momentum_score": 50.0,
-                    "edge_score": 50.0,
-                    "sample_symbol": symbol,
-                    "status": "NEUTRAL_FALLBACK",
-                    "error": str(exc),
-                }
+            asset_samples = {
+                "forex": FOREX_SYMBOLS[0] if FOREX_SYMBOLS else "EUR/USD",
+                "crypto": CRYPTO_SYMBOLS[0] if CRYPTO_SYMBOLS else "BTC/USDT",
+                "nse": NSE_SYMBOLS[0] if NSE_SYMBOLS else "RELIANCE",
+                "index": "NIFTY",
+            }
 
-        results = await asyncio.gather(
-            *[_fetch_asset_class(ac, sym) for ac, sym in asset_samples.items()]
-        )
-        heatmap = dict(results)
+            async def _fetch_asset_class(asset_class: str, symbol: str) -> tuple[str, dict]:
+                try:
+                    # 2.5s strict timeout per asset class to keep overall route responsive
+                    breakdown = await asyncio.wait_for(
+                        asyncio.to_thread(engine.get_edge_score, symbol, asset_class),
+                        timeout=2.5,
+                    )
+                    cache_age_seconds = max(
+                        0,
+                        int((datetime.now(timezone.utc) - breakdown.timestamp).total_seconds()),
+                    )
+                    return asset_class, {
+                        "macro_score": breakdown.macro_score,
+                        "cot_score": breakdown.cot_score,
+                        "sentiment_score": breakdown.sentiment_score,
+                        "risk_score": breakdown.risk_score,
+                        "momentum_score": breakdown.momentum_score,
+                        "edge_score": breakdown.edge_score,
+                        "sample_symbol": symbol,
+                        "cache_hit": breakdown.cache_hit,
+                        "cache_age_seconds": cache_age_seconds,
+                        "status": "LIVE" if not breakdown.cache_hit else "CACHED",
+                    }
+                except Exception as exc:
+                    logger.warning("Fast macro fetch timeout/error for %s: %s", asset_class, exc)
+                    # Fallback to durable cached snapshot if available
+                    if asset_class in durable_cached:
+                        fallback_item = dict(durable_cached[asset_class])
+                        fallback_item["status"] = "DURABLE_FALLBACK"
+                        fallback_item["sample_symbol"] = symbol
+                        return asset_class, fallback_item
 
-        payload = {
-            "heatmap": heatmap,
-            "force_refresh": force_refresh,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "real_data": any(v.get("status") in ("LIVE", "CACHED", "DURABLE_FALLBACK") for v in heatmap.values()),
-        }
+                    # Neutral baseline rather than zero (neutral edge is 50.0)
+                    return asset_class, {
+                        "macro_score": 50.0,
+                        "cot_score": 50.0,
+                        "sentiment_score": 50.0,
+                        "risk_score": 50.0,
+                        "momentum_score": 50.0,
+                        "edge_score": 50.0,
+                        "sample_symbol": symbol,
+                        "status": "NEUTRAL_FALLBACK",
+                        "error": str(exc),
+                    }
 
-        # Persist to durable state
-        try:
-            await asyncio.to_thread(set_runtime_state, "latest_macro_heatmap", payload)
-        except Exception:
-            pass
+            results = await asyncio.gather(
+                *[_fetch_asset_class(ac, sym) for ac, sym in asset_samples.items()]
+            )
+            heatmap = dict(results)
 
-        return payload
+            payload = {
+                "heatmap": heatmap,
+                "force_refresh": force_refresh,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "real_data": any(v.get("status") in ("LIVE", "CACHED", "DURABLE_FALLBACK") for v in heatmap.values()),
+            }
+
+            if payload["real_data"]:
+                _MACRO_HEATMAP_CACHE["ts"] = time.monotonic()
+                _MACRO_HEATMAP_CACHE["payload"] = payload
+
+            # Persist to durable state
+            try:
+                await asyncio.to_thread(set_runtime_state, "latest_macro_heatmap", payload)
+            except Exception:
+                pass
+
+            if _is_lightweight_mode():
+                svc._force_free_memory()
+
+            return payload
 
     except Exception as e:
         logger.error(f"Failed to generate macro heatmap: {e}")
@@ -514,9 +559,14 @@ async def get_macro_intelligence(force_refresh: bool = Query(False, description=
     from agents.market_intelligence.global_macro_fetcher import get_global_macro_fetcher
     from dataclasses import asdict
     try:
-        fetcher = get_global_macro_fetcher()
-        intel = await asyncio.to_thread(fetcher.get_intelligence, force_refresh)
-        return {"status": "ok", "macro": asdict(intel)}
+        async with _get_loop_lock(_MACRO_INTEL_LOCKS):
+            fetcher = get_global_macro_fetcher()
+            intel = await asyncio.to_thread(fetcher.get_intelligence, force_refresh)
+            out = {"status": "ok", "macro": asdict(intel)}
+            if force_refresh and _is_lightweight_mode():
+                del intel
+                svc._force_free_memory()
+            return out
     except Exception as e:
         logger.error("Failed to get macro intelligence: %s", e)
         return {"status": "error", "error": str(e)}
@@ -552,7 +602,10 @@ def _get_or_start_risk_gauge_refresh(cache_ttl_seconds: int) -> asyncio.Task:
     async def _run_refresh():
         try:
             bg_gauge = RiskGauge(cache_ttl_seconds=cache_ttl_seconds)
-            return await asyncio.to_thread(bg_gauge.fetch_risk_indicators)
+            res = await asyncio.to_thread(bg_gauge.fetch_risk_indicators)
+            if _is_lightweight_mode():
+                svc._force_free_memory()
+            return res
         except Exception as exc:
             logger.warning("Background RiskGauge refresh failed: %s", exc)
             return None
@@ -618,16 +671,34 @@ async def get_edge_risk_gauge(
 
         cached = None if force_refresh else await asyncio.to_thread(gauge._load_cache)
         if cached is not None and gauge._is_cache_fresh(cached):
+            payload_key = (cached.timestamp.isoformat(), bool(is_mkt_open))
+            cached_entry = _RISK_GAUGE_PAYLOAD_CACHE.get(payload_key)
+            if cached_entry is not None and (time.monotonic() - cached_entry[0]) < active_ttl:
+                out = dict(cached_entry[1])
+                out["cache_age_seconds"] = max(
+                    0, int((datetime.now(timezone.utc) - cached.timestamp).total_seconds())
+                )
+                return out
             indicators = cached
         elif cached is not None:
             # Stale-While-Revalidate: serve cached snapshot immediately and refresh off-loop in background
             _get_or_start_risk_gauge_refresh(active_ttl)
             indicators = cached
         else:
-            indicators = await asyncio.wait_for(
-                asyncio.to_thread(gauge.fetch_risk_indicators),
-                timeout=35.0,
-            )
+            async with _get_loop_lock(_RISK_GAUGE_LOCKS):
+                cached = None if force_refresh else await asyncio.to_thread(gauge._load_cache)
+                if cached is not None and gauge._is_cache_fresh(cached):
+                    indicators = cached
+                elif cached is not None and not force_refresh:
+                    _get_or_start_risk_gauge_refresh(active_ttl)
+                    indicators = cached
+                else:
+                    indicators = await asyncio.wait_for(
+                        asyncio.to_thread(gauge.fetch_risk_indicators),
+                        timeout=35.0,
+                    )
+                    if _is_lightweight_mode():
+                        svc._force_free_memory()
 
         breakdown = gauge.get_risk_breakdown(indicators)
         risk_score = breakdown["score"]
@@ -667,7 +738,7 @@ async def get_edge_risk_gauge(
             int((datetime.now(timezone.utc) - indicators.timestamp).total_seconds()),
         )
 
-        return {
+        payload = {
             "risk_score": risk_score,
             "regime": regime,
             "posture": getattr(indicators, "posture", "OPEN"),
@@ -697,6 +768,14 @@ async def get_edge_risk_gauge(
             "gold_trend": indicators.gold_trend,
             "timestamp": updated_at,
         }
+        if not force_refresh and gauge._is_cache_fresh(indicators):
+            payload_key = (indicators.timestamp.isoformat(), bool(is_mkt_open))
+            if payload_key in _RISK_GAUGE_PAYLOAD_CACHE:
+                _RISK_GAUGE_PAYLOAD_CACHE.move_to_end(payload_key)
+            _RISK_GAUGE_PAYLOAD_CACHE[payload_key] = (time.monotonic(), dict(payload))
+            while len(_RISK_GAUGE_PAYLOAD_CACHE) > _RISK_GAUGE_PAYLOAD_CACHE_MAX:
+                _RISK_GAUGE_PAYLOAD_CACHE.popitem(last=False)
+        return payload
 
     except Exception as e:
 

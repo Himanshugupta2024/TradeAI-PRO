@@ -21,10 +21,11 @@ import math
 import logging
 import statistics
 import asyncio
+import weakref
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional, List, Dict, Any
-from collections import deque
+from collections import OrderedDict, deque
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
@@ -49,6 +50,28 @@ _DASH_HTML_HEADERS = {
 _CRYPTO_PREDICTION_HISTORY: deque[dict] = deque(maxlen=60)
 _NEWS_SOURCE_BACKOFF_UNTIL: dict[str, float] = {}
 _NEWS_SOURCE_FAIL_COUNT: dict[str, int] = {}
+
+_CRYPTO_INTEL_CACHE: dict[str, Any] = {"ts": 0.0, "payload": None}
+_CRYPTO_INTEL_CACHE_TTL_SEC: float = 30.0
+_CRYPTO_INTEL_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+
+_CRYPTO_PRED_CACHE: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+_CRYPTO_PRED_CACHE_TTL_SEC: float = 60.0
+_CRYPTO_PRED_CACHE_MAX: int = 6
+_CRYPTO_PRED_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+
+
+def _get_crypto_lock(locks_map: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = locks_map.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks_map[loop] = lock
+    return lock
+
+
+def _is_lightweight_mode() -> bool:
+    return os.getenv("LIGHTWEIGHT_API_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
 
 router = APIRouter(tags=["crypto"])
 
@@ -1554,7 +1577,7 @@ async def get_crypto_news(limit: int = Query(12, ge=3, le=40)):
 
 @router.get("/api/crypto/intelligence")
 
-async def get_crypto_intelligence():
+async def get_crypto_intelligence(force_refresh: bool = Query(False, description="Bypass 30s TTL cache")):
     """
     Phase 6 - Aggregated crypto cockpit intelligence payload.
     Mirrors /api/overview/intelligence contract for frontend reuse.
@@ -1567,11 +1590,25 @@ async def get_crypto_intelligence():
             content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A). Unlock via Market Control with operator password."}
         )
 
+    if not force_refresh:
+        cached_payload = _CRYPTO_INTEL_CACHE.get("payload")
+        if isinstance(cached_payload, dict) and (time.monotonic() - float(_CRYPTO_INTEL_CACHE.get("ts") or 0.0)) < _CRYPTO_INTEL_CACHE_TTL_SEC:
+            return cached_payload
+
     try:
+        async with _get_crypto_lock(_CRYPTO_INTEL_LOCKS):
+            if not force_refresh:
+                cached_payload = _CRYPTO_INTEL_CACHE.get("payload")
+                if isinstance(cached_payload, dict) and (time.monotonic() - float(_CRYPTO_INTEL_CACHE.get("ts") or 0.0)) < _CRYPTO_INTEL_CACHE_TTL_SEC:
+                    return cached_payload
 
-        payload = await asyncio.to_thread(svc._compute_crypto_intelligence)
-
-        return payload
+            payload = await asyncio.to_thread(svc._compute_crypto_intelligence)
+            if isinstance(payload, dict) and "error" not in payload:
+                _CRYPTO_INTEL_CACHE["ts"] = time.monotonic()
+                _CRYPTO_INTEL_CACHE["payload"] = payload
+            if _is_lightweight_mode():
+                svc._force_free_memory()
+            return payload
 
     except Exception as exc:
 
@@ -1776,7 +1813,10 @@ async def proxy_binance_klines(symbol: str = Query(...), interval: str = Query("
 
 @router.get("/api/crypto/prediction")
 
-async def get_crypto_prediction(timeframe: str = Query(default="1h")):
+async def get_crypto_prediction(
+    timeframe: str = Query(default="1h"),
+    force_refresh: bool = Query(False, description="Bypass 60s TTL cache"),
+):
     from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
     if not is_crypto_forex_enabled():
         return JSONResponse(
@@ -1789,6 +1829,21 @@ async def get_crypto_prediction(timeframe: str = Query(default="1h")):
     if timeframe not in ("1h", "4h", "1d"):
 
         timeframe = "1h"
+
+    if not force_refresh:
+        cached_entry = _CRYPTO_PRED_CACHE.get(timeframe)
+        if cached_entry and (time.monotonic() - cached_entry[0]) < _CRYPTO_PRED_CACHE_TTL_SEC:
+            return cached_entry[1]
+
+    async with _get_crypto_lock(_CRYPTO_PRED_LOCKS):
+        if not force_refresh:
+            cached_entry = _CRYPTO_PRED_CACHE.get(timeframe)
+            if cached_entry and (time.monotonic() - cached_entry[0]) < _CRYPTO_PRED_CACHE_TTL_SEC:
+                return cached_entry[1]
+        return await _compute_crypto_prediction_locked(timeframe)
+
+
+async def _compute_crypto_prediction_locked(timeframe: str) -> dict:
 
     def _fetch_json(url: str) -> object:
 
@@ -2213,6 +2268,7 @@ async def get_crypto_prediction(timeframe: str = Query(default="1h")):
         losers_n = sum(1 for t in usdt if float(t.get("priceChangePercent") or 0.0) < 0)
 
         breadth = (gainers_n - losers_n) / max(gainers_n + losers_n, 1)
+        del raw_tickers, usdt
 
         # 2) Fear & Greed
 
@@ -2476,7 +2532,7 @@ async def get_crypto_prediction(timeframe: str = Query(default="1h")):
 
         )
 
-        return {
+        pred_payload = {
 
             "prediction": {
 
@@ -2549,6 +2605,15 @@ async def get_crypto_prediction(timeframe: str = Query(default="1h")):
             "real_data": True,
 
         }
+        if timeframe in _CRYPTO_PRED_CACHE:
+            _CRYPTO_PRED_CACHE.move_to_end(timeframe)
+        _CRYPTO_PRED_CACHE[timeframe] = (time.monotonic(), pred_payload)
+        while len(_CRYPTO_PRED_CACHE) > _CRYPTO_PRED_CACHE_MAX:
+            _CRYPTO_PRED_CACHE.popitem(last=False)
+        del ticker_map
+        if _is_lightweight_mode():
+            svc._force_free_memory()
+        return pred_payload
 
     except Exception as exc:
 

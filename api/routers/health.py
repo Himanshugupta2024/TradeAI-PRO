@@ -47,7 +47,19 @@ import asyncio
 import hashlib
 import hmac
 import subprocess
+import weakref
 from db.connection import check_db_connectivity
+
+_HEALTH_CHECK_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+
+
+def _get_health_check_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _HEALTH_CHECK_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _HEALTH_CHECK_LOCKS[loop] = lock
+    return lock
 
 _BUILD_SHA_CACHE: str | None = None
 _CONFIG_HASH_CACHE: str | None = None
@@ -107,13 +119,19 @@ async def _fetch_runtime_state_safe(key: str, default: Any = None) -> Any:
         return default
 
 async def _check_db_connectivity_with_retry() -> bool:
-    """Fast non-blocking DB probe so health endpoints respond within sub-second bounds."""
-    try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(check_db_connectivity), timeout=1.2
-        )
-    except Exception:
-        return False
+    """Non-blocking DB probe with bounded retry so transient analytics/pooler load doesn't flake."""
+    for attempt, timeout in enumerate((2.0, 4.0)):
+        try:
+            ok = await asyncio.wait_for(
+                asyncio.to_thread(check_db_connectivity), timeout=timeout
+            )
+            if ok:
+                return True
+        except Exception:
+            pass
+        if attempt == 0:
+            await asyncio.sleep(0.15)
+    return False
 
 
 @router.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
@@ -147,6 +165,25 @@ async def health_check(response: Response = None):
         cached = dict(_HEALTH_RESPONSE_CACHE)
         cached["uptime_seconds"] = round(time.time() - getattr(svc, "_SERVER_START_TIME", time.time()), 1)
         return cached
+
+    async with _get_health_check_lock():
+        now_mono = time.monotonic()
+        if _HEALTH_RESPONSE_CACHE and (now_mono - _HEALTH_RESPONSE_TS) < _HEALTH_RESPONSE_TTL:
+            cached = dict(_HEALTH_RESPONSE_CACHE)
+            cached["uptime_seconds"] = round(time.time() - getattr(svc, "_SERVER_START_TIME", time.time()), 1)
+            return cached
+
+        res_payload = await _compute_health_payload()
+        if res_payload.get("database", {}).get("connected") and res_payload.get("memory_tier") != "CRITICAL":
+            _HEALTH_RESPONSE_CACHE = res_payload
+            _HEALTH_RESPONSE_TS = time.monotonic()
+        else:
+            _HEALTH_RESPONSE_CACHE = {}
+            _HEALTH_RESPONSE_TS = 0.0
+        return res_payload
+
+
+async def _compute_health_payload() -> Dict[str, Any]:
 
     try:
 
@@ -299,8 +336,6 @@ async def health_check(response: Response = None):
         "feed_lag_seconds": feed_status.get("bar_age_seconds") if feed_status.get("bar_age_seconds") is not None else feed_status.get("age_seconds"),
         "server_time": datetime.now(timezone.utc).isoformat(),
     }
-    _HEALTH_RESPONSE_CACHE = res_payload
-    _HEALTH_RESPONSE_TS = now_mono
     return res_payload
 
 @router.api_route("/api/ready", methods=["GET", "HEAD"])

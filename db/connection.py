@@ -43,6 +43,7 @@ def _create_engine():
         kwargs["pool_size"] = 5
         kwargs["max_overflow"] = 5
         kwargs["pool_recycle"] = 300
+        kwargs["pool_timeout"] = 5
         # Disable server-side prepared statements for Supabase PgBouncer / Transaction pooler
         connect_args = {"connect_timeout": 5, "options": "-c search_path=tradeai,public"}
         if "psycopg" in url and "psycopg2" not in url:
