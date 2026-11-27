@@ -29,3 +29,24 @@ def test_service_get_providers_telemetry():
     assert "twelve_data" in telemetry
     assert "gdelt" in telemetry
     assert telemetry["yahoo"]["healthy"] is True
+
+
+def test_provider_telemetry_shared_across_direct_instances():
+    """Standalone TradingView/Yahoo instances must report into shared /api/health telemetry."""
+    from data.providers.tradingview import TradingViewProvider
+    from data.providers.yahoo import YahooProvider
+    from data.router import get_default_router
+
+    # Ensure router singleton exists first
+    _ = get_default_router()
+
+    tv = TradingViewProvider(timeout=2.0)
+    tv.health.record_success(35.0)
+    yh = YahooProvider(timeout=2.0)
+    yh.health.record_success(120.0)
+
+    telemetry = svc._get_providers_telemetry()
+    assert telemetry["tradingview"]["total_calls"] >= 1
+    assert telemetry["tradingview"]["avg_latency_ms"] >= 35.0
+    assert telemetry["yahoo"]["total_calls"] >= 1
+    assert telemetry["yahoo"]["avg_latency_ms"] >= 120.0

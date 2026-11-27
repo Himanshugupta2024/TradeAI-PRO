@@ -9,6 +9,8 @@ import logging
 import math
 import os
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -27,6 +29,31 @@ _async_client: Optional[httpx.AsyncClient] = None
 _sync_client: Optional[httpx.Client] = None
 _last_warn_time: float = 0.0
 _last_sim_warn_time: float = 0.0
+_suppress_shoonya_telemetry: ContextVar[bool] = ContextVar("_suppress_shoonya_telemetry", default=False)
+
+
+@contextmanager
+def suppress_feed_telemetry():
+    """Avoid double-counting when MarketDataProvider subclasses record their own health."""
+    tok = _suppress_shoonya_telemetry.set(True)
+    try:
+        yield
+    finally:
+        _suppress_shoonya_telemetry.reset(tok)
+
+
+def _record_shoonya_telemetry(ok: bool, latency_ms: float = 0.0) -> None:
+    if _suppress_shoonya_telemetry.get():
+        return
+    try:
+        from data.providers.base import get_shared_provider_health
+        h = get_shared_provider_health("shoonya_feed")
+        if ok:
+            h.record_success(latency_ms)
+        else:
+            h.record_failure()
+    except Exception:
+        pass
 
 
 def _get_async_client(timeout: float) -> httpx.AsyncClient:
@@ -143,6 +170,7 @@ async def fetch_feed_snapshot(
     client = _get_async_client(to)
     last_exc: Optional[Exception] = None
     for attempt in range(2):
+        t0 = time.perf_counter()
         try:
             resp = await client.get(
                 f"{url}/snapshot",
@@ -150,14 +178,18 @@ async def fetch_feed_snapshot(
                 headers=headers,
                 timeout=to,
             )
+            latency_ms = (time.perf_counter() - t0) * 1000.0
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, dict):
                     if not allow_simulated and is_simulated_snapshot(data):
                         _log_simulated_rejected(str(data.get("source") or data.get("feed_source") or "SIMULATED"))
+                        _record_shoonya_telemetry(False)
                         return None
+                    _record_shoonya_telemetry(True, latency_ms)
                     return data
             logger.debug("[FeedClient] Feed returned status %s: %s", resp.status_code, resp.text)
+            _record_shoonya_telemetry(False)
             return None
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             last_exc = exc
@@ -165,10 +197,12 @@ async def fetch_feed_snapshot(
                 continue
         except Exception as exc:
             _log_feed_failure(exc)
+            _record_shoonya_telemetry(False)
             return None
 
     if last_exc is not None:
         _log_feed_failure(last_exc)
+    _record_shoonya_telemetry(False)
     return None
 
 
@@ -187,6 +221,7 @@ def fetch_feed_snapshot_sync(
     token = os.environ.get("FEED_INTERNAL_TOKEN", FEED_INTERNAL_TOKEN)
     headers = {"X-Internal-Token": token} if token else {}
 
+    t0 = time.perf_counter()
     try:
         client = _get_sync_client(to)
         resp = client.get(
@@ -195,16 +230,21 @@ def fetch_feed_snapshot_sync(
             headers=headers,
             timeout=to,
         )
+        latency_ms = (time.perf_counter() - t0) * 1000.0
         if resp.status_code == 200:
             data = resp.json()
             if isinstance(data, dict):
                 if not allow_simulated and is_simulated_snapshot(data):
                     _log_simulated_rejected(str(data.get("source") or data.get("feed_source") or "SIMULATED"))
+                    _record_shoonya_telemetry(False)
                     return None
+                _record_shoonya_telemetry(True, latency_ms)
                 return data
+        _record_shoonya_telemetry(False)
         return None
     except Exception as exc:
         _log_feed_failure(exc)
+        _record_shoonya_telemetry(False)
         return None
 
 

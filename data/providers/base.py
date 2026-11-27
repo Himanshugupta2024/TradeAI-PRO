@@ -76,13 +76,42 @@ class ProviderHealth:
             self.cooldown_until = time.time() + cooldown_seconds
 
 
+_SHARED_PROVIDER_HEALTH: dict[str, ProviderHealth] = {}
+_SHARED_HEALTH_NAMES = frozenset({"shoonya_feed", "tradingview", "yahoo", "twelve_data"})
+
+
+def get_shared_provider_health(name: str) -> ProviderHealth:
+    """Return process-wide ProviderHealth telemetry shared across provider instances."""
+    health = _SHARED_PROVIDER_HEALTH.get(name)
+    if health is None:
+        health = ProviderHealth(name=name)
+        _SHARED_PROVIDER_HEALTH[name] = health
+    return health
+
+
+def reset_shared_provider_health() -> None:
+    """Reset shared telemetry counters in-place (preserving bound router references)."""
+    for health in _SHARED_PROVIDER_HEALTH.values():
+        health.is_healthy = True
+        health.consecutive_errors = 0
+        health.total_calls = 0
+        health.total_errors = 0
+        health.avg_latency_ms = 0.0
+        health.cooldown_until = 0.0
+
+
 class MarketDataProvider(ABC):
     """Abstract interface that every data source adapter must implement."""
 
     name: str = "base"
 
-    def __init__(self):
-        self.health = ProviderHealth(name=self.name)
+    def __init__(self, *, use_shared_health: bool | None = None):
+        shared = (
+            use_shared_health
+            if use_shared_health is not None
+            else self.name in _SHARED_HEALTH_NAMES
+        )
+        self.health = get_shared_provider_health(self.name) if shared else ProviderHealth(name=self.name)
 
     @abstractmethod
     async def get_quote(self, symbol: str) -> MarketQuote | None:

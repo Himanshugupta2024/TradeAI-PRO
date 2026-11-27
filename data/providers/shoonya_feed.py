@@ -16,6 +16,7 @@ from api.feed_client import (
     convert_feed_bars_to_df,
     fetch_feed_snapshot,
     is_simulated_snapshot,
+    suppress_feed_telemetry,
     validate_live_tick,
 )
 from data.providers.base import MarketDataProvider, MarketQuote
@@ -41,7 +42,8 @@ class ShoonyaFeedProvider(MarketDataProvider):
     async def get_quote(self, symbol: str) -> Optional[MarketQuote]:
         """Fetch quote for a single symbol from Box C."""
         t0 = time.perf_counter()
-        snap = await fetch_feed_snapshot([symbol], timeout=self.timeout)
+        with suppress_feed_telemetry():
+            snap = await fetch_feed_snapshot([symbol], timeout=self.timeout)
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
         if not snap or is_simulated_snapshot(snap):
@@ -85,7 +87,8 @@ class ShoonyaFeedProvider(MarketDataProvider):
             return {}
 
         t0 = time.perf_counter()
-        snap = await fetch_feed_snapshot(symbols, timeout=self.timeout)
+        with suppress_feed_telemetry():
+            snap = await fetch_feed_snapshot(symbols, timeout=self.timeout)
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
         if not snap or is_simulated_snapshot(snap):
@@ -158,7 +161,8 @@ class ShoonyaFeedProvider(MarketDataProvider):
             return {}
 
         t0 = time.perf_counter()
-        snap = await fetch_feed_snapshot(symbols, timeout=self.timeout)
+        with suppress_feed_telemetry():
+            snap = await fetch_feed_snapshot(symbols, timeout=self.timeout)
         latency_ms = (time.perf_counter() - t0) * 1000.0
         if not snap or is_simulated_snapshot(snap):
             self.health.record_failure()

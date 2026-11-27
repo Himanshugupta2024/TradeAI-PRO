@@ -305,11 +305,26 @@ def _fetch_history_with_timeout(
             kwargs["period"] = period or "5d"
         return tk.history(**kwargs)
 
+    def _record_yahoo(ok: bool, latency_ms: float = 0.0) -> None:
+        try:
+            from data.providers.base import get_shared_provider_health
+            h = get_shared_provider_health("yahoo")
+            if ok:
+                h.record_success(latency_ms)
+            else:
+                h.record_failure()
+        except Exception:
+            pass
+
+    t0 = time.perf_counter()
     with ThreadPoolExecutor(max_workers=1) as pool:
         fut = pool.submit(_fetch)
         try:
-            return fut.result(timeout=timeout_sec)
+            res = fut.result(timeout=timeout_sec)
+            _record_yahoo(res is not None and not res.empty, (time.perf_counter() - t0) * 1000.0)
+            return res
         except FutureTimeoutError:
+            _record_yahoo(False)
             logger.warning("Timed out fetching %s interval=%s", ticker, interval)
             return pd.DataFrame()
         except Exception as exc:

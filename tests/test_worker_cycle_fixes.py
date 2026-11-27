@@ -390,3 +390,12 @@ def test_github_workflows_hardened():
     assert "tests/test_tab_error_remediation.js" in ci_raw
     assert '"ml_server"' in ci_raw
     assert '"feed_server"' in ci_raw
+
+
+def test_autonomous_cycle_preserves_signals_snapshot_when_empty():
+    """Off-hours cycles producing 0 scanned signals must not overwrite latest_signals:v1 with []."""
+    src = (ROOT / "scripts" / "autonomous_cycle.py").read_text(encoding="utf-8")
+    anchor = "persisted_sigs = all_scanned_signals if all_scanned_signals else candidate_signals"
+    assert anchor in src
+    block = src.split(anchor, 1)[1][:450]
+    assert "if persisted_sigs:" in block

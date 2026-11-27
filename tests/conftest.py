@@ -149,6 +149,12 @@ def clean_test_runtime_state():
             svc._engine.last_rejection_reason = ""
     except Exception:
         pass
+    try:
+        pb = sys.modules.get("data.providers.base")
+        if pb is not None and hasattr(pb, "reset_shared_provider_health"):
+            pb.reset_shared_provider_health()
+    except Exception:
+        pass
 
     # Purge in a bounded background thread: a read-only or lock-contended
     # database used to block every teardown until the driver's busy timeout

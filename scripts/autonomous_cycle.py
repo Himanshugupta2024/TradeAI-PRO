@@ -1070,15 +1070,18 @@ async def run_single_autonomous_cycle(
         # 10c. Persist latest_signals:v1 for API consumption in lightweight mode
         try:
             persisted_sigs = all_scanned_signals if all_scanned_signals else candidate_signals
-            signals_payload = {
-                "version": version,
-                "timestamp": now_iso,
-                "count": len(persisted_sigs),
-                "signals": persisted_sigs,
-            }
-            await asyncio.to_thread(set_runtime_state, "latest_signals:v1", signals_payload)
-            await asyncio.to_thread(set_runtime_state, "latest_signals_snapshot", signals_payload)
-            logger.info("💾 [AutonomousWorker] Persisted %d signals to latest_signals:v1", len(persisted_sigs))
+            if persisted_sigs:
+                signals_payload = {
+                    "version": version,
+                    "timestamp": now_iso,
+                    "count": len(persisted_sigs),
+                    "signals": persisted_sigs,
+                }
+                await asyncio.to_thread(set_runtime_state, "latest_signals:v1", signals_payload)
+                await asyncio.to_thread(set_runtime_state, "latest_signals_snapshot", signals_payload)
+                logger.info("💾 [AutonomousWorker] Persisted %d signals to latest_signals:v1", len(persisted_sigs))
+            else:
+                logger.info("ℹ️ [AutonomousWorker] 0 scanned signals (off-hours / skipped); preserving existing latest_signals:v1 snapshot")
 
             try:
                 from api.service import _compute_overview_intelligence

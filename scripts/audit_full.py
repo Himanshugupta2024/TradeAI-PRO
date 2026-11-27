@@ -96,6 +96,7 @@ ld = H.get("loading") or {}
 chk("INFRA", "loaded <= total", (ld.get("loaded") or 0) <= (ld.get("total") or 0), ld)
 
 # ---------- FEED ----------
+in_session = bool(H.get("is_market_open"))
 prov = H.get("providers") or {}
 for k, v in prov.items():
     if not isinstance(v, dict):
@@ -104,11 +105,12 @@ for k, v in prov.items():
         chk("FEED", "%s latency measured" % k, (v.get("avg_latency_ms") or 0) > 0, v.get("avg_latency_ms"))
         up_h = (H.get("uptime_seconds") or 1) / 3600
         rate = (v.get("total_calls") or 0) / max(up_h, 0.01)
-        chk("FEED", "%s call rate plausible" % k, rate > 10, "%.1f calls/h" % rate)
+        chk("FEED", "%s call rate plausible" % k, rate > 10 if in_session else None, "%.1f calls/h" % rate)
     if v.get("role", "").startswith(("PRIMARY", "FALLBACK")) and (v.get("total_calls") or 0) == 0:
-        chk("FEED", "%s not dead" % k, False, "0 calls, role=%s" % v.get("role"))
+        chk("FEED", "%s not dead" % k, False if in_session else None, "0 calls, role=%s (off-hours=%s)" % (v.get("role"), not in_session))
 feed = H.get("feed") or {}
-chk("FEED", "bar_age < 8min (session)", (H.get("bar_age_seconds") or 999) < 480, H.get("bar_age_seconds"))
+bar_age = H.get("bar_age_seconds")
+chk("FEED", "bar_age < 8min (session)", ((bar_age or 999) < 480) if in_session else None, "%s (in_session=%s)" % (bar_age, in_session))
 chk("FEED", "snapshot/bar clocks split", "snapshot_age_seconds" in feed, list(feed.keys())[:6])
 
 # ---------- PRICE SANITY (P0) ----------
@@ -175,7 +177,7 @@ chk("PICKS", "R:R varies (not formulaic)", len(set(rrs)) > 1, rrs)
 chk("PICKS", "stop >= 1.2 ATR", not widths or min(widths) >= 1.2, widths)
 chk("PICKS", "no inverted geometry", not inv, inv)
 srrs, sw, sinv = geom(sigs, "entry", "stop_loss", "target", "direction")
-chk("SIGNALS", "R:R varies", len(set(srrs)) > 1, srrs)
+chk("SIGNALS", "R:R varies", (len(set(srrs)) > 1) if (in_session or srrs) else None, srrs)
 chk("SIGNALS", "no inverted geometry", not sinv, sinv)
 
 # ---------- CATALYSTS ----------
@@ -228,7 +230,8 @@ chk("GAUGE", "cache < 120s in session", (G.get("cache_age_seconds") or 0) < 120,
 chk("GAUGE", "integrity resolved", G.get("data_integrity") not in ("UNCONFIRMED_VOL_SPIKE",), G.get("data_integrity"))
 
 # ---------- SIGNALS HYGIENE ----------
-chk("SIGNALS", "count == signals_cached", len(sigs) == (H.get("signals_cached") or -1), "%d vs %s" % (len(sigs), H.get("signals_cached")))
+sc = H.get("signals_cached")
+chk("SIGNALS", "count == signals_cached", sc is not None and len(sigs) == sc, "%d vs %s" % (len(sigs), sc))
 agemis = [
     s.get("symbol")
     for s in sigs
@@ -238,11 +241,11 @@ agemis = [
 ]
 chk("SIGNALS", "age fields agree", not agemis, agemis)
 ev = [s.get("days_to_next_event") for s in sigs]
-chk("SIGNALS", "event calendar loaded", bool(ev) and any(v != 99 for v in ev), sorted(set(ev)))
+chk("SIGNALS", "event calendar loaded", (bool(ev) and any(v != 99 for v in ev)) if sigs else None, sorted(set(ev)))
 term = [s.get("symbol") for s in sigs if (s.get("lifecycle") or {}).get("terminal") and (s.get("confluence_score") or 0) > 0]
 chk("SIGNALS", "terminal confluence zeroed", not term, term)
 ua = parse(S.get("updated_at"))
-chk("SIGNALS", "envelope fresh", ua is not None and (now - ua).total_seconds() < 600, (now - ua).total_seconds() if ua else None)
+chk("SIGNALS", "envelope fresh", (ua is not None and (now - ua).total_seconds() < 600) if in_session else None, (now - ua).total_seconds() if ua else None)
 
 # ---------- PAPER BOOK ----------
 trades = []
