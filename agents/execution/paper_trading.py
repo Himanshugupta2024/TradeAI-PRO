@@ -1209,8 +1209,17 @@ class PaperTradingEngine:
         self._save()
         return self.get_stats()
 
+    def _max_open_positions_limit(self) -> int:
+        """Resolve effective simultaneous open positions cap from runtime overrides or settings."""
+        from agents.execution.runtime_controls import effective_int
+
+        return effective_int(
+            "PAPER_TRADING_MAX_OPEN", int(getattr(settings, "PAPER_TRADING_MAX_OPEN", 5))
+        )
+
     def get_stats(self, current_prices: dict = None) -> dict:
         """Get performance stats."""
+        max_open = self._max_open_positions_limit()
         equity_info = self.get_portfolio_equity(current_prices)
         closed = [t for t in self.trades if t.status != "OPEN"]
         if not closed:
@@ -1225,6 +1234,7 @@ class PaperTradingEngine:
                 "sharpe_ratio": 0, "max_drawdown": 0, "max_drawdown_pct": 0,
                 "profit_factor": 0, "avg_win": 0, "avg_loss": 0,
                 "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
+                "max_open_positions": max_open,
                 "winning_trades": 0,
                 "losing_trades": 0,
                 "breakeven_trades": 0,
@@ -1328,6 +1338,7 @@ class PaperTradingEngine:
             "max_drawdown_pct": round(max_dd_pct, 1),
             "profit_factor": profit_factor,
             "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
+            "max_open_positions": max_open,
             "excluded_legacy_trades": [
                 {
                     "id": t.id,

@@ -85,8 +85,18 @@ def _fetch_binance_futures_fallback(
     """Fallback fetcher for Binance Futures public REST (no API key required)."""
     import urllib.request
     import json
+    from agents.data_ingestion.binance_http import (
+        extract_http_status,
+        is_host_in_cooldown,
+        mark_host_geo_blocked,
+    )
+
+    fapi_base = "https://fapi.binance.com"
+    if is_host_in_cooldown(fapi_base):
+        return pd.DataFrame()
+
     clean_sym = symbol.replace("/", "").replace("-", "").upper()
-    url = f"https://fapi.binance.com/fapi/v1/klines?symbol={clean_sym}&interval={timeframe}&limit=500"
+    url = f"{fapi_base}/fapi/v1/klines?symbol={clean_sym}&interval={timeframe}&limit=500"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 TradeAI-PRO"})
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -107,6 +117,9 @@ def _fetch_binance_futures_fallback(
                     log.info("[Binance Futures Fallback] Fetched %d candles for %s (%s)", len(df), clean_sym, timeframe)
                     return df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
     except Exception as e:
+        status = extract_http_status(e)
+        if status in (403, 418, 429, 451):
+            mark_host_geo_blocked(fapi_base, status_code=status)
         log.debug("Binance futures fallback failed for %s: %s", symbol, e)
     return pd.DataFrame()
 
@@ -156,6 +169,48 @@ def _fetch_yahoo_crypto_fallback(
         return pd.DataFrame()
 
 
+_SPOT_KLN_LIMIT = 1000
+
+
+def _fetch_binance_spot_mirror_klines(
+    symbol: str, timeframe: str, since_days: int = settings.HISTORICAL_DAYS
+) -> pd.DataFrame:
+    """
+    Fetch historical spot OHLCV directly from Binance's public spot REST mirrors
+    (preferring data-api.binance.vision) when CCXT/api.binance.com hits HTTP 451 geo-block.
+    """
+    from agents.data_ingestion.binance_http import fetch_binance_spot_json
+
+    clean_sym = symbol.replace("/", "").replace("-", "").upper()
+    since_dt = datetime.now(timezone.utc) - timedelta(days=since_days)
+    start_ms = int(since_dt.timestamp() * 1000)
+
+    all_candles = []
+    cursor_ms = start_ms
+    for _ in range(5):
+        query = f"/api/v3/klines?symbol={clean_sym}&interval={timeframe}&startTime={cursor_ms}&limit={_SPOT_KLN_LIMIT}"
+        raw = fetch_binance_spot_json(query, timeout=8.0, log=log, context_label=f"klines:{clean_sym}")
+        if not isinstance(raw, list) or not raw:
+            break
+        all_candles.extend([c[:6] for c in raw if isinstance(c, list) and len(c) >= 6])
+        if len(raw) < _SPOT_KLN_LIMIT:
+            break
+        cursor_ms = int(raw[-1][0]) + 1
+
+    if not all_candles:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(
+        all_candles, columns=["timestamp", "open", "high", "low", "close", "volume"]
+    )
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    for col in ("open", "high", "low", "close", "volume"):
+        df[col] = df[col].astype(float)
+    df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    log.info("[Binance Spot Mirror] Fetched %d candles for %s (%s)", len(df), clean_sym, timeframe)
+    return df
+
+
 def fetch_historical(
     symbol: str,
     timeframe: str,
@@ -175,6 +230,22 @@ def fetch_historical(
     if _is_symbol_temporarily_unsupported(symbol):
         log.debug("Skipping unsupported Binance symbol (cached): %s", symbol)
         return pd.DataFrame()
+
+    from agents.data_ingestion.binance_http import (
+        is_host_in_cooldown,
+        log_geo_cooldown_once,
+        mark_host_geo_blocked,
+    )
+
+    api_host = "https://api.binance.com"
+    if is_host_in_cooldown(api_host):
+        df_mirror = _fetch_binance_spot_mirror_klines(symbol, timeframe, since_days)
+        if not df_mirror.empty:
+            return df_mirror
+        df_futures = _fetch_binance_futures_fallback(symbol, timeframe, since_days)
+        if not df_futures.empty:
+            return df_futures
+        return _fetch_yahoo_crypto_fallback(symbol, timeframe, since_days)
 
     exchange = _init_exchange()
     if not _is_supported_spot_symbol(exchange, symbol):
@@ -212,7 +283,14 @@ def fetch_historical(
             continue
         except ccxt.ExchangeError as e:
             msg = str(e).lower()
-            if "does not have market symbol" in msg or "bad symbol" in msg or "symbol" in msg and "not" in msg and "found" in msg:
+            if "451" in msg or "restricted location" in msg or "eligibility" in msg:
+                mark_host_geo_blocked(api_host, status_code=451)
+                log_geo_cooldown_once(
+                    log,
+                    "binance_ccxt_451",
+                    "CCXT api.binance.com geo-blocked (HTTP 451); routing historical crypto klines to spot mirror for 1h.",
+                )
+            elif "does not have market symbol" in msg or "bad symbol" in msg or "symbol" in msg and "not" in msg and "found" in msg:
                 _mark_symbol_unsupported(symbol)
                 _warn_unsupported_once(symbol, f"cached for {_UNSUPPORTED_SYMBOL_TTL_SECONDS}s")
             else:
@@ -235,6 +313,9 @@ def fetch_historical(
         time.sleep(exchange.rateLimit / 1000)
 
     if not all_candles:
+        df_mirror = _fetch_binance_spot_mirror_klines(symbol, timeframe, since_days)
+        if not df_mirror.empty:
+            return df_mirror
         log.warning("Binance returned no data for %s %s; trying Yahoo crypto fallback...", symbol, timeframe)
         return _fetch_yahoo_crypto_fallback(symbol, timeframe, since_days)
 

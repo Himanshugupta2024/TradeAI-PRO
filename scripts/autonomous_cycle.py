@@ -346,7 +346,7 @@ async def run_single_autonomous_cycle(
                 logger.error("[SettlementSweep] Failed to execute settlement sweep: %s", sw_exc)
 
         if is_premarket_window:
-            logger.info("🌅 [PreMarketPrep] Executing 08:55 IST pre-market base indicator state caching...")
+            logger.info("🌅 [PreMarketPrep] Executing 08:55 IST pre-market base indicator state & Morning Scan...")
             try:
                 from agents.market_intelligence.watchlist_analyzer import (
                     extract_premarket_base_state,
@@ -368,6 +368,32 @@ async def run_single_autonomous_cycle(
                     summary["premarket_prep"] = {"symbols": len(base_states), "persisted": saved}
             except Exception as pm_exc:
                 logger.error("[PreMarketPrep] Failed to execute pre-market prep: %s", pm_exc)
+
+            try:
+                from agents.stock_screener import run_morning_scan_once
+
+                morning_rows = await asyncio.to_thread(run_morning_scan_once)
+                logger.info("🌅 [MorningScan] Persisted %d morning scan picks for %s", len(morning_rows), today_str)
+                summary["morning_scan"] = {"candidates": len(morning_rows), "trigger": "premarket_prep"}
+            except Exception as ms_exc:
+                logger.warning("[MorningScan] Pre-market morning scan failed (non-fatal): %s", ms_exc)
+        elif is_nse_open and now_ist.hour < 11:
+            # Backfill today's MorningScan on the first active morning cycle if the 08:55 IST cron skipped/missed.
+            try:
+                from db.models import MorningScan
+
+                def _has_today_morning_scan() -> bool:
+                    with SessionLocal() as db:
+                        return db.query(MorningScan.id).filter(MorningScan.scan_date == now_ist.date()).first() is not None
+
+                if not await asyncio.to_thread(_has_today_morning_scan):
+                    from agents.stock_screener import run_morning_scan_once
+
+                    morning_rows = await asyncio.to_thread(run_morning_scan_once)
+                    logger.info("🌅 [MorningScan] Backfilled %d morning scan picks for %s", len(morning_rows), today_str)
+                    summary["morning_scan"] = {"candidates": len(morning_rows), "trigger": "morning_backfill"}
+            except Exception as ms_exc:
+                logger.debug("[MorningScan] Morning backfill skipped: %s", ms_exc)
 
         if not active_symbols:
             logger.info("ℹ️ [Session] No eligible symbols for active market hours. Standby status maintained.")
@@ -460,6 +486,24 @@ async def run_single_autonomous_cycle(
                     except Exception:
                         htf_df = None
 
+                    prev_close_val = None
+                    try:
+                        if htf_df is not None and not htf_df.empty and "close" in htf_df.columns:
+                            if is_crypto:
+                                if len(htf_df) >= 25:
+                                    prev_close_val = float(htf_df["close"].iloc[-25])
+                                elif len(htf_df) >= 2:
+                                    prev_close_val = float(htf_df["close"].iloc[-2])
+                            elif "timestamp" in htf_df.columns:
+                                htf_dates = pd.to_datetime(htf_df["timestamp"]).dt.date
+                                prior_rows = htf_df[htf_dates < now_ist.date()]
+                                if not prior_rows.empty:
+                                    prev_close_val = float(prior_rows["close"].iloc[-1])
+                            elif len(htf_df) >= 2:
+                                prev_close_val = float(htf_df["close"].iloc[-2])
+                    except Exception:
+                        prev_close_val = None
+
                     df, regime, sig_df = await asyncio.to_thread(_compute_symbol_signals, sym, df, htf_df)
 
                     now_mono = time.monotonic()
@@ -478,6 +522,7 @@ async def run_single_autonomous_cycle(
                         "age_sec": age_sec,
                         "regime": regime,
                         "sig_df": sig_df,
+                        "prev_close": prev_close_val,
                     }
                 except Exception as sym_err:
                     return {"symbol": sym, "status": "error", "error": str(sym_err)}
@@ -554,8 +599,14 @@ async def run_single_autonomous_cycle(
             close_price = float(last["close"])
             atr_val = float(last.get("ATR_14", 0.0))
             rsi_val = float(last.get("RSI_14", 50.0))
+            prev_close_val = res.get("prev_close")
+            change_pct_val = None
+            if prev_close_val and prev_close_val > 0 and close_price > 0:
+                pct_raw = ((close_price - prev_close_val) / prev_close_val) * 100.0
+                if res.get("is_crypto") or abs(pct_raw) <= 20.0:
+                    change_pct_val = round(pct_raw, 2)
 
-            market_prices[sym] = {
+            price_entry = {
                 "close": round(close_price, 2),
                 "high": round(float(last["high"]), 2),
                 "low": round(float(last["low"]), 2),
@@ -565,6 +616,14 @@ async def run_single_autonomous_cycle(
                 "data_status": freshness,
                 "freshness_sec": int(age_sec),
             }
+            if prev_close_val and prev_close_val > 0:
+                price_entry["prev_close"] = round(float(prev_close_val), 2)
+            if change_pct_val is not None:
+                price_entry["change_pct"] = change_pct_val
+            vol_last = last.get("volume")
+            if vol_last is not None and pd.notna(vol_last) and float(vol_last) > 0:
+                price_entry["volume"] = float(vol_last)
+            market_prices[sym] = price_entry
             atr_lookup[sym] = atr_val
             symbol_dfs[sym] = df
 
@@ -703,6 +762,11 @@ async def run_single_autonomous_cycle(
                         "context_score": float(sig_last.get("context_score", 0.0) or 0.0),
                         "context_warning": ctx_warn,
                     })
+                if all_scanned_signals and all_scanned_signals[-1].get("symbol") == sym:
+                    if change_pct_val is not None and all_scanned_signals[-1].get("change_pct") is None:
+                        all_scanned_signals[-1]["change_pct"] = change_pct_val
+                    if prev_close_val and prev_close_val > 0 and all_scanned_signals[-1].get("prev_close") is None:
+                        all_scanned_signals[-1]["prev_close"] = round(float(prev_close_val), 2)
                 else:
                     all_scanned_signals.append({
                         "symbol": sym,
@@ -730,6 +794,11 @@ async def run_single_autonomous_cycle(
                         "context_score": float(sig_last.get("context_score", 0.0) or 0.0),
                         "context_warning": ctx_warn,
                     })
+                if all_scanned_signals and all_scanned_signals[-1].get("symbol") == sym:
+                    if change_pct_val is not None and all_scanned_signals[-1].get("change_pct") is None:
+                        all_scanned_signals[-1]["change_pct"] = change_pct_val
+                    if prev_close_val and prev_close_val > 0 and all_scanned_signals[-1].get("prev_close") is None:
+                        all_scanned_signals[-1]["prev_close"] = round(float(prev_close_val), 2)
 
         # 6. Manage Open Trades (Trailing Stops, +1R breakeven, +1.5R partial profit, 15:15 IST EOD)
         if market_prices:
@@ -1029,17 +1098,62 @@ async def run_single_autonomous_cycle(
         summary["open_positions"] = len(engine_inst.open_trades)
 
         version = int(time.time() * 1000)
-        snapshot_payload = {
-            "version": version,
-            "timestamp": now_iso,
-            "source": "AUTONOMOUS_WORKER_CYCLE",
-            "feed_status": "LIVE",
-            "last_bar_at": max_bar_dt.isoformat() if max_bar_dt else None,
-            "symbols": list(market_prices.keys()),
-            "prices": market_prices,
-            "regimes": regimes,
-        }
-        await asyncio.to_thread(set_runtime_state, "latest_market_snapshot", snapshot_payload)
+        if market_prices:
+            snapshot_payload = {
+                "version": version,
+                "timestamp": now_iso,
+                "source": "AUTONOMOUS_WORKER_CYCLE",
+                "feed_status": "LIVE",
+                "last_bar_at": max_bar_dt.isoformat() if max_bar_dt else None,
+                "symbols": list(market_prices.keys()),
+                "prices": market_prices,
+                "regimes": regimes,
+            }
+            await asyncio.to_thread(set_runtime_state, "latest_market_snapshot", snapshot_payload)
+
+            try:
+                from api.service import _get_sector_for_symbol
+            except Exception:
+                _get_sector_for_symbol = lambda _s: "Others"
+
+            movers_pool = []
+            for m_sym, m_info in market_prices.items():
+                if "/" in m_sym or m_sym.startswith(("NIFTY", "BANKNIFTY", "SENSEX")):
+                    continue
+                m_pct = m_info.get("change_pct")
+                m_close = m_info.get("close")
+                if m_pct is None or not m_close or abs(float(m_pct)) > 20.0:
+                    continue
+                m_vol = float(m_info.get("volume") or 0.0)
+                movers_pool.append({
+                    "symbol": m_sym,
+                    "company": m_sym,
+                    "sector": _get_sector_for_symbol(m_sym),
+                    "ltp": round(float(m_close), 2),
+                    "pct_change": round(float(m_pct), 2),
+                    "volume_cr": max(round(m_vol * float(m_close) / 1e7, 1) if m_vol > 0 else 0.1, 0.1),
+                    "x_factor": 1.0,
+                    "oi_change": None,
+                })
+            if movers_pool:
+                avg_abs = sum(abs(r["pct_change"]) for r in movers_pool) / len(movers_pool) or 1.0
+                for r in movers_pool:
+                    r["x_factor"] = round(abs(r["pct_change"]) / avg_abs, 2)
+                gainers = sorted((r for r in movers_pool if r["pct_change"] > 0), key=lambda x: x["pct_change"], reverse=True)[:20]
+                losers = sorted((r for r in movers_pool if r["pct_change"] < 0), key=lambda x: x["pct_change"])[:20]
+                if gainers or losers:
+                    await asyncio.to_thread(
+                        set_runtime_state,
+                        "movers_snapshot:v1",
+                        {
+                            "gainers": gainers,
+                            "losers": losers,
+                            "updated_at": now_iso,
+                            "source": "AUTONOMOUS_WORKER_CYCLE",
+                        },
+                    )
+        else:
+            logger.info("ℹ️ [AutonomousWorker] 0 market prices collected; preserving existing latest_market_snapshot")
 
         # 10b. Persist IntradayScan with Scan Freshness Contract for dashboard
         try:

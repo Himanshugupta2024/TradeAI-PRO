@@ -710,7 +710,7 @@ async def get_nse_dashboard_snapshot():
 
     """Aggregate NSE dashboard snapshot for faster UI bootstrap."""
 
-    if not svc._movers_cache.get("gainers") and svc._market_data:
+    if not svc._movers_cache.get("gainers") and (svc._market_data or svc._persisted_signals_snapshot):
 
         svc._refresh_movers_cache()
 

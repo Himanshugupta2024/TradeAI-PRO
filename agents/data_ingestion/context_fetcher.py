@@ -351,33 +351,49 @@ class ContextFetcher:
         )
 
     def _fetch_binance_ticker(self, symbol: str) -> dict[str, float]:
-        url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={quote_plus(symbol)}"
-        try:
-            data = self._get_json(url, timeout=10)
-        except requests.HTTPError as exc:
-            status = int(exc.response.status_code) if exc.response is not None else None
-            if status in (403, 418, 429, 451):
+        from agents.data_ingestion.binance_http import (
+            extract_http_status,
+            mark_host_geo_blocked,
+            spot_candidate_urls,
+        )
+
+        urls = spot_candidate_urls(f"/api/v3/ticker/24hr?symbol={quote_plus(symbol)}")
+        data: dict[str, Any] | None = None
+        last_exc: Exception | None = None
+        for url in urls:
+            try:
+                candidate = self._get_json(url, timeout=10)
+                if isinstance(candidate, dict) and candidate:
+                    data = candidate
+                    break
+            except requests.HTTPError as exc:
+                last_exc = exc
+                status = extract_http_status(exc)
+                if status in (403, 418, 429, 451):
+                    mark_host_geo_blocked(url, status_code=status)
+                    self._log_warning_throttled(
+                        f"binance_ticker_{status}",
+                        "Binance ticker degraded for %s (HTTP %s); trying fallback/neutral.",
+                        symbol,
+                        status,
+                    )
+                    continue
+                raise
+            except Exception as exc:
+                last_exc = exc
+                status = extract_http_status(exc)
+                if status in (403, 418, 429, 451):
+                    mark_host_geo_blocked(url, status_code=status)
+                continue
+
+        if data is None:
+            if last_exc is not None and not extract_http_status(last_exc) in (403, 418, 429, 451):
                 self._log_warning_throttled(
-                    f"binance_ticker_{status}",
-                    "Binance ticker degraded for %s (HTTP %s); using neutral fallback.",
+                    "binance_ticker_generic",
+                    "Binance ticker degraded for %s (%s); using neutral fallback.",
                     symbol,
-                    status,
+                    last_exc,
                 )
-                return {
-                    "price_change_pct": 0.0,
-                    "volume": 0.0,
-                    "high": 0.0,
-                    "low": 0.0,
-                    "trade_count": 0.0,
-                }
-            raise
-        except Exception as exc:
-            self._log_warning_throttled(
-                "binance_ticker_generic",
-                "Binance ticker degraded for %s (%s); using neutral fallback.",
-                symbol,
-                exc,
-            )
             return {
                 "price_change_pct": 0.0,
                 "volume": 0.0,
@@ -694,13 +710,25 @@ class ContextFetcher:
         return "NEUTRAL"
 
     def _fetch_crypto_price_change_7d(self, symbol: str) -> float:
-        url = f"https://api.binance.com/api/v3/klines?symbol={quote_plus(symbol)}&interval=1d&limit=8"
-        try:
-            response = self._http_get(url, timeout=10)
-            response.raise_for_status()
-            raw = response.json()
-        except Exception:
-            return 0.0
+        from agents.data_ingestion.binance_http import (
+            extract_http_status,
+            mark_host_geo_blocked,
+            spot_candidate_urls,
+        )
+
+        urls = spot_candidate_urls(f"/api/v3/klines?symbol={quote_plus(symbol)}&interval=1d&limit=8")
+        raw = None
+        for url in urls:
+            try:
+                response = self._http_get(url, timeout=10)
+                response.raise_for_status()
+                raw = response.json()
+                break
+            except Exception as exc:
+                status = extract_http_status(exc)
+                if status in (403, 418, 429, 451):
+                    mark_host_geo_blocked(url, status_code=status)
+                continue
         if not isinstance(raw, list) or len(raw) < 2:
             return 0.0
         try:

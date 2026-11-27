@@ -1481,7 +1481,10 @@
       return '';
     })();
 
-    let adminKey = sessionStorage.getItem('tradeai_admin_key') || '';
+    const _sessionAdminKey = (sessionStorage.getItem('tradeai_admin_key') || '').trim();
+    const _localAdminKey = (localStorage.getItem('tradeai_admin_key') || localStorage.getItem('admin_api_key') || '').trim();
+    const _adminKeyFromSession = Boolean(_sessionAdminKey);
+    let adminKey = _sessionAdminKey || _localAdminKey;
     let autoRefreshTimer = null;
     let operatorRefreshTimer = null;
     let pendingConfirmAction = null;
@@ -1555,6 +1558,8 @@
 
         adminKey = key;
         sessionStorage.setItem('tradeai_admin_key', key);
+        localStorage.setItem('tradeai_admin_key', key);
+        localStorage.setItem('admin_api_key', key);
         document.getElementById('authGate').style.display = 'none';
         logMessage('Authenticated successfully as Operator.', 'ok');
         startTelemetryLoop();
@@ -1569,6 +1574,8 @@
 
     function handleLogout() {
       sessionStorage.removeItem('tradeai_admin_key');
+      localStorage.removeItem('tradeai_admin_key');
+      localStorage.removeItem('admin_api_key');
       adminKey = '';
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
       if (operatorRefreshTimer) clearInterval(operatorRefreshTimer);
@@ -1613,7 +1620,10 @@
           await new Promise(r => setTimeout(r, delayMs));
           return apiCall(endpoint, method, body, _retries - 1);
         }
-        if (res.status === 401 || res.status === 403) {
+        const isPolicyDenied = res.status === 403 && (
+          endpoint.startsWith('/api/market-control/') || endpoint.startsWith('/api/forex/')
+        );
+        if (res.status === 401 || (res.status === 403 && !isPolicyDenied)) {
           logMessage(`Access Denied (HTTP ${res.status}) on ${endpoint}`, 'err');
           handleLogout();
           const err = document.getElementById('authError');
@@ -1706,7 +1716,7 @@
         if (port) {
           const cap = Number(port.capital ?? port.total_equity ?? port.current_capital ?? port.total_capital ?? 100000);
           document.getElementById('valTotalCapital').textContent = `₹${cap.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
-          const maxOpen = port.max_open_positions ?? 8;
+          const maxOpen = port.max_open_positions ?? risk?.max_open_positions ?? auto?.status?.max_positions ?? 3;
           document.getElementById('valOpenTrades').textContent = `${port.open_trades ?? 0} / ${maxOpen} max`;
           document.getElementById('valWinRate').textContent = `${(port.win_rate || 0).toFixed(1)}%`;
 
@@ -1920,7 +1930,8 @@
       logMessage('Purging cache & refreshing all scanners...', 'info');
       try {
         const res = await apiCall('/api/refresh', 'POST');
-        logMessage(`Scanners refreshed! Symbols: ${res.symbols_updated || 'Updated'}`, 'ok');
+        const symInfo = res.symbols_updated ?? (Number(res.symbols) > 0 ? res.symbols : 'Background refresh queued');
+        logMessage(`Scanners refreshed! Symbols: ${symInfo}`, 'ok');
         fetchAllTelemetry();
       } catch (e) {
         logMessage(`Refresh failed: ${e.message}`, 'err');
@@ -2521,7 +2532,7 @@
         const weights = stats.weights || {};
         if (statsEl) {
           statsEl.innerHTML = [
-            miniStat('Closed Trades', overall.total_trades ?? 0),
+            miniStat('Evaluated Outcomes', overall.total_trades ?? 0),
             miniStat('Win Rate', `${fmtNum(overall.win_rate, 1)}%`),
             miniStat('Avg P&L', `${fmtNum(overall.avg_pnl_pct, 2)}%`, Number(overall.avg_pnl_pct || 0) >= 0 ? 'green' : 'red'),
             miniStat('Learned Weight Keys', Object.keys(weights).length),
@@ -2758,11 +2769,29 @@
     }
 
     // ── Auto-Resume Session ──────────────────────────────────
-    window.addEventListener('DOMContentLoaded', () => {
-      if (adminKey) {
+    window.addEventListener('DOMContentLoaded', async () => {
+      if (!adminKey) return;
+      if (_adminKeyFromSession) {
         document.getElementById('authGate').style.display = 'none';
         logMessage('Resumed active operator session.', 'info');
         startTelemetryLoop();
+        return;
+      }
+      try {
+        const res = await fetch(`${API}/api/admin/runtime-controls`, {
+          method: 'GET',
+          headers: { 'X-Admin-Key': adminKey, 'Accept': 'application/json' },
+        });
+        if (res.ok) {
+          sessionStorage.setItem('tradeai_admin_key', adminKey);
+          document.getElementById('authGate').style.display = 'none';
+          logMessage('Resumed & verified operator session from shared storage.', 'info');
+          startTelemetryLoop();
+        } else {
+          handleLogout();
+        }
+      } catch (_) {
+        // Network issue on boot: stay gated so user can retry cleanly
       }
     });
   </script>

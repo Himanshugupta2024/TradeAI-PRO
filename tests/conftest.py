@@ -155,6 +155,18 @@ def clean_test_runtime_state():
             pb.reset_shared_provider_health()
     except Exception:
         pass
+    try:
+        bh = sys.modules.get("agents.data_ingestion.binance_http")
+        if bh is not None and hasattr(bh, "reset_binance_geo_cooldown"):
+            bh.reset_binance_geo_cooldown()
+    except Exception:
+        pass
+    try:
+        mc = sys.modules.get("api.ml_client")
+        if mc is not None and hasattr(mc, "reset_ml_sidecar_state"):
+            mc.reset_ml_sidecar_state()
+    except Exception:
+        pass
 
     # Purge in a bounded background thread: a read-only or lock-contended
     # database used to block every teardown until the driver's busy timeout

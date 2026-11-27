@@ -56,20 +56,31 @@ class ProviderHealth:
     avg_latency_ms: float = 0.0
     cooldown_until: float = 0.0  # epoch timestamp
 
-    def record_success(self, latency_ms: float) -> None:
-        self.total_calls += 1
-        self.consecutive_errors = 0
-        self.is_healthy = True
-        # Rolling average latency
+    def _update_avg_latency(self, latency_ms: float) -> None:
+        if latency_ms < 0:
+            return
         if self.avg_latency_ms <= 0:
             self.avg_latency_ms = latency_ms
         else:
             self.avg_latency_ms = (self.avg_latency_ms * 0.8) + (latency_ms * 0.2)
 
-    def record_failure(self, max_consecutive_errors: int = 3, cooldown_seconds: float = 60.0) -> None:
+    def record_success(self, latency_ms: float) -> None:
+        self.total_calls += 1
+        self.consecutive_errors = 0
+        self.is_healthy = True
+        self._update_avg_latency(latency_ms)
+
+    def record_failure(
+        self,
+        max_consecutive_errors: int = 3,
+        cooldown_seconds: float = 60.0,
+        latency_ms: float | None = None,
+    ) -> None:
         self.total_calls += 1
         self.total_errors += 1
         self.consecutive_errors += 1
+        if latency_ms is not None:
+            self._update_avg_latency(latency_ms)
         if self.consecutive_errors >= max_consecutive_errors:
             import time
             self.is_healthy = False

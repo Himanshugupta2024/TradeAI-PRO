@@ -550,9 +550,15 @@ async def _hydrate_signals_cache_from_db() -> bool:
                                 if hasattr(b_row, "iloc"):
                                     b_row = b_row.iloc[0] if len(b_row.shape) > 1 else b_row
                                 official_close = float(b_row.get("close") or 0.0)
+                                prev_bhav = float(b_row.get("prev_close") or 0.0)
                                 if official_close > 0:
                                     s["close"] = official_close
                                     s["ltp"] = official_close
+                                    if prev_bhav > 0 and s.get("change_pct") is None:
+                                        s["prev_close"] = round(prev_bhav, 2)
+                                        s["change_pct"] = round(((official_close - prev_bhav) / prev_bhav) * 100.0, 2)
+                                    elif prev_bhav > 0 and not s.get("prev_close"):
+                                        s["prev_close"] = round(prev_bhav, 2)
                                     s["delivery_pct"] = float(b_row.get("delivery_pct") or 0.0)
                                     s["delivery_qty"] = float(b_row.get("delivery_qty") or 0.0)
                                     s["source"] = "NSE_BHAVCOPY_EOD"
@@ -561,6 +567,7 @@ async def _hydrate_signals_cache_from_db() -> bool:
             except Exception as exc:
                 logger.debug("NSE Bhavcopy calibration deferred: %s", exc)
 
+            _refresh_movers_cache()
             logger.info("Hydrated %d signals from DB snapshot on startup", len(_persisted_signals_snapshot))
             return True
     except Exception as e:
@@ -1832,12 +1839,24 @@ async def _refresh_lightweight_state_inner() -> None:
                         lp = float(q["lp"])
                         if lp > 0:
                             sig["close"] = round(lp, 2)
+                            sig["ltp"] = round(lp, 2)
                             prev_c = q.get("prev_close")
                             if prev_c and float(prev_c) > 0:
+                                sig["prev_close"] = round(float(prev_c), 2)
                                 sig["change_pct"] = round(((lp - float(prev_c)) / float(prev_c)) * 100.0, 2)
+                            vol_q = q.get("volume") or q.get("v")
+                            if vol_q is not None:
+                                try:
+                                    if float(vol_q) > 0:
+                                        sig["volume"] = float(vol_q)
+                                except (TypeError, ValueError):
+                                    pass
                     _persisted_signals_updated_at = now_utc.isoformat()
     except Exception as exc:
         logger.debug("[LightweightSync] Box C overlay skipped: %s", exc)
+
+    if _persisted_signals_snapshot or not _movers_cache.get("gainers"):
+        _refresh_movers_cache()
 
     try:
         from utils.memory_profiler import get_process_rss_mb
@@ -2933,13 +2952,87 @@ def _build_market_records(df: pd.DataFrame) -> list[dict]:
     return records
 
 
+def _compute_gainers_losers_from_persisted_signals(mode: str) -> list[dict]:
+    """Compute gainers/losers from hydrated persisted signals / movers snapshot in lightweight mode."""
+    from api.feed_client import validate_live_tick
+
+    results: list[dict] = []
+    seen: set[str] = set()
+    for s in _persisted_signals_snapshot or []:
+        if not isinstance(s, dict):
+            continue
+        sym = str(s.get("symbol") or "").upper().replace(".NS", "").strip()
+        if not sym or sym in seen or "/" in sym or sym.startswith(("NIFTY", "BANKNIFTY", "SENSEX")):
+            continue
+        seen.add(sym)
+        try:
+            close = float(s.get("ltp") or s.get("close") or s.get("entry") or 0.0)
+            pct_raw = s.get("change_pct")
+            if close <= 0 or pct_raw is None:
+                continue
+            pct_change = float(pct_raw)
+            prev_close = float(s.get("prev_close") or 0.0)
+            if prev_close <= 0 and abs(pct_change) < 99.0:
+                prev_close = close / (1.0 + (pct_change / 100.0))
+            if prev_close > 0 and not validate_live_tick(sym, close, prev_close):
+                continue
+            if abs(pct_change) > 20.0:
+                continue
+            vol_val = float(s.get("volume") or 0.0)
+            vol_cr = round(vol_val * close / 1e7, 1) if vol_val > 0 else 0.1
+            results.append(
+                {
+                    "symbol": sym,
+                    "company": sym,
+                    "sector": _get_sector_for_symbol(sym),
+                    "ltp": round(close, 2),
+                    "pct_change": round(pct_change, 2),
+                    "volume_cr": max(vol_cr, 0.1),
+                    "x_factor": 1.0,
+                    "oi_change": None,
+                }
+            )
+        except Exception:
+            continue
+
+    if not results:
+        try:
+            from db.runtime_state import get_runtime_state
+            snap = get_runtime_state("movers_snapshot:v1")
+            if isinstance(snap, dict):
+                key = "gainers" if mode == "gainers" else "losers"
+                cached_rows = snap.get(key)
+                if isinstance(cached_rows, list) and cached_rows:
+                    return list(cached_rows[:20])
+        except Exception:
+            pass
+        return []
+
+    avg_abs = np.mean([abs(r["pct_change"]) for r in results]) or 1.0
+    for r in results:
+        r["x_factor"] = round(abs(r["pct_change"]) / avg_abs, 2)
+
+    if mode == "gainers":
+        results.sort(key=lambda x: x["pct_change"], reverse=True)
+        results = [r for r in results if r["pct_change"] > 0]
+    else:
+        results.sort(key=lambda x: x["pct_change"])
+        results = [r for r in results if r["pct_change"] < 0]
+
+    return results[:20]
+
+
 def _compute_gainers_losers_from_cache(mode: str) -> list[dict]:
     """
     Fallback: compute gainers/losers from the in-memory _market_data cache
     when the NSE screener API is unavailable or times out.
     Compares current close vs previous completed daily close, rejecting >20%
-    corrupt/unadjusted outlier prints.
+    corrupt/unadjusted outlier prints. In LIGHTWEIGHT_API_MODE when _market_data
+    is empty, derives movers from _persisted_signals_snapshot or movers_snapshot:v1.
     """
+    if not _market_data:
+        return _compute_gainers_losers_from_persisted_signals(mode)
+
     from api.feed_client import validate_live_tick
     from zoneinfo import ZoneInfo
 
@@ -5152,7 +5245,16 @@ def _fetch_binance_futures_context(symbols: list[str]) -> dict[str, dict]:
     import json as _json
     import urllib.request
 
+    from agents.data_ingestion.binance_http import (
+        extract_http_status,
+        is_host_in_cooldown,
+        log_geo_cooldown_once,
+        mark_host_geo_blocked,
+    )
+
     result: dict[str, dict] = {}
+    if is_host_in_cooldown(_BINANCE_FAPI_BASE):
+        return result
 
     # Convert CCXT format BTC/USDT → BTCUSDT for Binance REST
     def _to_binance(sym: str) -> str:
@@ -5171,6 +5273,17 @@ def _fetch_binance_futures_context(symbols: list[str]) -> dict[str, dict]:
                 sym_b = str(item.get("symbol", ""))
                 funding_data[sym_b] = item
     except Exception as exc:
+        status = extract_http_status(exc)
+        if status in (403, 418, 429, 451):
+            mark_host_geo_blocked(_BINANCE_FAPI_BASE, status_code=status)
+            log_geo_cooldown_once(
+                logger,
+                f"binance_fapi_{status}",
+                "Binance FAPI %s geo/rate limited (HTTP %s); pausing futures context calls for 1h.",
+                _BINANCE_FAPI_BASE,
+                status,
+            )
+            return result
         logger.warning("Binance FAPI premiumIndex failed: %s", exc)
 
     # Bulk open interest — no key needed, public
@@ -5278,15 +5391,15 @@ def _compute_crypto_intelligence() -> dict:
     gainers_n = 0
     losers_n = 0
 
-    # ── Market mood from live ticker (best-effort) ────────────────────────────
+    # ── Market mood from live ticker (best-effort, geo-block safe) ────────────
     try:
-        import json as _jj
-        import urllib.request as _ur
+        from agents.data_ingestion.binance_http import fetch_binance_spot_json
 
-        raw_t = _jj.loads(
-            _ur.urlopen("https://api.binance.com/api/v3/ticker/24hr", timeout=6)
-            .read()
-            .decode()
+        raw_t = fetch_binance_spot_json(
+            "/api/v3/ticker/24hr",
+            timeout=6.0,
+            log=logger,
+            context_label="crypto_mood",
         )
         if isinstance(raw_t, list):
             usdt = [

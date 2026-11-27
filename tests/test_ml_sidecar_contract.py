@@ -199,3 +199,76 @@ def test_get_model_status_sidecar_awareness(monkeypatch):
     assert "Lightweight" in status_fallback["mode"]
     assert "⚡" in status_fallback["badge_short"]
 
+
+def test_ml_client_retry_on_503_and_circuit_cooldown(monkeypatch):
+    """Transient 503 retries once; repeated failures open cooldown circuit without stalling."""
+    from unittest.mock import MagicMock
+    import api.ml_client as mlc
+
+    mlc.reset_ml_sidecar_state()
+    monkeypatch.delenv("SERVICE_ROLE", raising=False)
+    monkeypatch.setenv("ML_SIDECAR_URL", "http://mock-box-b.local")
+    monkeypatch.setattr(mlc, "ML_SIDECAR_FAILURES_TO_TRIP", 2)
+    monkeypatch.setattr(mlc, "ML_SIDECAR_COOLDOWN_SEC", 60.0)
+
+    df = _create_sample_df(60)
+    calls = {"n": 0}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls["n"] += 1
+        resp = MagicMock()
+        if calls["n"] == 1:
+            resp.status_code = 503
+            resp.text = "waking"
+        else:
+            resp.status_code = 200
+            resp.json.return_value = {"direction": "UP", "confidence": 72.0}
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.post = fake_post
+    monkeypatch.setattr(mlc, "_get_sync_client", lambda to: mock_client)
+
+    res = mlc.infer_remote_sync("RELIANCE", df)
+    assert res is not None and res["confidence"] == 72.0
+    assert calls["n"] == 2
+
+    # Now induce failures to trip cooldown breaker
+    calls["n"] = 0
+
+    def always_timeout(url, json=None, headers=None, timeout=None):
+        calls["n"] += 1
+        raise mlc.httpx.ReadTimeout("timed out")
+
+    mock_client.post = always_timeout
+    assert mlc.infer_remote_sync("TCS", df) is None
+    assert mlc.infer_remote_sync("INFY", df) is None
+    assert calls["n"] == 2  # tripped after 2nd failure
+
+    # Subsequent calls short-circuit instantaneously without HTTP POST
+    assert mlc.infer_remote_sync("HDFCBANK", df) is None
+    assert calls["n"] == 2
+
+
+def test_ml_health_reports_models_ready_and_keep_alive_window(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from api.app import _in_sidecar_warm_window
+
+    client = TestClient(app)
+    data = client.get("/health").json()
+    assert isinstance(data.get("models_ready"), bool)
+
+    ist = timezone(timedelta(hours=5, minutes=30))
+    mon_open = datetime(2026, 11, 23, 10, 0, tzinfo=ist)
+    mon_night = datetime(2026, 11, 23, 22, 0, tzinfo=ist)
+    sun_morning = datetime(2026, 11, 22, 10, 0, tzinfo=ist)
+
+    monkeypatch.setenv("SIDECAR_MARKET_HOURS_ONLY", "true")
+    assert _in_sidecar_warm_window(mon_open) is True
+    assert _in_sidecar_warm_window(mon_night) is False
+    assert _in_sidecar_warm_window(sun_morning) is False
+
+    monkeypatch.setenv("SIDECAR_MARKET_HOURS_ONLY", "false")
+    assert _in_sidecar_warm_window(mon_night) is True
+
+

@@ -130,8 +130,22 @@ def _spawn_task(coro, name: str) -> asyncio.Task:
 
 
 
+def _in_sidecar_warm_window(now_utc=None) -> bool:
+    """Match Cloudflare Worker shouldPingSidecars(): 08:30-16:30 IST Mon-Fri unless disabled."""
+    if os.environ.get("SIDECAR_MARKET_HOURS_ONLY", "true").strip().lower() in ("false", "0", "no", "off"):
+        return True
+    from datetime import datetime, timedelta, timezone
+
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now_ist = (now_utc or datetime.now(timezone.utc)).astimezone(ist)
+    if now_ist.weekday() >= 5:
+        return False
+    mins = now_ist.hour * 60 + now_ist.minute
+    return 8 * 60 + 30 <= mins < 16 * 60 + 30
+
+
 async def _keep_alive_task():
-    """Periodically ping public URL and ML sidecar to prevent Render free-tier spin-down."""
+    """Periodically ping public URL (and ML sidecar during market hours) to prevent Render spin-down."""
     public_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://trading-api-n1wt.onrender.com"
     url = f"{public_url.rstrip('/')}/api/health/live"
     ml_url = os.environ.get("ML_SIDECAR_URL", "https://trading-ml-8umr.onrender.com").rstrip("/")
@@ -143,7 +157,7 @@ async def _keep_alive_task():
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
                     await client.get(url)
-                    if ml_health_url:
+                    if ml_health_url and _in_sidecar_warm_window():
                         await client.get(ml_health_url)
             except Exception as exc:
                 logger.debug("Keep-alive ping failed (non-critical): %s", exc)

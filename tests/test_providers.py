@@ -165,3 +165,16 @@ async def test_yahoo_batch_quotes_chart_meta(monkeypatch):
     assert q.data_age_seconds is not None
     assert q.is_valid() is True
 
+
+def test_provider_health_failure_records_latency_compat():
+    h = ProviderHealth(name="shoonya_feed")
+    h.record_failure()
+    assert h.avg_latency_ms == 0.0
+    assert h.total_errors == 1
+
+    h.record_failure(latency_ms=42.5)
+    assert h.avg_latency_ms == 42.5
+    h.record_failure(latency_ms=92.5)
+    assert h.avg_latency_ms == pytest.approx(52.5)
+
+

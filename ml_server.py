@@ -6,10 +6,12 @@ Strictly NO network data fetching.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -20,9 +22,23 @@ from fastapi import FastAPI, Header, HTTPException, status
 from pydantic import BaseModel
 
 _ML_START_TIME = time.time()
+_WARMUP_READY = threading.Event()
 
 logger = logging.getLogger("ml_server")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+
+def _run_model_warmup() -> None:
+    """Warm ML registry in a worker thread so Uvicorn binds immediately."""
+    try:
+        from agents.ai_engine.model_registry import get_model_registry
+
+        registry = get_model_registry()
+        registry.warmup_all()
+        _WARMUP_READY.set()
+        logger.info("ModelRegistry warmup complete on ML Sidecar.")
+    except Exception as exc:
+        logger.warning("ModelRegistry warmup error on ML Sidecar: %s", exc)
 
 
 @asynccontextmanager
@@ -32,15 +48,13 @@ async def lifespan(app: FastAPI):
     os.environ["LIGHTWEIGHT_API_MODE"] = "false"
 
     logger.info("Starting TradeAI ML Inference Sidecar...")
+    warmup_task = asyncio.create_task(asyncio.to_thread(_run_model_warmup))
     try:
-        from agents.ai_engine.model_registry import get_model_registry
-        registry = get_model_registry()
-        registry.warmup_all()
-        logger.info("ModelRegistry warmup complete on ML Sidecar.")
-    except Exception as exc:
-        logger.warning("ModelRegistry warmup error on ML Sidecar: %s", exc)
-    yield
-    logger.info("Shutting down ML Inference Sidecar...")
+        yield
+    finally:
+        if not warmup_task.done():
+            warmup_task.cancel()
+        logger.info("Shutting down ML Inference Sidecar...")
 
 
 app = FastAPI(
@@ -89,6 +103,7 @@ def health() -> Dict[str, Any]:
     return {
         "status": "ok",
         "service": "ml_sidecar",
+        "models_ready": _WARMUP_READY.is_set(),
         "build_sha": os.environ.get("RENDER_GIT_COMMIT", "dev")[:8],
         "boot_time": datetime.fromtimestamp(_ML_START_TIME, tz=timezone.utc).isoformat(),
         "uptime_seconds": round(time.time() - _ML_START_TIME, 2),

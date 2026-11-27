@@ -502,27 +502,27 @@ async def _compute_meme_signals_raw():
 
         """Fetch 1h klines from Binance public API (no auth needed)."""
 
-        url = (
-
-            f"https://api.binance.com/api/v3/klines"
-
-            f"?symbol={sym}USDT&interval=1h&limit={limit}"
-
-        )
+        from agents.data_ingestion.binance_http import fetch_binance_spot_json
 
         try:
 
-            resp = await asyncio.to_thread(
+            raw = await asyncio.to_thread(
 
-                lambda: __import__("requests").get(url, timeout=2.5)
+                fetch_binance_spot_json,
+
+                f"/api/v3/klines?symbol={sym}USDT&interval=1h&limit={limit}",
+
+                timeout=2.5,
+
+                log=logger,
+
+                context_label="meme_klines",
 
             )
 
-            if resp.status_code != 200:
+            if not isinstance(raw, list) or not raw:
 
                 return None
-
-            raw = resp.json()
 
             closes = [float(c[4]) for c in raw]
 
@@ -828,21 +828,27 @@ async def _compute_meme_signals_raw():
 
         }
 
-        url = "https://api.binance.com/api/v3/ticker/24hr"
+        from agents.data_ingestion.binance_http import fetch_binance_spot_json
 
         try:
 
-            resp = await asyncio.to_thread(
+            rows = await asyncio.to_thread(
 
-                lambda: __import__("requests").get(url, timeout=3.0)
+                fetch_binance_spot_json,
+
+                "/api/v3/ticker/24hr",
+
+                timeout=3.0,
+
+                log=logger,
+
+                context_label="meme_discovery",
 
             )
 
-            if resp.status_code != 200:
+            if not isinstance(rows, list):
 
                 return []
-
-            rows = resp.json()
 
             candidates: list[tuple[str, float]] = []
 
@@ -1757,18 +1763,23 @@ async def proxy_binance_24hr(symbol: str | None = Query(default=None)):
                     data = resp.json()
                     if isinstance(data, list):
                         # Merge prominent meme/futures tickers that may not exist on spot
-                        try:
-                            f_resp = await client.get("https://fapi.binance.com/fapi/v1/ticker/24hr", headers={"User-Agent": "TradeAI-Pro/1.0"})
-                            if f_resp.status_code == 200:
-                                f_data = f_resp.json()
-                                if isinstance(f_data, list):
-                                    existing_syms = {t.get("symbol") for t in data if isinstance(t, dict)}
-                                    for ft in f_data:
-                                        if isinstance(ft, dict) and ft.get("symbol") and ft.get("symbol").endswith("USDT"):
-                                            if ft["symbol"] not in existing_syms:
-                                                data.append(ft)
-                        except Exception as f_exc:
-                            logger.debug("Optional futures ticker merge skipped: %s", f_exc)
+                        from agents.data_ingestion.binance_http import is_host_in_cooldown, mark_host_geo_blocked
+
+                        if not is_host_in_cooldown("https://fapi.binance.com"):
+                            try:
+                                f_resp = await client.get("https://fapi.binance.com/fapi/v1/ticker/24hr", headers={"User-Agent": "TradeAI-Pro/1.0"})
+                                if f_resp.status_code in (403, 418, 429, 451):
+                                    mark_host_geo_blocked("https://fapi.binance.com", status_code=f_resp.status_code)
+                                elif f_resp.status_code == 200:
+                                    f_data = f_resp.json()
+                                    if isinstance(f_data, list):
+                                        existing_syms = {t.get("symbol") for t in data if isinstance(t, dict)}
+                                        for ft in f_data:
+                                            if isinstance(ft, dict) and ft.get("symbol") and ft.get("symbol").endswith("USDT"):
+                                                if ft["symbol"] not in existing_syms:
+                                                    data.append(ft)
+                            except Exception as f_exc:
+                                logger.debug("Optional futures ticker merge skipped: %s", f_exc)
 
                         _binance_proxy_cache["timestamp"] = now
                         _binance_proxy_cache["payload"] = data
@@ -2206,11 +2217,21 @@ async def get_crypto_prediction(timeframe: str = Query(default="1h")):
 
     try:
 
-        # 1) Live market snapshot from Binance
+        # 1) Live market snapshot from Binance public spot mirror first (US geo-block safe)
+
+        from agents.data_ingestion.binance_http import fetch_binance_spot_json
 
         raw_tickers = await asyncio.to_thread(
 
-            _fetch_json, "https://api.binance.com/api/v3/ticker/24hr"
+            fetch_binance_spot_json,
+
+            "/api/v3/ticker/24hr",
+
+            timeout=8.0,
+
+            log=logger,
+
+            context_label="crypto_router_mood",
 
         )
 
@@ -2320,9 +2341,19 @@ async def get_crypto_prediction(timeframe: str = Query(default="1h")):
 
             try:
 
-                kline_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval={timeframe}&limit=80"
+                kraw = await asyncio.to_thread(
 
-                kraw = await asyncio.to_thread(_fetch_json, kline_url)
+                    fetch_binance_spot_json,
+
+                    f"/api/v3/klines?symbol={sym}&interval={timeframe}&limit=80",
+
+                    timeout=8.0,
+
+                    log=logger,
+
+                    context_label="crypto_hero",
+
+                )
 
                 if not isinstance(kraw, list):
 

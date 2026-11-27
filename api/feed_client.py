@@ -51,7 +51,7 @@ def _record_shoonya_telemetry(ok: bool, latency_ms: float = 0.0) -> None:
         if ok:
             h.record_success(latency_ms)
         else:
-            h.record_failure()
+            h.record_failure(latency_ms=latency_ms if latency_ms > 0 else None)
     except Exception:
         pass
 
@@ -148,6 +148,27 @@ def is_feed_configured() -> bool:
     return bool(url)
 
 
+def _process_snapshot_response(
+    resp: httpx.Response,
+    latency_ms: float,
+    allow_simulated: bool,
+) -> Optional[Dict[str, Any]]:
+    if resp.status_code == 200:
+        data = resp.json()
+        if isinstance(data, dict):
+            if not allow_simulated and is_simulated_snapshot(data):
+                _log_simulated_rejected(
+                    str(data.get("source") or data.get("feed_source") or "SIMULATED")
+                )
+                _record_shoonya_telemetry(False, latency_ms)
+                return None
+            _record_shoonya_telemetry(True, latency_ms)
+            return data
+    logger.debug("[FeedClient] Feed returned status %s: %s", resp.status_code, resp.text)
+    _record_shoonya_telemetry(False, latency_ms)
+    return None
+
+
 async def fetch_feed_snapshot(
     symbols: List[str],
     timeout: Optional[float] = None,
@@ -169,6 +190,7 @@ async def fetch_feed_snapshot(
 
     client = _get_async_client(to)
     last_exc: Optional[Exception] = None
+    last_latency_ms = 0.0
     for attempt in range(2):
         t0 = time.perf_counter()
         try:
@@ -179,30 +201,21 @@ async def fetch_feed_snapshot(
                 timeout=to,
             )
             latency_ms = (time.perf_counter() - t0) * 1000.0
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, dict):
-                    if not allow_simulated and is_simulated_snapshot(data):
-                        _log_simulated_rejected(str(data.get("source") or data.get("feed_source") or "SIMULATED"))
-                        _record_shoonya_telemetry(False)
-                        return None
-                    _record_shoonya_telemetry(True, latency_ms)
-                    return data
-            logger.debug("[FeedClient] Feed returned status %s: %s", resp.status_code, resp.text)
-            _record_shoonya_telemetry(False)
-            return None
+            return _process_snapshot_response(resp, latency_ms, allow_simulated)
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            last_latency_ms = (time.perf_counter() - t0) * 1000.0
             last_exc = exc
             if attempt == 0:
                 continue
         except Exception as exc:
+            last_latency_ms = (time.perf_counter() - t0) * 1000.0
             _log_feed_failure(exc)
-            _record_shoonya_telemetry(False)
+            _record_shoonya_telemetry(False, last_latency_ms)
             return None
 
     if last_exc is not None:
         _log_feed_failure(last_exc)
-    _record_shoonya_telemetry(False)
+    _record_shoonya_telemetry(False, last_latency_ms)
     return None
 
 
@@ -231,20 +244,11 @@ def fetch_feed_snapshot_sync(
             timeout=to,
         )
         latency_ms = (time.perf_counter() - t0) * 1000.0
-        if resp.status_code == 200:
-            data = resp.json()
-            if isinstance(data, dict):
-                if not allow_simulated and is_simulated_snapshot(data):
-                    _log_simulated_rejected(str(data.get("source") or data.get("feed_source") or "SIMULATED"))
-                    _record_shoonya_telemetry(False)
-                    return None
-                _record_shoonya_telemetry(True, latency_ms)
-                return data
-        _record_shoonya_telemetry(False)
-        return None
+        return _process_snapshot_response(resp, latency_ms, allow_simulated)
     except Exception as exc:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
         _log_feed_failure(exc)
-        _record_shoonya_telemetry(False)
+        _record_shoonya_telemetry(False, latency_ms)
         return None
 
 

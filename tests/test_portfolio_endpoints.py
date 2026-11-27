@@ -127,3 +127,26 @@ def test_manual_close_trade_flow(fresh_engine):
     # 3. Verify closed in portfolio
     p2 = client.get("/api/portfolio").json()
     assert not any(p["id"] == tid for p in p2["open_positions"])
+
+
+def test_stats_includes_max_open_positions_parity(fresh_engine):
+    client = TestClient(app)
+
+    stats = client.get("/api/stats").json()
+    risk = client.get("/api/risk/state").json()
+
+    assert "max_open_positions" in stats
+    assert isinstance(stats["max_open_positions"], int)
+    assert stats["max_open_positions"] == risk["max_open_positions"]
+
+
+def test_admin_html_session_and_policy_403_guards():
+    from pathlib import Path
+
+    html = Path("dashboard/admin.html").read_text(encoding="utf-8")
+    assert "localStorage.getItem('tradeai_admin_key')" in html
+    assert "localStorage.removeItem('tradeai_admin_key')" in html
+    assert "isPolicyDenied" in html
+    assert "risk?.max_open_positions" in html
+    assert "Evaluated Outcomes" in html
+    assert "Background refresh queued" in html

@@ -380,3 +380,57 @@ def test_validate_live_tick_rejects_gt_20_pct_outlier():
     assert validate_live_tick("HDFCBANK", 895.0, prev_close=817.81) is True
     assert validate_live_tick("INFY", float("nan"), prev_close=1103.38) is False
     assert validate_live_tick("INFY", -10.0, prev_close=1103.38) is False
+
+
+def test_feed_client_records_latency_on_simulated_and_failure(monkeypatch):
+    """Box C simulated or error HTTP calls must still record measurable round-trip latency."""
+    import asyncio
+    from api import feed_client
+    from data.providers.base import get_shared_provider_health, reset_shared_provider_health
+
+    reset_shared_provider_health()
+    monkeypatch.setenv("FEED_SERVICE_URL", "http://mock-box-c.local")
+
+    sim_payload = {
+        "source": "SHOONYA_SIMULATED",
+        "feed_state": "SIMULATED",
+        "quotes": {"RELIANCE": {"lp": 1350.0}},
+        "bars": {},
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = sim_payload
+
+    async def slow_get(*args, **kwargs):
+        await asyncio.sleep(0.01)
+        return mock_resp
+
+    mock_async = MagicMock()
+    mock_async.get = slow_get
+
+    with patch("api.feed_client._get_async_client", return_value=mock_async):
+        res = asyncio.run(feed_client.fetch_feed_snapshot(["RELIANCE"]))
+        assert res is None
+
+    h = get_shared_provider_health("shoonya_feed")
+    assert h.total_calls >= 1
+    assert h.avg_latency_ms > 0.0
+
+    # Sync 503 failure also preserves elapsed HTTP latency
+    reset_shared_provider_health()
+    err_resp = MagicMock()
+    err_resp.status_code = 503
+    err_resp.text = "Service Unavailable"
+    mock_sync = MagicMock()
+    mock_sync.get = MagicMock(return_value=err_resp)
+
+    perf_seq = iter([10.0, 10.05])
+    with patch("api.feed_client._get_sync_client", return_value=mock_sync), patch(
+        "api.feed_client.time.perf_counter", side_effect=lambda: next(perf_seq)
+    ):
+        assert feed_client.fetch_feed_snapshot_sync(["RELIANCE"]) is None
+
+    h2 = get_shared_provider_health("shoonya_feed")
+    assert h2.total_errors == 1
+    assert h2.avg_latency_ms == pytest.approx(50.0, abs=1.0)
+

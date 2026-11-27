@@ -1,6 +1,7 @@
 import json
 import os
 import statistics
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -48,7 +49,8 @@ def chk(layer, name, ok, detail=""):
 
 EPS = [
     "health", "signals/all", "autonomous/status", "edge/risk-gauge", "nse/dashboard",
-    "research/next-day-picks", "performance", "context/v3", "macro/intelligence", "tradeflow",
+    "research/next-day-picks", "performance", "trades?limit=100", "track-record",
+    "context/v3", "macro/intelligence", "tradeflow",
     "swing/shortlist", "prediction/RELIANCE", "dashboard/overview", "market/mood",
     "analytics/scorecard", "sectors", "breakouts", "forex/rates", "crypto/intelligence",
     "autonomous/feed",
@@ -96,13 +98,19 @@ ld = H.get("loading") or {}
 chk("INFRA", "loaded <= total", (ld.get("loaded") or 0) <= (ld.get("total") or 0), ld)
 
 # ---------- FEED ----------
-in_session = bool(H.get("is_market_open"))
+force_market_hours = "--market-hours" in sys.argv
+in_session = bool(H.get("is_market_open")) or force_market_hours
 prov = H.get("providers") or {}
 for k, v in prov.items():
     if not isinstance(v, dict):
         continue
-    if v.get("state") == "ACTIVE" and str(v.get("role", "")).startswith("PRIMARY"):
-        chk("FEED", "%s latency measured" % k, (v.get("avg_latency_ms") or 0) > 0, v.get("avg_latency_ms"))
+    if str(v.get("role", "")).startswith("PRIMARY") and ((v.get("total_calls") or 0) > 0 or v.get("state") == "ACTIVE"):
+        chk(
+            "FEED",
+            "%s latency measured" % k,
+            (v.get("avg_latency_ms") or 0) > 0,
+            "%.1f ms (state=%s)" % (float(v.get("avg_latency_ms") or 0), v.get("state")),
+        )
         up_h = (H.get("uptime_seconds") or 1) / 3600
         rate = (v.get("total_calls") or 0) / max(up_h, 0.01)
         chk("FEED", "%s call rate plausible" % k, rate > 10 if in_session else None, "%.1f calls/h" % rate)
@@ -256,6 +264,45 @@ for ep in ("performance", "autonomous/feed"):
             v = b.get(k)
             if isinstance(v, list):
                 trades += [x for x in v if isinstance(x, dict) and "entry_price" in x]
+tr_body = D.get("trades?limit=100", (None, 0, {}))[2]
+raw_book_trades = (tr_body.get("trades") or []) if isinstance(tr_body, dict) else []
+quarantined = [x for x in raw_book_trades if isinstance(x, dict) and x.get("data_quality") == "LEGACY_EXCLUDED"]
+clean_book_trades = [
+    x for x in raw_book_trades
+    if isinstance(x, dict) and "entry_price" in x and x.get("data_quality") != "LEGACY_EXCLUDED"
+]
+seen_trade_ids = {t.get("id") for t in trades if t.get("id") is not None}
+for t in clean_book_trades:
+    tid = t.get("id")
+    if tid is None or tid not in seen_trade_ids:
+        trades.append(t)
+        if tid is not None:
+            seen_trade_ids.add(tid)
+chk(
+    "BOOK",
+    "trades ledger & legacy quarantine",
+    isinstance(tr_body, dict)
+    and isinstance(tr_body.get("trades"), list)
+    and all(bool(q.get("exclusion_reason")) for q in quarantined),
+    "total=%d clean=%d quarantined=%d" % (len(raw_book_trades), len(clean_book_trades), len(quarantined)),
+)
+track = D.get("track-record", (None, 0, {}))[2]
+perf = D.get("performance", (None, 0, {}))[2]
+tr_ok = isinstance(track, dict) and track.get("status") == "ok" and isinstance(track.get("total_trades"), int)
+if tr_ok and isinstance(perf, dict) and perf.get("total_trades") is not None:
+    tr_ok = track.get("total_trades") == perf.get("total_trades")
+if tr_ok and len(raw_book_trades) < 100 and isinstance(track.get("excluded_legacy_trades_count"), int):
+    tr_ok = track.get("excluded_legacy_trades_count") == len(quarantined)
+chk(
+    "BOOK",
+    "track-record reconciles with performance",
+    tr_ok,
+    "track=%s perf=%s excluded=%s" % (
+        track.get("total_trades") if isinstance(track, dict) else None,
+        perf.get("total_trades") if isinstance(perf, dict) else None,
+        track.get("excluded_legacy_trades_count") if isinstance(track, dict) else None,
+    ),
+)
 inv, slip, nocal, nofx, nonet = [], [], [], [], []
 for t in trades:
     e, s, d = t.get("entry_price"), t.get("stop_loss"), (t.get("direction") or "LONG").upper()

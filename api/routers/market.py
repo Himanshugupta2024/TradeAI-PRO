@@ -1261,6 +1261,12 @@ async def get_stats():
 
         "open_trades": stats.get("open_trades", len(engine.get_open_trades())),
 
+        "max_open_positions": int(
+            stats.get("max_open_positions")
+            or (engine.get_risk_state().get("max_open_positions") if engine else 5)
+            or 5
+        ),
+
         "valuation_status": val_summary.get("valuation_status", "UNKNOWN"),
 
         "unpriced_quotes_count": int(val_summary.get("unpriced_quotes_count", 0) or 0),
@@ -2460,6 +2466,47 @@ def _collect_db_screener_candidates() -> list[dict]:
                 })
     except Exception as exc:
         logger.debug("Screener latest_swing_scan fallback failed: %s", exc)
+
+    try:
+        from db.connection import SessionLocal
+        from db.models import MorningScan
+
+        with SessionLocal() as db:
+            latest_ms = db.query(MorningScan).order_by(MorningScan.scan_date.desc(), MorningScan.rank.asc()).limit(10).all()
+            if latest_ms:
+                latest_date = latest_ms[0].scan_date
+                for row in latest_ms:
+                    if row.scan_date != latest_date:
+                        continue
+                    sym = str(row.symbol or "").upper().replace(".NS", "").strip()
+                    if not sym or sym in _SCREENER_INDEX_EXCLUDES:
+                        continue
+                    entry_val = float(row.entry_price or 0.0)
+                    if entry_val <= 0:
+                        continue
+                    sl_val = float(row.stop_loss or 0.0)
+                    tp_val = float(row.target_price or 0.0)
+                    sig_dir = "SHORT" if (sl_val > entry_val > tp_val) else "LONG"
+                    conf_val = round(float(row.confidence_score or 65.0), 1)
+                    rsi_val = round(float(row.rsi_val), 1) if getattr(row, "rsi_val", None) is not None else None
+                    ranked.append({
+                        "symbol": sym,
+                        "direction": sig_dir,
+                        "signal": sig_dir,
+                        "strategy": "MORNING_SCAN",
+                        "confidence": conf_val,
+                        "entry": round(entry_val, 2),
+                        "price": round(entry_val, 2),
+                        "close": round(entry_val, 2),
+                        "target": round(tp_val, 2) if tp_val > 0 else None,
+                        "stop_loss": round(sl_val, 2) if sl_val > 0 else None,
+                        "rsi": rsi_val,
+                        "rationale": row.reason or f"Morning Scan Rank #{row.rank}",
+                        "source": "MORNING_SCAN",
+                        "_rank": (conf_val + 10.0, 1),
+                    })
+    except Exception as exc:
+        logger.debug("Screener MorningScan fallback failed: %s", exc)
 
     return ranked
 
