@@ -113,7 +113,13 @@ class ShoonyaFeedManager:
                     return False
                 totp = totp_clean
             else:
-                totp = pyotp.TOTP(totp_clean.upper()).now()
+                try:
+                    totp = pyotp.TOTP(totp_clean.upper()).now()
+                except Exception:
+                    self.last_error = "Configured TOTP secret is not valid Base32 — connect via OAuth Login"
+                    logger.warning("[Shoonya] %s", self.last_error)
+                    self.is_simulated = True
+                    return False
 
             logger.info("[Shoonya] Attempting login for user: %s (vc: %s)", self.uid, self.vendor_code)
             pwd_hash = hashlib.sha256(self.password.encode("utf-8")).hexdigest()
@@ -311,18 +317,29 @@ class ShoonyaFeedManager:
         payload = {
             "uid": uid_val,
             "code": code_clean,
-            "appkey": checksum,
+            "checksum": checksum,
         }
         try:
-            res = requests.post(url, data={"jData": json.dumps(payload)}, timeout=15)
+            res = requests.post(
+                url,
+                data=f"jData={json.dumps(payload)}",
+                headers={"Content-Type": "text/plain"},
+                timeout=15,
+            )
             data = None
             try:
                 data = res.json()
             except Exception:
                 data = None
 
-            if res.status_code == 200 and isinstance(data, dict) and data.get("stat") == "Ok" and data.get("susertoken"):
-                self.usertoken = str(data["susertoken"])
+            tok = ""
+            if isinstance(data, dict):
+                tok = str(data.get("susertoken") or data.get("access_token") or "").strip()
+
+            if res.status_code == 200 and isinstance(data, dict) and data.get("stat") == "Ok" and tok:
+                if data.get("uid") and not self.uid:
+                    self.uid = str(data["uid"]).strip()
+                self.usertoken = tok
                 self.last_error = None
                 logger.info("[Shoonya] Successfully exchanged OAuth auth_code for susertoken")
                 return self.usertoken

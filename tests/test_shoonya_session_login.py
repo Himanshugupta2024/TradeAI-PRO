@@ -215,9 +215,11 @@ def test_shoonya_oauth_auth_code_exchange_and_emsg(monkeypatch):
 
     seen = {}
 
-    def _ok_gen(url, data=None, timeout=15):
+    def _ok_gen(url, data=None, headers=None, timeout=15):
         seen["url"] = url
-        seen["jdata"] = json.loads(data["jData"])
+        seen["headers"] = headers or {}
+        assert isinstance(data, str) and data.startswith("jData=")
+        seen["jdata"] = json.loads(data[len("jData="):])
         return _Resp(200, {"stat": "Ok", "susertoken": "oauth-live-tok"})
 
     monkeypatch.setattr(requests, "post", _ok_gen)
@@ -229,11 +231,12 @@ def test_shoonya_oauth_auth_code_exchange_and_emsg(monkeypatch):
     assert mgr.usertoken == "oauth-live-tok"
     assert mgr.is_simulated is False
     assert seen["url"].endswith("/GenAcsTok")
+    assert seen["headers"].get("Content-Type") == "text/plain"
     expected_hash = hashlib.sha256(b"FN243453_Umysecretkeyauth_999").hexdigest()
-    assert seen["jdata"] == {"uid": "FN243453", "code": "auth_999", "appkey": expected_hash}
+    assert seen["jdata"] == {"uid": "FN243453", "code": "auth_999", "checksum": expected_hash}
 
     # Exact broker emsg preserved on IP/code failure
-    def _bad_gen(url, data=None, timeout=15):
+    def _bad_gen(url, data=None, headers=None, timeout=15):
         return _Resp(400, {"stat": "Not_Ok", "emsg": "Invalid IP Address"})
 
     monkeypatch.setattr(requests, "post", _bad_gen)
