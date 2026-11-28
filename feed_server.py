@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query, status
+from pydantic import BaseModel
 
 # Load local environment if present
 load_dotenv()
@@ -226,6 +227,76 @@ def update_fno_chain(
             )
         updated += 1
     return {"status": "ok", "symbol": sym, "strikes_updated": updated}
+
+
+class ShoonyaSessionLoginRequest(BaseModel):
+    userid: Optional[str] = None
+    password: Optional[str] = None
+    api_key: Optional[str] = None
+    vendor_code: Optional[str] = None
+    totp: Optional[str] = None
+    usertoken: Optional[str] = None
+
+
+def _session_status_payload() -> Dict[str, Any]:
+    stats = bar_builder.get_stats()
+    feed_state = "OFFLINE"
+    if feed_manager:
+        if feed_manager.is_simulated:
+            feed_state = "SIMULATED"
+        elif feed_manager.is_connected:
+            feed_state = "LIVE"
+        elif feed_manager.last_login_time is not None:
+            feed_state = "CONNECTING"
+    return {
+        "status": "ok",
+        "feed_source": "SHOONYA" if feed_state == "LIVE" else "SIMULATED",
+        "feed_state": feed_state,
+        "has_credentials": bool(feed_manager and feed_manager.has_credentials()),
+        "masked_uid": feed_manager.masked_uid() if feed_manager else "",
+        "watchlist_count": len(feed_manager.watchlist) if feed_manager else 0,
+        "symbols_tracked": stats["symbols_tracked"],
+        "total_ticks": stats["total_ticks"],
+        "last_tick_time": stats["last_tick_time"],
+        "last_error": feed_manager.last_error if feed_manager else None,
+    }
+
+
+@app.get("/session/status")
+def session_status(
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """Return Shoonya feed authentication/connection state without exposing secrets."""
+    _verify_auth(x_internal_token)
+    return _session_status_payload()
+
+
+@app.post("/session/login")
+def session_login(
+    req: ShoonyaSessionLoginRequest,
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """Authenticate Box C with operator-provided Shoonya credentials/OTP and start live WS."""
+    _verify_auth(x_internal_token)
+    if not feed_manager:
+        raise HTTPException(status_code=503, detail="Feed manager not initialized")
+
+    ok, msg = feed_manager.login_interactive(
+        userid=req.userid or "",
+        password=req.password or "",
+        api_key=req.api_key or "",
+        vendor_code=req.vendor_code or "",
+        totp=req.totp or "",
+        usertoken=req.usertoken or "",
+    )
+    if not ok:
+        raise HTTPException(status_code=401, detail=msg)
+    return {
+        **_session_status_payload(),
+        "feed_state": "LIVE",
+        "feed_source": "SHOONYA",
+        "message": msg,
+    }
 
 
 @app.get("/oauth/callback")

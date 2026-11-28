@@ -1224,6 +1224,44 @@ async def toggle_kill_switch(payload: KillSwitchRequest):
     return {"status": "ok", "message": message, **status_payload}
 
 
+class ShoonyaFeedLoginRequest(BaseModel):
+    userid: Optional[str] = None
+    password: Optional[str] = None
+    api_key: Optional[str] = None
+    vendor_code: Optional[str] = None
+    totp: Optional[str] = None
+    usertoken: Optional[str] = None
+
+
+@router.get("/api/admin/feed/shoonya-status", dependencies=[Depends(require_admin)])
+async def get_shoonya_feed_status():
+    """Return Box C Shoonya feed connection/authentication status for Admin console."""
+    from api.feed_client import get_feed_session_status
+    return await get_feed_session_status()
+
+
+@router.post("/api/admin/feed/shoonya-login", dependencies=[Depends(require_admin)])
+async def login_shoonya_feed(payload: ShoonyaFeedLoginRequest):
+    """Connect Box C live Shoonya WebSocket using operator-supplied credentials/OTP/token."""
+    from api.feed_client import login_feed_session
+    res = await login_feed_session(
+        {
+            "userid": payload.userid or "",
+            "password": payload.password or "",
+            "api_key": payload.api_key or "",
+            "vendor_code": payload.vendor_code or "",
+            "totp": payload.totp or "",
+            "usertoken": payload.usertoken or "",
+        }
+    )
+    if not res.get("ok"):
+        raise HTTPException(
+            status_code=int(res.get("status_code") or 401),
+            detail=res.get("detail") or "Shoonya feed login failed",
+        )
+    return {"status": "ok", **res}
+
+
 # ── Admin Web Console ─────────────────────────────────────────────────────────
 @router.api_route("/admin", methods=["GET", "HEAD"], include_in_schema=False)
 @router.api_route("/admin/", methods=["GET", "HEAD"], include_in_schema=False)

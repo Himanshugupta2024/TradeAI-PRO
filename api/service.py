@@ -6086,6 +6086,53 @@ class SnapshotBroadcaster:
                     }
             source = "IN_PROCESS"
 
+        # Overlay real-time ticks from Box C (Shoonya LIVE only; SIMULATED rejected)
+        try:
+            from api.feed_client import is_feed_configured, fetch_feed_snapshot, validate_live_tick
+            from data.providers.base import get_shared_provider_health
+
+            if is_feed_configured():
+                sh_health = get_shared_provider_health("shoonya_feed")
+                if sh_health.is_healthy or time.time() >= sh_health.cooldown_until:
+                    target_syms = list(prices.keys()) or list(settings.NSE_SYMBOLS)
+                    # Only poll equity/index symbols, skip crypto '/' pairs
+                    nse_syms = [s for s in target_syms if "/" not in s][:40]
+                    if nse_syms:
+                        snap = await fetch_feed_snapshot(nse_syms, timeout=1.5, allow_simulated=False)
+                        quotes = snap.get("quotes") if isinstance(snap, dict) else None
+                        if isinstance(quotes, dict) and quotes:
+                            updated_any = False
+                            for sym, q in quotes.items():
+                                lp = q.get("lp") if isinstance(q, dict) else None
+                                prev_c = q.get("prev_close") if isinstance(q, dict) else None
+                                if lp is None or not validate_live_tick(sym, float(lp), float(prev_c) if prev_c else None):
+                                    continue
+                                lp_f = round(float(lp), 2)
+                                prev_f = float(prev_c) if prev_c else None
+                                chg_pct = round(((lp_f - prev_f) / prev_f) * 100.0, 2) if prev_f and prev_f > 0 else None
+                                cur_entry = dict(prices.get(sym) or {})
+                                cur_entry["close"] = lp_f
+                                cur_entry["ltp"] = lp_f
+                                if q.get("high"):
+                                    cur_entry["high"] = round(float(q["high"]), 2)
+                                if q.get("low"):
+                                    cur_entry["low"] = round(float(q["low"]), 2)
+                                if chg_pct is not None:
+                                    cur_entry["change_pct"] = chg_pct
+                                cur_entry["data_status"] = "LIVE"
+                                cur_entry["source"] = "SHOONYA_LIVE"
+                                prices[sym] = cur_entry
+                                updated_any = True
+                            if updated_any:
+                                source = "SHOONYA_LIVE"
+                                updated_at = datetime.now(timezone.utc).isoformat()
+                                if isinstance(feed_status, dict):
+                                    feed_status = dict(feed_status)
+                                    feed_status["state"] = "LIVE"
+                                    feed_status["source"] = "SHOONYA_LIVE"
+        except Exception as feed_exc:
+            logger.debug("[Broadcaster] Box C live tick overlay skipped: %s", feed_exc)
+
         try:
             from agents.execution.market_control import is_crypto_forex_enabled
             if not is_crypto_forex_enabled():

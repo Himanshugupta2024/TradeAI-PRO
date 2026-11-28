@@ -280,3 +280,84 @@ def convert_feed_bars_to_df(bars: List[Dict[str, Any]]) -> Optional[pd.DataFrame
     except Exception as exc:
         logger.debug("[FeedClient] Error converting bars to DataFrame: %s", exc)
         return None
+
+
+async def get_feed_session_status(timeout: float = 15.0) -> Dict[str, Any]:
+    """Query Box C Shoonya session status via internal token auth."""
+    url = os.environ.get("FEED_SERVICE_URL", FEED_SERVICE_URL).rstrip("/")
+    if not url:
+        return {"configured": False, "feed_state": "UNCONFIGURED", "detail": "FEED_SERVICE_URL is not set"}
+
+    token = os.environ.get("FEED_INTERNAL_TOKEN", FEED_INTERNAL_TOKEN)
+    if not token:
+        return {"configured": False, "feed_state": "AUTH_UNCONFIGURED", "detail": "FEED_INTERNAL_TOKEN is not set"}
+
+    client = _get_async_client(timeout)
+    t0 = time.perf_counter()
+    try:
+        resp = await client.get(
+            f"{url}/session/status",
+            headers={"X-Internal-Token": token},
+            timeout=timeout,
+        )
+        latency_ms = round((time.perf_counter() - t0) * 1000.0, 1)
+        if resp.status_code == 200:
+            data = resp.json() if isinstance(resp.json(), dict) else {}
+            return {"configured": True, "latency_ms": latency_ms, **data}
+        detail = ""
+        try:
+            detail = str((resp.json() or {}).get("detail") or resp.text)
+        except Exception:
+            detail = resp.text
+        return {
+            "configured": True,
+            "feed_state": "ERROR",
+            "status_code": resp.status_code,
+            "detail": detail,
+            "latency_ms": latency_ms,
+        }
+    except Exception as exc:
+        return {"configured": True, "feed_state": "UNREACHABLE", "detail": str(exc)}
+
+
+async def login_feed_session(payload: Dict[str, Any], timeout: float = 20.0) -> Dict[str, Any]:
+    """Forward operator-supplied Shoonya credentials/OTP to Box C /session/login."""
+    url = os.environ.get("FEED_SERVICE_URL", FEED_SERVICE_URL).rstrip("/")
+    if not url:
+        return {"ok": False, "status_code": 503, "detail": "FEED_SERVICE_URL is not set on Box A"}
+
+    token = os.environ.get("FEED_INTERNAL_TOKEN", FEED_INTERNAL_TOKEN)
+    if not token:
+        return {"ok": False, "status_code": 503, "detail": "FEED_INTERNAL_TOKEN is not set on Box A"}
+
+    client = _get_async_client(timeout)
+    t0 = time.perf_counter()
+    try:
+        resp = await client.post(
+            f"{url}/session/login",
+            json=payload,
+            headers={"X-Internal-Token": token},
+            timeout=timeout,
+        )
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        body = {}
+        try:
+            body = resp.json() if resp.content else {}
+        except Exception:
+            body = {}
+        if resp.status_code == 200:
+            try:
+                from data.providers.base import get_shared_provider_health
+                h = get_shared_provider_health("shoonya_feed")
+                h.cooldown_until = 0.0
+                h.record_success(latency_ms)
+            except Exception:
+                pass
+            return {"ok": True, "status_code": 200, "latency_ms": round(latency_ms, 1), **(body if isinstance(body, dict) else {})}
+        return {
+            "ok": False,
+            "status_code": resp.status_code,
+            "detail": (body.get("detail") if isinstance(body, dict) else None) or resp.text or f"HTTP {resp.status_code}",
+        }
+    except Exception as exc:
+        return {"ok": False, "status_code": 502, "detail": f"Box C feed connection failed: {exc}"}

@@ -1136,6 +1136,15 @@
           </div>
           <button class="btn-action btn-secondary" onclick="executeTestTelegram()">Send Test Ping</button>
         </div>
+
+        <!-- Shoonya Live Data Feed -->
+        <div class="action-card">
+          <div class="action-info">
+            <h4>⚡ Shoonya Live Market Feed</h4>
+            <p id="shoonyaFeedSummary">Connect your Finvasia Shoonya ID &amp; TOTP in Box C memory to stream real-time NSE quotes across 40 symbols.</p>
+          </div>
+          <button class="btn-action btn-primary" onclick="openShoonyaConnectFromAdmin()">Connect Shoonya ID</button>
+        </div>
       </div>
     </section>
 
@@ -2804,6 +2813,32 @@
       }
     }
 
+    async function refreshShoonyaAdminCard() {
+      const el = document.getElementById('shoonyaFeedSummary');
+      if (!el) return;
+      try {
+        const res = await apiCall('/api/admin/feed/shoonya-status');
+        const st = String(res?.feed_state || 'UNKNOWN').toUpperCase();
+        const uid = res?.masked_uid ? ` (${res.masked_uid})` : '';
+        el.textContent = `Box C Feed State: ${st}${uid} · Tracked: ${res?.symbols_tracked ?? 0} · Ticks: ${res?.total_ticks ?? 0}`;
+      } catch (e) {
+        el.textContent = `Box C feed status unavailable: ${e.message}`;
+      }
+    }
+
+    function openShoonyaConnectFromAdmin() {
+      if (typeof window.openShoonyaLoginModal === 'function') {
+        window.openShoonyaLoginModal({
+          hideAdminKeyIfPresent: true,
+          onSuccess: () => {
+            logMessage('Shoonya live WebSocket connected on Box C.', 'ok');
+            refreshShoonyaAdminCard();
+            fetchAllTelemetry();
+          },
+        });
+      }
+    }
+
     // ── Operator panel orchestrator ──────────────────────────
     async function loadOperatorPanels() {
       if (_operatorInFlight) return;
@@ -2816,6 +2851,7 @@
           loadRetrainJobs(),
           loadLearningPanels(),
           loadAutonomousFeed(),
+          refreshShoonyaAdminCard(),
         ]);
       } finally {
         _operatorInFlight = false;
@@ -2849,5 +2885,6 @@
       }
     });
   </script>
+  <script src="/static/shoonya_modal.js?v=1"></script>
 </body>
 </html>

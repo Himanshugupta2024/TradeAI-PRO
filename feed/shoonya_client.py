@@ -26,6 +26,17 @@ SHOONYA_HOST = "https://api.shoonya.com/NorenWClientAPI/"
 SHOONYA_WS = "wss://api.shoonya.com/NorenWSAPI/"
 
 
+DEFAULT_LIVE_WATCHLIST: List[str] = [
+    "NIFTY 50", "NIFTY BANK", "RELIANCE", "TCS", "INFY", "HDFCBANK",
+    "ICICIBANK", "SBIN", "BHARTIARTL", "KOTAKBANK", "LT", "ITC",
+    "AXISBANK", "HINDUNILVR", "BAJFINANCE", "MARUTI", "TITAN", "WIPRO",
+    "TATAMOTORS", "SUNPHARMA", "ULTRACEMCO", "ADANIENT", "ADANIPORTS",
+    "ADANIPOWER", "ADANIGREEN", "TATASTEEL", "JSWSTEEL", "HINDALCO",
+    "COALINDIA", "NTPC", "POWERGRID", "ONGC", "BPCL", "IOC", "GAIL",
+    "TECHM", "HCLTECH", "DRREDDY", "CIPLA", "SWIGGY",
+]
+
+
 class ShoonyaFeedManager:
     """
     Manages Shoonya API lifecycle: authentication, token mapping,
@@ -40,10 +51,7 @@ class ShoonyaFeedManager:
     ):
         self.bar_builder = bar_builder or BarBuilder()
         self.token_master = token_master or TokenMaster()
-        self.watchlist = watchlist or [
-            "NIFTY 50", "NIFTY BANK", "RELIANCE", "TCS", "INFY", "HDFCBANK",
-            "ICICIBANK", "SBIN", "BHARTIARTL", "ITC", "KOTAKBANK", "LT"
-        ]
+        self.watchlist = watchlist or list(DEFAULT_LIVE_WATCHLIST)
 
         # Credentials
         self.uid = os.environ.get("SHOONYA_USERID", "").strip()
@@ -58,8 +66,10 @@ class ShoonyaFeedManager:
         self.is_connected = False
         self.is_simulated = False
         self.last_login_time: Optional[datetime] = None
+        self.last_error: Optional[str] = None
         self.api = None
         self._sim_task = None
+        self._sim_stop_event = threading.Event()
         self._stop_event = threading.Event()
         self._reconnect_lock = threading.Lock()
         self._reconnecting = False
@@ -106,17 +116,88 @@ class ShoonyaFeedManager:
             if isinstance(res, dict) and res.get("stat") == "Ok":
                 self.last_login_time = datetime.now(timezone.utc)
                 self.is_simulated = False
+                self.last_error = None
                 logger.info("[Shoonya] Login successful. Session token acquired.")
                 return True
             else:
+                self.last_error = str((res or {}).get("emsg") if isinstance(res, dict) else res or "Login rejected")
                 logger.error("[Shoonya] Login failed response: %s", res)
                 self.is_simulated = True
                 return False
 
         except Exception as exc:
+            self.last_error = str(exc)
             logger.error("[Shoonya] Exception during login: %s", exc)
             self.is_simulated = True
             return False
+
+    def masked_uid(self) -> str:
+        uid = (self.uid or "").strip()
+        if not uid:
+            return ""
+        if len(uid) <= 4:
+            return uid[0] + "*" * (len(uid) - 1)
+        return uid[:2] + "*" * (len(uid) - 4) + uid[-2:]
+
+    def stop_simulation(self) -> None:
+        """Stop the synthetic tick thread cleanly when switching to a live broker session."""
+        self._sim_stop_event.set()
+        self.is_simulated = False
+
+    def login_interactive(
+        self,
+        *,
+        userid: str = "",
+        password: str = "",
+        api_key: str = "",
+        vendor_code: str = "",
+        totp: str = "",
+        usertoken: str = "",
+    ) -> tuple[bool, str]:
+        """Apply operator-supplied credentials/OTP/token in memory and start live Shoonya WS."""
+        if userid.strip():
+            self.uid = userid.strip()
+        if password.strip():
+            self.password = password.strip()
+        if api_key.strip():
+            self.api_key = api_key.strip()
+        if vendor_code.strip():
+            self.vendor_code = vendor_code.strip()
+        if totp.strip():
+            self.totp_secret = totp.strip()
+
+        self.last_error = None
+        logged_in = False
+        if usertoken.strip():
+            logged_in = self.login_with_token(usertoken.strip())
+        else:
+            if not self.has_credentials():
+                missing = [
+                    name
+                    for name, val in (
+                        ("userid", self.uid),
+                        ("password", self.password),
+                        ("api_key", self.api_key),
+                        ("vendor_code", self.vendor_code),
+                        ("totp", self.totp_secret),
+                    )
+                    if not val
+                ]
+                msg = f"Missing required Shoonya fields: {', '.join(missing)}"
+                self.last_error = msg
+                return False, msg
+            logged_in = self.login()
+
+        if not logged_in or self.api is None:
+            return False, self.last_error or "Shoonya authentication failed"
+
+        self.stop_simulation()
+        self.stop_ws_only()
+        self._reconnect_attempts = 0
+        self._start_websocket()
+        if self.has_credentials():
+            self._start_session_watchdog()
+        return True, f"Shoonya live session active for {self.masked_uid() or 'operator'}"
 
     def login_with_token(self, usertoken: str) -> bool:
         """Authenticate using an active 24-hour Shoonya user token."""
@@ -374,6 +455,7 @@ class ShoonyaFeedManager:
         Background simulation loop when credentials are not configured or during testing.
         Generates realistic ticks around anchor prices.
         """
+        self._sim_stop_event.clear()
         self.is_simulated = True
         self.is_connected = True
         logger.info("[Shoonya] Starting simulated tick generator for %d symbols", len(self.watchlist))
@@ -400,7 +482,7 @@ class ShoonyaFeedManager:
             day_vol = {sym: 50000.0 for sym in self.watchlist}
             cur_price = {sym: anchors.get(sym, 1000.0) for sym in self.watchlist}
 
-            while not self._stop_event.is_set():
+            while not self._stop_event.is_set() and not self._sim_stop_event.is_set():
                 for sym in self.watchlist:
                     anchor = anchors.get(sym, 1000.0)
                     p = cur_price[sym]
