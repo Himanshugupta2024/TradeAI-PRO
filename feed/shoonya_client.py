@@ -181,6 +181,28 @@ class ShoonyaFeedManager:
         self._sim_stop_event.set()
         self.is_simulated = False
 
+    @staticmethod
+    def _extract_auth_code(raw: str) -> str:
+        """Extract raw OAuth authorization code from a query token or full redirect URL."""
+        text = (raw or "").strip()
+        if not text:
+            return ""
+        if "code=" in text:
+            try:
+                from urllib.parse import parse_qs, urlparse
+
+                parsed = urlparse(text)
+                qs = parse_qs(parsed.query)
+                if qs.get("code") and qs["code"][0].strip():
+                    return qs["code"][0].strip()
+                # Handle bare query fragments such as "?code=xyz" or "code=xyz&state=..."
+                raw_qs = parse_qs(text.lstrip("?"))
+                if raw_qs.get("code") and raw_qs["code"][0].strip():
+                    return raw_qs["code"][0].strip()
+            except Exception:
+                pass
+        return text
+
     def login_interactive(
         self,
         *,
@@ -190,8 +212,9 @@ class ShoonyaFeedManager:
         vendor_code: str = "",
         totp: str = "",
         usertoken: str = "",
+        auth_code: str = "",
     ) -> tuple[bool, str]:
-        """Apply operator-supplied credentials/OTP/token in memory and start live Shoonya WS."""
+        """Apply operator-supplied credentials/OAuth/OTP/token in memory and start live Shoonya WS."""
         if userid.strip():
             self.uid = userid.strip()
         if password.strip():
@@ -202,11 +225,24 @@ class ShoonyaFeedManager:
             self.vendor_code = vendor_code.strip()
         if totp.strip():
             self.totp_secret = totp.strip()
+        if not self.uid and self.vendor_code.upper().endswith("_U"):
+            self.uid = self.vendor_code[:-2]
 
         self.last_error = None
         logged_in = False
         if usertoken.strip():
             logged_in = self.login_with_token(usertoken.strip())
+        elif auth_code.strip():
+            clean_code = self._extract_auth_code(auth_code)
+            if not self.uid or not self.api_key:
+                missing = [k for k, v in (("userid", self.uid), ("api_key (Secret Code)", self.api_key)) if not v]
+                msg = f"Missing required Shoonya OAuth fields: {', '.join(missing)}"
+                self.last_error = msg
+                return False, msg
+            token = self.exchange_auth_code(clean_code)
+            if not token:
+                return False, self.last_error or "Shoonya OAuth GenAcsTok exchange failed"
+            logged_in = self.login_with_token(token)
         else:
             if not self.has_credentials():
                 missing = [
@@ -243,13 +279,16 @@ class ShoonyaFeedManager:
             from NorenRestApiPy.NorenApi import NorenApi
 
             self.api = NorenApi(host=SHOONYA_HOST, websocket=SHOONYA_WS)
-            self.api.set_session(userid=self.uid, password=self.password, usertoken=usertoken)
+            uid_val = self.uid or (self.vendor_code[:-2] if self.vendor_code.upper().endswith("_U") else self.vendor_code)
+            self.api.set_session(userid=uid_val, password=self.password, usertoken=usertoken)
             self.usertoken = usertoken
             self.last_login_time = datetime.now(timezone.utc)
             self.is_simulated = False
-            logger.info("[Shoonya] User session token set successfully for user: %s", self.uid)
+            self.last_error = None
+            logger.info("[Shoonya] User session token set successfully for user: %s", uid_val)
             return True
         except Exception as exc:
+            self.last_error = str(exc)
             logger.error("[Shoonya] Failed to set user token: %s", exc)
             return False
 
@@ -258,28 +297,46 @@ class ShoonyaFeedManager:
         import json
         import requests
 
+        code_clean = self._extract_auth_code(auth_code)
+        if not code_clean:
+            self.last_error = "Missing Shoonya OAuth authorization code"
+            return None
+
         client_id = self.vendor_code or f"{self.uid}_U"
-        raw_str = f"{client_id}{self.api_key}{auth_code}"
+        uid_val = self.uid or (client_id[:-2] if client_id.upper().endswith("_U") else client_id)
+        raw_str = f"{client_id}{self.api_key}{code_clean}"
         checksum = hashlib.sha256(raw_str.encode("utf-8")).hexdigest()
 
-        url = f"{SHOONYA_HOST}GenAcsTok"
+        url = f"{SHOONYA_HOST.rstrip('/')}/GenAcsTok"
         payload = {
-            "uid": self.uid,
-            "code": auth_code,
+            "uid": uid_val,
+            "code": code_clean,
             "appkey": checksum,
         }
         try:
-            res = requests.post(url, data={"jData": json.dumps(payload)}, timeout=10)
-            if res.status_code == 200:
+            res = requests.post(url, data={"jData": json.dumps(payload)}, timeout=15)
+            data = None
+            try:
                 data = res.json()
-                if isinstance(data, dict) and data.get("stat") == "Ok" and data.get("susertoken"):
-                    self.usertoken = data["susertoken"]
-                    logger.info("[Shoonya] Successfully exchanged OAuth auth_code for susertoken")
-                    return self.usertoken
-                logger.error("[Shoonya] OAuth exchange failed with message: %s", data)
-            else:
-                logger.error("[Shoonya] OAuth exchange HTTP error %s: %s", res.status_code, res.text)
+            except Exception:
+                data = None
+
+            if res.status_code == 200 and isinstance(data, dict) and data.get("stat") == "Ok" and data.get("susertoken"):
+                self.usertoken = str(data["susertoken"])
+                self.last_error = None
+                logger.info("[Shoonya] Successfully exchanged OAuth auth_code for susertoken")
+                return self.usertoken
+
+            emsg = ""
+            if isinstance(data, dict):
+                emsg = str(data.get("emsg") or data.get("message") or "").strip()
+            if not emsg:
+                snippet = (getattr(res, "text", "") or "").strip()[:160]
+                emsg = f"GenAcsTok HTTP {res.status_code}: {snippet}" if snippet else f"GenAcsTok HTTP {res.status_code} failed"
+            self.last_error = emsg
+            logger.error("[Shoonya] OAuth exchange failed (HTTP %s): %s", res.status_code, emsg)
         except Exception as exc:
+            self.last_error = str(exc)
             logger.error("[Shoonya] Exception during OAuth exchange: %s", exc)
         return None
 

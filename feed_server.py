@@ -9,6 +9,7 @@ import hmac
 import logging
 import os
 import threading
+import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
@@ -270,11 +271,35 @@ class ShoonyaSessionLoginRequest(BaseModel):
     vendor_code: Optional[str] = None
     totp: Optional[str] = None
     usertoken: Optional[str] = None
+    auth_code: Optional[str] = None
+
+
+_EGRESS_IP_CACHE: Dict[str, Any] = {"ip": None, "ts": 0.0}
+
+
+def _get_cached_egress_ip() -> Optional[str]:
+    """Best-effort cached public IPv4 lookup for Shoonya Static IP whitelisting guidance."""
+    now = time.time()
+    if _EGRESS_IP_CACHE["ip"] and (now - float(_EGRESS_IP_CACHE["ts"])) < 300.0:
+        return str(_EGRESS_IP_CACHE["ip"])
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen("https://api.ipify.org", timeout=1.5) as r:
+            ip = r.read().decode("utf-8", errors="ignore").strip()
+            if ip and len(ip) <= 45:
+                _EGRESS_IP_CACHE["ip"] = ip
+                _EGRESS_IP_CACHE["ts"] = now
+                return ip
+    except Exception:
+        pass
+    return _EGRESS_IP_CACHE["ip"]
 
 
 def _session_status_payload() -> Dict[str, Any]:
     stats = bar_builder.get_stats()
     feed_state = "OFFLINE"
+    oauth_client_id = ""
     if feed_manager:
         if feed_manager.is_simulated:
             feed_state = "SIMULATED"
@@ -282,12 +307,24 @@ def _session_status_payload() -> Dict[str, Any]:
             feed_state = "LIVE"
         elif feed_manager.last_login_time is not None:
             feed_state = "CONNECTING"
+        vc = str(getattr(feed_manager, "vendor_code", "") or "").strip()
+        uid = str(getattr(feed_manager, "uid", "") or "").strip()
+        api_key = str(getattr(feed_manager, "api_key", "") or "").strip()
+        oauth_client_id = vc or (f"{uid}_U" if uid else "")
+    else:
+        uid = ""
+        vc = ""
+        api_key = ""
     return {
         "status": "ok",
         "feed_source": "SHOONYA" if feed_state == "LIVE" else "SIMULATED",
         "feed_state": feed_state,
         "has_credentials": bool(feed_manager and feed_manager.has_credentials()),
+        "has_oauth_credentials": bool(feed_manager and (uid or vc) and api_key),
         "masked_uid": feed_manager.masked_uid() if feed_manager else "",
+        "oauth_client_id": oauth_client_id,
+        "oauth_login_url": f"https://api.shoonya.com/OAuthlogin/authorize/oauth?client_id={oauth_client_id}" if oauth_client_id else "",
+        "egress_ip": _get_cached_egress_ip(),
         "watchlist_count": len(feed_manager.watchlist) if feed_manager else 0,
         "symbols_tracked": stats["symbols_tracked"],
         "total_ticks": stats["total_ticks"],
@@ -310,7 +347,7 @@ def session_login(
     req: ShoonyaSessionLoginRequest,
     x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
 ) -> Dict[str, Any]:
-    """Authenticate Box C with operator-provided Shoonya credentials/OTP and start live WS."""
+    """Authenticate Box C with operator-provided Shoonya OAuth/token/OTP and start live WS."""
     _verify_auth(x_internal_token)
     if not feed_manager:
         raise HTTPException(status_code=503, detail="Feed manager not initialized")
@@ -322,6 +359,7 @@ def session_login(
         vendor_code=req.vendor_code or "",
         totp=req.totp or "",
         usertoken=req.usertoken or "",
+        auth_code=req.auth_code or "",
     )
     if not ok:
         raise HTTPException(status_code=401, detail=msg)

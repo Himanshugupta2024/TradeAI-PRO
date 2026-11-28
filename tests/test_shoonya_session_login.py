@@ -184,3 +184,92 @@ def test_shoonya_login_preserves_exact_broker_emsg(monkeypatch):
     assert mgr.usertoken == "tok-abc-123"
     assert mgr.is_simulated is False
     assert mgr.last_error is None
+
+
+def test_shoonya_oauth_auth_code_exchange_and_emsg(monkeypatch):
+    import hashlib
+    import json
+    import requests
+    from feed.bar_builder import BarBuilder
+    from feed.shoonya_client import ShoonyaFeedManager
+    from feed.token_master import TokenMaster
+
+    mgr = ShoonyaFeedManager(bar_builder=BarBuilder(), token_master=TokenMaster())
+    mgr.uid = "FN243453"
+    mgr.vendor_code = "FN243453_U"
+    mgr.api_key = "mysecretkey"
+    mgr.is_simulated = True
+
+    monkeypatch.setattr(mgr, "_start_websocket", lambda: None)
+    monkeypatch.setattr(mgr, "_start_session_watchdog", lambda: None)
+    monkeypatch.setattr(mgr, "_start_fno_rotator", lambda: None)
+
+    class _Resp:
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self._body = body
+            self.text = json.dumps(body)
+
+        def json(self):
+            return self._body
+
+    seen = {}
+
+    def _ok_gen(url, data=None, timeout=15):
+        seen["url"] = url
+        seen["jdata"] = json.loads(data["jData"])
+        return _Resp(200, {"stat": "Ok", "susertoken": "oauth-live-tok"})
+
+    monkeypatch.setattr(requests, "post", _ok_gen)
+    ok, msg = mgr.login_interactive(
+        auth_code="https://tradeai-pro.tradingpro.workers.dev/?code=auth_999&uid=FN243453"
+    )
+    assert ok is True
+    assert "FN****53" in msg
+    assert mgr.usertoken == "oauth-live-tok"
+    assert mgr.is_simulated is False
+    assert seen["url"].endswith("/GenAcsTok")
+    expected_hash = hashlib.sha256(b"FN243453_Umysecretkeyauth_999").hexdigest()
+    assert seen["jdata"] == {"uid": "FN243453", "code": "auth_999", "appkey": expected_hash}
+
+    # Exact broker emsg preserved on IP/code failure
+    def _bad_gen(url, data=None, timeout=15):
+        return _Resp(400, {"stat": "Not_Ok", "emsg": "Invalid IP Address"})
+
+    monkeypatch.setattr(requests, "post", _bad_gen)
+    ok2, msg2 = mgr.login_interactive(auth_code="expired_code")
+    assert ok2 is False
+    assert msg2 == "Invalid IP Address"
+
+
+def test_feed_server_session_status_exposes_oauth_metadata(monkeypatch):
+    import feed_server
+
+    monkeypatch.setenv("FEED_INTERNAL_TOKEN", "feed-secret-xyz")
+    monkeypatch.setattr(feed_server, "_get_cached_egress_ip", lambda: "35.160.1.2")
+
+    class _OAuthMgr:
+        is_simulated = True
+        is_connected = False
+        last_login_time = None
+        last_error = None
+        watchlist = ["NIFTY 50"]
+        uid = "FN243453"
+        vendor_code = "FN243453_U"
+        api_key = "secret"
+
+        def has_credentials(self):
+            return False
+
+        def masked_uid(self):
+            return "FN***53"
+
+    monkeypatch.setattr(feed_server, "feed_manager", _OAuthMgr())
+    client = TestClient(feed_server.app)
+    resp = client.get("/session/status", headers={"X-Internal-Token": "feed-secret-xyz"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["oauth_client_id"] == "FN243453_U"
+    assert "FN243453_U" in data["oauth_login_url"]
+    assert data["has_oauth_credentials"] is True
+    assert data["egress_ip"] == "35.160.1.2"

@@ -1231,6 +1231,7 @@ class ShoonyaFeedLoginRequest(BaseModel):
     vendor_code: Optional[str] = None
     totp: Optional[str] = None
     usertoken: Optional[str] = None
+    auth_code: Optional[str] = None
 
 
 @router.get("/api/admin/feed/shoonya-status", dependencies=[Depends(require_admin)])
@@ -1242,7 +1243,7 @@ async def get_shoonya_feed_status():
 
 @router.post("/api/admin/feed/shoonya-login", dependencies=[Depends(require_admin)])
 async def login_shoonya_feed(payload: ShoonyaFeedLoginRequest):
-    """Connect Box C live Shoonya WebSocket using operator-supplied credentials/OTP/token."""
+    """Connect Box C live Shoonya WebSocket using operator-supplied OAuth/token/OTP."""
     from api.feed_client import login_feed_session
     res = await login_feed_session(
         {
@@ -1252,6 +1253,7 @@ async def login_shoonya_feed(payload: ShoonyaFeedLoginRequest):
             "vendor_code": payload.vendor_code or "",
             "totp": payload.totp or "",
             "usertoken": payload.usertoken or "",
+            "auth_code": payload.auth_code or "",
         }
     )
     if not res.get("ok"):

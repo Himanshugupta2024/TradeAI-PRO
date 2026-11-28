@@ -2,7 +2,7 @@
   'use strict';
 
   let _modalEl = null;
-  let _activeMode = 'totp'; // 'totp' | 'token'
+  let _activeMode = 'oauth'; // 'oauth' | 'token' | 'totp'
   let _onSuccessCb = null;
 
   function _apiBase() {
@@ -18,6 +18,21 @@
     } catch (_) {
       return '';
     }
+  }
+
+  function _extractAuthCode(raw) {
+    const val = (raw || '').trim();
+    if (!val) return '';
+    if (val.includes('code=')) {
+      try {
+        const u = new URL(val.startsWith('http') ? val : `https://dummy.local/${val.replace(/^\?/, '?')}`);
+        const c = (u.searchParams.get('code') || '').trim();
+        if (c) return c;
+      } catch (_) {}
+      const m = val.match(/[?&]?code=([^&\s#]+)/i);
+      if (m && m[1]) return decodeURIComponent(m[1]).trim();
+    }
+    return val;
   }
 
   function _ensureModal() {
@@ -37,7 +52,7 @@
     ].join(';');
 
     wrap.innerHTML = `
-      <div style="background:var(--surface-1,#0e1118);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:10px;padding:1.35rem;max-width:460px;width:100%;box-shadow:var(--shadow-lg,0 25px 50px -12px rgba(0,0,0,0.75));color:var(--text-1,#f1f5f9);font-family:var(--font-sans,Inter,system-ui,sans-serif);">
+      <div style="background:var(--surface-1,#0e1118);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:10px;padding:1.35rem;max-width:480px;width:100%;box-shadow:var(--shadow-lg,0 25px 50px -12px rgba(0,0,0,0.75));color:var(--text-1,#f1f5f9);font-family:var(--font-sans,Inter,system-ui,sans-serif);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.55rem;">
           <h3 style="margin:0;font-size:1.05rem;font-weight:700;display:flex;align-items:center;gap:8px;color:var(--text-1,#f1f5f9);">
             <span>⚡</span> Shoonya Live Feed Connect
@@ -48,14 +63,15 @@
           Paper trading mode stays active (market-data ticks only, zero live orders). Credentials are sent once to Box C memory and never saved in browser storage.
         </p>
 
-        <div id="shStatusBanner" style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface-2,#141923);border:1px solid var(--border-subtle,rgba(148,163,184,0.14));border-radius:8px;padding:0.55rem 0.75rem;margin-bottom:0.85rem;font-size:0.76rem;">
-          <span id="shStatusText" style="color:var(--text-2,#94a3b8);">Status: Not checked yet</span>
-          <button type="button" id="shRefreshStatusBtn" style="background:var(--surface-3,#1b2230);color:var(--text-1,#f1f5f9);border:1px solid var(--border-subtle,rgba(148,163,184,0.14));border-radius:5px;padding:3px 8px;font-size:0.72rem;cursor:pointer;">Check</button>
+        <div id="shStatusBanner" style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface-2,#141923);border:1px solid var(--border-subtle,rgba(148,163,184,0.14));border-radius:8px;padding:0.55rem 0.75rem;margin-bottom:0.85rem;font-size:0.75rem;">
+          <span id="shStatusText" style="color:var(--text-2,#94a3b8);word-break:break-word;">Status: Not checked yet</span>
+          <button type="button" id="shRefreshStatusBtn" style="flex-shrink:0;background:var(--surface-3,#1b2230);color:var(--text-1,#f1f5f9);border:1px solid var(--border-subtle,rgba(148,163,184,0.14));border-radius:5px;padding:3px 8px;font-size:0.72rem;cursor:pointer;">Check</button>
         </div>
 
         <div style="display:flex;gap:6px;margin-bottom:0.85rem;">
-          <button type="button" id="shTabTotp" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-accent,rgba(34,211,238,0.4));background:var(--accent-brand-soft,rgba(34,211,238,0.12));color:var(--accent-brand,#22d3ee);font-size:0.76rem;font-weight:600;cursor:pointer;">ID + Password + TOTP</button>
-          <button type="button" id="shTabToken" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-subtle,rgba(148,163,184,0.16));background:var(--surface-2,#141923);color:var(--text-2,#94a3b8);font-size:0.76rem;font-weight:600;cursor:pointer;">Daily User Token</button>
+          <button type="button" id="shTabOauth" style="flex:1.1;padding:6px 8px;border-radius:6px;border:1px solid var(--border-accent,rgba(34,211,238,0.4));background:var(--accent-brand-soft,rgba(34,211,238,0.12));color:var(--accent-brand,#22d3ee);font-size:0.74rem;font-weight:600;cursor:pointer;">OAuth Login</button>
+          <button type="button" id="shTabToken" style="flex:1;padding:6px 8px;border-radius:6px;border:1px solid var(--border-subtle,rgba(148,163,184,0.16));background:var(--surface-2,#141923);color:var(--text-2,#94a3b8);font-size:0.74rem;font-weight:600;cursor:pointer;">Daily Token</button>
+          <button type="button" id="shTabTotp" style="flex:0.9;padding:6px 8px;border-radius:6px;border:1px solid var(--border-subtle,rgba(148,163,184,0.16));background:var(--surface-2,#141923);color:var(--text-2,#94a3b8);font-size:0.74rem;font-weight:600;cursor:pointer;">Legacy TOTP</button>
         </div>
 
         <form id="shLoginForm" autocomplete="off">
@@ -64,7 +80,28 @@
             <input type="password" id="shAdminKey" autocomplete="off" placeholder="Enter Admin Key" style="width:100%;box-sizing:border-box;padding:0.5rem 0.7rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
           </div>
 
-          <div id="shTotpFields" style="display:grid;grid-template-columns:1fr 1fr;gap:0.55rem;margin-bottom:0.65rem;">
+          <div id="shOauthFields" style="display:block;margin-bottom:0.65rem;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.55rem;margin-bottom:0.55rem;">
+              <div>
+                <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">OAuth Client ID</label>
+                <input type="text" id="shOauthClientId" autocomplete="off" spellcheck="false" placeholder="e.g. FN243453_U (blank = env)" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
+              </div>
+              <div>
+                <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">Secret Code</label>
+                <input type="password" id="shOauthSecret" autocomplete="off" placeholder="Blank = keep Box C env" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:0.55rem;padding:0.5rem 0.65rem;background:var(--surface-2,#141923);border:1px solid var(--border-subtle,rgba(148,163,184,0.16));border-radius:6px;">
+              <span style="font-size:0.72rem;color:var(--text-2,#94a3b8);line-height:1.35;">Step 1: Log in at Shoonya — you redirect right back here with <code style="color:var(--accent-brand,#22d3ee);">?code=...</code>.</span>
+              <button type="button" id="shOpenOauthBtn" style="flex-shrink:0;padding:0.42rem 0.7rem;background:var(--accent-brand-soft,rgba(34,211,238,0.15));color:var(--accent-brand,#22d3ee);border:1px solid var(--border-accent,rgba(34,211,238,0.4));border-radius:6px;font-size:0.74rem;font-weight:700;cursor:pointer;">Open OAuth ↗</button>
+            </div>
+            <div>
+              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">Step 2: OAuth Code or Full Redirect URL</label>
+              <input type="text" id="shAuthCode" autocomplete="off" spellcheck="false" placeholder="Auto-filled on redirect, or paste ?code=... URL" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
+            </div>
+          </div>
+
+          <div id="shTotpFields" style="display:none;grid-template-columns:1fr 1fr;gap:0.55rem;margin-bottom:0.65rem;">
             <div>
               <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">Shoonya User ID</label>
               <input type="text" id="shUserId" autocomplete="off" spellcheck="false" placeholder="e.g. FA12345 (blank = keep env)" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
@@ -88,6 +125,10 @@
           </div>
 
           <div id="shTokenFields" style="display:none;margin-bottom:0.65rem;">
+            <div style="margin-bottom:0.5rem;">
+              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">Shoonya User ID</label>
+              <input type="text" id="shTokenUserId" autocomplete="off" spellcheck="false" placeholder="e.g. FN243453 (blank = keep env)" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
+            </div>
             <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">Shoonya Daily susertoken</label>
             <input type="password" id="shUserToken" autocomplete="off" placeholder="Paste today's susertoken" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
           </div>
@@ -111,29 +152,47 @@
     document.getElementById('shCloseBtn').addEventListener('click', window.closeShoonyaLoginModal);
     document.getElementById('shCancelBtn').addEventListener('click', window.closeShoonyaLoginModal);
     document.getElementById('shRefreshStatusBtn').addEventListener('click', () => window.refreshShoonyaStatus());
-    document.getElementById('shTabTotp').addEventListener('click', () => _setMode('totp'));
+    document.getElementById('shTabOauth').addEventListener('click', () => _setMode('oauth'));
     document.getElementById('shTabToken').addEventListener('click', () => _setMode('token'));
+    document.getElementById('shTabTotp').addEventListener('click', () => _setMode('totp'));
+    document.getElementById('shOpenOauthBtn').addEventListener('click', _openOauthPage);
     document.getElementById('shLoginForm').addEventListener('submit', _submitShoonyaLogin);
     return wrap;
   }
 
-  function _setMode(mode) {
-    _activeMode = mode === 'token' ? 'token' : 'totp';
-    const totpBtn = document.getElementById('shTabTotp');
-    const tokBtn = document.getElementById('shTabToken');
-    const totpBox = document.getElementById('shTotpFields');
-    const tokBox = document.getElementById('shTokenFields');
-    if (_activeMode === 'token') {
-      totpBox.style.display = 'none';
-      tokBox.style.display = 'block';
-      tokBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-accent,rgba(34,211,238,0.4));background:var(--accent-brand-soft,rgba(34,211,238,0.12));color:var(--accent-brand,#22d3ee);font-size:0.76rem;font-weight:600;cursor:pointer;';
-      totpBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-subtle,rgba(148,163,184,0.16));background:var(--surface-2,#141923);color:var(--text-2,#94a3b8);font-size:0.76rem;font-weight:600;cursor:pointer;';
-    } else {
-      totpBox.style.display = 'grid';
-      tokBox.style.display = 'none';
-      totpBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-accent,rgba(34,211,238,0.4));background:var(--accent-brand-soft,rgba(34,211,238,0.12));color:var(--accent-brand,#22d3ee);font-size:0.76rem;font-weight:600;cursor:pointer;';
-      tokBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-subtle,rgba(148,163,184,0.16));background:var(--surface-2,#141923);color:var(--text-2,#94a3b8);font-size:0.76rem;font-weight:600;cursor:pointer;';
+  function _openOauthPage() {
+    const cidEl = document.getElementById('shOauthClientId');
+    let clientId = cidEl ? cidEl.value.trim() : '';
+    if (!clientId) {
+      const uidFallback = (document.getElementById('shUserId')?.value || '').trim();
+      clientId = uidFallback ? (uidFallback.endsWith('_U') ? uidFallback : `${uidFallback}_U`) : 'FN243453_U';
     }
+    const oauthUrl = `https://api.shoonya.com/OAuthlogin/authorize/oauth?client_id=${encodeURIComponent(clientId)}`;
+    const popup = window.open(oauthUrl, '_blank', 'noopener');
+    if (!popup) {
+      window.location.href = oauthUrl;
+    }
+  }
+
+  function _setMode(mode) {
+    _activeMode = mode === 'token' ? 'token' : (mode === 'totp' ? 'totp' : 'oauth');
+    const oauthBtn = document.getElementById('shTabOauth');
+    const tokBtn = document.getElementById('shTabToken');
+    const totpBtn = document.getElementById('shTabTotp');
+    const oauthBox = document.getElementById('shOauthFields');
+    const tokBox = document.getElementById('shTokenFields');
+    const totpBox = document.getElementById('shTotpFields');
+
+    const activeCss = (flex) => `flex:${flex};padding:6px 8px;border-radius:6px;border:1px solid var(--border-accent,rgba(34,211,238,0.4));background:var(--accent-brand-soft,rgba(34,211,238,0.12));color:var(--accent-brand,#22d3ee);font-size:0.74rem;font-weight:600;cursor:pointer;`;
+    const idleCss = (flex) => `flex:${flex};padding:6px 8px;border-radius:6px;border:1px solid var(--border-subtle,rgba(148,163,184,0.16));background:var(--surface-2,#141923);color:var(--text-2,#94a3b8);font-size:0.74rem;font-weight:600;cursor:pointer;`;
+
+    oauthBox.style.display = _activeMode === 'oauth' ? 'block' : 'none';
+    tokBox.style.display = _activeMode === 'token' ? 'block' : 'none';
+    totpBox.style.display = _activeMode === 'totp' ? 'grid' : 'none';
+
+    oauthBtn.style.cssText = _activeMode === 'oauth' ? activeCss('1.1') : idleCss('1.1');
+    tokBtn.style.cssText = _activeMode === 'token' ? activeCss('1') : idleCss('1');
+    totpBtn.style.cssText = _activeMode === 'totp' ? activeCss('0.9') : idleCss('0.9');
   }
 
   function _showFeedback(msg, isError) {
@@ -147,7 +206,7 @@
   }
 
   function _clearSensitiveInputs() {
-    ['shPassword', 'shApiKey', 'shTotp', 'shUserToken'].forEach((id) => {
+    ['shPassword', 'shApiKey', 'shOauthSecret', 'shAuthCode', 'shTotp', 'shUserToken'].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
@@ -164,9 +223,25 @@
     }
 
     const payload = {};
-    if (_activeMode === 'token') {
+    if (_activeMode === 'oauth') {
+      const clientId = (document.getElementById('shOauthClientId')?.value || '').trim();
+      const secret = (document.getElementById('shOauthSecret')?.value || '').trim();
+      const code = _extractAuthCode(document.getElementById('shAuthCode')?.value || '');
+      if (clientId) {
+        payload.vendor_code = clientId;
+        if (clientId.toUpperCase().endsWith('_U')) {
+          payload.userid = clientId.slice(0, -2);
+        }
+      }
+      if (secret) payload.api_key = secret;
+      if (!code) {
+        _showFeedback('Click "Open OAuth ↗" first, or paste the Shoonya ?code=... redirect URL.', true);
+        return;
+      }
+      payload.auth_code = code;
+    } else if (_activeMode === 'token') {
       payload.usertoken = (document.getElementById('shUserToken')?.value || '').trim();
-      const uid = (document.getElementById('shUserId')?.value || '').trim();
+      const uid = (document.getElementById('shTokenUserId')?.value || document.getElementById('shUserId')?.value || '').trim();
       if (uid) payload.userid = uid;
       if (!payload.usertoken) {
         _showFeedback('Please paste a Shoonya susertoken.', true);
@@ -244,8 +319,14 @@
       const uid = data.masked_uid ? ` · UID ${data.masked_uid}` : '';
       const ticks = data.total_ticks != null ? ` · ${data.total_ticks} ticks` : '';
       const syms = data.watchlist_count ? ` · ${data.watchlist_count} symbols` : '';
-      statusEl.textContent = `Box C: ${state}${uid}${syms}${ticks}`;
+      const ipNote = data.egress_ip ? ` · Box C IP ${data.egress_ip}` : '';
+      statusEl.textContent = `Box C: ${state}${uid}${syms}${ticks}${ipNote}`;
       statusEl.style.color = state === 'LIVE' ? '#34d399' : (state === 'SIMULATED' ? '#fbbf24' : '#cbd5e1');
+
+      const cidInput = document.getElementById('shOauthClientId');
+      if (cidInput && !cidInput.value.trim() && data.oauth_client_id) {
+        cidInput.value = data.oauth_client_id;
+      }
       if (data.last_error && state !== 'LIVE') {
         _showFeedback(`Last feed note: ${data.last_error}`, true);
       }
@@ -271,6 +352,7 @@
     }
     const fb = document.getElementById('shFeedbackMsg');
     if (fb) fb.style.display = 'none';
+    _setMode((opts && opts.mode) || _activeMode || 'oauth');
     modal.style.display = 'flex';
     if (saved) {
       window.refreshShoonyaStatus(saved);
@@ -283,4 +365,26 @@
       _modalEl.style.display = 'none';
     }
   };
+
+  function _checkOAuthRedirectCode() {
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      const code = (params.get('code') || '').trim();
+      if (!code) return;
+      params.delete('code');
+      const remaining = params.toString();
+      const cleanUrl = window.location.pathname + (remaining ? `?${remaining}` : '') + (window.location.hash || '');
+      window.history.replaceState({}, document.title, cleanUrl);
+      window.openShoonyaLoginModal({ mode: 'oauth' });
+      const codeEl = document.getElementById('shAuthCode');
+      if (codeEl) codeEl.value = code;
+      _showFeedback('Shoonya OAuth code captured! Click "Connect Live Feed" (enter Admin Key if blank).', false);
+    } catch (_) {}
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _checkOAuthRedirectCode);
+  } else {
+    _checkOAuthRedirectCode();
+  }
 })();
