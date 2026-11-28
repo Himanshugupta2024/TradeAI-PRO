@@ -145,6 +145,59 @@ class Backtester:
         self.max_consecutive_losses = max_consecutive_losses
         self.daily_loss_limit_pct = daily_loss_limit_pct / 100.0
 
+    @staticmethod
+    def _resolve_exit_price(
+        open_px: float,
+        level: float,
+        direction: str,
+        is_stop: bool,
+        slippage_pct: float,
+    ) -> float:
+        """Apply realistic opening-gap fill semantics + adverse slippage."""
+        if direction == "LONG":
+            base = min(open_px, level) if is_stop else max(open_px, level)
+            return base * (1 - slippage_pct)
+        base = max(open_px, level) if is_stop else min(open_px, level)
+        return base * (1 + slippage_pct)
+
+    def _record_closed_trade(
+        self,
+        *,
+        trades: list[TradeResult],
+        entry_time,
+        exit_time,
+        direction: str,
+        entry_price: float,
+        exit_price: float,
+        sl: float,
+        tp: float,
+        shares: int,
+        exit_reason: str,
+    ) -> float:
+        pts = (exit_price - entry_price) if direction == "LONG" else (entry_price - exit_price)
+        pnl_pct = (pts / entry_price) * 100.0 if entry_price else 0.0
+        gross_inr = pts * shares
+        costs_inr = self.cost_model.trade_cost(entry_price * shares, exit_price * shares, direction)
+        net_inr = gross_inr - costs_inr
+        trades.append(TradeResult(
+            entry_time=entry_time,
+            exit_time=exit_time,
+            direction=direction,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            stop_loss=sl,
+            target=tp,
+            pnl=pts,
+            pnl_pct=pnl_pct,
+            points_pnl=pts,
+            gross_pnl_inr=gross_inr,
+            trade_cost_inr=costs_inr,
+            net_pnl_inr=net_inr,
+            shares=shares,
+            exit_reason=exit_reason,
+        ))
+        return net_inr
+
     def run(self, df: pd.DataFrame) -> BacktestResult:
         """
         Run backtest on a DataFrame that has signal columns.
@@ -210,26 +263,18 @@ class Backtester:
 
             # ── Check if we're in an active trade ──
             if in_trade:
+                bar_open = float(row.get("open", row["close"]))
                 if direction == "LONG":
-                    # Conservative check: If both SL and TP touched on same bar, assume SL hit first
-                    sl_hit = (row["low"] <= sl)
-                    tp_hit = (row["high"] >= tp)
+                    sl_hit = (bar_open <= sl) or (row["low"] <= sl)
+                    tp_hit = (bar_open >= tp) or (row["high"] >= tp)
 
                     if sl_hit:
-                        exit_price = sl * (1 - self.slippage_pct)
-                        pts = exit_price - entry_price
-                        pnl_pct = (pts / entry_price) * 100.0
-                        gross_inr = pts * shares
-                        costs_inr = self.cost_model.trade_cost(entry_price * shares, exit_price * shares, direction)
-                        net_inr = gross_inr - costs_inr
-                        trades.append(TradeResult(
-                            entry_time=entry_time, exit_time=row["timestamp"],
-                            direction=direction, entry_price=entry_price,
-                            exit_price=exit_price, stop_loss=sl, target=tp,
-                            pnl=pts, pnl_pct=pnl_pct, points_pnl=pts,
-                            gross_pnl_inr=gross_inr, trade_cost_inr=costs_inr,
-                            net_pnl_inr=net_inr, shares=shares, exit_reason="STOP_LOSS",
-                        ))
+                        exit_price = self._resolve_exit_price(bar_open, sl, direction, True, self.slippage_pct)
+                        net_inr = self._record_closed_trade(
+                            trades=trades, entry_time=entry_time, exit_time=row["timestamp"],
+                            direction=direction, entry_price=entry_price, exit_price=exit_price,
+                            sl=sl, tp=tp, shares=shares, exit_reason="STOP_LOSS",
+                        )
                         capital += net_inr
                         daily_pnl += net_inr
                         consecutive_losses += 1
@@ -237,20 +282,12 @@ class Backtester:
                         continue
 
                     if tp_hit:
-                        exit_price = tp * (1 - self.slippage_pct)
-                        pts = exit_price - entry_price
-                        pnl_pct = (pts / entry_price) * 100.0
-                        gross_inr = pts * shares
-                        costs_inr = self.cost_model.trade_cost(entry_price * shares, exit_price * shares, direction)
-                        net_inr = gross_inr - costs_inr
-                        trades.append(TradeResult(
-                            entry_time=entry_time, exit_time=row["timestamp"],
-                            direction=direction, entry_price=entry_price,
-                            exit_price=exit_price, stop_loss=sl, target=tp,
-                            pnl=pts, pnl_pct=pnl_pct, points_pnl=pts,
-                            gross_pnl_inr=gross_inr, trade_cost_inr=costs_inr,
-                            net_pnl_inr=net_inr, shares=shares, exit_reason="TARGET",
-                        ))
+                        exit_price = self._resolve_exit_price(bar_open, tp, direction, False, self.slippage_pct)
+                        net_inr = self._record_closed_trade(
+                            trades=trades, entry_time=entry_time, exit_time=row["timestamp"],
+                            direction=direction, entry_price=entry_price, exit_price=exit_price,
+                            sl=sl, tp=tp, shares=shares, exit_reason="TARGET",
+                        )
                         capital += net_inr
                         daily_pnl += net_inr
                         consecutive_losses = 0
@@ -258,25 +295,16 @@ class Backtester:
                         continue
 
                 elif direction == "SHORT":
-                    # Conservative check for SHORT: SL is above entry, TP is below
-                    sl_hit = (row["high"] >= sl)
-                    tp_hit = (row["low"] <= tp)
+                    sl_hit = (bar_open >= sl) or (row["high"] >= sl)
+                    tp_hit = (bar_open <= tp) or (row["low"] <= tp)
 
                     if sl_hit:
-                        exit_price = sl * (1 + self.slippage_pct)
-                        pts = entry_price - exit_price
-                        pnl_pct = (pts / entry_price) * 100.0
-                        gross_inr = pts * shares
-                        costs_inr = self.cost_model.trade_cost(entry_price * shares, exit_price * shares, direction)
-                        net_inr = gross_inr - costs_inr
-                        trades.append(TradeResult(
-                            entry_time=entry_time, exit_time=row["timestamp"],
-                            direction=direction, entry_price=entry_price,
-                            exit_price=exit_price, stop_loss=sl, target=tp,
-                            pnl=pts, pnl_pct=pnl_pct, points_pnl=pts,
-                            gross_pnl_inr=gross_inr, trade_cost_inr=costs_inr,
-                            net_pnl_inr=net_inr, shares=shares, exit_reason="STOP_LOSS",
-                        ))
+                        exit_price = self._resolve_exit_price(bar_open, sl, direction, True, self.slippage_pct)
+                        net_inr = self._record_closed_trade(
+                            trades=trades, entry_time=entry_time, exit_time=row["timestamp"],
+                            direction=direction, entry_price=entry_price, exit_price=exit_price,
+                            sl=sl, tp=tp, shares=shares, exit_reason="STOP_LOSS",
+                        )
                         capital += net_inr
                         daily_pnl += net_inr
                         consecutive_losses += 1
@@ -284,20 +312,12 @@ class Backtester:
                         continue
 
                     if tp_hit:
-                        exit_price = tp * (1 + self.slippage_pct)
-                        pts = entry_price - exit_price
-                        pnl_pct = (pts / entry_price) * 100.0
-                        gross_inr = pts * shares
-                        costs_inr = self.cost_model.trade_cost(entry_price * shares, exit_price * shares, direction)
-                        net_inr = gross_inr - costs_inr
-                        trades.append(TradeResult(
-                            entry_time=entry_time, exit_time=row["timestamp"],
-                            direction=direction, entry_price=entry_price,
-                            exit_price=exit_price, stop_loss=sl, target=tp,
-                            pnl=pts, pnl_pct=pnl_pct, points_pnl=pts,
-                            gross_pnl_inr=gross_inr, trade_cost_inr=costs_inr,
-                            net_pnl_inr=net_inr, shares=shares, exit_reason="TARGET",
-                        ))
+                        exit_price = self._resolve_exit_price(bar_open, tp, direction, False, self.slippage_pct)
+                        net_inr = self._record_closed_trade(
+                            trades=trades, entry_time=entry_time, exit_time=row["timestamp"],
+                            direction=direction, entry_price=entry_price, exit_price=exit_price,
+                            sl=sl, tp=tp, shares=shares, exit_reason="TARGET",
+                        )
                         capital += net_inr
                         daily_pnl += net_inr
                         consecutive_losses = 0

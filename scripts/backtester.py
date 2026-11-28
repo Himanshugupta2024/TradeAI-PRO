@@ -171,17 +171,23 @@ def check_outcome(
     if future.empty:
         return "EXPIRED"
 
-    for _, row in future.iterrows():
+    for idx_offset, (_, row) in enumerate(future.iterrows()):
         h = float(row["high"])
         lo = float(row["low"])
+        op = float(row.get("open", h) or h)
 
         if direction == "LONG":
+            # Opening gap past stop loss exits at open (LOSS) before intraday target
+            if idx_offset == 0 and op <= sl:
+                return "LOSS"
             # Check SL first (conservative — if both hit same bar, SL wins)
             if lo <= sl:
                 return "LOSS"
             if h >= target:
                 return "WIN"
         else:  # SHORT
+            if idx_offset == 0 and op >= sl:
+                return "LOSS"
             if h >= sl:
                 return "LOSS"
             if lo <= target:

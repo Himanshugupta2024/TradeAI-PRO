@@ -441,9 +441,9 @@ def generate_signals(
         result["htf_trend"] = TrendDirection.NEUTRAL.value
 
     # ── Edge Engine Integration ──────────────────────────────────────────────
-    # Fetch EdgeScore from macro intelligence layer if not provided
+    # Fetch EdgeScore from macro intelligence layer if not provided (skip in offline/backtest mode)
     edge_breakdown = edge_score
-    if edge_breakdown is None and symbol and asset_class:
+    if edge_breakdown is None and symbol and asset_class and not offline:
         try:
             edge_engine = _get_edge_engine()
             edge_breakdown = edge_engine.get_edge_score(symbol, asset_class)
@@ -466,12 +466,14 @@ def generate_signals(
     _edge_carry = edge_breakdown.carry_bonus if edge_breakdown else 0.0
 
     # ── Self-Learning Weights (Regime-Conditioned 2D Matrix) ───────
-    try:
-        from agents.analytics.feedback_loop import WeightAdapter
-        _regime_name = regime.value if hasattr(regime, "value") else (str(regime) if regime else "UNKNOWN")
-        _w = WeightAdapter().get_regime_weights(_regime_name)
-    except Exception:
-        _w = {}
+    _w = {}
+    if not offline:
+        try:
+            from agents.analytics.feedback_loop import WeightAdapter
+            _regime_name = regime.value if hasattr(regime, "value") else (str(regime) if regime else "UNKNOWN")
+            _w = WeightAdapter().get_regime_weights(_regime_name)
+        except Exception:
+            _w = {}
     
     w_rsi  = _w.get("RSI_BOUNCE", 1.0)
     w_macd = _w.get("MACD_CROSS", 1.0)
@@ -876,17 +878,24 @@ def generate_signals(
     result["tradeflow_source_stale"] = bool(tradeflow_ctx.get("source_stale", True))
 
     # ── Regime-adaptive scoring threshold ────────────────────────────────────
-    signal_threshold = settings.SIGNAL_SCORE_THRESHOLDS.get(
+    base_threshold = settings.SIGNAL_SCORE_THRESHOLDS.get(
         regime_key, settings.SIGNAL_SCORE_DEFAULT
     )
-    # Check session phase: during MIDDAY_CHOP (11:30–13:30 IST), add +5 hurdle
-    # to protect capital from low-volume false breakouts and midday head-fakes
+    signal_threshold = pd.Series(float(base_threshold), index=result.index)
+    # Check session phase per-bar when timestamp is available (prevents wall-clock
+    # leakage into historical/offline backtests); fall back to live clock only online.
     try:
         from agents.analytics.feedback_loop import get_ist_session_phase
-        current_session_phase = get_ist_session_phase()
-        if current_session_phase == "MIDDAY_CHOP":
-            signal_threshold += 5.0
-            log.debug("MIDDAY_CHOP active: raised signal score threshold by +5.0 to %.1f", signal_threshold)
+        if "timestamp" in result.columns:
+            phases = result["timestamp"].apply(get_ist_session_phase)
+            chop_mask = phases == "MIDDAY_CHOP"
+            if chop_mask.any():
+                signal_threshold = signal_threshold + chop_mask.astype(float) * 5.0
+        elif not offline:
+            current_session_phase = get_ist_session_phase()
+            if current_session_phase == "MIDDAY_CHOP":
+                signal_threshold = signal_threshold + 5.0
+                log.debug("MIDDAY_CHOP active: raised signal score threshold by +5.0 to %.1f", base_threshold + 5.0)
     except Exception:
         pass
     # AI confidence is now used as a SOFT BONUS in the score, not a hard gate.
@@ -1262,12 +1271,17 @@ def generate_signals(
         conf_boost += (sr_test_buy | sr_test_sell).astype(float) * settings.SR_TEST_CONF_BONUS
 
     # (D) MTF Alignment: 15m + 1h + 1d all agree on direction → +15 pts
-    #     If mtf_score is provided (full MTF pipeline), convert it to a bonus;
-    #     if not, check if the HTF trend strongly agrees (htf_bull/bear is a proxy).
+    #     Only reward mtf_score when its sign matches the candidate's direction.
     if mtf_score is not None:
-        # mtf_score is -100 to +100; map extremes to full bonus
-        mtf_alignment_bonus = (abs(mtf_score) / 100.0 * settings.MTF_ALIGNMENT_CONF_BONUS)
-        result["confidence"] = (result["confidence"] + mtf_alignment_bonus).clip(0, 100)
+        mtf_val = float(mtf_score)
+        if "_raw_direction" in result.columns:
+            aligned_long = (result["_raw_direction"] == "LONG") & (mtf_val > 0)
+            aligned_short = (result["_raw_direction"] == "SHORT") & (mtf_val < 0)
+            aligned_mask = aligned_long | aligned_short
+        else:
+            aligned_mask = (buy_condition & (mtf_val > 0)) | (sell_condition & (mtf_val < 0))
+        mtf_alignment_bonus = (abs(mtf_val) / 100.0 * settings.MTF_ALIGNMENT_CONF_BONUS)
+        conf_boost += aligned_mask.astype(float) * mtf_alignment_bonus
     else:
         # HTF strongly aligned + EMA alignment + MACD direction = proxy for MTF agreement
         strong_mtf_bull = htf_bull & ema_align_buy  & macd_bull
@@ -1483,9 +1497,17 @@ def signal_generator_for_backtest(train_df: pd.DataFrame, test_df: pd.DataFrame)
     """
     Walk-forward compatible signal generator.
 
-    Uses the training data to establish the strategy parameters (currently fixed),
-    then applies signals to the test set.
-
-    This is the callback passed to `run_walk_forward()`.
+    Calibrates regime strictly from `train_df`, prepends a trailing warmup slice
+    for rolling indicators/divergence without future leakage, and scores `test_df`
+    in isolated offline mode.
     """
-    return generate_signals(test_df)
+    if test_df.empty:
+        return test_df
+
+    from agents.feature_engine.regime_detector import detect_regime
+
+    train_regime = detect_regime(train_df) if train_df is not None and not train_df.empty else None
+    warmup = train_df.tail(220) if train_df is not None and not train_df.empty else pd.DataFrame()
+    combined = pd.concat([warmup, test_df], axis=0) if not warmup.empty else test_df
+    scored = generate_signals(combined, regime=train_regime, offline=True)
+    return scored.iloc[-len(test_df):].copy()

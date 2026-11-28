@@ -156,54 +156,67 @@ def run_walk_forward_validation(
         n_high = 0; n_high_corr = 0
 
         from agents.ai_engine.ensemble import predict_advanced
+        import os
 
-        for i in range(len(test_df) - forward_bars):
-            window = test_df.iloc[max(0, i - 100): i + 1]
-            if len(window) < 30:
-                continue
+        _orig_lw = os.environ.get("LIGHTWEIGHT_API_MODE")
+        _orig_sidecar = os.environ.get("ML_SIDECAR_URL")
+        os.environ["LIGHTWEIGHT_API_MODE"] = "false"
+        os.environ.pop("ML_SIDECAR_URL", None)
+        try:
+            for i in range(len(test_df) - forward_bars):
+                window = test_df.iloc[max(0, i - 100): i + 1]
+                if len(window) < 30:
+                    continue
 
-            try:
-                pred = predict_advanced(window, symbol=symbol)
-            except Exception:
-                continue
+                try:
+                    pred = predict_advanced(window, symbol=symbol, offline=True, force_refresh=True)
+                except Exception:
+                    continue
 
-            predicted_dir = pred["direction"]
-            conf = pred["confidence"]
+                predicted_dir = pred["direction"]
+                conf = pred["confidence"]
 
-            if predicted_dir == "NEUTRAL":
-                continue   # Skip neutral predictions
+                if predicted_dir == "NEUTRAL":
+                    continue   # Skip neutral predictions
 
-            # Actual direction: did price go up or down after `forward_bars`?
-            future_close = test_df.iloc[i + forward_bars]["close"]
-            current_close = test_df.iloc[i]["close"]
-            pct_move = (future_close - current_close) / current_close * 100
-            actual_dir = "UP" if pct_move > 0 else "DOWN"
+                # Actual direction: did price go up or down after `forward_bars`?
+                future_close = test_df.iloc[i + forward_bars]["close"]
+                current_close = test_df.iloc[i]["close"]
+                pct_move = (future_close - current_close) / current_close * 100
+                actual_dir = "UP" if pct_move > 0 else "DOWN"
 
-            is_correct = (predicted_dir == actual_dir)
-            n_pred += 1
-            if is_correct:
-                n_corr += 1
-                confs_corr.append(conf)
+                is_correct = (predicted_dir == actual_dir)
+                n_pred += 1
+                if is_correct:
+                    n_corr += 1
+                    confs_corr.append(conf)
+                else:
+                    confs_wrong.append(conf)
+
+                # Precision per direction
+                if predicted_dir == "UP":
+                    prec_up_total += 1
+                    if is_correct: prec_up_corr += 1
+                else:
+                    prec_dn_total += 1
+                    if is_correct: prec_dn_corr += 1
+
+                # High-confidence accuracy
+                if conf >= high_conf_threshold:
+                    n_high += 1
+                    if is_correct: n_high_corr += 1
+
+                all_correct.append(int(is_correct))
+                all_conf.append(conf)
+                all_dir.append(predicted_dir)
+                all_actual.append(actual_dir)
+        finally:
+            if _orig_lw is None:
+                os.environ.pop("LIGHTWEIGHT_API_MODE", None)
             else:
-                confs_wrong.append(conf)
-
-            # Precision per direction
-            if predicted_dir == "UP":
-                prec_up_total += 1
-                if is_correct: prec_up_corr += 1
-            else:
-                prec_dn_total += 1
-                if is_correct: prec_dn_corr += 1
-
-            # High-confidence accuracy
-            if conf >= high_conf_threshold:
-                n_high += 1
-                if is_correct: n_high_corr += 1
-
-            all_correct.append(int(is_correct))
-            all_conf.append(conf)
-            all_dir.append(predicted_dir)
-            all_actual.append(actual_dir)
+                os.environ["LIGHTWEIGHT_API_MODE"] = _orig_lw
+            if _orig_sidecar is not None:
+                os.environ["ML_SIDECAR_URL"] = _orig_sidecar
 
         if n_pred == 0:
             continue
@@ -334,10 +347,11 @@ def _retrain_for_fold(train_df: pd.DataFrame, symbol: str) -> None:
             return
 
         predictor.model.fit(X, y)
+        predictor.feature_cols = list(xm.FEATURE_COLS_XGB[:X.shape[1]])
         predictor.is_fitted = True
         if hasattr(predictor.model, "feature_importances_"):
             predictor._feature_importance = dict(
-                zip(xm.FEATURE_COLS_XGB, predictor.model.feature_importances_.round(4).tolist())
+                zip(predictor.feature_cols, predictor.model.feature_importances_.round(4).tolist())
             )
     except Exception as exc:
         log.debug("Fold retrain failed (non-critical): %s", exc)

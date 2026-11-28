@@ -239,7 +239,13 @@ chk(
     abs(sum(x.get("weight_pct", 0) for x in det if x.get("scored")) - 100) < 0.01,
     G.get("weight_sum"),
 )
-chk("GAUGE", "cache < 120s in session", (G.get("cache_age_seconds") or 0) < 120, G.get("cache_age_seconds"))
+cache_age = G.get("cache_age_seconds")
+chk(
+    "GAUGE",
+    "cache < 120s in session",
+    ((cache_age or 0) < 120) if in_session else None,
+    "%s (in_session=%s)" % (cache_age, in_session),
+)
 chk("GAUGE", "integrity resolved", G.get("data_integrity") not in ("UNCONFIRMED_VOL_SPIKE",), G.get("data_integrity"))
 
 # ---------- SIGNALS HYGIENE ----------

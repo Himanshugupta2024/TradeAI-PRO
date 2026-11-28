@@ -51,6 +51,8 @@ from typing import Deque
 import numpy as np
 import pandas as pd
 
+from config import settings
+
 log = logging.getLogger(__name__)
 
 # Base model weights (renormalized if some models are unavailable)
@@ -668,9 +670,11 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
     meta_active = False
     calib_active = False
     meta_prob_up = 50.0
+    cal_prob_up: float | None = None
 
-    # Option B Fail-Safe: Check if critical models are active
-    if xgb_fitted and lgbm_fitted and lstm_fitted and logit_fitted:
+    # Option B Fail-Safe: Stack whenever core tabular + linear models are active
+    # (LSTM stays optional because Box B sets ENABLE_PYTORCH_MODELS=false).
+    if xgb_fitted and lgbm_fitted and logit_fitted:
         try:
             from agents.ai_engine.meta_learner import build_meta_feature_vector, get_meta_learner
             meta = get_meta_learner()
@@ -678,7 +682,7 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
                 stat_prob_up = float(stat_result.get("prob_up", 50.0))
                 xgb_p = float(xgb_result.get("prob_up", 50.0)) / 100.0
                 lgb_p = float(lgbm_result.get("prob_up", 50.0)) / 100.0
-                lst_p = float(lstm_result.get("prob_up", 50.0)) / 100.0
+                lst_p = float(lstm_result.get("prob_up", 50.0)) / 100.0 if lstm_fitted else 0.5
                 log_p = float(logit_result.get("prob_up", 50.0)) / 100.0
                 sta_p = stat_prob_up / 100.0
 
@@ -708,7 +712,7 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
                         from agents.ai_engine.calibrator import get_calibrator
                         calib = get_calibrator()
                         if calib.is_fitted:
-                            calibrated_trade_win_prob = round(float(calib.calibrate(X_meta)[0]) * 100.0, 1)
+                            cal_prob_up = float(calib.calibrate(X_meta)[0])
                             calib_active = True
                     except Exception:
                         pass
@@ -763,8 +767,15 @@ def predict_advanced(df: pd.DataFrame, symbol: str = "", offline: bool = False, 
         prob_up = prob_down = 50.0
         raw_ensemble_score = 0.0
 
-    # If calibrator wasn't fitted, apply realistic Platt Sigmoid compression
-    if not calib_active:
+    # Align calibrated trade win probability with predicted direction (UP -> p_up, DOWN -> 1 - p_up)
+    if calib_active and cal_prob_up is not None:
+        if direction == "UP":
+            calibrated_trade_win_prob = round(cal_prob_up * 100.0, 1)
+        elif direction == "DOWN":
+            calibrated_trade_win_prob = round((1.0 - cal_prob_up) * 100.0, 1)
+        else:
+            calibrated_trade_win_prob = 50.0
+    else:
         calibrated_trade_win_prob = round(50.0 + (raw_ensemble_score / 2.0) * 0.72, 1)
 
     # ── 11. Anomaly Tier Application (Phase 1) ─────────────────────────────
