@@ -381,7 +381,8 @@ cur = {
 }
 if prev:
     chk("REGRESS", "RSS not climbing >20MB", rss - (prev.get("rss") or rss) < 20, "%s -> %s" % (prev.get("rss"), rss))
-    chk("REGRESS", "VIX value changed (not frozen)", cur["vix"] != prev.get("vix"), "%s -> %s" % (prev.get("vix"), cur["vix"]))
+    vix_ok = (cur["vix"] != prev.get("vix")) if in_session else None
+    chk("REGRESS", "VIX value changed (not frozen)", vix_ok, "%s -> %s (in_session=%s)" % (prev.get("vix"), cur["vix"], in_session))
     lost = [c for c in (prev.get("cautions") or []) if c not in cur["cautions"]]
     worse = (cur.get("usdjpy") or 0) > (prev.get("usdjpy") or 0)
     chk("REGRESS", "cautions not lost while risk rose", not (lost and worse), "lost=%s" % lost)

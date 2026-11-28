@@ -9,16 +9,16 @@
    ========================================================================== */
 
 :root {
-    --tb-h: 42px;
-    --tb-pill-h: 24px;
+    --tb-h: var(--topbar-h, 44px);
+    --tb-pill-h: 26px;
     --tb-radius: 999px;
-    --tb-control-radius: 8px;
+    --tb-control-radius: var(--radius-sm, 6px);
     --tb-gap: 10px;
-    --tb-surface: rgba(255, 255, 255, 0.05);
-    --tb-surface-hover: rgba(255, 255, 255, 0.10);
-    --tb-border: rgba(255, 255, 255, 0.12);
-    --tb-text: #e2e8f0;
-    --tb-muted: #8b97ad;
+    --tb-surface: rgba(148, 163, 184, 0.06);
+    --tb-surface-hover: rgba(148, 163, 184, 0.13);
+    --tb-border: var(--border-subtle, rgba(148, 163, 184, 0.12));
+    --tb-text: var(--text-1, #f1f5f9);
+    --tb-muted: var(--text-2, #94a3b8);
 }
 
 /* ── Bar Container ────────────────────────────────────────────────────────── */
@@ -34,9 +34,9 @@
     justify-content: space-between !important;
     gap: var(--tb-gap) !important;
     padding: 0 14px !important;
-    background: rgba(8, 12, 22, 0.85) !important;
-    -webkit-backdrop-filter: blur(16px) saturate(150%);
-    backdrop-filter: blur(16px) saturate(150%);
+    background: var(--surface-glass, rgba(14, 17, 24, 0.92)) !important;
+    -webkit-backdrop-filter: blur(12px) saturate(130%);
+    backdrop-filter: blur(12px) saturate(130%);
     border-bottom: 1px solid var(--tb-border) !important;
     box-sizing: border-box !important;
     overflow: visible !important;
@@ -171,7 +171,7 @@
     font-size: 0.70rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.04em;
-    color: #7dd3fc !important;
+    color: var(--accent-brand, #22d3ee) !important;
 }
 
 .mood-clock {
@@ -179,6 +179,7 @@
     font-weight: 600 !important;
     letter-spacing: 0.03em !important;
     color: var(--tb-muted) !important;
+    font-family: var(--font-num, 'JetBrains Mono', monospace);
     font-variant-numeric: tabular-nums;
     padding: 0 2px;
     flex-shrink: 0 !important;
@@ -198,17 +199,33 @@
     z-index: 300 !important;
 }
 
-.mood-search-input,
-.global-search-input {
-    height: 30px;
-    width: 200px;
-    padding: 0 10px !important;
+.search-input-row {
+    min-width: 0 !important;
+    padding: 0 8px !important;
+    height: 28px !important;
+    gap: 6px !important;
     border-radius: var(--tb-control-radius) !important;
     border: 1px solid var(--tb-border) !important;
-    background: rgba(2, 6, 23, 0.55) !important;
+    background: var(--surface-input, #0b0e14) !important;
+}
+
+.search-input-row:focus-within {
+    border-color: var(--border-focus, rgba(34, 211, 238, 0.65)) !important;
+    box-shadow: 0 0 0 2px var(--accent-brand-soft, rgba(34, 211, 238, 0.12)) !important;
+}
+
+.mood-search-input,
+.global-search-input {
+    height: 26px !important;
+    width: 130px !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
     color: var(--tb-text) !important;
     font-size: 0.72rem !important;
-    transition: width 0.2s ease, border-color 0.15s ease;
+    transition: width 0.2s ease;
 }
 
 .mood-search-input::placeholder,
@@ -219,8 +236,8 @@
 .mood-search-input:focus,
 .global-search-input:focus {
     outline: none;
-    border-color: rgba(96, 165, 250, 0.55) !important;
-    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+    border-color: transparent !important;
+    box-shadow: none !important;
 }
 
 .search-kbd {
@@ -298,47 +315,70 @@
 /* Keyboard focus */
 .mood-strip button:focus-visible,
 .mood-strip input:focus-visible {
-    outline: 2px solid #60a5fa;
+    outline: 2px solid var(--border-focus, #22d3ee);
     outline-offset: 2px;
 }
 
 /* ── Light theme ─────────────────────────────────────────────────────────── */
 [data-theme="light"] .mood-strip {
-    background: rgba(248, 250, 252, 0.94) !important;
-    border-bottom-color: rgba(15, 23, 42, 0.10) !important;
-}
-
-[data-theme="light"] {
-    --tb-surface: rgba(15, 23, 42, 0.05);
-    --tb-surface-hover: rgba(15, 23, 42, 0.09);
-    --tb-border: rgba(15, 23, 42, 0.12);
-    --tb-text: #0f172a;
-    --tb-muted: #64748b;
+    background: var(--surface-glass, rgba(255, 255, 255, 0.94)) !important;
+    border-bottom-color: var(--border-subtle, rgba(15, 23, 42, 0.10)) !important;
 }
 
 [data-theme="light"] .mood-ticker-item + .mood-ticker-item::before {
     background: rgba(15, 23, 42, 0.10);
 }
 
+[data-theme="light"] .search-input-row {
+    background: var(--surface-1, #ffffff) !important;
+    border-color: var(--tb-border) !important;
+}
+
 [data-theme="light"] .mood-search-input,
 [data-theme="light"] .global-search-input {
-    background: #ffffff !important;
-    color: #0f172a !important;
+    background: transparent !important;
+    color: var(--text-1, #0f172a) !important;
+}
+
+#btnShoonyaFeed {
+    height: var(--tb-pill-h);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 10px;
+    border-radius: var(--tb-radius);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    background: var(--bull-soft, rgba(16, 185, 129, 0.12));
+    color: var(--bull, #10b981);
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+[data-theme="light"] #btnShoonyaFeed {
+    background: rgba(5, 150, 105, 0.12) !important;
+    border-color: rgba(5, 150, 105, 0.35) !important;
+    color: #047857 !important;
 }
 
 /* ── Proportional Responsive Hierarchy (Preserves NIFTY, SENSEX, BANK NIFTY across all viewports) ── */
 
-/* 1. Large Laptops / Desktops (≤ 1600px): Hide dev telemetry and secondary crypto ticker */
+/* 1. Large Laptops / Desktops (≤ 1600px): Hide dev telemetry, secondary crypto ticker & clock */
 @media (max-width: 1600px) {
     #v2PipelineBadge { display: none !important; }
     .mood-ticker-item:nth-child(3) { display: none !important; } /* BTC */
+    .mood-clock { display: none !important; }
 }
 
-/* 2. Standard Laptops (≤ 1420px): Streamline search input, keep SENSEX & BANK NIFTY visible */
-@media (max-width: 1420px) {
+/* 2. Standard Laptops & 1440px (≤ 1480px): Ensure full NIFTY + SENSEX + BANK NIFTY visibility */
+@media (max-width: 1480px) {
+    .mood-strip-right { gap: 6px !important; }
     .mood-search-input,
-    .global-search-input { width: 130px !important; }
-    .mood-clock { display: none !important; }
+    .global-search-input { width: 96px !important; }
+    .mood-ticker { padding: 0 4px !important; margin: 0 2px !important; -webkit-mask-image: none; mask-image: none; }
+    .mood-ticker-item { padding: 0 7px !important; gap: 5px !important; }
 }
 
 /* 3. Compact Laptops (≤ 1260px): Tighten padding, keep indices visible */
@@ -371,11 +411,15 @@
     .mood-ticker-item { padding: 0 6px !important; gap: 4px !important; }
 }
 
-/* 6. Phone screens (≤ 580px): Compact typography for NIFTY, SENSEX, BANK NIFTY */
+/* 6. Phone screens (≤ 580px): Fit brand, mood pill, theme button & Shoonya CTA inside 360-390px without clipping */
 @media (max-width: 580px) {
     .market-status { display: none !important; }
-    .mood-strip { padding: 0 6px !important; }
+    .mood-strip { padding: 0 8px !important; gap: 6px !important; }
+    .mood-strip-logo { margin-right: 0 !important; gap: 5px !important; }
     .mood-strip-logo .logo-text { font-size: 0.82rem !important; }
+    .mood-pill { padding: 0 7px !important; font-size: 0.66rem !important; }
+    .mood-strip .theme-toggle { width: 26px !important; height: 26px !important; }
+    #btnShoonyaFeed { padding: 0 7px !important; font-size: 0.66rem !important; gap: 3px !important; }
     .mood-ticker-sym { font-size: 0.72rem !important; }
     .mood-ticker-val { font-size: 0.72rem !important; }
     .mood-ticker-chg { font-size: 0.72rem !important; }

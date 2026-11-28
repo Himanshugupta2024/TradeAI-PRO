@@ -71,6 +71,14 @@ services:
         value: "true"
       - key: ALLOW_LOCAL_AUTONOMOUS_CYCLE
         value: "false"
+      - key: DEFAULT_CRYPTO_FOREX_ENABLED
+        value: "true"
+      - key: PAPER_MAX_OPEN_EQUITY
+        value: 5
+      - key: PAPER_MAX_OPEN_GLOBAL
+        value: 4
+      - key: FOREX_AUTO_EXECUTE
+        value: "true"
       - key: SCREENER_TASK_ENABLED
         value: false
       - key: MORNING_SCAN_TASK_ENABLED
@@ -87,18 +95,18 @@ services:
         value: 20
       - key: CRON_SECRET
         sync: false
-      # ML Inference Sidecar (Box B) connection
+      # ML Inference Sidecar (Box B, Render Account 2) connection
       - key: ML_SIDECAR_URL
         value: "https://trading-ml-8umr.onrender.com"
       - key: ML_INTERNAL_TOKEN
         sync: false
-      # Market Data Feed Service (Box C) connection
+      # Market Data Feed Service (Box C, Render Account 2) connection
       - key: FEED_SERVICE_URL
-        value: "https://trading-feed.onrender.com"
+        value: "https://trading-feed-pp80.onrender.com"
       - key: FEED_INTERNAL_TOKEN
         sync: false
 
-  # ── Box B: Dedicated ML Inference Sidecar (Render Free ~420MB) ──
+  # ── Box B (Account 2): Dedicated ML Inference Sidecar (Render Free ~420MB) ──
   - type: web
     name: trading-ml
     env: python
@@ -133,7 +141,8 @@ services:
       - key: ML_INTERNAL_TOKEN
         sync: false
 
-  # ── Box C: Dedicated Market Data Feed Service (Shoonya WebSocket ~150MB) ──
+  # ── Box C (Account 2): Dedicated Market Data Feed Service (Shoonya WebSocket ~150MB) ──
+  # Live URL on Render Account 2: https://trading-feed-pp80.onrender.com
   - type: web
     name: trading-feed
     env: python

@@ -18,10 +18,12 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from config import settings
+from api.security import require_admin
 from agents.execution.market_control import is_crypto_forex_enabled, is_crypto_research_allowed
 
 logger = logging.getLogger(__name__)
@@ -101,19 +103,23 @@ async def get_forex_signals():
 
         if _scan_cache.get("setups"):
 
-            setups = _scan_cache["setups"]
-
-        elif is_forex_scanning():
-
-            setups = _scan_cache.get("setups", [])
+            all_dicts = [s.to_dict() if hasattr(s, "to_dict") else dict(s) for s in _scan_cache["setups"]]
 
         else:
 
-            asyncio.create_task(asyncio.to_thread(scan_all_forex))
+            db_fx = None
+            try:
+                from db.runtime_state import get_runtime_state
+                db_fx = await asyncio.to_thread(get_runtime_state, "latest_forex_scan:v1")
+            except Exception:
+                db_fx = None
 
-            setups = _scan_cache.get("setups", [])
-
-        all_dicts = [s.to_dict() for s in setups]
+            if isinstance(db_fx, dict) and isinstance(db_fx.get("setups"), list) and db_fx.get("setups"):
+                all_dicts = [dict(row) for row in db_fx["setups"]]
+            else:
+                if not is_forex_scanning():
+                    asyncio.create_task(asyncio.to_thread(scan_all_forex))
+                all_dicts = []
 
         qualified = [s for s in all_dicts if s.get("status") == "QUALIFIED"]
 
@@ -382,4 +388,73 @@ async def get_forex_ohlcv_endpoint(
         logger.error("Forex OHLCV error for %s: %s", symbol, e)
 
         return JSONResponse(status_code=503, content={"error": str(e), "candles": []})
+
+
+class ForexPaperTradeRequest(BaseModel):
+    symbol: str
+    direction: str
+    entry: float
+    stop_loss: float
+    target: float
+    atr: float = 0.0
+    confidence: float = 65.0
+    strategy: str = "FOREX_SWING_4H"
+
+
+@router.post("/api/forex/paper-trade", dependencies=[Depends(require_admin)])
+async def execute_forex_paper_trade(req: ForexPaperTradeRequest):
+    """Execute a strict paper-only Forex swing trade into INR base accounting."""
+    if not is_crypto_forex_enabled():
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Crypto & Forex trading is disabled under NSE Focus Mode (Section 6A)."},
+        )
+
+    from agents.execution.paper_trading import PaperTradingEngine, validate_trade_geometry
+    from agents.execution.currency import resolve_instrument_identity
+
+    sym = req.symbol.strip().upper().replace("_", "/")
+    ac, _, _ = resolve_instrument_identity(sym)
+    if ac != "FOREX":
+        raise HTTPException(status_code=400, detail=f"Expected a Forex pair (got {sym} -> {ac})")
+
+    d = req.direction.strip().upper()
+    ok_geom, geom_msg = validate_trade_geometry(d, float(req.entry), float(req.stop_loss), float(req.target))
+    if not ok_geom:
+        raise HTTPException(status_code=400, detail=geom_msg)
+
+    def _exec_sync():
+        engine = PaperTradingEngine()
+        trade = engine.execute(
+            symbol=sym,
+            direction=d,
+            entry=float(req.entry),
+            sl=float(req.stop_loss),
+            tp=float(req.target),
+            atr=float(req.atr or 0.0),
+            signal_type=req.strategy,
+            regime="TREND",
+            confidence=float(req.confidence or 65.0),
+            p_calibrated=None,
+            p_source="forex_manual_paper",
+            min_rr=1.5,
+        )
+        return trade, engine.last_rejection_reason, engine.get_slot_buckets_summary()
+
+    trade, rej_reason, buckets = await asyncio.to_thread(_exec_sync)
+    if not trade:
+        return JSONResponse(
+            status_code=400,
+            content={"executed": False, "error": rej_reason or "Risk rules rejected trade", "slot_buckets": buckets},
+        )
+    return {
+        "executed": True,
+        "paper_only": True,
+        "trade_id": trade.id,
+        "symbol": trade.symbol,
+        "direction": trade.direction,
+        "quantity": trade.quantity,
+        "entry_price": trade.entry_price,
+        "slot_buckets": buckets,
+    }
 

@@ -284,7 +284,7 @@ async function coalescedGetFetch(url, options = {}, timeoutMs = 12000, _retries 
             if (_inFlightRequests.get(cacheKey) === fetchPromise) {
                 _inFlightRequests.delete(cacheKey);
             }
-        });
+        }).catch(() => {});
     }
 
     return _raceWithCallerSignal(fetchPromise.then(r => r.clone()), forceRefresh ? null : callerSignal);
@@ -3330,7 +3330,9 @@ async function _allSettledLimited(tasks, limit = 3) {
             const index = nextIndex++;
             if (index >= tasks.length) return;
             try {
-                results[index] = { status: 'fulfilled', value: await tasks[index] };
+                const task = tasks[index];
+                const p = typeof task === 'function' ? task() : task;
+                results[index] = { status: 'fulfilled', value: await p };
             } catch (reason) {
                 results[index] = { status: 'rejected', reason };
             }
@@ -3391,21 +3393,21 @@ async function loadAllData({ background = false, forceRefresh = false } = {}) {
     const reqOpts = forceRefresh ? { forceRefresh: true } : {};
     const promises = [
 
-        fetchWithTimeout(`${API}/api/signals/all`, reqOpts, 60000).then((r) => parseJsonResponse(r)),
+        () => fetchWithTimeout(`${API}/api/signals/all`, reqOpts, 60000).then((r) => parseJsonResponse(r)),
 
-        fetchWithTimeout(`${API}/api/stats`, reqOpts, 25000).then((r) => parseJsonResponse(r)),
+        () => fetchWithTimeout(`${API}/api/stats`, reqOpts, 25000).then((r) => parseJsonResponse(r)),
 
-        fetchWithTimeout(`${API}/api/nse/dashboard`, reqOpts, 25000).then((r) => parseJsonResponse(r)),
+        () => fetchWithTimeout(`${API}/api/nse/dashboard`, reqOpts, 25000).then((r) => parseJsonResponse(r)),
 
-        shouldFetchOpps ? fetchWithTimeout(`${API}/api/screener/opportunities`, reqOpts, 25000).then((r) => { if (r.ok) _lastOppsFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
+        () => shouldFetchOpps ? fetchWithTimeout(`${API}/api/screener/opportunities`, reqOpts, 25000).then((r) => { if (r.ok) _lastOppsFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
 
-        fetchWithTimeout(`${API}/api/overview/intelligence`, reqOpts, 60000).then((r) => parseJsonResponse(r)).catch(() => null),
+        () => fetchWithTimeout(`${API}/api/overview/intelligence`, reqOpts, 60000).then((r) => parseJsonResponse(r)).catch(() => null),
 
-        shouldFetchMorning ? fetchWithTimeout(`${API}/api/morning-scan`, reqOpts, 20000).then((r) => { _lastMorningFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
+        () => shouldFetchMorning ? fetchWithTimeout(`${API}/api/morning-scan`, reqOpts, 20000).then((r) => { _lastMorningFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
 
-        shouldFetchCrypto ? fetchWithTimeout(`${API}/api/crypto/intelligence`, reqOpts, 25000).then((r) => { _lastCryptoFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
+        () => shouldFetchCrypto ? fetchWithTimeout(`${API}/api/crypto/intelligence`, reqOpts, 25000).then((r) => { _lastCryptoFetchTs = nowTs; return parseJsonResponse(r); }).catch(() => null) : Promise.resolve(null),
 
-        fetchWithTimeout(`${API}/api/paper/open`, reqOpts, 15000).then((r) => parseJsonResponse(r)).catch(() => null),
+        () => fetchWithTimeout(`${API}/api/paper/open`, reqOpts, 15000).then((r) => parseJsonResponse(r)).catch(() => null),
 
     ];
 
@@ -25401,7 +25403,7 @@ async function loadNsePredictionTab() {
 
 
 
-        const resp = await fetchWithTimeout(`${API}/api/nse/prediction`);
+        const resp = await fetchWithTimeout(`${API}/api/nse/prediction`, {}, 25000);
 
 
 
@@ -25545,7 +25547,7 @@ async function loadNsePredictionTab() {
 
 
 
-        console.error('[loadNsePredictionTab] error:', err);
+        console.warn('[loadNsePredictionTab] deferred:', err && err.message ? err.message : err);
 
 
 
@@ -26044,23 +26046,29 @@ async function updateAiModelHealthBadge() {
             if (titleEl) {
                 if (status === 'HEALTHY' || status === 'OK') {
                     titleEl.textContent = 'System Healthy';
+                    titleEl.dataset.tone = 'ok';
                     titleEl.style.color = '#10b981';
                 } else if (status === 'DEGRADED' || tier.freshness === 'EOD_UNVERIFIED') {
                     if (tier.infra === 'UNHEALTHY' || tier.infra === 'DOWN') {
                         titleEl.textContent = 'System Degraded';
+                        titleEl.dataset.tone = 'err';
                         titleEl.style.color = '#ef4444';
                     } else {
                         titleEl.textContent = 'Freshness Unverified';
+                        titleEl.dataset.tone = 'warn';
                         titleEl.style.color = '#f59e0b';
                     }
                 } else if (status === 'STALE_DATA') {
                     titleEl.textContent = 'Data Stale';
+                    titleEl.dataset.tone = 'warn';
                     titleEl.style.color = '#f59e0b';
                 } else if (status === 'WORKER_DOWN') {
                     titleEl.textContent = 'Worker Lagging';
+                    titleEl.dataset.tone = 'warn';
                     titleEl.style.color = '#f59e0b';
                 } else {
                     titleEl.textContent = 'System Degraded';
+                    titleEl.dataset.tone = 'err';
                     titleEl.style.color = '#ef4444';
                 }
             }
@@ -26667,23 +26675,15 @@ function renderMarketControlUI(data) {
     if (!btn || !badge) return;
 
     const isEnabled = Boolean(data.crypto_forex_enabled);
-    if (isEnabled) {
-        btn.textContent = "ON";
-        btn.style.background = "#059669";
-        btn.style.borderColor = "#10b981";
-        btn.style.color = "#ffffff";
-        badge.textContent = "Multi-Asset";
-        badge.style.background = "rgba(16, 185, 129, 0.2)";
-        badge.style.color = "#34d399";
-    } else {
-        btn.textContent = "OFF";
-        btn.style.background = "#1e293b";
-        btn.style.borderColor = "#475569";
-        btn.style.color = "#94a3b8";
-        badge.textContent = "NSE Focus";
-        badge.style.background = "rgba(59, 130, 246, 0.2)";
-        badge.style.color = "#60a5fa";
-    }
+    btn.classList.toggle("is-enabled", isEnabled);
+    badge.classList.toggle("is-enabled", isEnabled);
+    btn.style.background = "";
+    btn.style.borderColor = "";
+    btn.style.color = "";
+    badge.style.background = "";
+    badge.style.color = "";
+    btn.textContent = isEnabled ? "ON" : "OFF";
+    badge.textContent = isEnabled ? "Multi-Asset" : "NSE Focus";
 
     if (_marketFocusLoaded && _marketFocusConfig) {
         applyMarketFocusToDashboard(_marketFocusConfig);
@@ -28418,11 +28418,28 @@ async function openAiPredictionModal(sym) {
 // ── F&O Derivatives Intelligence Tab Loader ─────────────────────────
 let _fnoOverviewCache = null;
 let _fnoSelectedSymbol = "NIFTY 50";
+let _fnoUnderlyingsLoaded = false;
+
+async function populateFnoUnderlyingsDropdown() {
+    const selectEl = document.getElementById("fnoUnderlyingSelect");
+    if (!selectEl || _fnoUnderlyingsLoaded) return;
+    try {
+        const res = await fetchSafeJSON(`${API}/api/fno/underlyings`, {}, 10000);
+        const items = res && res.ok && Array.isArray(res.data?.underlyings) ? res.data.underlyings : [];
+        if (items.length > 0) {
+            const current = _fnoSelectedSymbol || selectEl.value || "NIFTY 50";
+            selectEl.innerHTML = items.map(sym => `<option value="${_escHtml(sym)}">${_escHtml(sym)}</option>`).join("");
+            if (items.includes(current)) selectEl.value = current;
+            _fnoUnderlyingsLoaded = true;
+        }
+    } catch (_) {}
+}
 
 async function loadFnoAnalyticsTab(symbolOverride = null) {
     if (symbolOverride) {
         _fnoSelectedSymbol = symbolOverride;
     }
+    await populateFnoUnderlyingsDropdown();
     const selectEl = document.getElementById("fnoUnderlyingSelect");
     if (selectEl && !selectEl._hasChangeListener) {
         selectEl.value = _fnoSelectedSymbol;
@@ -28442,9 +28459,9 @@ async function loadFnoAnalyticsTab(symbolOverride = null) {
         refreshBtn._hasClickListener = true;
     }
 
-    // 1. Fetch F&O Overview
+    // 1. Fetch F&O Overview (up to 24 indexed underlyings)
     try {
-        const res = await fetchSafeJSON(`${API}/api/fno/overview`, {}, 15000);
+        const res = await fetchSafeJSON(`${API}/api/fno/overview?universe=all&limit=24`, {}, 15000);
         if (res && res.ok && res.data) {
             const data = res.data;
             _fnoOverviewCache = data;
@@ -28493,11 +28510,16 @@ function renderFnoSymbolKPIs(d) {
     const srcBadge = document.getElementById("fnoEnvelopeSourceBadge");
     if (srcBadge) {
         const isLive = d.envelope_source === "BOX_C_STREAM" || d.envelope_source === "SHOONYA_OPTIONS_CHAIN";
+        const isCached = d.envelope_source === "BOX_C_CACHED" || d.envelope_source === "BOX_C_STALE";
         const isModel = d.envelope_source === "BOX_C_MODEL";
-        const label = isLive ? "BOX_C_STREAM (Institutional)" : (isModel ? "BOX_C_MODEL (Volatility Corridor)" : "ATR_FALLBACK (Options Envelope)");
+        const label = isLive
+            ? "BOX_C_STREAM (Live Institutional)"
+            : (isCached
+                ? "BOX_C_CACHED (Last Valid OI)"
+                : (isModel ? "BOX_C_MODEL (Volatility Corridor)" : "ATR_FALLBACK (No Live OI Feed)"));
         srcBadge.textContent = label;
-        srcBadge.style.color = isLive ? "#0284c7" : (isModel ? "#818cf8" : "#f59e0b");
-        srcBadge.style.borderColor = isLive ? "rgba(14,165,233,0.3)" : (isModel ? "rgba(99,102,241,0.3)" : "rgba(245,158,11,0.3)");
+        srcBadge.style.color = isLive ? "#0284c7" : (isCached ? "#38bdf8" : (isModel ? "#818cf8" : "#f59e0b"));
+        srcBadge.style.borderColor = isLive ? "rgba(14,165,233,0.3)" : (isCached ? "rgba(56,189,248,0.3)" : (isModel ? "rgba(99,102,241,0.3)" : "rgba(245,158,11,0.3)"));
     }
 
     // 1. PCR
@@ -28674,12 +28696,16 @@ function renderFnoOverviewTable(data) {
             maxPain = `<span style="color:#94a3b8;font-size:0.75rem" title="ATM Magnet Level">₹${Number(row.atm_strike).toLocaleString('en-IN')}</span>`;
         }
         const isLive = row.envelope_source === 'BOX_C_STREAM' || row.envelope_source === 'SHOONYA_OPTIONS_CHAIN';
+        const isCached = row.envelope_source === 'BOX_C_CACHED' || row.envelope_source === 'BOX_C_STALE';
         const isModel = row.envelope_source === 'BOX_C_MODEL';
-        const src = isLive ? 
+        const src = isLive ?
             `<span style="color:#0284c7;background:rgba(14,165,233,0.1);padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600">BOX_C_STREAM</span>` :
-            (isModel ? 
-                `<span style="color:#818cf8;background:rgba(99,102,241,0.1);padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600">BOX_C_MODEL</span>` :
-                `<span style="color:#f59e0b;background:rgba(245,158,11,0.1);padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600">ATR_FALLBACK</span>`
+            (isCached ?
+                `<span style="color:#38bdf8;background:rgba(56,189,248,0.1);padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600">${_escHtml(row.envelope_source)}</span>` :
+                (isModel ?
+                    `<span style="color:#818cf8;background:rgba(99,102,241,0.1);padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600">BOX_C_MODEL</span>` :
+                    `<span style="color:#f59e0b;background:rgba(245,158,11,0.1);padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600">ATR_FALLBACK</span>`
+                )
             );
 
         return `

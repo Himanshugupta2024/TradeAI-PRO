@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import math
+import time
+from collections import OrderedDict
 from typing import Any, Dict, Optional, Tuple
 
 from feed.option_chain import OptionChain
@@ -18,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 # Standard risk-free rate assumption for Indian markets (RBI 91-day T-Bill yield ~6.8%)
 DEFAULT_RISK_FREE_RATE = 0.068
+MAX_CACHED_CHAINS = 220
+CHAIN_FRESH_TTL_SEC = 180.0
 
 
 def norm_cdf(x: float) -> float:
@@ -110,15 +114,35 @@ def calculate_implied_volatility(
 class FNOAnalyticsEngine:
     """Computes comprehensive derivatives telemetry for equities and indices."""
 
-    def __init__(self):
-        # Maps symbol -> OptionChain instance
-        self.chains: Dict[str, OptionChain] = {}
+    def __init__(self, max_chains: int = MAX_CACHED_CHAINS):
+        # Bounded LRU map: symbol -> OptionChain instance (keeps Box C well below 512MB RAM)
+        self.max_chains = max(10, int(max_chains))
+        self.chains: OrderedDict[str, OptionChain] = OrderedDict()
+        self._updated_at: Dict[str, float] = {}
 
     def get_or_create_chain(self, symbol: str) -> OptionChain:
         sym = symbol.strip().upper().replace(".NS", "")
-        if sym not in self.chains:
-            self.chains[sym] = OptionChain(sym)
+        if sym in self.chains:
+            self.chains.move_to_end(sym)
+            return self.chains[sym]
+        while len(self.chains) >= self.max_chains:
+            evicted_sym, _ = self.chains.popitem(last=False)
+            self._updated_at.pop(evicted_sym, None)
+        self.chains[sym] = OptionChain(sym)
         return self.chains[sym]
+
+    def mark_updated(self, symbol: str, ts: Optional[float] = None) -> None:
+        sym = symbol.strip().upper().replace(".NS", "")
+        self._updated_at[sym] = float(ts if ts is not None else time.time())
+        if sym in self.chains:
+            self.chains.move_to_end(sym)
+
+    def get_chain_age_seconds(self, symbol: str) -> Optional[float]:
+        sym = symbol.strip().upper().replace(".NS", "")
+        ts = self._updated_at.get(sym)
+        if ts is None:
+            return None
+        return max(0.0, time.time() - ts)
 
     def compute_symbol_analytics(
         self,
@@ -180,6 +204,21 @@ class FNOAnalyticsEngine:
         elif atm_ce_iv or atm_pe_iv:
             straddle_iv = atm_ce_iv or atm_pe_iv
 
+        total_oi = sum(
+            int(row["ce"]["oi"]) + int(row["pe"]["oi"])
+            for row in chain.strikes.values()
+        )
+        chain_age = self.get_chain_age_seconds(sym)
+        if total_oi > 0:
+            if chain_age is None or chain_age <= CHAIN_FRESH_TTL_SEC:
+                envelope_source = "SHOONYA_OPTIONS_CHAIN"
+            else:
+                envelope_source = "BOX_C_STALE"
+        elif straddle_price > 0:
+            envelope_source = "SHOONYA_OPTIONS_CHAIN"
+        else:
+            envelope_source = "NO_CHAIN_DATA"
+
         return {
             "symbol": sym,
             "spot_price": round(spot, 2),
@@ -188,12 +227,16 @@ class FNOAnalyticsEngine:
             "max_pain": max_pain,
             "pcr_oi": pcr["pcr_oi"],
             "pcr_volume": pcr["pcr_volume"],
+            "total_ce_oi": pcr.get("total_ce_oi", 0),
+            "total_pe_oi": pcr.get("total_pe_oi", 0),
+            "total_oi": total_oi,
             "atm_strike": atm_strike,
             "straddle_price": straddle_price,
             "straddle_iv": straddle_iv,
             "implied_move_1d_pct": implied_move_1d_pct,
             "implied_move_5d_pct": implied_move_5d_pct,
             "days_to_expiry": days_to_expiry,
-            "envelope_source": "SHOONYA_OPTIONS_CHAIN" if straddle_price > 0 else "NO_CHAIN_DATA",
+            "chain_age_seconds": round(chain_age, 1) if chain_age is not None else None,
+            "envelope_source": envelope_source,
             "strike_count": len(chain.strikes),
         }

@@ -8,6 +8,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
@@ -40,16 +41,26 @@ async def lifespan(app: FastAPI):
     global feed_manager
     logger.info("Starting TradeAI Market Data Feed Service (Box C)...")
 
-    # Initial token master refresh (non-blocking fallback)
+    # Initial token master + NFO master refresh (non-blocking fallback)
     try:
         token_master.refresh_from_shoonya(timeout=5.0)
     except Exception as exc:
         logger.warning("Token master refresh deferred: %s", exc)
 
+    def _refresh_nfo_bg():
+        try:
+            nfo_master.refresh_from_shoonya(timeout=10.0)
+        except Exception as exc:
+            logger.warning("NFO master refresh deferred: %s", exc)
+
+    threading.Thread(target=_refresh_nfo_bg, daemon=True, name="NFOMasterRefresh").start()
+
     # Initialize and start feed manager
     feed_manager = ShoonyaFeedManager(
         bar_builder=bar_builder,
         token_master=token_master,
+        nfo_master=nfo_master,
+        fno_engine=fno_engine,
     )
     feed_manager.start()
 
@@ -109,6 +120,8 @@ def health() -> Dict[str, Any]:
         "total_ticks": stats["total_ticks"],
         "last_tick_time": stats["last_tick_time"],
         "token_master_symbols": len(token_master.symbol_to_token),
+        "nfo_underlyings_indexed": len(nfo_master.contracts),
+        "fno_live_chains": len(fno_engine.chains),
     }
 
 
@@ -185,11 +198,30 @@ def get_fno_analytics(
         if quote and "quotes" in quote and sym in quote["quotes"]:
             resolved_spot = float(quote["quotes"][sym].get("lp", 0.0))
 
+    age_sec = fno_engine.get_chain_age_seconds(sym)
+    if feed_manager and not feed_manager.is_simulated and (age_sec is None or age_sec > 90.0):
+        feed_manager.refresh_fno_underlying(sym, spot=resolved_spot, count=10)
+
     return fno_engine.compute_symbol_analytics(
         symbol=sym,
         spot=resolved_spot,
         days_to_expiry=days_to_expiry,
     )
+
+
+@app.get("/fno/underlyings")
+def list_fno_underlyings(
+    x_internal_token: Optional[str] = Header(None, alias="X-Internal-Token"),
+) -> Dict[str, Any]:
+    """Return full list of F&O underlyings indexed by NFOMaster."""
+    _verify_auth(x_internal_token)
+    priority_display = {"NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK"}
+    items = [priority_display.get(u, u) for u in nfo_master.list_underlyings()]
+    return {
+        "underlyings": items,
+        "count": len(items),
+        "live_chains": list(fno_engine.chains.keys()),
+    }
 
 
 @app.post("/fno/update-chain")
@@ -226,6 +258,8 @@ def update_fno_chain(
                 volume=pe.get("volume"),
             )
         updated += 1
+    if updated > 0:
+        fno_engine.mark_updated(sym)
     return {"status": "ok", "symbol": sym, "strikes_updated": updated}
 
 

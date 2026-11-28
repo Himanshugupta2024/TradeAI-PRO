@@ -1241,28 +1241,66 @@ export function istClock(date = new Date()) {
  * Decide whether this cron tick should dispatch a cycle.
  * Cron fires every 2 minutes; cadence check keeps it to one dispatch per 20 minutes.
  */
-export function shouldDispatchCycle(date = new Date()) {
+export function shouldDispatchCycle(date = new Date(), options = {}) {
   const { weekday, minutesOfDay, minuteOfHour } = istClock(date);
-  if (weekday < 1 || weekday > 5) return { dispatch: false, reason: "weekend" };
-  if (minutesOfDay < 9 * 60 + 15 || minutesOfDay > 15 * 60 + 30) {
-    return { dispatch: false, reason: "outside_session" };
+  const offHoursCrypto = Boolean(options && options.offHoursCrypto);
+  const inWeekday = weekday >= 1 && weekday <= 5;
+  const inNseSession = inWeekday && minutesOfDay >= 9 * 60 + 15 && minutesOfDay <= 15 * 60 + 30;
+
+  if (inNseSession) {
+    if (minuteOfHour % CYCLE_DISPATCH_INTERVAL_MIN !== 0) {
+      return { dispatch: false, reason: "off_cadence" };
+    }
+    return { dispatch: true, reason: "session_cadence" };
   }
-  if (minuteOfHour % CYCLE_DISPATCH_INTERVAL_MIN !== 0) {
+
+  if (offHoursCrypto) {
+    // Hourly cadence off-hours/weekends triggered cleanly at minute :00 by the */10 cron
+    if (minuteOfHour === 0) {
+      return { dispatch: true, reason: "offhours_crypto_cadence", universe: "crypto" };
+    }
     return { dispatch: false, reason: "off_cadence" };
   }
-  return { dispatch: true, reason: "session_cadence" };
+
+  if (!inWeekday) return { dispatch: false, reason: "weekend" };
+  return { dispatch: false, reason: "outside_session" };
 }
 
 async function dispatchAutonomousCycle(env, fetchFn, now, eventCron) {
   if (!env || !env.GH_PAT) return { dispatched: false, reason: "no_token" };
-  const decision = shouldDispatchCycle(now);
+  const offHoursCrypto = Boolean(
+    env && String(env.OFFHOURS_CRYPTO_DISPATCH || "").toLowerCase() === "true"
+  );
+  const decision = shouldDispatchCycle(now, { offHoursCrypto });
   if (!decision.dispatch) return { dispatched: false, reason: decision.reason };
-  // Only dispatch from the market-hours cron; the */10 keep-alive cron must not
-  // double-dispatch on minutes where both triggers fire simultaneously.
-  if (eventCron && eventCron !== '*/2 3-10 * * 1-5') {
+
+  // Avoid duplicate dispatches on minutes where both crons overlap:
+  // - NSE session ticks dispatch ONLY from the */2 market-hours cron.
+  // - Off-hours crypto ticks dispatch ONLY from the */10 keep-alive cron.
+  if (decision.reason === "session_cadence" && eventCron && eventCron !== '*/2 3-10 * * 1-5') {
     return { dispatched: false, reason: "deduped_cron" };
   }
+  if (decision.reason === "offhours_crypto_cadence" && eventCron && eventCron !== '*/10 * * * *') {
+    return { dispatched: false, reason: "deduped_cron" };
+  }
+
+  if (decision.reason === "offhours_crypto_cadence" && env.ML_BACKEND_ORIGIN) {
+    try {
+      await fetchFn(`${env.ML_BACKEND_ORIGIN.replace(/\/+$/, "")}/health/live`, {
+        method: "GET",
+        headers: {
+          "User-Agent": "TradeAI-Cloudflare-Cron-KeepAlive/1.0",
+          "Accept": "application/json",
+        },
+      });
+    } catch (_) {}
+  }
+
   try {
+    const body = { ref: "main" };
+    if (decision.universe === "crypto") {
+      body.inputs = { universe: "crypto", force_scan: "false", dry_run: "false" };
+    }
     const res = await fetchFn(
       `https://api.github.com/repos/${CYCLE_REPO}/actions/workflows/${CYCLE_WORKFLOW_FILE}/dispatches`,
       {
@@ -1273,7 +1311,7 @@ async function dispatchAutonomousCycle(env, fetchFn, now, eventCron) {
           "Content-Type": "application/json",
           "User-Agent": "TradeAI-Cloudflare-Cron-Scheduler/1.0",
         },
-        body: JSON.stringify({ ref: "main" }),
+        body: JSON.stringify(body),
       }
     );
     const ok = res.status === 201 || res.status === 204;

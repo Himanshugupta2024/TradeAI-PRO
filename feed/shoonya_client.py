@@ -48,10 +48,14 @@ class ShoonyaFeedManager:
         bar_builder: Optional[BarBuilder] = None,
         token_master: Optional[TokenMaster] = None,
         watchlist: Optional[List[str]] = None,
+        nfo_master: Optional[Any] = None,
+        fno_engine: Optional[Any] = None,
     ):
         self.bar_builder = bar_builder or BarBuilder()
         self.token_master = token_master or TokenMaster()
         self.watchlist = watchlist or list(DEFAULT_LIVE_WATCHLIST)
+        self.nfo_master = nfo_master
+        self.fno_engine = fno_engine
 
         # Credentials
         self.uid = os.environ.get("SHOONYA_USERID", "").strip()
@@ -75,6 +79,9 @@ class ShoonyaFeedManager:
         self._reconnecting = False
         self._reconnect_attempts = 0
         self._watchdog_started = False
+        self._fno_rotator_started = False
+        self._fno_lock = threading.Lock()
+        self._fno_last_refresh: Dict[str, float] = {}
 
     def has_credentials(self) -> bool:
         """Check if all required Shoonya credentials are present."""
@@ -197,6 +204,7 @@ class ShoonyaFeedManager:
         self._start_websocket()
         if self.has_credentials():
             self._start_session_watchdog()
+        self._start_fno_rotator()
         return True, f"Shoonya live session active for {self.masked_uid() or 'operator'}"
 
     def login_with_token(self, usertoken: str) -> bool:
@@ -256,6 +264,7 @@ class ShoonyaFeedManager:
 
         if logged_in and self.api is not None:
             self._start_websocket()
+            self._start_fno_rotator()
         else:
             self._start_simulation()
 
@@ -449,6 +458,148 @@ class ShoonyaFeedManager:
             )
         except Exception as exc:
             logger.debug("[Shoonya] Error parsing tick message: %s", exc)
+
+    def refresh_fno_underlying(self, symbol: str, spot: float = 0.0, count: int = 10) -> bool:
+        """Fetch near-expiry CE/PE option chain from Shoonya REST and populate FNOAnalyticsEngine."""
+        if not self.api or self.is_simulated or not self.nfo_master or not self.fno_engine:
+            return False
+
+        from feed.nfo_master import normalize_nfo_underlying
+
+        canonical = symbol.strip().upper().replace(".NS", "")
+        nfo_sym = normalize_nfo_underlying(canonical)
+        expiry = self.nfo_master.get_nearest_expiry(nfo_sym)
+        if not expiry:
+            return False
+
+        resolved_spot = float(spot or 0.0)
+        if resolved_spot <= 0:
+            snap = self.bar_builder.get_snapshot([canonical, nfo_sym])
+            quotes = (snap or {}).get("quotes") or {}
+            q_row = quotes.get(canonical) or quotes.get(nfo_sym) or {}
+            resolved_spot = float(q_row.get("lp") or 0.0)
+
+        atm_slice = self.nfo_master.get_strike_slice(nfo_sym, spot=resolved_spot, half_width=1, expiry=expiry)
+        if not atm_slice:
+            return False
+
+        ref_contract = atm_slice[0]
+        rows: list = []
+        with self._fno_lock:
+            try:
+                res = self.api.get_option_chain(
+                    "NFO",
+                    str(ref_contract.get("trading_symbol") or ""),
+                    str(ref_contract.get("strike") or ""),
+                    count=max(2, int(count)),
+                )
+                if isinstance(res, dict) and res.get("stat") == "Ok" and isinstance(res.get("values"), list):
+                    rows = res["values"]
+            except Exception as exc:
+                logger.debug("[Shoonya] get_option_chain failed for %s: %s", nfo_sym, exc)
+
+            # Fallback to slice get_quotes if get_option_chain omitted values
+            if not rows and hasattr(self.api, "get_quotes"):
+                broad_slice = self.nfo_master.get_strike_slice(nfo_sym, spot=resolved_spot, half_width=5, expiry=expiry)
+                for contract in broad_slice:
+                    tok = str(contract.get("token") or "")
+                    if not tok:
+                        continue
+                    try:
+                        q = self.api.get_quotes("NFO", tok)
+                        if isinstance(q, dict) and q.get("stat") == "Ok":
+                            rows.append({
+                                "tsym": contract.get("trading_symbol"),
+                                "strprc": contract.get("strike"),
+                                "optt": contract.get("option_type"),
+                                "lp": q.get("lp"),
+                                "oi": q.get("oi"),
+                                "v": q.get("v"),
+                            })
+                    except Exception:
+                        continue
+
+        if not rows:
+            return False
+
+        chain = self.fno_engine.get_or_create_chain(canonical)
+        updated = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            tsym = str(row.get("tsym") or "").upper()
+            optt = str(row.get("optt") or "").upper()
+            if optt not in ("CE", "PE"):
+                if "CE" in tsym:
+                    optt = "CE"
+                elif "PE" in tsym:
+                    optt = "PE"
+                else:
+                    continue
+            try:
+                strike = float(row.get("strprc") or row.get("strike") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if strike <= 0:
+                continue
+            try:
+                ltp = float(row.get("lp") or 0.0)
+            except (TypeError, ValueError):
+                ltp = 0.0
+            try:
+                oi = int(float(row.get("oi") or 0))
+            except (TypeError, ValueError):
+                oi = 0
+            try:
+                vol = int(float(row.get("v") or 0))
+            except (TypeError, ValueError):
+                vol = 0
+            chain.update_by_strike(
+                strike=strike,
+                opt_type=optt.lower(),
+                ltp=ltp if ltp > 0 else None,
+                oi=oi if oi >= 0 else None,
+                volume=vol if vol >= 0 else None,
+            )
+            updated += 1
+
+        if updated > 0:
+            self.fno_engine.mark_updated(canonical)
+            self._fno_last_refresh[canonical] = time.time()
+            return True
+        return False
+
+    def _start_fno_rotator(self) -> None:
+        """Rotate across indexed NFO underlyings during NSE session with polite REST pacing."""
+        if self._fno_rotator_started or not self.nfo_master or not self.fno_engine:
+            return
+        self._fno_rotator_started = True
+
+        def _rotator_loop():
+            idx = 0
+            priority_map = {"NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK"}
+            while not self._stop_event.wait(2.0):
+                try:
+                    if not self.api or self.is_simulated or not self.is_connected:
+                        continue
+                    now_ist = datetime.now(_IST)
+                    if now_ist.weekday() >= 5 or not ((9, 10) <= (now_ist.hour, now_ist.minute) <= (15, 35)):
+                        continue
+                    underlyings = self.nfo_master.list_underlyings()
+                    if not underlyings:
+                        continue
+                    raw_u = underlyings[idx % len(underlyings)]
+                    idx += 1
+                    sym = priority_map.get(raw_u, raw_u)
+                    last_ts = self._fno_last_refresh.get(sym, 0.0)
+                    if time.time() - last_ts < 90.0:
+                        continue
+                    self.refresh_fno_underlying(sym, count=10)
+                except Exception as exc:
+                    logger.debug("[Shoonya] NFO rotator step error: %s", exc)
+
+        t = threading.Thread(target=_rotator_loop, daemon=True, name="ShoonyaFnoRotator")
+        t.start()
 
     def _start_simulation(self) -> None:
         """

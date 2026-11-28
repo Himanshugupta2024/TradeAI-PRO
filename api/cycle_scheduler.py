@@ -32,6 +32,7 @@ log = get_logger(__name__)
 # is CYCLE_INTERVAL_SEC; the loop just needs to wake often enough to honour it.
 SUPERVISOR_TICK_SEC = 60
 CYCLE_INTERVAL_SEC = 20 * 60
+OFFHOURS_CYCLE_INTERVAL_SEC = int(os.getenv("OFFHOURS_CYCLE_INTERVAL_SEC", str(60 * 60)))
 STATE_KEY = "cycle_scheduler:v1"
 
 _REPO_DEFAULT = "Himanshugupta2024/TradeAI-PRO"
@@ -66,16 +67,40 @@ def evaluate_tick(
     last_dispatch_at: Any = None,
     enabled: bool = True,
     interval_sec: int = CYCLE_INTERVAL_SEC,
+    crypto_forex_enabled: bool = False,
+    last_offhours_dispatch_at: Any = None,
+    offhours_interval_sec: int = OFFHOURS_CYCLE_INTERVAL_SEC,
 ) -> dict:
-    """Decide whether to dispatch a cycle right now.
-
-    Pure function so the cadence rules stay unit-testable without network,
-    database, or clock dependencies.
-    """
+    """Decide whether to dispatch a cycle right now (dual-cadence NSE + off-hours multi-asset)."""
     if not enabled:
         return {"action": "skip", "reason": "scheduler_disabled"}
+
     if not market_open:
-        return {"action": "skip", "reason": "market_closed"}
+        if not crypto_forex_enabled:
+            return {"action": "skip", "reason": "market_closed"}
+        if not token_present:
+            return {
+                "action": "skip",
+                "reason": "no_github_token",
+                "detail": "Set GITHUB_TOKEN on the API service so cycles dispatch to GitHub Actions.",
+            }
+        last_off = _parse_iso(last_offhours_dispatch_at)
+        if last_off is not None:
+            if last_off.tzinfo is None:
+                last_off = last_off.replace(tzinfo=timezone.utc)
+            age_sec = (now - last_off).total_seconds()
+            if age_sec < offhours_interval_sec:
+                return {
+                    "action": "skip",
+                    "reason": "offhours_cooldown",
+                    "next_dispatch_in_sec": int(offhours_interval_sec - max(age_sec, 0)),
+                }
+        return {
+            "action": "dispatch",
+            "reason": "offhours_multi_asset_interval_elapsed",
+            "universe": "crypto",
+        }
+
     if not token_present:
         return {
             "action": "skip",
@@ -95,7 +120,7 @@ def evaluate_tick(
                 "next_dispatch_in_sec": int(interval_sec - max(age_sec, 0)),
             }
 
-    return {"action": "dispatch", "reason": "market_open_interval_elapsed"}
+    return {"action": "dispatch", "reason": "market_open_interval_elapsed", "universe": "tier1"}
 
 
 LOCAL_CYCLE_REFUSED_MESSAGE = (
@@ -183,11 +208,13 @@ async def run_scheduler_loop() -> None:
     while True:
         try:
             from agents.execution.session_guard import is_nse_market_open
+            from agents.execution.market_control import is_crypto_forex_enabled
             from zoneinfo import ZoneInfo
 
             ist = ZoneInfo("Asia/Kolkata")
             now = datetime.now(timezone.utc)
             market_open, _reason = is_nse_market_open(datetime.now(ist))
+            crypto_forex_on = await asyncio.to_thread(is_crypto_forex_enabled)
             state = await asyncio.to_thread(_read_state)
             token_present = bool(_github_token())
 
@@ -198,24 +225,42 @@ async def run_scheduler_loop() -> None:
                 last_dispatch_at=state.get("last_dispatch_at"),
                 enabled=os.getenv("CYCLE_SCHEDULER_ENABLED", "true").strip().lower()
                 in ("1", "true", "yes", "on"),
+                crypto_forex_enabled=crypto_forex_on,
+                last_offhours_dispatch_at=state.get("last_offhours_dispatch_at"),
             )
 
             state.update(
                 {
                     "last_check_at": now.isoformat(),
                     "market_open": market_open,
+                    "crypto_forex_enabled": crypto_forex_on,
                     "token_present": token_present,
                     "last_decision": decision,
                 }
             )
 
             if decision["action"] == "dispatch":
-                result = await dispatch_cycle()
+                universe = str(decision.get("universe") or "tier1")
+                if not market_open and crypto_forex_on:
+                    # Wake Box B cleanly just before an off-hours multi-asset scan without pinning it 24/7
+                    ml_url = os.getenv("ML_SIDECAR_URL", "").strip().rstrip("/")
+                    if ml_url:
+                        try:
+                            import httpx
+                            async with httpx.AsyncClient(timeout=5.0) as wake_client:
+                                await wake_client.get(f"{ml_url}/health/live")
+                        except Exception:
+                            pass
+
+                result = await dispatch_cycle(universe=universe)
                 state["last_dispatch_result"] = result
                 if result.get("ok"):
-                    state["last_dispatch_at"] = now.isoformat()
+                    if market_open:
+                        state["last_dispatch_at"] = now.isoformat()
+                    else:
+                        state["last_offhours_dispatch_at"] = now.isoformat()
                     state["dispatches_total"] = int(state.get("dispatches_total") or 0) + 1
-                    log.info("[cycle-scheduler] dispatched autonomous cycle on %s", _github_repo())
+                    log.info("[cycle-scheduler] dispatched %s cycle on %s", universe, _github_repo())
                 else:
                     state["last_dispatch_error"] = result.get("error") or result.get("status")
                     log.warning("[cycle-scheduler] dispatch failed: %s", state["last_dispatch_error"])

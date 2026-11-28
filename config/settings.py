@@ -1434,8 +1434,12 @@ PAPER_TRADING_UNLOCK_MIN_WR_PCT = float(os.getenv("PAPER_TRADING_UNLOCK_MIN_WR_P
 # How many calendar days ahead to check SL/Target for EOD resolution
 PAPER_TRADING_FORWARD_DAYS = int(os.getenv("PAPER_TRADING_FORWARD_DAYS", "5"))
 
-# Max open paper trades at once (prevents over-crowding)
-PAPER_TRADING_MAX_OPEN = int(os.getenv("PAPER_TRADING_MAX_OPEN", "3"))
+# Max open paper trades at once (legacy unified cap + per-bucket partitioned caps)
+PAPER_TRADING_MAX_OPEN = int(os.getenv("PAPER_TRADING_MAX_OPEN", "5"))
+PAPER_MAX_OPEN_EQUITY = int(os.getenv("PAPER_MAX_OPEN_EQUITY", str(PAPER_TRADING_MAX_OPEN)))
+PAPER_MAX_OPEN_GLOBAL = int(os.getenv("PAPER_MAX_OPEN_GLOBAL", "4"))
+PAPER_MAX_OPEN_FOREX = int(os.getenv("PAPER_MAX_OPEN_FOREX", "2"))
+FOREX_AUTO_EXECUTE = os.getenv("FOREX_AUTO_EXECUTE", "true").lower() in ("1", "true", "yes", "on")
 
 # ── Autonomous Self-Learning Execution Daemon ─────────────────────────────────
 AUTONOMOUS_TRADING_ENABLED = os.getenv("AUTONOMOUS_TRADING_ENABLED", "true").lower() in ("1", "true", "yes")

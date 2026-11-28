@@ -1,24 +1,12 @@
 /* ============================================================================
-   TradeAI PRO — Liquid Glass for the standalone Crypto page.
-   crypto.html ships its own inline tokens (--bg / --card / --border) and a
-   different component set, so it gets a small dedicated mapping instead of the
-   dashboard stylesheet. Scoped to html[data-skin="glass"] — inert by default.
+   TradeAI PRO — Obsidian Frost Skin for Crypto Live (Opt-in via ?skin=glass)
+   Aligned strictly to /static/tokens.css (zero neon blue/purple gradient blobs).
    ========================================================================== */
-
-html[data-skin="glass"] {
-    --bg: #05070f;
-    --card: rgba(15, 23, 42, 0.55);
-    --border: rgba(255, 255, 255, 0.14);
-    --text: #f8fafc;
-    --radius: 20px;
-}
 
 html[data-skin="glass"] body {
     background:
-        radial-gradient(900px 620px at 12% -8%, rgba(59, 130, 246, 0.30), transparent 62%),
-        radial-gradient(760px 520px at 88% 2%, rgba(168, 85, 247, 0.20), transparent 60%),
-        radial-gradient(820px 620px at 50% 112%, rgba(34, 211, 238, 0.16), transparent 62%),
-        #05070f;
+        radial-gradient(920px 440px at 50% -10%, rgba(34, 211, 238, 0.055), transparent 65%),
+        var(--canvas);
     background-attachment: fixed;
 }
 
@@ -30,24 +18,20 @@ html[data-skin="glass"] .futures-panel,
 html[data-skin="glass"] .meme-card,
 html[data-skin="glass"] .news-item,
 html[data-skin="glass"] .signal-card {
-    background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.025)),
-        rgba(15, 23, 42, 0.55);
-    -webkit-backdrop-filter: blur(18px) saturate(160%);
-    backdrop-filter: blur(18px) saturate(160%);
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(14, 17, 24, 0.78);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    backdrop-filter: blur(12px) saturate(140%);
+    border: 1px solid var(--border-subtle);
     box-shadow:
-        0 22px 55px -26px rgba(0, 0, 0, 0.9),
-        inset 0 1px 0 rgba(255, 255, 255, 0.22);
-    border-radius: var(--radius);
+        var(--shadow-md),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-lg);
 }
 
 html[data-skin="glass"] .mover-card:hover,
 html[data-skin="glass"] .insight-card:hover {
-    border-color: rgba(255, 255, 255, 0.22);
-    background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04)),
-        rgba(30, 41, 59, 0.62);
+    border-color: var(--border-strong);
+    background: rgba(27, 34, 48, 0.86);
 }
 
 html[data-skin="glass"] table {

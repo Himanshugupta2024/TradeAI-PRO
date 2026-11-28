@@ -8,31 +8,32 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/tokens.css?v=1">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #0b0d14;
-      --bg2: #10131d;
-      --card: #151824;
-      --card-hover: #1b1f2e;
-      --border: rgba(255, 255, 255, 0.08);
-      --border-accent: rgba(99, 102, 241, 0.3);
-      --accent: #6366f1;
-      --accent-glow: rgba(99, 102, 241, 0.2);
-      --green: #10b981;
-      --green-glow: rgba(16, 185, 129, 0.2);
-      --red: #ef4444;
-      --red-glow: rgba(239, 68, 68, 0.2);
-      --yellow: #f59e0b;
-      --yellow-glow: rgba(245, 158, 11, 0.2);
-      --cyan: #06b6d4;
-      --text: #f8fafc;
-      --text-muted: #94a3b8;
-      --text-subtle: #64748b;
-      --mono: 'JetBrains Mono', monospace;
-      --sans: 'Inter', sans-serif;
-      --radius: 12px;
-      --radius-sm: 8px;
+      --bg: var(--canvas, #080a0f);
+      --bg2: var(--surface-1, #0e1118);
+      --card: var(--surface-2, #141923);
+      --card-hover: var(--surface-3, #1b2230);
+      --border: var(--border-subtle, rgba(148, 163, 184, 0.12));
+      --border-accent: rgba(34, 211, 238, 0.35);
+      --accent: var(--accent-brand, #22d3ee);
+      --accent-glow: var(--accent-brand-soft, rgba(34, 211, 238, 0.12));
+      --green: var(--bull, #10b981);
+      --green-glow: var(--bull-soft, rgba(16, 185, 129, 0.12));
+      --red: var(--bear, #f43f5e);
+      --red-glow: var(--bear-soft, rgba(244, 63, 94, 0.12));
+      --yellow: var(--warn, #f59e0b);
+      --yellow-glow: var(--warn-soft, rgba(245, 158, 11, 0.12));
+      --cyan: var(--accent-brand, #22d3ee);
+      --text: var(--text-1, #f1f5f9);
+      --text-muted: var(--text-2, #94a3b8);
+      --text-subtle: var(--text-3, #64748b);
+      --mono: var(--font-num, 'JetBrains Mono', monospace);
+      --sans: var(--font-sans, 'Inter', sans-serif);
+      --radius: var(--radius-lg, 10px);
+      --radius-sm: var(--radius-md, 8px);
     }
 
     body {
@@ -318,12 +319,14 @@
       cursor: not-allowed;
     }
     .btn-primary {
-      background: var(--accent);
-      color: #fff;
+      background: var(--accent-brand, #22d3ee);
+      color: var(--accent-brand-ink, #080a0f);
+      font-weight: 700;
     }
     .btn-primary:hover:not(:disabled) {
-      background: #4f46e5;
-      box-shadow: 0 0 12px var(--accent-glow);
+      background: var(--accent-brand-strong, #06b6d4);
+      color: var(--accent-brand-ink, #080a0f);
+      box-shadow: var(--shadow-glow);
     }
     .btn-danger {
       background: rgba(239, 68, 68, 0.15);
@@ -487,8 +490,8 @@
     .auth-icon-wrap {
       width: 52px;
       height: 52px;
-      border-radius: 12px;
-      background: rgba(99, 102, 241, 0.15);
+      border-radius: 10px;
+      background: var(--accent-brand-soft, rgba(34, 211, 238, 0.12));
       border: 1px solid var(--border-accent);
       display: flex;
       align-items: center;
@@ -511,7 +514,7 @@
     }
     .auth-input {
       width: 100%;
-      background: #080a11;
+      background: var(--surface-input, #0b0e14);
       border: 1px solid var(--border);
       color: var(--text);
       font-family: var(--mono);
@@ -546,9 +549,9 @@
       padding: 1.5rem;
     }
     .confirm-card {
-      background: #151824;
+      background: var(--surface-2, #141923);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 10px;
       padding: 1.75rem;
       max-width: 420px;
       width: 100%;
@@ -1158,7 +1161,7 @@
             <span class="section-hd-sub">Granular asset enablement (NSE, Crypto, Forex) &amp; dynamic platform broadcast focus</span>
           </div>
         </div>
-        <div id="marketFocusActiveBadge" style="font-size:0.75rem; font-weight:700; padding:3px 10px; border-radius:20px; background:rgba(99,102,241,0.15); color:#818cf8; border:1px solid rgba(99,102,241,0.3);">
+        <div id="marketFocusActiveBadge" style="font-size:0.75rem; font-weight:700; padding:3px 10px; border-radius:20px; background:var(--accent-brand-soft,rgba(34,211,238,0.12)); color:var(--accent-brand,#22d3ee); border:1px solid var(--border-accent,rgba(34,211,238,0.32));">
           Focus: Loading...
         </div>
       </div>
@@ -1774,8 +1777,13 @@
         if (port) {
           const cap = Number(port.capital ?? port.total_equity ?? port.current_capital ?? port.total_capital ?? 100000);
           document.getElementById('valTotalCapital').textContent = `₹${cap.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
-          const maxOpen = port.max_open_positions ?? risk?.max_open_positions ?? auto?.status?.max_positions ?? 3;
-          document.getElementById('valOpenTrades').textContent = `${port.open_trades ?? 0} / ${maxOpen} max`;
+          const maxOpen = port.max_open_positions ?? risk?.max_open_positions ?? auto?.status?.max_positions ?? 5;
+          const buckets = port.slot_buckets || risk?.slot_buckets;
+          if (buckets && buckets.equity && buckets.global) {
+            document.getElementById('valOpenTrades').textContent = `${port.open_trades ?? 0} total · NSE ${buckets.equity.open}/${buckets.equity.max} · Global ${buckets.global.open}/${buckets.global.max}`;
+          } else {
+            document.getElementById('valOpenTrades').textContent = `${port.open_trades ?? 0} / ${maxOpen} max`;
+          }
           document.getElementById('valWinRate').textContent = `${(port.win_rate || 0).toFixed(1)}%`;
 
           const pnlEl = document.getElementById('valDailyPnl');
@@ -2031,10 +2039,10 @@
       _currentMarketFocus = mode;
       document.querySelectorAll('#focusBtnGroup .btn-focus-opt').forEach(btn => {
         const isSelected = btn.getAttribute('data-focus') === mode;
-        btn.style.background = isSelected ? 'rgba(99, 102, 241, 0.25)' : 'rgba(255, 255, 255, 0.03)';
+        btn.style.background = isSelected ? 'var(--accent-brand-soft, rgba(34, 211, 238, 0.14))' : 'rgba(148, 163, 184, 0.04)';
         btn.style.borderColor = isSelected ? 'var(--accent)' : 'var(--border)';
-        btn.style.boxShadow = isSelected ? '0 0 14px var(--accent-glow)' : 'none';
-        btn.style.color = isSelected ? '#fff' : 'var(--text-muted)';
+        btn.style.boxShadow = 'none';
+        btn.style.color = isSelected ? 'var(--accent)' : 'var(--text-muted)';
       });
 
       const chkNse = document.getElementById('chkEnableNse');

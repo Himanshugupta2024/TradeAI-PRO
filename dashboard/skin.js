@@ -1,16 +1,15 @@
 /**
- * TradeAI PRO — skin switch.
+ * TradeAI PRO — skin switch (Obsidian Matte default / Obsidian Frost toggle).
  *
- * Enables the opt-in Liquid Glass skin without touching the default theme.
- * Priority: ?skin=glass URL param  →  localStorage  →  default.
+ * Enables the opt-in Frost skin without breaking dark/light tokens.
+ * Priority: ?skin=glass|default URL param  →  localStorage  →  Obsidian Matte ('default').
  *
- * The attribute is set before first paint (this file is loaded in <head>), so
- * there is no flash of the wrong theme. Toggling stores the choice.
+ * Loaded in <head> before first paint so there is no flash of the wrong surface.
  */
 (function () {
     'use strict';
 
-    var STORAGE_KEY = 'tradeai_skin';
+    var STORAGE_KEY = 'tradeai_skin_v2';
     var root = document.documentElement;
 
     function readStored() {
@@ -42,8 +41,8 @@
         if (button) {
             button.setAttribute('aria-pressed', glass ? 'true' : 'false');
             button.title = glass
-                ? 'Liquid Glass: on — switch to classic'
-                : 'Liquid Glass: off — switch to glass';
+                ? 'Obsidian Frost: on — switch to Matte Terminal'
+                : 'Obsidian Matte: on — switch to Frost';
             var icon = document.getElementById('skinIcon');
             if (icon) icon.textContent = glass ? '✦' : '✧';
         }
@@ -61,12 +60,12 @@
     var params = new URLSearchParams(window.location.search);
     var requested = params.get('skin');
     var stored = readStored();
-    // Liquid Glass is ON by default unless explicitly set to 'default'/'classic'
-    var initial = (requested === 'default' || requested === 'classic')
-        ? 'default'
-        : (requested === 'glass'
-            ? 'glass'
-            : (stored === 'default' || stored === 'classic' ? 'default' : 'glass'));
+    // Obsidian Matte ('default') is active by default; Frost ('glass') is opt-in.
+    var initial = (requested === 'glass')
+        ? 'glass'
+        : ((requested === 'default' || requested === 'classic' || requested === 'matte')
+            ? 'default'
+            : (stored === 'glass' ? 'glass' : 'default'));
 
     apply(initial);
 
@@ -76,7 +75,6 @@
         button.addEventListener('click', function () {
             apply(root.getAttribute('data-skin') === 'glass' ? 'default' : 'glass');
         });
-        // Reflect the current state on the button after binding.
         apply(root.getAttribute('data-skin') === 'glass' ? 'glass' : 'default');
     }
 

@@ -11,8 +11,9 @@
   },
   "vars": {
     "ML_BACKEND_ORIGIN": "https://trading-ml-8umr.onrender.com",
-    "FEED_BACKEND_ORIGIN": "https://trading-feed.onrender.com",
-    "SIDECAR_MARKET_HOURS_ONLY": "true"
+    "FEED_BACKEND_ORIGIN": "https://trading-feed-pp80.onrender.com",
+    "SIDECAR_MARKET_HOURS_ONLY": "true",
+    "OFFHOURS_CRYPTO_DISPATCH": "true"
   },
   "assets": {
     "directory": "./dashboard",

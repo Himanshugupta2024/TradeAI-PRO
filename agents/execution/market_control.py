@@ -174,37 +174,45 @@ def verify_operator_password(password: str, client_id: str = "global") -> Tuple[
         return False, "Invalid operator credentials."
 
 
+def _default_crypto_forex_enabled() -> bool:
+    """Resolve uninitialized multi-asset default via DEFAULT_CRYPTO_FOREX_ENABLED."""
+    raw = os.getenv("DEFAULT_CRYPTO_FOREX_ENABLED", "false").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def get_market_control_state() -> Dict[str, Any]:
     """
     Fetch the persistent market control state from authoritative database.
-    Defaults to OFF on a new installation or database read error.
+    Falls back to DEFAULT_CRYPTO_FOREX_ENABLED (default False for clean isolated installs,
+    or True in production multi-asset deployments) when DB state has not been explicitly toggled.
     """
+    default_cf = _default_crypto_forex_enabled()
     try:
         from db.runtime_state import get_runtime_state
         state = get_runtime_state(STATE_KEY)
         if isinstance(state, dict):
             return {
-                "crypto_forex_enabled": bool(state.get("crypto_forex_enabled", False)),
+                "crypto_forex_enabled": bool(state.get("crypto_forex_enabled", default_cf)),
                 "version": int(state.get("version", 1)),
                 "updated_at": str(state.get("updated_at", "")),
                 "updated_by": str(state.get("updated_by", "system")),
                 "audit_log": state.get("audit_log", [])[-20:],  # keep last 20
             }
     except Exception as exc:
-        logger.error("Failed to load market control state from DB: %s (defaulting to OFF)", exc)
+        logger.error("Failed to load market control state from DB: %s (defaulting to %s)", exc, default_cf)
 
-    # Safe default: OFF on new install or store error
+    mode_desc = "Multi-Asset Active (default configuration)" if default_cf else "Default installation state: NSE Focus Mode active, Crypto/Forex OFF"
     return {
-        "crypto_forex_enabled": False,
+        "crypto_forex_enabled": default_cf,
         "version": 1,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "updated_by": "system_default",
         "audit_log": [
             {
                 "action": "DEFAULT_INIT",
-                "state": False,
+                "state": default_cf,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "reason": "Default installation state: NSE Focus Mode active, Crypto/Forex OFF",
+                "reason": mode_desc,
             }
         ],
     }

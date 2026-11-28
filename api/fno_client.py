@@ -25,8 +25,11 @@ FNO_CACHE_TTL_SEC = 30.0
 
 # In-memory TTL cache: symbol -> (timestamp, data_dict)
 _FNO_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_UNDERLYINGS_CACHE: Dict[str, Any] = {"ts": 0.0, "items": []}
+_PERSIST_THROTTLE: Dict[str, float] = {}
 _async_client: Optional[httpx.AsyncClient] = None
 _sync_client: Optional[httpx.Client] = None
+_FNO_SNAPSHOT_STATE_KEY = "fno_snapshots:v1"
 
 
 def _get_async_client(timeout: float) -> httpx.AsyncClient:
@@ -110,6 +113,55 @@ def _build_atr_fallback(symbol: str, spot: float, atr: float) -> Dict[str, Any]:
     }
 
 
+def _persist_fno_snapshot_sync(sym: str, data: Dict[str, Any]) -> None:
+    """Persist verified Box C F&O snapshot to Supabase runtime_state (throttled per symbol)."""
+    src = str(data.get("envelope_source") or "")
+    if src not in ("BOX_C_STREAM", "SHOONYA_OPTIONS_CHAIN") or (data.get("ce_wall") is None and data.get("pe_wall") is None):
+        return
+    now = time.monotonic()
+    if now - _PERSIST_THROTTLE.get(sym, 0.0) < 60.0:
+        return
+    _PERSIST_THROTTLE[sym] = now
+    try:
+        from db.runtime_state import get_runtime_state, set_runtime_state
+        from datetime import datetime, timezone
+        store = get_runtime_state(_FNO_SNAPSHOT_STATE_KEY)
+        if not isinstance(store, dict):
+            store = {}
+        snap_copy = dict(data)
+        snap_copy["persisted_at"] = datetime.now(timezone.utc).isoformat()
+        store[sym] = snap_copy
+        # Keep snapshot dictionary bounded to <= 220 underlyings
+        if len(store) > 220:
+            oldest_key = next(iter(store))
+            if oldest_key != sym:
+                store.pop(oldest_key, None)
+        set_runtime_state(_FNO_SNAPSHOT_STATE_KEY, store)
+    except Exception as exc:
+        logger.debug("[FNOClient] Persist snapshot skipped for %s: %s", sym, exc)
+
+
+def _load_cached_fno_snapshot_sync(sym: str, spot: float, atr: float) -> Optional[Dict[str, Any]]:
+    """Return last persisted real Box C F&O snapshot when Box C is sleeping or off-hours."""
+    try:
+        from db.runtime_state import get_runtime_state
+        store = get_runtime_state(_FNO_SNAPSHOT_STATE_KEY)
+        if not isinstance(store, dict):
+            return None
+        cached = store.get(sym)
+        if not isinstance(cached, dict):
+            return None
+        if cached.get("ce_wall") is None and cached.get("pe_wall") is None:
+            return None
+        out = dict(cached)
+        if spot > 0:
+            out["spot_price"] = round(float(spot), 2)
+        out["envelope_source"] = "BOX_C_CACHED"
+        return out
+    except Exception:
+        return None
+
+
 def _apply_atr_fallback_if_unbacked(
     data: Dict[str, Any],
     sym: str,
@@ -120,6 +172,11 @@ def _apply_atr_fallback_if_unbacked(
     if data.get("envelope_source") == "NO_CHAIN_DATA" or (
         data.get("ce_wall") is None and data.get("pe_wall") is None
     ):
+        cached = _load_cached_fno_snapshot_sync(sym, spot, atr)
+        if cached is not None:
+            data.clear()
+            data.update(cached)
+            return data
         fb = _build_atr_fallback(sym, spot, atr)
         data.update({
             "ce_wall": fb["ce_wall"],
@@ -146,12 +203,14 @@ async def fetch_fno_analytics(
 ) -> Dict[str, Any]:
     """
     Fetch live F&O analytics for symbol with 30s TTL caching.
-    Falls back to ATR envelope on failure.
+    Falls back cleanly to persisted BOX_C_CACHED snapshot, then ATR envelope.
     """
+    import asyncio
     sym = symbol.strip().upper().replace(".NS", "")
     url = os.environ.get("FEED_SERVICE_URL", FEED_SERVICE_URL).rstrip("/")
     if not url:
-        return _build_atr_fallback(sym, spot, atr)
+        cached = await asyncio.to_thread(_load_cached_fno_snapshot_sync, sym, spot, atr)
+        return cached if cached is not None else _build_atr_fallback(sym, spot, atr)
 
     now = time.monotonic()
     cache_key = f"{sym}|{url}|{round(float(spot or 0.0), 2)}"
@@ -177,12 +236,15 @@ async def fetch_fno_analytics(
             data = resp.json()
             if isinstance(data, dict):
                 _apply_atr_fallback_if_unbacked(data, sym, spot, atr)
+                if data.get("envelope_source") in ("BOX_C_STREAM", "SHOONYA_OPTIONS_CHAIN"):
+                    await asyncio.to_thread(_persist_fno_snapshot_sync, sym, data)
                 _FNO_CACHE[cache_key] = (now, data)
                 return data
     except Exception as exc:
-        logger.debug("[FNOClient] Call failed for %s, using ATR fallback: %s", sym, exc)
+        logger.debug("[FNOClient] Call failed for %s, using fallback: %s", sym, exc)
 
-    fallback = _build_atr_fallback(sym, spot, atr)
+    cached = await asyncio.to_thread(_load_cached_fno_snapshot_sync, sym, spot, atr)
+    fallback = cached if cached is not None else _build_atr_fallback(sym, spot, atr)
     _FNO_CACHE[cache_key] = (now, fallback)
     return fallback
 
@@ -198,7 +260,8 @@ def fetch_fno_analytics_sync(
     sym = symbol.strip().upper().replace(".NS", "")
     url = os.environ.get("FEED_SERVICE_URL", FEED_SERVICE_URL).rstrip("/")
     if not url:
-        return _build_atr_fallback(sym, spot, atr)
+        cached = _load_cached_fno_snapshot_sync(sym, spot, atr)
+        return cached if cached is not None else _build_atr_fallback(sym, spot, atr)
 
     now = time.monotonic()
     cache_key = f"{sym}|{url}|{round(float(spot or 0.0), 2)}"
@@ -223,11 +286,51 @@ def fetch_fno_analytics_sync(
             data = resp.json()
             if isinstance(data, dict):
                 _apply_atr_fallback_if_unbacked(data, sym, spot, atr)
+                if data.get("envelope_source") in ("BOX_C_STREAM", "SHOONYA_OPTIONS_CHAIN"):
+                    _persist_fno_snapshot_sync(sym, data)
                 _FNO_CACHE[cache_key] = (now, data)
                 return data
     except Exception as exc:
-        logger.debug("[FNOClient] Sync call failed for %s, using ATR fallback: %s", sym, exc)
+        logger.debug("[FNOClient] Sync call failed for %s, using fallback: %s", sym, exc)
 
-    fallback = _build_atr_fallback(sym, spot, atr)
+    cached = _load_cached_fno_snapshot_sync(sym, spot, atr)
+    fallback = cached if cached is not None else _build_atr_fallback(sym, spot, atr)
     _FNO_CACHE[cache_key] = (now, fallback)
+    return fallback
+
+
+async def fetch_fno_underlyings() -> list[str]:
+    """Return full F&O underlying universe from Box C, with equity fallback."""
+    now = time.monotonic()
+    if _UNDERLYINGS_CACHE["items"] and (now - float(_UNDERLYINGS_CACHE["ts"])) < 300.0:
+        return list(_UNDERLYINGS_CACHE["items"])
+
+    url = os.environ.get("FEED_SERVICE_URL", FEED_SERVICE_URL).rstrip("/")
+    token = os.environ.get("FEED_INTERNAL_TOKEN", FEED_INTERNAL_TOKEN)
+    headers = {"X-Internal-Token": token} if token else {}
+    if url:
+        try:
+            client = _get_async_client(max(2.5, FNO_TIMEOUT_SEC))
+            resp = await client.get(f"{url}/fno/underlyings", headers=headers)
+            if resp.status_code == 200:
+                payload = resp.json()
+                items = payload.get("underlyings") if isinstance(payload, dict) else None
+                if isinstance(items, list) and items:
+                    _UNDERLYINGS_CACHE["ts"] = now
+                    _UNDERLYINGS_CACHE["items"] = items
+                    return list(items)
+        except Exception as exc:
+            logger.debug("[FNOClient] Underlyings lookup skipped: %s", exc)
+
+    core = ["NIFTY 50", "NIFTY BANK"]
+    try:
+        from config import settings
+        nse_keys = [
+            str(s).upper()
+            for s in (settings.NSE_SYMBOLS.keys() if isinstance(settings.NSE_SYMBOLS, dict) else settings.NSE_SYMBOLS)
+            if str(s).upper() not in ("NIFTY 50", "BANKNIFTY", "SENSEX", "INDIA VIX", "NIFTY BANK")
+        ]
+        fallback = core + nse_keys
+    except Exception:
+        fallback = core + list(_DEFAULT_SPOT_ANCHORS.keys())[2:]
     return fallback

@@ -88,6 +88,23 @@ class _NoopLogger:
 
 
 
+def _slot_bucket(symbol: str) -> str:
+    """Partition symbols into EQUITY (NSE) vs GLOBAL (Crypto/Forex) risk-slot buckets."""
+    from agents.execution.currency import resolve_instrument_identity
+
+    asset_class, _, _ = resolve_instrument_identity(symbol)
+    if asset_class in ("CRYPTO", "FOREX"):
+        return "GLOBAL"
+    return "EQUITY"
+
+
+def _asset_class_for_slot(symbol: str) -> str:
+    from agents.execution.currency import resolve_instrument_identity
+
+    asset_class, _, _ = resolve_instrument_identity(symbol)
+    return asset_class
+
+
 def validate_trade_geometry(direction: str, entry: float, stop_loss: float, target: float) -> tuple[bool, str]:
     """Enforce strict directional stop/target geometry (LONG: SL < entry < TP, SHORT: TP < entry < SL)."""
     for name, val in (("entry", entry), ("stop_loss", stop_loss), ("target", target)):
@@ -416,14 +433,31 @@ class PaperTradingEngine:
             log.warning("BLOCKED: Daily loss limit hit (%.2f)", daily)
             return None
 
-        # Risk check: max open positions
-        max_open = effective_int("PAPER_TRADING_MAX_OPEN", int(getattr(settings, "PAPER_TRADING_MAX_OPEN", 5)))
-        if len(self.open_trades) >= max_open:
-            self.last_rejection_reason = (
-                f"Maximum open positions limit ({len(self.open_trades)}/{max_open}) reached"
-            )
-            log.warning("BLOCKED: %s", self.last_rejection_reason)
-            return None
+        # Risk check: partitioned max open positions per asset bucket (NSE Equity vs Global Crypto/Forex)
+        bucket_limits = self.get_bucket_limits()
+        sym_asset_class = _asset_class_for_slot(symbol)
+        sym_bucket = "GLOBAL" if sym_asset_class in ("CRYPTO", "FOREX") else "EQUITY"
+        bucket_counts = self.get_open_bucket_counts()
+        if sym_bucket == "EQUITY":
+            if bucket_counts["EQUITY"] >= bucket_limits["equity"]:
+                self.last_rejection_reason = (
+                    f"Maximum open NSE Equity positions limit ({bucket_counts['EQUITY']}/{bucket_limits['equity']}) reached"
+                )
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
+        else:
+            if bucket_counts["GLOBAL"] >= bucket_limits["global"]:
+                self.last_rejection_reason = (
+                    f"Maximum open Global Crypto/Forex positions limit ({bucket_counts['GLOBAL']}/{bucket_limits['global']}) reached"
+                )
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
+            if sym_asset_class == "FOREX" and bucket_counts["FOREX"] >= bucket_limits["forex"]:
+                self.last_rejection_reason = (
+                    f"Maximum open Paper Forex positions limit ({bucket_counts['FOREX']}/{bucket_limits['forex']}) reached"
+                )
+                log.warning("BLOCKED: %s", self.last_rejection_reason)
+                return None
 
         # Risk check: duplicate open trade on the same symbol
         norm_sym = self._normalize_symbol(symbol)
@@ -652,8 +686,9 @@ class PaperTradingEngine:
         new_exposure = float(to_decimal(abs(entry * qty)) * to_decimal(fx_rate))
         if current_exposure + new_exposure > max_exposure:
             remaining_exposure = max(max_exposure - current_exposure, 0.0)
-            if remaining_exposure >= entry:
-                qty = math.floor(remaining_exposure / entry) if entry >= 10 else round(remaining_exposure / entry, 4)
+            remaining_quote = remaining_exposure / max(fx_rate, 1e-9)
+            if remaining_quote >= entry:
+                qty = math.floor(remaining_quote / entry) if entry >= 10 else round(remaining_quote / entry, 4)
             else:
                 self.last_rejection_reason = (
                     f"Portfolio leverage limit exceeded (current={current_exposure:.2f}, new={new_exposure:.2f}, max={max_exposure:.2f})"
@@ -1228,16 +1263,45 @@ class PaperTradingEngine:
         return self.get_stats()
 
     def _max_open_positions_limit(self) -> int:
-        """Resolve effective simultaneous open positions cap from runtime overrides or settings."""
+        """Resolve effective simultaneous NSE Equity open positions cap from runtime overrides or settings."""
         from agents.execution.runtime_controls import effective_int
 
-        return effective_int(
-            "PAPER_TRADING_MAX_OPEN", int(getattr(settings, "PAPER_TRADING_MAX_OPEN", 5))
-        )
+        default_eq = int(getattr(settings, "PAPER_MAX_OPEN_EQUITY", getattr(settings, "PAPER_TRADING_MAX_OPEN", 5)))
+        return effective_int("PAPER_TRADING_MAX_OPEN", default_eq)
+
+    def get_bucket_limits(self) -> dict[str, int]:
+        """Return partitioned slot limits for EQUITY, GLOBAL (Crypto+Forex), and FOREX."""
+        eq_cap = max(1, self._max_open_positions_limit())
+        global_cap = max(1, int(os.getenv("PAPER_MAX_OPEN_GLOBAL", str(getattr(settings, "PAPER_MAX_OPEN_GLOBAL", 4)))))
+        forex_cap = min(global_cap, max(1, int(os.getenv("PAPER_MAX_OPEN_FOREX", str(getattr(settings, "PAPER_MAX_OPEN_FOREX", 2))))))
+        return {"equity": eq_cap, "global": global_cap, "forex": forex_cap}
+
+    def get_open_bucket_counts(self) -> dict[str, int]:
+        """Count current open positions per bucket (EQUITY vs GLOBAL/CRYPTO/FOREX)."""
+        counts = {"EQUITY": 0, "GLOBAL": 0, "CRYPTO": 0, "FOREX": 0}
+        for t in self.open_trades:
+            ac = _asset_class_for_slot(t.symbol)
+            if ac in ("CRYPTO", "FOREX"):
+                counts["GLOBAL"] += 1
+                counts[ac] += 1
+            else:
+                counts["EQUITY"] += 1
+        return counts
+
+    def get_slot_buckets_summary(self) -> dict[str, Any]:
+        limits = self.get_bucket_limits()
+        counts = self.get_open_bucket_counts()
+        return {
+            "equity": {"open": counts["EQUITY"], "max": limits["equity"], "remaining": max(0, limits["equity"] - counts["EQUITY"])},
+            "global": {"open": counts["GLOBAL"], "max": limits["global"], "remaining": max(0, limits["global"] - counts["GLOBAL"])},
+            "forex": {"open": counts["FOREX"], "max": limits["forex"], "remaining": max(0, limits["forex"] - counts["FOREX"])},
+            "crypto": {"open": counts["CRYPTO"]},
+        }
 
     def get_stats(self, current_prices: dict = None) -> dict:
         """Get performance stats."""
         max_open = self._max_open_positions_limit()
+        slot_buckets = self.get_slot_buckets_summary()
         equity_info = self.get_portfolio_equity(current_prices)
         closed = [t for t in self.trades if t.status != "OPEN"]
         if not closed:
@@ -1253,6 +1317,7 @@ class PaperTradingEngine:
                 "profit_factor": 0, "avg_win": 0, "avg_loss": 0,
                 "open_trades": len([t for t in self.trades if t.status == "OPEN"]),
                 "max_open_positions": max_open,
+                "slot_buckets": slot_buckets,
                 "winning_trades": 0,
                 "losing_trades": 0,
                 "breakeven_trades": 0,
@@ -1418,9 +1483,8 @@ class PaperTradingEngine:
             "daily_loss_limit_pct": effective_float(
                 "DAILY_LOSS_LIMIT_PCT", float(settings.DAILY_LOSS_LIMIT_PCT)
             ) / 100.0,
-            "max_open_positions": effective_int(
-                "PAPER_TRADING_MAX_OPEN", int(getattr(settings, "PAPER_TRADING_MAX_OPEN", 5))
-            ),
+            "max_open_positions": self._max_open_positions_limit(),
+            "slot_buckets": self.get_slot_buckets_summary(),
         }
 
     def reset_circuit_breaker(self, rebase_capital: bool = False) -> dict:

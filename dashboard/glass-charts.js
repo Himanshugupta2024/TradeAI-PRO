@@ -33,10 +33,21 @@
     }
 
     function palette() {
-        if (!isGlass()) return null;
-        return isLight()
-            ? { text: '#475569', grid: 'rgba(15,23,42,0.08)', border: 'rgba(15,23,42,0.10)' }
-            : { text: '#94a3b8', grid: 'rgba(255,255,255,0.07)', border: 'rgba(255,255,255,0.10)' };
+        var cs = window.getComputedStyle ? window.getComputedStyle(document.documentElement) : null;
+        var textToken = cs ? cs.getPropertyValue('--text-2').trim() : '';
+        var borderToken = cs ? cs.getPropertyValue('--border-subtle').trim() : '';
+        if (isLight()) {
+            return {
+                text: textToken || '#475569',
+                grid: 'rgba(15, 23, 42, 0.08)',
+                border: borderToken || 'rgba(15, 23, 42, 0.12)'
+            };
+        }
+        return {
+            text: textToken || '#94a3b8',
+            grid: isGlass() ? 'rgba(148, 163, 184, 0.10)' : 'rgba(148, 163, 184, 0.08)',
+            border: borderToken || 'rgba(148, 163, 184, 0.14)'
+        };
     }
 
     function setDefaults(p) {

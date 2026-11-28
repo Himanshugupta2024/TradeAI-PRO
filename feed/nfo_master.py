@@ -12,9 +12,30 @@ import math
 import os
 import urllib.request
 import zipfile
+from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+_UNDERLYING_ALIASES: Dict[str, str] = {
+    "NIFTY 50": "NIFTY",
+    "NIFTY50": "NIFTY",
+    "^NSEI": "NIFTY",
+    "NIFTY BANK": "BANKNIFTY",
+    "BANK NIFTY": "BANKNIFTY",
+    "^NSEBANK": "BANKNIFTY",
+    "NIFTY FIN SERVICE": "FINNIFTY",
+    "FINNIFTY": "FINNIFTY",
+}
+
+
+def normalize_nfo_underlying(symbol: str) -> str:
+    """Map spot/display symbol (e.g. 'NIFTY 50', 'RELIANCE.NS') to Shoonya NFO symbol."""
+    raw = str(symbol or "").strip().upper()
+    if raw in _UNDERLYING_ALIASES:
+        return _UNDERLYING_ALIASES[raw]
+    clean = raw.replace(".NS", "").strip()
+    return _UNDERLYING_ALIASES.get(clean, clean)
 
 # Standard NSE index and stock options strike intervals (steps)
 STRIKE_STEPS: Dict[str, float] = {
@@ -57,8 +78,11 @@ class NFOMaster:
 
     def get_strike_step(self, symbol: str) -> float:
         """Return typical strike step for symbol, defaulting to 10.0."""
-        sym = symbol.strip().upper().replace(".NS", "")
-        return STRIKE_STEPS.get(sym, 10.0)
+        raw = symbol.strip().upper().replace(".NS", "")
+        if raw in STRIKE_STEPS:
+            return STRIKE_STEPS[raw]
+        norm = normalize_nfo_underlying(raw)
+        return STRIKE_STEPS.get(norm, 10.0)
 
     def get_atm_strike(self, symbol: str, spot: float, step: Optional[float] = None) -> float:
         """Compute the nearest At-The-Money (ATM) strike price for spot."""
@@ -78,11 +102,14 @@ class NFOMaster:
         trading_symbol: str = "",
     ) -> None:
         """Register a single contract into index."""
-        sym = symbol.strip().upper().replace(".NS", "")
+        sym = normalize_nfo_underlying(symbol)
         opt_type = option_type.strip().upper()
+        tok = str(token)
+        if tok and tok in self.token_to_contract:
+            return
         item = {
             "symbol": sym,
-            "token": str(token),
+            "token": tok,
             "strike": float(strike),
             "option_type": opt_type,
             "expiry": expiry,
@@ -92,11 +119,84 @@ class NFOMaster:
         if sym not in self.contracts:
             self.contracts[sym] = []
         self.contracts[sym].append(item)
-        self.token_to_contract[str(token)] = item
+        if tok:
+            self.token_to_contract[tok] = item
+
+    def list_underlyings(self) -> List[str]:
+        """Return sorted list of all indexed F&O underlyings."""
+        priority = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
+        all_syms = set(self.contracts.keys())
+        head = [p for p in priority if p in all_syms]
+        tail = sorted(s for s in all_syms if s not in priority)
+        return head + tail
+
+    @staticmethod
+    def _parse_expiry_date(exp_str: str) -> Optional[date]:
+        for fmt in ("%d-%b-%Y", "%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(exp_str.strip(), fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    def get_nearest_expiry(self, symbol: str, ref_date: Optional[date] = None) -> str:
+        """Return nearest active option expiry string for underlying."""
+        contracts = self.get_contracts(symbol)
+        if not contracts:
+            return ""
+        today = ref_date or date.today()
+        dated: List[Tuple[date, str]] = []
+        raw_fallback: List[str] = []
+        for c in contracts:
+            exp = str(c.get("expiry") or "").strip()
+            if not exp:
+                continue
+            d = self._parse_expiry_date(exp)
+            if d is not None:
+                if d >= today:
+                    dated.append((d, exp))
+            else:
+                raw_fallback.append(exp)
+        if dated:
+            dated.sort(key=lambda pair: pair[0])
+            return dated[0][1]
+        if raw_fallback:
+            return sorted(set(raw_fallback))[0]
+        all_dated = [
+            (self._parse_expiry_date(str(c.get("expiry") or "")), str(c.get("expiry") or ""))
+            for c in contracts
+        ]
+        valid = [(d, e) for d, e in all_dated if d is not None]
+        if valid:
+            valid.sort(key=lambda pair: pair[0], reverse=True)
+            return valid[0][1]
+        return ""
+
+    def get_strike_slice(
+        self,
+        symbol: str,
+        spot: float = 0.0,
+        half_width: int = 8,
+        expiry: Optional[str] = None,
+    ) -> List[Dict]:
+        """Return CE/PE option contracts for nearest expiry sliced around ATM spot."""
+        exp = expiry or self.get_nearest_expiry(symbol)
+        c_list = self.get_contracts(symbol, expiry=exp or None)
+        if not c_list:
+            return []
+        strikes = sorted({float(c["strike"]) for c in c_list if c.get("strike")})
+        if not strikes:
+            return []
+        anchor = float(spot) if spot and spot > 0 else strikes[len(strikes) // 2]
+        atm_idx = min(range(len(strikes)), key=lambda i: abs(strikes[i] - anchor))
+        lo = max(0, atm_idx - max(0, int(half_width)))
+        hi = min(len(strikes), atm_idx + max(0, int(half_width)) + 1)
+        wanted = set(strikes[lo:hi])
+        return [c for c in c_list if float(c["strike"]) in wanted]
 
     def get_contracts(self, symbol: str, expiry: Optional[str] = None) -> List[Dict]:
         """Get all option contracts for an underlying symbol, optionally filtered by expiry."""
-        sym = symbol.strip().upper().replace(".NS", "")
+        sym = normalize_nfo_underlying(symbol)
         c_list = self.contracts.get(sym, [])
         if expiry:
             return [c for c in c_list if c.get("expiry") == expiry]

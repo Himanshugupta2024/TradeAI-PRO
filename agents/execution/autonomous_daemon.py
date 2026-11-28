@@ -284,9 +284,23 @@ class AutonomousExecutionDaemon:
             log.debug("Shadow trade resolution skipped: %s", _ab_err)
 
         open_trades = engine.open_trades
-        remaining_slots = self.max_positions - len(open_trades)
-        if remaining_slots <= 0:
-            log.debug("[Autonomous] Max concurrent positions reached (%d/%d)", len(open_trades), self.max_positions)
+        bucket_summary = (
+            engine.get_slot_buckets_summary()
+            if hasattr(engine, "get_slot_buckets_summary")
+            else None
+        )
+        if isinstance(bucket_summary, dict):
+            rem_equity = int(bucket_summary["equity"]["remaining"])
+            rem_global = int(bucket_summary["global"]["remaining"])
+            rem_forex = int(bucket_summary["forex"]["remaining"])
+        else:
+            rem_total = max(0, self.max_positions - len(open_trades))
+            rem_equity = rem_total
+            rem_global = rem_total
+            rem_forex = rem_total
+
+        if rem_equity <= 0 and rem_global <= 0:
+            log.debug("[Autonomous] Max concurrent positions reached across all buckets (%d open)", len(open_trades))
             return []
 
         open_symbols = {engine._normalize_symbol(t.symbol) for t in open_trades}
@@ -386,9 +400,29 @@ class AutonomousExecutionDaemon:
                 "calibration_active": sig.get("calibration_active"),
             })
 
-        # Rank candidates by QS Score descending, then AI confidence
+        # Rank candidates by QS Score descending, then AI confidence per asset-class slot bucket
+        from agents.execution.currency import resolve_instrument_identity
+
         candidates.sort(key=lambda c: (c["qs_score"], c["ai_confidence"]), reverse=True)
-        selected = candidates[:remaining_slots]
+        selected = []
+        eq_used = 0
+        global_used = 0
+        forex_used = 0
+        for cand in candidates:
+            ac, _, _ = resolve_instrument_identity(cand["symbol"])
+            if ac == "EQUITY":
+                if eq_used < rem_equity:
+                    selected.append(cand)
+                    eq_used += 1
+            elif ac == "FOREX":
+                if global_used < rem_global and forex_used < rem_forex:
+                    selected.append(cand)
+                    global_used += 1
+                    forex_used += 1
+            else:
+                if global_used < rem_global:
+                    selected.append(cand)
+                    global_used += 1
         executed_trades = []
 
         for cand in selected:

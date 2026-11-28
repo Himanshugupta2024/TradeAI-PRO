@@ -5,69 +5,52 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Public Track Record — TradeAI PRO</title>
     <meta name="description" content="Every closed paper trade from TradeAI PRO, winners and losers, with per-year statistics. Paper trading only; not investment advice.">
-    <meta name="theme-color" content="#05070f">
+    <meta name="theme-color" content="#080a0f">
     <link rel="canonical" href="https://tradeai-pro.tradingpro.workers.dev/track-record">
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/tokens.css?v=1">
     <style>
-        :root {
-            --bg: #05070f;
-            --surface: rgba(15, 23, 42, 0.62);
-            --border: rgba(255, 255, 255, 0.12);
-            --text: #f8fafc;
-            --muted: #94a3b8;
-            --green: #10b981;
-            --red: #ef4444;
-            --amber: #f59e0b;
-            --blue: #60a5fa;
-            --mono: 'JetBrains Mono', monospace;
-        }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            background:
-                radial-gradient(900px 620px at 12% -8%, rgba(59,130,246,.28), transparent 62%),
-                radial-gradient(760px 520px at 88% 2%, rgba(168,85,247,.18), transparent 60%),
-                radial-gradient(820px 620px at 50% 112%, rgba(34,211,238,.14), transparent 62%),
-                var(--bg);
-            background-attachment: fixed;
-            color: var(--text);
-            font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--canvas, #080a0f);
+            color: var(--text-1, #f1f5f9);
+            font-family: var(--font-sans, Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
             line-height: 1.55;
             min-height: 100vh;
         }
         .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 80px; }
-        a { color: var(--blue); }
+        a { color: var(--accent-brand, #22d3ee); }
         .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 26px; }
         .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: .2px; }
-        .brand span.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green);  }
-        .back { font-size: .82rem; text-decoration: none; color: var(--muted); }
-        .back:hover { color: var(--text); }
+        .brand span.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bull, #10b981); }
+        .back { font-size: .82rem; text-decoration: none; color: var(--text-2, #94a3b8); }
+        .back:hover { color: var(--text-1, #f1f5f9); }
         h1 { font-size: 1.9rem; letter-spacing: -.02em; margin-bottom: 6px; }
-        .sub { color: var(--muted); font-size: .9rem; max-width: 760px; }
+        .sub { color: var(--text-2, #94a3b8); font-size: .9rem; max-width: 760px; }
         .badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 18px; }
         .badge { font-size: .75rem; font-weight: 700; letter-spacing: .04em; padding: 3px 8px; border-radius: 5px; border: 1px solid; }
-        .badge-paper { color: var(--amber); border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.12); }
-        .badge-sebi { color: #fca5a5; border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.12); }
-        .badge-ok { color: var(--green); border-color: rgba(16,185,129,.35); background: rgba(16,185,129,.12); }
-        .badge-warn { color: var(--amber); border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.12); }
+        .badge-paper { color: var(--warn, #f59e0b); border-color: rgba(245,158,11,.35); background: var(--warn-soft); }
+        .badge-sebi { color: #fca5a5; border-color: rgba(244,63,94,.35); background: var(--bear-soft); }
+        .badge-ok { color: var(--bull, #10b981); border-color: rgba(16,185,129,.35); background: var(--bull-soft); }
+        .badge-warn { color: var(--warn, #f59e0b); border-color: rgba(245,158,11,.35); background: var(--warn-soft); }
         .disclaimer {
-            border: 1px solid var(--border); border-top: 2px solid var(--amber);
-            background: rgba(15,23,42,.6); border-radius: 10px;
-            padding: 12px 16px; font-size: .82rem; color: #cbd5e1; margin-bottom: 22px;
+            border: 1px solid var(--border-subtle); border-top: 2px solid var(--warn, #f59e0b);
+            background: var(--surface-1, #0e1118); border-radius: var(--radius-lg, 10px);
+            padding: 12px 16px; font-size: .82rem; color: var(--text-2, #94a3b8); margin-bottom: 22px;
         }
         .error {
-            display: none; border: 1px solid rgba(239,68,68,.35); background: rgba(239,68,68,.08);
-            color: #fecaca; padding: 12px 16px; border-radius: 10px; font-size: .85rem; margin-bottom: 20px;
+            display: none; border: 1px solid rgba(244,63,94,.35); background: var(--bear-soft);
+            color: #fecaca; padding: 12px 16px; border-radius: var(--radius-lg, 10px); font-size: .85rem; margin-bottom: 20px;
         }
-        .meta-line { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; color: var(--muted); font-size: .76rem; margin-bottom: 18px; }
+        .meta-line { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; color: var(--text-2, #94a3b8); font-size: .76rem; margin-bottom: 18px; }
         .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 26px; }
         .kpi {
-            background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.02)), var(--surface);
-            border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,.18);
+            background: var(--surface-2, #141923);
+            border: 1px solid var(--border-subtle); border-radius: var(--radius-lg, 10px); padding: 14px 16px;
         }
-        .kpi-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+        .kpi-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-3, #64748b); margin-bottom: 6px; }
         .kpi-value { font-size: 1.45rem; font-weight: 800; font-family: var(--mono); }
         .pos { color: var(--green); }
         .neg { color: var(--red); }

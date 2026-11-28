@@ -1,0 +1,219 @@
+/* ============================================================================
+   TradeAI PRO — Obsidian Quant Terminal Design Tokens
+   Single source of truth for colors, surfaces, hairline borders, typography,
+   elevation, spacing, and theme parity (Dark default + Light mode).
+   ========================================================================== */
+
+:root {
+  /* ── Canvas & Elevation Surfaces (Dark Obsidian Matte) ─────────────────── */
+  --canvas: #080a0f;
+  --surface-1: #0e1118;
+  --surface-2: #141923;
+  --surface-3: #1b2230;
+  --surface-glass: rgba(14, 17, 24, 0.84);
+  --surface-glass-hover: rgba(20, 25, 35, 0.92);
+  --surface-input: #0b0e14;
+
+  /* ── Razor Hairline Borders ────────────────────────────────────────────── */
+  --border-subtle: rgba(148, 163, 184, 0.12);
+  --border-strong: rgba(148, 163, 184, 0.24);
+  --border-focus: rgba(34, 211, 238, 0.65);
+
+  /* ── Ink & Hierarchy ───────────────────────────────────────────────────── */
+  --text-1: #f1f5f9;
+  --text-2: #94a3b8;
+  --text-3: #64748b;
+  --text-inv: #080a0f;
+
+  /* ── Single Brand Accent + Semantic Market Signals ─────────────────────── */
+  --accent-brand: #22d3ee;
+  --accent-brand-strong: #06b6d4;
+  --accent-brand-light: #67e8f9;
+  --accent-brand-ink: #080a0f;
+  --accent-brand-soft: rgba(34, 211, 238, 0.12);
+
+  --bull: #10b981;
+  --bull-strong: #059669;
+  --bull-soft: rgba(16, 185, 129, 0.12);
+  --bear: #f43f5e;
+  --bear-strong: #e11d48;
+  --bear-soft: rgba(244, 63, 94, 0.12);
+  --warn: #f59e0b;
+  --warn-soft: rgba(245, 158, 11, 0.12);
+  --info: #38bdf8;
+  --info-soft: rgba(56, 189, 248, 0.12);
+
+  /* ── Typography & Tabular Numeric Discipline ───────────────────────────── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-num: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+
+  /* ── Crisp Geometry & Shadows ──────────────────────────────────────────── */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 8px 24px -8px rgba(0, 0, 0, 0.65);
+  --shadow-lg: 0 18px 42px -14px rgba(0, 0, 0, 0.78);
+  --shadow-glow: 0 0 0 1px rgba(34, 211, 238, 0.18), 0 8px 24px -10px rgba(34, 211, 238, 0.18);
+
+  --transition-fast: 0.14s ease;
+  --transition-med: 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ── Shell Dimensions ──────────────────────────────────────────────────── */
+  --topbar-h: 44px;
+  --sidebar-w: 220px;
+  --sidebar-collapsed-w: 64px;
+
+  /* ── Backward-Compatible Aliases (Legacy Dashboard & Sub-Pages) ────────── */
+  --bg-primary: var(--canvas);
+  --bg-secondary: var(--surface-1);
+  --bg-card: var(--surface-2);
+  --bg-card-hover: var(--surface-3);
+  --bg-glass: var(--surface-glass);
+  --bg-glass-hover: var(--surface-glass-hover);
+  --bg-input: var(--surface-input);
+  --bg-base: var(--canvas);
+  --bg-surface: var(--surface-1);
+  --bg-raised: var(--surface-2);
+  --bg: var(--canvas);
+  --bg2: var(--surface-1);
+
+  --border-color: var(--border-subtle);
+  --border-glow: var(--border-focus);
+  --border-accent: rgba(34, 211, 238, 0.35);
+  --bdr: var(--border-subtle);
+  --border: var(--border-subtle);
+
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --text-subtle: var(--text-3);
+  --text-inverse: var(--text-inv);
+  --text: var(--text-1);
+  --txt: var(--text-1);
+  --txt-muted: var(--text-3);
+  --muted: var(--text-2);
+  --text-color: var(--text-1);
+
+  --card-bg: var(--surface-2);
+  --card-bg-hover: var(--surface-3);
+  --card: var(--surface-2);
+  --card-hover: var(--surface-3);
+  --surface: var(--surface-2);
+
+  --accent: var(--accent-brand);
+  --accent-light: var(--accent-brand-light);
+  --accent-glow: var(--accent-brand-soft);
+
+  --green: var(--bull);
+  --green2: var(--bull);
+  --green-bg: var(--bull-soft);
+  --green-glow: var(--bull-soft);
+  --red: var(--bear);
+  --red2: var(--bear);
+  --red-bg: var(--bear-soft);
+  --red-glow: var(--bear-soft);
+  --yellow: var(--warn);
+  --yellow-bg: var(--warn-soft);
+  --yellow-glow: var(--warn-soft);
+  --amber: var(--warn);
+  --cyan: var(--info);
+  --cyan-bg: var(--info-soft);
+  --blue: var(--accent-brand);
+  --teal: var(--accent-brand);
+  --teal-dim: var(--accent-brand-soft);
+  --orange: #fb923c;
+
+  --font-body: var(--font-sans);
+  --font-mono: var(--font-num);
+  --mono: var(--font-num);
+  --sans: var(--font-sans);
+  --radius: var(--radius-lg);
+
+  /* ── Topbar Tokens ─────────────────────────────────────────────────────── */
+  --tb-h: var(--topbar-h);
+  --tb-pill-h: 26px;
+  --tb-radius: var(--radius-pill);
+  --tb-control-radius: var(--radius-sm);
+  --tb-gap: 10px;
+  --tb-surface: rgba(148, 163, 184, 0.06);
+  --tb-surface-hover: rgba(148, 163, 184, 0.13);
+  --tb-border: var(--border-subtle);
+  --tb-text: var(--text-1);
+  --tb-muted: var(--text-2);
+}
+
+/* ── Light Mode Parity (Crisp Institutional Off-White) ───────────────────── */
+[data-theme="light"] {
+  --canvas: #f4f6fa;
+  --surface-1: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #eef2f6;
+  --surface-glass: rgba(255, 255, 255, 0.90);
+  --surface-glass-hover: rgba(248, 250, 252, 0.98);
+  --surface-input: #ffffff;
+
+  --border-subtle: rgba(15, 23, 42, 0.10);
+  --border-strong: rgba(15, 23, 42, 0.22);
+  --border-focus: rgba(2, 132, 199, 0.55);
+  --border-accent: rgba(2, 132, 199, 0.35);
+
+  --text-1: #0f172a;
+  --text-2: #475569;
+  --text-3: #64748b;
+  --text-inv: #ffffff;
+
+  --accent-brand: #0284c7;
+  --accent-brand-strong: #0369a1;
+  --accent-brand-light: #0ea5e9;
+  --accent-brand-ink: #ffffff;
+  --accent-brand-soft: rgba(2, 132, 199, 0.10);
+
+  --bull: #059669;
+  --bull-strong: #047857;
+  --bull-soft: rgba(5, 150, 105, 0.10);
+  --bear: #e11d48;
+  --bear-strong: #be123c;
+  --bear-soft: rgba(225, 29, 72, 0.10);
+  --warn: #d97706;
+  --warn-soft: rgba(217, 119, 6, 0.10);
+  --info: #0284c7;
+  --info-soft: rgba(2, 132, 199, 0.10);
+
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 6px 20px -6px rgba(15, 23, 42, 0.10);
+  --shadow-lg: 0 14px 36px -12px rgba(15, 23, 42, 0.14);
+  --shadow-glow: 0 0 0 1px rgba(2, 132, 199, 0.20), 0 6px 20px -8px rgba(2, 132, 199, 0.14);
+
+  --tb-surface: rgba(15, 23, 42, 0.04);
+  --tb-surface-hover: rgba(15, 23, 42, 0.09);
+  --tb-border: rgba(15, 23, 42, 0.11);
+  --tb-text: #0f172a;
+  --tb-muted: #475569;
+}
+
+/* ── Shared Numeric & Accessibility Utilities ────────────────────────────── */
+.num,
+.tabular-num,
+.kpi-val,
+.hero-metric-val,
+.macro-stat-val,
+.mood-ticker-val,
+.mood-ticker-chg,
+.mood-clock,
+.watchlist-ltp,
+.watchlist-chg,
+.watchlist-lvl-val,
+td[data-num],
+th[data-num] {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}

@@ -37,66 +37,66 @@
     ].join(';');
 
     wrap.innerHTML = `
-      <div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:1.35rem;max-width:460px;width:100%;box-shadow:0 25px 50px -12px rgba(0,0,0,0.75);color:#f8fafc;font-family:Inter,system-ui,sans-serif;">
+      <div style="background:var(--surface-1,#0e1118);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:10px;padding:1.35rem;max-width:460px;width:100%;box-shadow:var(--shadow-lg,0 25px 50px -12px rgba(0,0,0,0.75));color:var(--text-1,#f1f5f9);font-family:var(--font-sans,Inter,system-ui,sans-serif);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.55rem;">
-          <h3 style="margin:0;font-size:1.05rem;font-weight:700;display:flex;align-items:center;gap:8px;">
+          <h3 style="margin:0;font-size:1.05rem;font-weight:700;display:flex;align-items:center;gap:8px;color:var(--text-1,#f1f5f9);">
             <span>⚡</span> Shoonya Live Feed Connect
           </h3>
-          <button type="button" id="shCloseBtn" aria-label="Close Shoonya modal" style="background:none;border:none;color:#94a3b8;font-size:1.35rem;cursor:pointer;line-height:1;">&times;</button>
+          <button type="button" id="shCloseBtn" aria-label="Close Shoonya modal" style="background:none;border:none;color:var(--text-2,#94a3b8);font-size:1.35rem;cursor:pointer;line-height:1;">&times;</button>
         </div>
-        <p style="margin:0 0 0.75rem;color:#94a3b8;font-size:0.78rem;line-height:1.45;">
+        <p style="margin:0 0 0.75rem;color:var(--text-2,#94a3b8);font-size:0.78rem;line-height:1.45;">
           Paper trading mode stays active (market-data ticks only, zero live orders). Credentials are sent once to Box C memory and never saved in browser storage.
         </p>
 
-        <div id="shStatusBanner" style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:0.55rem 0.75rem;margin-bottom:0.85rem;font-size:0.76rem;">
-          <span id="shStatusText" style="color:#cbd5e1;">Status: Not checked yet</span>
-          <button type="button" id="shRefreshStatusBtn" style="background:#334155;color:#e2e8f0;border:none;border-radius:5px;padding:3px 8px;font-size:0.72rem;cursor:pointer;">Check</button>
+        <div id="shStatusBanner" style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface-2,#141923);border:1px solid var(--border-subtle,rgba(148,163,184,0.14));border-radius:8px;padding:0.55rem 0.75rem;margin-bottom:0.85rem;font-size:0.76rem;">
+          <span id="shStatusText" style="color:var(--text-2,#94a3b8);">Status: Not checked yet</span>
+          <button type="button" id="shRefreshStatusBtn" style="background:var(--surface-3,#1b2230);color:var(--text-1,#f1f5f9);border:1px solid var(--border-subtle,rgba(148,163,184,0.14));border-radius:5px;padding:3px 8px;font-size:0.72rem;cursor:pointer;">Check</button>
         </div>
 
         <div style="display:flex;gap:6px;margin-bottom:0.85rem;">
-          <button type="button" id="shTabTotp" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid #6366f1;background:rgba(99,102,241,0.2);color:#e0e7ff;font-size:0.76rem;font-weight:600;cursor:pointer;">ID + Password + TOTP</button>
-          <button type="button" id="shTabToken" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#94a3b8;font-size:0.76rem;font-weight:600;cursor:pointer;">Daily User Token</button>
+          <button type="button" id="shTabTotp" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-accent,rgba(34,211,238,0.4));background:var(--accent-brand-soft,rgba(34,211,238,0.12));color:var(--accent-brand,#22d3ee);font-size:0.76rem;font-weight:600;cursor:pointer;">ID + Password + TOTP</button>
+          <button type="button" id="shTabToken" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-subtle,rgba(148,163,184,0.16));background:var(--surface-2,#141923);color:var(--text-2,#94a3b8);font-size:0.76rem;font-weight:600;cursor:pointer;">Daily User Token</button>
         </div>
 
         <form id="shLoginForm" autocomplete="off">
           <div id="shAdminKeyRow" style="margin-bottom:0.6rem;">
-            <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:3px;">Operator Admin Key (X-Admin-Key)</label>
-            <input type="password" id="shAdminKey" autocomplete="off" placeholder="Enter Admin Key" style="width:100%;box-sizing:border-box;padding:0.5rem 0.7rem;background:#1e293b;border:1px solid #475569;border-radius:6px;color:#f8fafc;font-size:0.82rem;outline:none;">
+            <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">Operator Admin Key (X-Admin-Key)</label>
+            <input type="password" id="shAdminKey" autocomplete="off" placeholder="Enter Admin Key" style="width:100%;box-sizing:border-box;padding:0.5rem 0.7rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
           </div>
 
           <div id="shTotpFields" style="display:grid;grid-template-columns:1fr 1fr;gap:0.55rem;margin-bottom:0.65rem;">
             <div>
-              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:3px;">Shoonya User ID</label>
-              <input type="text" id="shUserId" autocomplete="off" spellcheck="false" placeholder="e.g. FA12345 (blank = keep env)" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:#1e293b;border:1px solid #475569;border-radius:6px;color:#f8fafc;font-size:0.82rem;outline:none;">
+              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">Shoonya User ID</label>
+              <input type="text" id="shUserId" autocomplete="off" spellcheck="false" placeholder="e.g. FA12345 (blank = keep env)" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
             </div>
             <div>
-              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:3px;">Password</label>
-              <input type="password" id="shPassword" autocomplete="new-password" placeholder="Blank = keep env" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:#1e293b;border:1px solid #475569;border-radius:6px;color:#f8fafc;font-size:0.82rem;outline:none;">
+              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">Password</label>
+              <input type="password" id="shPassword" autocomplete="new-password" placeholder="Blank = keep env" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
             </div>
             <div>
-              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:3px;">Vendor Code</label>
-              <input type="text" id="shVendorCode" autocomplete="off" placeholder="e.g. FA12345_U" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:#1e293b;border:1px solid #475569;border-radius:6px;color:#f8fafc;font-size:0.82rem;outline:none;">
+              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">Vendor Code</label>
+              <input type="text" id="shVendorCode" autocomplete="off" placeholder="e.g. FA12345_U" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
             </div>
             <div>
-              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:3px;">API Key (Secret)</label>
-              <input type="password" id="shApiKey" autocomplete="off" placeholder="Blank = keep env" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:#1e293b;border:1px solid #475569;border-radius:6px;color:#f8fafc;font-size:0.82rem;outline:none;">
+              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">API Key (Secret)</label>
+              <input type="password" id="shApiKey" autocomplete="off" placeholder="Blank = keep env" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
             </div>
             <div style="grid-column:1 / -1;">
-              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:3px;">6-Digit OTP or TOTP Secret</label>
-              <input type="password" id="shTotp" autocomplete="one-time-code" placeholder="Enter 6-digit authenticator OTP or Base32 secret" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:#1e293b;border:1px solid #475569;border-radius:6px;color:#f8fafc;font-size:0.82rem;outline:none;">
+              <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">6-Digit OTP or TOTP Secret</label>
+              <input type="password" id="shTotp" autocomplete="one-time-code" placeholder="Enter 6-digit authenticator OTP or Base32 secret" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
             </div>
           </div>
 
           <div id="shTokenFields" style="display:none;margin-bottom:0.65rem;">
-            <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:#94a3b8;margin-bottom:3px;">Shoonya Daily susertoken</label>
-            <input type="password" id="shUserToken" autocomplete="off" placeholder="Paste today's susertoken" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:#1e293b;border:1px solid #475569;border-radius:6px;color:#f8fafc;font-size:0.82rem;outline:none;">
+            <label style="display:block;font-size:0.68rem;font-weight:700;text-transform:uppercase;color:var(--text-2,#94a3b8);margin-bottom:3px;">Shoonya Daily susertoken</label>
+            <input type="password" id="shUserToken" autocomplete="off" placeholder="Paste today's susertoken" style="width:100%;box-sizing:border-box;padding:0.5rem 0.65rem;background:var(--surface-input,#0b0e14);border:1px solid var(--border-strong,rgba(148,163,184,0.24));border-radius:6px;color:var(--text-1,#f1f5f9);font-size:0.82rem;outline:none;">
           </div>
 
           <div id="shFeedbackMsg" style="display:none;font-size:0.76rem;line-height:1.4;margin-bottom:0.75rem;padding:0.45rem 0.65rem;border-radius:6px;"></div>
 
           <div style="display:flex;justify-content:flex-end;gap:0.6rem;">
-            <button type="button" id="shCancelBtn" style="padding:0.5rem 0.9rem;background:#334155;color:#cbd5e1;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:600;">Cancel</button>
-            <button type="submit" id="shSubmitBtn" style="padding:0.5rem 1.15rem;background:#10b981;color:#052e16;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:700;">Connect Live Feed</button>
+            <button type="button" id="shCancelBtn" style="padding:0.5rem 0.9rem;background:var(--surface-3,#1b2230);color:var(--text-2,#94a3b8);border:1px solid var(--border-subtle,rgba(148,163,184,0.14));border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:600;">Cancel</button>
+            <button type="submit" id="shSubmitBtn" style="padding:0.5rem 1.15rem;background:var(--bull,#10b981);color:#042f2e;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:700;">Connect Live Feed</button>
           </div>
         </form>
       </div>
@@ -126,13 +126,13 @@
     if (_activeMode === 'token') {
       totpBox.style.display = 'none';
       tokBox.style.display = 'block';
-      tokBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid #6366f1;background:rgba(99,102,241,0.2);color:#e0e7ff;font-size:0.76rem;font-weight:600;cursor:pointer;';
-      totpBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#94a3b8;font-size:0.76rem;font-weight:600;cursor:pointer;';
+      tokBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-accent,rgba(34,211,238,0.4));background:var(--accent-brand-soft,rgba(34,211,238,0.12));color:var(--accent-brand,#22d3ee);font-size:0.76rem;font-weight:600;cursor:pointer;';
+      totpBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-subtle,rgba(148,163,184,0.16));background:var(--surface-2,#141923);color:var(--text-2,#94a3b8);font-size:0.76rem;font-weight:600;cursor:pointer;';
     } else {
       totpBox.style.display = 'grid';
       tokBox.style.display = 'none';
-      totpBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid #6366f1;background:rgba(99,102,241,0.2);color:#e0e7ff;font-size:0.76rem;font-weight:600;cursor:pointer;';
-      tokBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#94a3b8;font-size:0.76rem;font-weight:600;cursor:pointer;';
+      totpBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-accent,rgba(34,211,238,0.4));background:var(--accent-brand-soft,rgba(34,211,238,0.12));color:var(--accent-brand,#22d3ee);font-size:0.76rem;font-weight:600;cursor:pointer;';
+      tokBtn.style.cssText = 'flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border-subtle,rgba(148,163,184,0.16));background:var(--surface-2,#141923);color:var(--text-2,#94a3b8);font-size:0.76rem;font-weight:600;cursor:pointer;';
     }
   }
 

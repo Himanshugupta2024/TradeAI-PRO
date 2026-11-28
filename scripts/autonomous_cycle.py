@@ -815,6 +815,83 @@ async def run_single_autonomous_cycle(
             closed_trades = daemon.manage_open_trades(engine_inst, market_prices, atr_lookup)
             summary["trades_closed"] = len(closed_trades)
 
+        # 6b. Scheduled Paper Forex 4h Swing Scan (runs at most once per 2 hours when Section 6A active)
+        if crypto_enabled and universe_arg.strip().lower() in ("tier1", "crypto", "all", "forex"):
+            try:
+                from db.runtime_state import get_runtime_state
+                prev_fx = await asyncio.to_thread(get_runtime_state, "latest_forex_scan:v1")
+                fx_age_sec = 999999.0
+                if isinstance(prev_fx, dict) and prev_fx.get("timestamp"):
+                    try:
+                        prev_fx_dt = datetime.fromisoformat(str(prev_fx["timestamp"]).replace("Z", "+00:00"))
+                        fx_age_sec = max(0.0, (datetime.now(timezone.utc) - prev_fx_dt.astimezone(timezone.utc)).total_seconds())
+                    except Exception:
+                        fx_age_sec = 999999.0
+                if fx_age_sec >= 7200.0 or universe_arg.strip().lower() == "forex":
+                    from agents.market_intelligence.forex_scanner import scan_all_forex
+                    fx_setups = await asyncio.to_thread(scan_all_forex, True)
+                    fx_dicts = [s.to_dict() for s in (fx_setups or [])]
+                    await asyncio.to_thread(
+                        set_runtime_state,
+                        "latest_forex_scan:v1",
+                        {
+                            "timestamp": now_iso,
+                            "count": len(fx_dicts),
+                            "qualified_count": sum(1 for row in fx_dicts if row.get("status") == "QUALIFIED"),
+                            "setups": fx_dicts,
+                        },
+                    )
+                    summary["forex_scanned"] = len(fx_dicts)
+                    auto_fx = bool(getattr(settings, "FOREX_AUTO_EXECUTE", True))
+                    for fx_row in fx_dicts:
+                        fx_sym = str(fx_row.get("symbol") or "").upper()
+                        fx_dir = str(fx_row.get("direction") or "").upper()
+                        fx_entry = float(fx_row.get("entry") or fx_row.get("current_price") or 0.0)
+                        fx_sl = float(fx_row.get("sl") or 0.0)
+                        fx_tp = float(fx_row.get("tp1") or 0.0)
+                        fx_rr = float(fx_row.get("rr_ratio") or 0.0)
+                        fx_score = float(fx_row.get("strength_score") or 0.0)
+                        fx_conf = float(fx_row.get("win_probability") or 0.0)
+                        fx_ind = fx_row.get("indicators") or {}
+                        fx_atr = float(fx_ind.get("atr") or 0.0)
+                        fx_rsi = float(fx_ind.get("rsi") or 50.0)
+                        if fx_sym and fx_entry > 0:
+                            market_prices[fx_sym] = {
+                                "close": fx_entry,
+                                "high": fx_entry,
+                                "low": fx_entry,
+                                "atr": fx_atr,
+                                "rsi": fx_rsi,
+                                "timestamp": now_iso,
+                            }
+                            atr_lookup[fx_sym] = fx_atr
+                        if auto_fx and fx_row.get("status") == "QUALIFIED" and fx_dir in ("LONG", "SHORT") and fx_entry > 0:
+                            fx_sig_payload = {
+                                "symbol": fx_sym,
+                                "signal": fx_dir,
+                                "direction": fx_dir,
+                                "actionable": True,
+                                "quant_score": fx_score,
+                                "quality_score": fx_score,
+                                "confidence": fx_conf,
+                                "entry": fx_entry,
+                                "close": fx_entry,
+                                "stop_loss": fx_sl,
+                                "target": fx_tp,
+                                "risk_reward": fx_rr,
+                                "atr": fx_atr,
+                                "rsi": fx_rsi,
+                                "regime": str(fx_row.get("daily_trend") or "TREND"),
+                                "strategy": "FOREX_SWING_4H",
+                                "candle_time": str(fx_row.get("timestamp_utc") or now_iso),
+                                "timestamp": now_iso,
+                                "data_status": "LIVE",
+                            }
+                            candidate_signals.append(fx_sig_payload)
+                            all_scanned_signals.append(fx_sig_payload)
+            except Exception as fx_exc:
+                logger.warning("[AutonomousWorker] Scheduled Paper Forex scan failed (non-fatal): %s", fx_exc)
+
         # 7. Evaluate Signals with Deterministic Idempotency & Risk Gates
         if candidate_signals and not dry_run:
             posture = "OPEN"
@@ -829,8 +906,31 @@ async def run_single_autonomous_cycle(
                 logger.debug("Could not fetch risk posture: %s", g_exc)
 
             open_count = len(engine_inst.open_trades)
-            remaining_slots = max(0, daemon.max_positions - open_count)
-            logger.info("[Risk] Open positions: %d/%d (Slots remaining: %d, Posture: %s)", open_count, daemon.max_positions, remaining_slots, posture)
+            bucket_summary = (
+                engine_inst.get_slot_buckets_summary()
+                if hasattr(engine_inst, "get_slot_buckets_summary")
+                else None
+            )
+            if isinstance(bucket_summary, dict):
+                rem_equity = int(bucket_summary["equity"]["remaining"])
+                rem_global = int(bucket_summary["global"]["remaining"])
+                rem_forex = int(bucket_summary["forex"]["remaining"])
+                remaining_slots = rem_equity + rem_global
+                logger.info(
+                    "[Risk] Open positions: %d (Equity free: %d/%d, Global Crypto/Forex free: %d/%d, Posture: %s)",
+                    open_count,
+                    rem_equity,
+                    bucket_summary["equity"]["max"],
+                    rem_global,
+                    bucket_summary["global"]["max"],
+                    posture,
+                )
+            else:
+                remaining_slots = max(0, daemon.max_positions - open_count)
+                rem_equity = remaining_slots
+                rem_global = remaining_slots
+                rem_forex = remaining_slots
+                logger.info("[Risk] Open positions: %d/%d (Slots remaining: %d, Posture: %s)", open_count, daemon.max_positions, remaining_slots, posture)
 
             if not daemon.enabled:
                 logger.info("⏸️ [Autonomous] Daemon disabled — recording SKIPPED ledger entries for %d candidates.", len(candidate_signals))
@@ -971,10 +1071,36 @@ async def run_single_autonomous_cycle(
 
                     qualified.append(cand)
 
-                # Rank qualified candidates: QS score desc, then confidence desc
+                # Rank qualified candidates: QS score desc, then confidence desc per slot bucket
+                from agents.execution.currency import resolve_instrument_identity
+
                 qualified.sort(key=lambda c: (c["quant_score"], c["confidence"]), reverse=True)
-                selected = qualified[:remaining_slots]
-                overflow = qualified[remaining_slots:]
+                selected = []
+                overflow = []
+                eq_used = 0
+                global_used = 0
+                forex_used = 0
+                for cand in qualified:
+                    ac, _, _ = resolve_instrument_identity(cand["symbol"])
+                    if ac == "EQUITY":
+                        if eq_used < rem_equity:
+                            selected.append(cand)
+                            eq_used += 1
+                        else:
+                            overflow.append(cand)
+                    elif ac == "FOREX":
+                        if global_used < rem_global and forex_used < rem_forex:
+                            selected.append(cand)
+                            global_used += 1
+                            forex_used += 1
+                        else:
+                            overflow.append(cand)
+                    else:
+                        if global_used < rem_global:
+                            selected.append(cand)
+                            global_used += 1
+                        else:
+                            overflow.append(cand)
 
                 for cand in overflow:
                     _record_skipped_candidate(

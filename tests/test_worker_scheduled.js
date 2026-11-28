@@ -721,12 +721,12 @@ async function runTests() {
     };
     await handleScheduled(
       { cron: '*/10 * * * *' },
-      { FEED_BACKEND_ORIGIN: 'https://trading-feed.onrender.com' },
+      { FEED_BACKEND_ORIGIN: 'https://trading-feed-pp80.onrender.com' },
       {},
       feedMockFetch,
       at(12, 0)
     );
-    const feedHealthCalls = feedCalls.filter((c) => c.url === 'https://trading-feed.onrender.com/health/live');
+    const feedHealthCalls = feedCalls.filter((c) => c.url === 'https://trading-feed-pp80.onrender.com/health/live');
     assert.strictEqual(feedHealthCalls.length, 1, 'Feed service /health/live must be pinged exactly once');
     assert.strictEqual(feedHealthCalls[0].options.headers['User-Agent'], 'TradeAI-Cloudflare-Cron-KeepAlive/1.0');
     console.log('✓ Test 18 passed.');
@@ -758,7 +758,7 @@ async function runTests() {
       {
         SIDECAR_MARKET_HOURS_ONLY: 'true',
         ML_BACKEND_ORIGIN: 'https://trading-ml-8umr.onrender.com',
-        FEED_BACKEND_ORIGIN: 'https://trading-feed.onrender.com',
+        FEED_BACKEND_ORIGIN: 'https://trading-feed-pp80.onrender.com',
       },
       {},
       async (url) => {
@@ -769,7 +769,7 @@ async function runTests() {
     );
     assert.ok(offHourUrls.some((u) => u.includes('trading-api-n1wt.onrender.com/api/health/live')));
     assert.strictEqual(offHourUrls.some((u) => u.includes('trading-ml-8umr.onrender.com')), false);
-    assert.strictEqual(offHourUrls.some((u) => u.includes('trading-feed.onrender.com')), false);
+    assert.strictEqual(offHourUrls.some((u) => u.includes('trading-feed-pp80.onrender.com')), false);
     console.log('✓ Test 19 passed.');
 
     // ------------------------------------------------------------------------
@@ -818,6 +818,42 @@ async function runTests() {
     assert.strictEqual(marketOn429.status, 200);
     assert.strictEqual(marketOn429.headers.get('CF-Cache-Status'), 'STALE-FALLBACK-503');
     console.log('✓ Test 20 passed.');
+
+    // ------------------------------------------------------------------------
+    // Test 21: Dual-cadence offhours crypto dispatch at top-of-hour */10 tick
+    // ------------------------------------------------------------------------
+    console.log('Test 21: Dual-cadence offhours crypto dispatch...');
+    const offHrHit = shouldDispatchCycle(at(12, 30, 7), { offHoursCrypto: true }); // Saturday 18:00 IST (:00)
+    assert.deepStrictEqual(offHrHit, {
+      dispatch: true,
+      reason: 'offhours_crypto_cadence',
+      universe: 'crypto',
+    });
+    const offHrSkip = shouldDispatchCycle(at(12, 50, 7), { offHoursCrypto: true }); // Saturday 18:20 IST (:20)
+    assert.deepStrictEqual(offHrSkip, { dispatch: false, reason: 'off_cadence' });
+
+    const offDispatchCalls = [];
+    const resOff = await handleScheduled(
+      { cron: '*/10 * * * *' },
+      {
+        GH_PAT: 'test-pat',
+        OFFHOURS_CRYPTO_DISPATCH: 'true',
+        ML_BACKEND_ORIGIN: 'https://trading-ml-8umr.onrender.com',
+      },
+      {},
+      async (url, opts) => {
+        offDispatchCalls.push({ url: String(url), opts });
+        return { ok: true, status: 204 };
+      },
+      at(12, 30, 7) // Saturday 18:00 IST
+    );
+    assert.strictEqual(resOff.cycle.dispatched, true);
+    assert.strictEqual(resOff.cycle.reason, 'offhours_crypto_cadence');
+    assert.ok(offDispatchCalls.some((c) => c.url === 'https://trading-ml-8umr.onrender.com/health/live'));
+    const offGhCall = offDispatchCalls.find((c) => c.url.includes('/dispatches'));
+    assert.ok(offGhCall);
+    assert.strictEqual(JSON.parse(offGhCall.opts.body).inputs.universe, 'crypto');
+    console.log('✓ Test 21 passed.');
 
   } finally {
     // Restore global fetch and caches

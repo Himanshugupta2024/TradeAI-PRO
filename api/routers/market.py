@@ -58,7 +58,7 @@ from dataclasses import asdict
 
 from datetime import datetime, timedelta, timezone
 
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from urllib.request import Request, urlopen
 from urllib.parse import quote_plus
@@ -4205,11 +4205,31 @@ async def get_fno_symbol_analytics(symbol: str, spot: float = 0.0, atr: float = 
     return await fetch_fno_analytics(sym, spot=resolved_spot, atr=resolved_atr)
 
 
+@router.get("/api/fno/underlyings")
+async def get_fno_underlyings():
+    """List all indexed NFO F&O underlyings across Box C / NSE universe."""
+    from api.fno_client import fetch_fno_underlyings
+    items = await fetch_fno_underlyings()
+    return {
+        "underlyings": items,
+        "count": len(items),
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @router.get("/api/fno/overview")
-async def get_fno_overview():
-    """Fetch F&O telemetry across high-weight benchmark and equity underlyings."""
-    from api.fno_client import fetch_fno_analytics
-    symbols = ["NIFTY 50", "NIFTY BANK", "RELIANCE", "HDFCBANK", "TCS", "INFY", "ICICIBANK", "SBIN"]
+async def get_fno_overview(
+    universe: Annotated[str, Query(description="'core' (8 benchmarks) or 'all' (up to 40 F&O underlyings)")] = "core",
+    limit: Annotated[int, Query(ge=1, le=40)] = 20,
+):
+    """Fetch F&O telemetry across benchmark and liquid NFO equity underlyings."""
+    from api.fno_client import fetch_fno_analytics, fetch_fno_underlyings
+    core_symbols = ["NIFTY 50", "NIFTY BANK", "RELIANCE", "HDFCBANK", "TCS", "INFY", "ICICIBANK", "SBIN"]
+    if universe.strip().lower() == "all":
+        all_u = await fetch_fno_underlyings()
+        symbols = all_u[:limit] if all_u else core_symbols
+    else:
+        symbols = core_symbols
     
     # Try resolving spots from latest snapshot & index sync
     spots_map: Dict[str, Tuple[float, float]] = {}

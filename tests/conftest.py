@@ -39,6 +39,9 @@ if os.getenv("PYTEST_ALLOW_REAL_DB") != "1":
     # ENVIRONMENT=test keeps the SQLite-in-production guard in db.connection
     # quiet and tells api.security that an admin key is not mandatory.
     os.environ["ENVIRONMENT"] = "test"
+    # Prevent local .env ADMIN_API_KEY from leaking into hermetic API tests
+    # (security tests explicitly monkeypatch ADMIN_API_KEY as needed).
+    os.environ["ADMIN_API_KEY"] = ""
 
 from db.connection import SessionLocal, engine, init_db  # noqa: E402
 from db.models import RuntimeState  # noqa: E402

@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 
-<html lang="en" data-theme="dark" data-skin="glass">
+<html lang="en" data-theme="dark">
 
 
 
@@ -29,7 +29,7 @@
 
         content="AI-powered autonomous trading dashboard with signals, portfolio, sectoral heatmap and institutional trade flow">
 
-    <meta name="theme-color" content="#0b1120">
+    <meta name="theme-color" content="#080a0f">
 
     <link rel="canonical" href="https://tradeai-pro.tradingpro.workers.dev/">
 
@@ -114,53 +114,27 @@
 
     <script src="/static/vendor/chart.umd.min.js"></script>
 
-    <link rel="stylesheet" href="/static/styles.css?v=mw_17">
+    <link rel="stylesheet" href="/static/tokens.css?v=1">
 
-    <link rel="stylesheet" href="/static/glass.css?v=1">
+    <link rel="stylesheet" href="/static/styles.css?v=mw_18">
 
-    <link rel="stylesheet" href="/static/topbar.css?v=2">
+    <link rel="stylesheet" href="/static/glass.css?v=2">
 
-    <script src="/static/skin.js"></script>
+    <link rel="stylesheet" href="/static/topbar.css?v=4">
 
-    <script src="/static/glass-charts.js" defer></script>
+    <script src="/static/skin.js?v=2"></script>
+
+    <script src="/static/glass-charts.js?v=2" defer></script>
 
     <style>
 
-        /* ═══ NEW 3-ZONE LAYOUT ═══ */
+        /* ═══ OBSIDIAN QUANT TERMINAL LAYOUT ═══ */
 
         :root {
 
             --sidebar-w: 220px;
 
-            --topbar-h: 42px;
-
-            --bg-base: var(--bg-primary);
-
-            --bg-surface: var(--bg-secondary);
-
-            --bg-raised: var(--bg-card);
-
-            --bdr: var(--border-color);
-
-            --txt: var(--text-primary);
-
-            --txt-muted: var(--text-muted);
-
-            --green2: #22c55e;
-
-            --red2: #ef4444;
-
-            --amber: #f59e0b;
-
-            --teal: #14b8a6;
-
-            --teal-dim: rgba(20,184,166,0.12);
-
-        }
-
-        [data-theme="light"] {
-
-            --teal-dim: rgba(20,184,166,0.08);
+            --topbar-h: 44px;
 
         }
 
@@ -425,19 +399,19 @@
 
         }
 
-        /* Active menu item - Soft cyan ambient pill with subtle border */
+        /* Active menu item - Crisp Obsidian cyan hairline pill */
 
         .sidebar-item.active {
 
-            color: #38bdf8;
+            color: var(--accent-brand, #22d3ee);
 
-            background: rgba(56, 189, 248, 0.1);
+            background: var(--accent-brand-soft, rgba(34, 211, 238, 0.10));
 
-            border: 1px solid rgba(56, 189, 248, 0.28);
+            border: 1px solid var(--border-accent, rgba(34, 211, 238, 0.30));
 
             font-weight: 600;
 
-            box-shadow: 0 0 12px rgba(56, 189, 248, 0.08);
+            box-shadow: none;
 
         }
 
@@ -691,15 +665,15 @@
 
             align-items: center;
 
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(10, 14, 26, 0.95) 100%);
+            background: var(--surface-1, #0e1118);
 
-            border: 1px solid rgba(99, 102, 241, 0.25);
+            border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.12));
 
-            border-radius: 10px;
+            border-radius: var(--radius-lg, 10px);
 
             padding: 1rem 1.25rem;
 
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+            box-shadow: var(--shadow-sm);
 
             flex-wrap: wrap;
 
@@ -739,7 +713,7 @@
 
             letter-spacing: -0.02em;
 
-            color: #f8fafc;
+            color: var(--text-1, #f1f5f9);
 
         }
 
@@ -753,11 +727,11 @@
 
             border-radius: 4px;
 
-            background: rgba(99, 102, 241, 0.2);
+            background: var(--accent-brand-soft, rgba(34, 211, 238, 0.12));
 
-            color: #818cf8;
+            color: var(--accent-brand, #22d3ee);
 
-            border: 1px solid rgba(99, 102, 241, 0.4);
+            border: 1px solid var(--border-accent, rgba(34, 211, 238, 0.32));
 
             letter-spacing: 0.06em;
 
@@ -771,7 +745,7 @@
 
             font-size: 0.78rem;
 
-            color: #94a3b8;
+            color: var(--text-2, #94a3b8);
 
         }
 
@@ -861,31 +835,37 @@
 
         .ee-action-btn:hover {
 
-            background: rgba(99, 102, 241, 0.18);
+            background: var(--accent-brand-soft, rgba(34, 211, 238, 0.12));
 
-            border-color: rgba(99, 102, 241, 0.4);
+            border-color: var(--border-accent, rgba(34, 211, 238, 0.35));
 
-            color: #fff;
+            color: var(--text-1, #f1f5f9);
 
         }
 
         .ee-action-btn.primary {
 
-            background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+            background: var(--accent-brand, #22d3ee);
 
-            border-color: #6366f1;
+            border-color: var(--accent-brand, #22d3ee);
 
-            color: #fff;
+            color: var(--accent-brand-ink, #080a0f);
 
-            box-shadow: 0 2px 8px rgba(79, 70, 229, 0.35);
+            font-weight: 700;
+
+            box-shadow: none;
 
         }
 
         .ee-action-btn.primary:hover {
 
-            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            background: var(--accent-brand-strong, #06b6d4);
 
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.45);
+            border-color: var(--accent-brand-strong, #06b6d4);
+
+            color: var(--accent-brand-ink, #080a0f);
+
+            box-shadow: var(--shadow-glow);
 
         }
 
@@ -923,11 +903,11 @@
 
         .ee-metric-card {
 
-            background: #0f172a;
+            background: var(--surface-2, #141923);
 
-            border: 1px solid rgba(255, 255, 255, 0.07);
+            border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.12));
 
-            border-radius: 8px;
+            border-radius: var(--radius-md, 8px);
 
             padding: 0.75rem 0.9rem;
 
@@ -943,7 +923,7 @@
 
         .ee-metric-card:hover {
 
-            border-color: rgba(99, 102, 241, 0.35);
+            border-color: var(--border-strong, rgba(148, 163, 184, 0.24));
 
             transform: translateY(-1px);
 
@@ -1141,19 +1121,19 @@
 
         .ee-filter-pill:hover {
 
-            color: #e2e8f0;
+            color: var(--text-1, #f1f5f9);
 
-            border-color: rgba(255, 255, 255, 0.18);
+            border-color: var(--border-strong, rgba(148, 163, 184, 0.24));
 
         }
 
         .ee-filter-pill.active {
 
-            background: rgba(99, 102, 241, 0.2);
+            background: var(--accent-brand-soft, rgba(34, 211, 238, 0.12));
 
-            color: #a5b4fc;
+            color: var(--accent-brand, #22d3ee);
 
-            border-color: rgba(99, 102, 241, 0.45);
+            border-color: var(--border-accent, rgba(34, 211, 238, 0.35));
 
         }
 
@@ -1225,7 +1205,7 @@
 
         .ee-table th {
 
-            background: #0f172a;
+            background: var(--surface-1, #0e1118);
 
             position: sticky;
 
@@ -1265,9 +1245,9 @@
 
             padding: 0.6rem 0.6rem;
 
-            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            border-bottom: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.10));
 
-            color: #e2e8f0;
+            color: var(--text-1, #f1f5f9);
 
             white-space: nowrap;
 
@@ -1277,7 +1257,7 @@
 
         .ee-table tr:hover td {
 
-            background: rgba(99, 102, 241, 0.08);
+            background: var(--accent-brand-soft, rgba(34, 211, 238, 0.08));
 
         }
 
@@ -1477,11 +1457,11 @@
 
             height: 100%;
 
-            background: #0f172a;
+            background: var(--surface-1, #0e1118);
 
-            border-left: 1px solid rgba(99, 102, 241, 0.3);
+            border-left: 1px solid var(--border-strong, rgba(148, 163, 184, 0.24));
 
-            box-shadow: -10px 0 35px rgba(0, 0, 0, 0.75);
+            box-shadow: var(--shadow-lg);
 
             display: flex;
 
@@ -1733,7 +1713,7 @@
                 max-height: 86vh !important;
                 border-radius: 20px 20px 0 0 !important;
                 border-left: none !important;
-                border-top: 1px solid rgba(99, 102, 241, 0.45) !important;
+                border-top: 1px solid var(--border-accent, rgba(34, 211, 238, 0.45)) !important;
                 box-shadow: 0 -12px 45px rgba(0, 0, 0, 0.85) !important;
                 overflow-y: auto !important;
             }
@@ -1749,7 +1729,7 @@
                 max-height: 86vh !important;
                 border-radius: 20px 20px 0 0 !important;
                 border-left: none !important;
-                border-top: 1px solid rgba(99, 102, 241, 0.45) !important;
+                border-top: 1px solid var(--border-accent, rgba(34, 211, 238, 0.45)) !important;
                 box-shadow: 0 -12px 45px rgba(0, 0, 0, 0.85) !important;
                 overflow-y: auto !important;
             }
@@ -2034,11 +2014,11 @@
 
             margin-left: 0.6rem;
 
-            background: rgba(99, 102, 241, 0.18);
+            background: var(--accent-brand-soft, rgba(34, 211, 238, 0.12));
 
-            border: 1px solid rgba(99, 102, 241, 0.4);
+            border: 1px solid var(--border-accent, rgba(34, 211, 238, 0.35));
 
-            color: var(--text-primary, #f1f5f9);
+            color: var(--accent-brand, #22d3ee);
 
             padding: 0.22rem 0.55rem;
 
@@ -3396,7 +3376,7 @@
                 max-height: 86vh !important;
                 border-radius: 20px 20px 0 0 !important;
                 border-left: none !important;
-                border-top: 1px solid rgba(99, 102, 241, 0.45) !important;
+                border-top: 1px solid var(--border-accent, rgba(34, 211, 238, 0.45)) !important;
                 box-shadow: 0 -12px 45px rgba(0, 0, 0, 0.85) !important;
                 overflow-y: auto !important;
             }
@@ -3412,7 +3392,7 @@
                 max-height: 86vh !important;
                 border-radius: 20px 20px 0 0 !important;
                 border-left: none !important;
-                border-top: 1px solid rgba(99, 102, 241, 0.45) !important;
+                border-top: 1px solid var(--border-accent, rgba(34, 211, 238, 0.45)) !important;
                 box-shadow: 0 -12px 45px rgba(0, 0, 0, 0.85) !important;
                 overflow-y: auto !important;
             }
@@ -3596,7 +3576,7 @@
 
             </div>
 
-            <button type="button" id="btnShoonyaFeed" onclick="if(window.openShoonyaLoginModal){window.openShoonyaLoginModal();}" title="Connect Shoonya Live NSE Feed (Admin)" style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;border:1px solid rgba(16,185,129,0.35);background:rgba(16,185,129,0.12);color:#6ee7b7;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap;">
+            <button type="button" id="btnShoonyaFeed" onclick="if(window.openShoonyaLoginModal){window.openShoonyaLoginModal();}" title="Connect Shoonya Live NSE Feed (Admin)">
                 <span>⚡</span>
                 <span>Shoonya Feed</span>
             </button>
@@ -3890,15 +3870,15 @@
                 <span class="sidebar-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
                 </span>
-                <span class="sidebar-label">Next-Day Picks</span>
-                <span class="status-pill status-pill-active" style="font-size:11px;margin-left:auto;padding:2px 6px;">RESEARCH</span>
+                <span class="sidebar-label" style="min-width:0;overflow:hidden;text-overflow:ellipsis;">Next-Day Picks</span>
+                <span class="status-pill status-pill-active" style="font-size:9.5px;margin-left:auto;padding:2px 5px;flex-shrink:0;">RESEARCH</span>
             </button>
             <button class="sidebar-item tab-btn" data-tab="fno" id="tabFno" title="F&O Derivatives Intelligence">
                 <span class="sidebar-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M16 8l-4 4-4-4"></path><path d="M12 12v6"></path></svg>
                 </span>
-                <span class="sidebar-label">F&O Derivatives</span>
-                <span class="status-pill status-pill-active" style="font-size:10px;margin-left:auto;padding:2px 5px;background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);">OI WALLS</span>
+                <span class="sidebar-label" style="min-width:0;overflow:hidden;text-overflow:ellipsis;">F&O Derivatives</span>
+                <span class="status-pill status-pill-active" style="font-size:9.5px;margin-left:auto;padding:2px 5px;flex-shrink:0;background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);">OI WALLS</span>
             </button>
 
         </div>
@@ -3912,14 +3892,14 @@
         <!-- Clean Footer Status Box (Zero duplicate Crypto!) -->
 
         <!-- Section 6A: NSE Focus Mode & Crypto/Forex Operator Switch -->
-        <div class="market-control-card" id="marketControlCard" style="margin: 0.5rem 0.75rem 0.75rem; padding: 0.6rem 0.75rem; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px;">
+        <div class="market-control-card" id="marketControlCard">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.35rem;">
-                <span style="font-size: 0.72rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">NSE Focus Mode</span>
-                <span id="marketControlModeBadge" style="font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; font-weight: 600; background: rgba(59, 130, 246, 0.2); color: #60a5fa;">Active</span>
+                <span class="market-control-heading">NSE Focus Mode</span>
+                <span id="marketControlModeBadge" class="market-control-mode-badge">Active</span>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size: 0.75rem; color: #cbd5e1; font-weight: 500;">Crypto & Forex</span>
-                <button id="cryptoForexToggleBtn" type="button" onclick="handleCryptoForexToggleClick()" style="padding: 3px 10px; font-size: 0.7rem; font-weight: 700; border-radius: 4px; border: 1px solid #475569; background: #1e293b; color: #94a3b8; cursor: pointer; transition: all 0.2s;">
+                <span class="market-control-label">Crypto & Forex</span>
+                <button id="cryptoForexToggleBtn" class="market-control-toggle-btn" type="button" onclick="handleCryptoForexToggleClick()">
                     OFF
                 </button>
             </div>
@@ -7575,7 +7555,7 @@
                     <div class="ee-title-group">
                         <div class="ee-badge-row">
                             <h2 class="ee-main-title">F&O DERIVATIVES INTELLIGENCE</h2>
-                            <span class="ee-pro-pill" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border-color: rgba(99, 102, 241, 0.3);">INSTITUTIONAL GEOMETRY</span>
+                            <span class="ee-pro-pill">INSTITUTIONAL GEOMETRY</span>
                             <div class="ee-telemetry-pill live" id="fnoFeedPill">
                                 <span class="status-dot live" style="width:6px;height:6px;"></span>
                                 <span id="fnoFeedStatusText">Box C Derivatives: Online</span>
@@ -7584,7 +7564,7 @@
                         <p class="ee-subtitle">Real-time Open Interest structure, Black-76 implied volatility, market-priced reachability envelopes, and institutional option walls.</p>
                     </div>
                     <div class="ee-header-actions" style="display: flex; gap: 0.75rem; align-items: center; margin-left: auto;">
-                        <select id="fnoUnderlyingSelect" class="form-select" aria-label="Select underlying instrument for F&O analytics" style="min-width: 180px; font-size: 0.82rem; background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.45rem 0.75rem;">
+                        <select id="fnoUnderlyingSelect" class="form-select" aria-label="Select underlying instrument for F&O analytics" style="min-width: 190px; font-size: 0.82rem; font-family: var(--font-sans); background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.45rem 0.75rem;">
                             <option value="NIFTY 50">NIFTY 50</option>
                             <option value="NIFTY BANK">NIFTY BANK</option>
                             <option value="RELIANCE">RELIANCE</option>
@@ -7594,7 +7574,7 @@
                             <option value="ICICIBANK">ICICIBANK</option>
                             <option value="SBIN">SBIN</option>
                         </select>
-                        <button id="fnoRefreshBtn" class="btn btn-secondary" style="font-size: 0.82rem; display: inline-flex; align-items: center; gap: 6px; padding: 0.45rem 0.85rem; border-radius: 8px;">
+                        <button id="fnoRefreshBtn" class="btn btn-secondary fno-refresh-btn" type="button">
                             <span>⚡</span> Refresh F&O
                         </button>
                     </div>
@@ -7626,44 +7606,44 @@
 
                 <!-- Strike Ladder Corridor Visualizer -->
                 <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 1.25rem; margin-top: 1.25rem;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
                         <div>
                             <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); letter-spacing: 0.03em;">INSTITUTIONAL STRIKE CORRIDOR & REACHABILITY</span>
                             <span style="font-size: 0.72rem; color: var(--text-muted); margin-left: 8px;" id="fnoCorridorSymbol">NIFTY 50</span>
                         </div>
-                        <span class="badge" id="fnoEnvelopeSourceBadge" style="background: rgba(14, 165, 233, 0.15); color: #0284c7; border: 1px solid rgba(14, 165, 233, 0.3); font-size: 0.72rem; padding: 2px 8px; border-radius: 4px;">BOX_C_STREAM</span>
+                        <span class="badge" id="fnoEnvelopeSourceBadge" style="background: rgba(14, 165, 233, 0.15); color: #0284c7; border: 1px solid rgba(14, 165, 233, 0.3); font-size: 0.72rem; padding: 2px 8px; border-radius: 4px; max-width: 100%;">BOX_C_STREAM</span>
                     </div>
                     
-                    <div id="fnoLadderVisualizer" style="display: flex; align-items: center; justify-content: space-between; gap: 8px; background: rgba(15, 23, 42, 0.6); padding: 1rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+                    <div id="fnoLadderVisualizer" class="fno-ladder-visualizer">
                         <!-- Left: PE Wall (Support Floor) -->
-                        <div style="text-align: center; flex: 1; padding: 0.75rem; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px;">
-                            <div style="font-size: 0.7rem; color: #10b981; font-weight: 700; text-transform: uppercase;">Max PE Wall (Support)</div>
-                            <div id="fnoLadderPeVal" style="font-size: 1.2rem; font-weight: 700; color: #10b981; margin: 4px 0;">₹--</div>
-                            <div id="fnoLadderPeDist" style="font-size: 0.72rem; color: #94a3b8;">--% below Spot</div>
+                        <div class="fno-ladder-wall fno-ladder-wall--pe">
+                            <div class="fno-ladder-label fno-ladder-tone-pe">Max PE Wall (Support)</div>
+                            <div id="fnoLadderPeVal" class="fno-ladder-val fno-ladder-tone-pe">₹--</div>
+                            <div id="fnoLadderPeDist" class="fno-ladder-sub">--% below Spot</div>
                         </div>
 
                         <!-- Mid-Left Arrow / Reach -->
-                        <div style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 0 4px;">
+                        <div class="fno-ladder-arrow">
                             <span>◄ 1D Cone</span>
                         </div>
 
                         <!-- Center: Spot LTP -->
-                        <div style="text-align: center; flex: 1.2; padding: 0.85rem; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 6px;">
-                            <div style="font-size: 0.7rem; color: #38bdf8; font-weight: 700; text-transform: uppercase;">Underlying Spot LTP</div>
-                            <div id="fnoLadderSpotVal" style="font-size: 1.35rem; font-weight: 800; color: #38bdf8; margin: 4px 0;">₹--</div>
-                            <div id="fnoLadderStraddleVal" style="font-size: 0.72rem; color: #94a3b8;">ATM Strike: ₹-- · Straddle: ₹--</div>
+                        <div class="fno-ladder-wall fno-ladder-wall--spot">
+                            <div class="fno-ladder-label fno-ladder-tone-spot">Underlying Spot LTP</div>
+                            <div id="fnoLadderSpotVal" class="fno-ladder-val fno-ladder-tone-spot">₹--</div>
+                            <div id="fnoLadderStraddleVal" class="fno-ladder-sub">ATM Strike: ₹-- · Straddle: ₹--</div>
                         </div>
 
                         <!-- Mid-Right Arrow / Reach -->
-                        <div style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 0 4px;">
+                        <div class="fno-ladder-arrow">
                             <span>1D Cone ►</span>
                         </div>
 
                         <!-- Right: CE Wall (Resistance Ceiling) -->
-                        <div style="text-align: center; flex: 1; padding: 0.75rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 6px;">
-                            <div style="font-size: 0.7rem; color: #ef4444; font-weight: 700; text-transform: uppercase;">Max CE Wall (Resistance)</div>
-                            <div id="fnoLadderCeVal" style="font-size: 1.2rem; font-weight: 700; color: #ef4444; margin: 4px 0;">₹--</div>
-                            <div id="fnoLadderCeDist" style="font-size: 0.72rem; color: #94a3b8;">--% above Spot</div>
+                        <div class="fno-ladder-wall fno-ladder-wall--ce">
+                            <div class="fno-ladder-label fno-ladder-tone-ce">Max CE Wall (Resistance)</div>
+                            <div id="fnoLadderCeVal" class="fno-ladder-val fno-ladder-tone-ce">₹--</div>
+                            <div id="fnoLadderCeDist" class="fno-ladder-sub">--% above Spot</div>
                         </div>
                     </div>
                 </div>
@@ -8223,11 +8203,11 @@
                         <span class="more-card-arrow">›</span>
                     </button>
                     <button class="more-menu-card more-menu-item" data-tab="fno">
-                        <div class="more-card-icon" style="color: #818cf8;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M16 8l-4 4-4-4"></path><path d="M12 12v6"></path></svg></div>
+                        <div class="more-card-icon icon-cyan"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M16 8l-4 4-4-4"></path><path d="M12 12v6"></path></svg></div>
                         <div class="more-card-body">
                             <div class="more-card-header-row">
                                 <span class="more-card-title">F&O Derivatives</span>
-                                <span class="more-card-pill" style="background: rgba(99, 102, 241, 0.15); color: #818cf8;">OI WALLS</span>
+                                <span class="more-card-pill pill-cyan">OI WALLS</span>
                             </div>
                             <span class="more-card-desc">Option OI walls, PCR, ATM straddle implied moves</span>
                         </div>
@@ -8459,25 +8439,25 @@
     <script src="/static/honesty.js" defer></script>
 
     <!-- Section 6A: Market Control Password Verification Modal -->
-    <div id="marketControlPasswordModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 10000; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
-        <div style="background: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 1.5rem; max-width: 420px; width: 90%; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.7);">
+    <div id="marketControlPasswordModal" style="display: none; position: fixed; inset: 0; background: rgba(4, 7, 12, 0.80); z-index: 10000; align-items: center; justify-content: center; backdrop-filter: blur(6px);">
+        <div style="background: var(--surface-1, #0e1118); border: 1px solid var(--border-strong, rgba(148,163,184,0.24)); border-radius: 10px; padding: 1.5rem; max-width: 420px; width: 90%; box-shadow: var(--shadow-lg); color: var(--text-1, #f1f5f9);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem;">
-                <h3 style="margin:0; color:#f8fafc; font-size:1.05rem; display:flex; align-items:center; gap:8px;">
+                <h3 style="margin:0; color:var(--text-1, #f1f5f9); font-size:1.05rem; display:flex; align-items:center; gap:8px;">
                     <span>🔒</span> Operator Authorization Required
                 </h3>
-                <button type="button" onclick="closeMarketControlModal()" style="background:none; border:none; color:#94a3b8; font-size:1.2rem; cursor:pointer;">&times;</button>
+                <button type="button" onclick="closeMarketControlModal()" style="background:none; border:none; color:var(--text-2, #94a3b8); font-size:1.2rem; cursor:pointer;">&times;</button>
             </div>
-            <p style="color:#94a3b8; font-size:0.82rem; line-height:1.45; margin:0 0 1rem 0;">
+            <p style="color:var(--text-2, #94a3b8); font-size:0.82rem; line-height:1.45; margin:0 0 1rem 0;">
                 Enabling Crypto & Forex processing initiates 24/7 background market feeds, indicator calculation, and provider polling. Enter the operator password to confirm override:
             </p>
             <form autocomplete="off" onsubmit="event.preventDefault(); submitMarketControlPassword();">
                 <div style="margin-bottom: 1rem;">
-                    <input type="password" id="marketControlPasswordInput" aria-label="Enter operator password to toggle crypto forex mode" autocomplete="off" placeholder="Operator Password" style="width: 100%; box-sizing: border-box; padding: 0.6rem 0.8rem; background: #1e293b; border: 1px solid #475569; border-radius: 6px; color: #f8fafc; font-size: 0.88rem; outline: none;" />
-                    <div id="marketControlErrorMsg" style="color: #ef4444; font-size: 0.75rem; margin-top: 0.4rem; display: none;"></div>
+                    <input type="password" id="marketControlPasswordInput" aria-label="Enter operator password to toggle crypto forex mode" autocomplete="off" placeholder="Operator Password" style="width: 100%; box-sizing: border-box; padding: 0.6rem 0.8rem; background: var(--surface-input, #0b0e14); border: 1px solid var(--border-strong, rgba(148,163,184,0.24)); border-radius: 6px; color: var(--text-1, #f1f5f9); font-size: 0.88rem; outline: none;" />
+                    <div id="marketControlErrorMsg" style="color: var(--bear, #f43f5e); font-size: 0.75rem; margin-top: 0.4rem; display: none;"></div>
                 </div>
                 <div style="display:flex; justify-content:flex-end; gap: 0.6rem;">
-                    <button type="button" onclick="closeMarketControlModal()" style="padding: 0.5rem 0.9rem; background: #334155; color: #cbd5e1; border: none; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500;">Cancel</button>
-                    <button id="marketControlSubmitBtn" type="submit" style="padding: 0.5rem 1.1rem; background: #3b82f6; color: #ffffff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.82rem;">Authorize & Enable</button>
+                    <button type="button" onclick="closeMarketControlModal()" style="padding: 0.5rem 0.9rem; background: var(--surface-3, #1b2230); color: var(--text-2, #94a3b8); border: 1px solid var(--border-subtle, rgba(148,163,184,0.12)); border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 500;">Cancel</button>
+                    <button id="marketControlSubmitBtn" type="submit" style="padding: 0.5rem 1.1rem; background: var(--accent-brand, #22d3ee); color: var(--accent-brand-ink, #080a0f); border: none; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 0.82rem;">Authorize & Enable</button>
                 </div>
             </form>
         </div>
