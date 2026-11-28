@@ -177,7 +177,7 @@
       payload.password = (document.getElementById('shPassword')?.value || '').trim();
       payload.vendor_code = (document.getElementById('shVendorCode')?.value || '').trim();
       payload.api_key = (document.getElementById('shApiKey')?.value || '').trim();
-      payload.totp = (document.getElementById('shTotp')?.value || '').trim();
+      payload.totp = (document.getElementById('shTotp')?.value || '').replace(/\s+/g, '');
     }
 
     const btn = document.getElementById('shSubmitBtn');

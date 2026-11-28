@@ -90,47 +90,77 @@ class ShoonyaFeedManager:
         )
 
     def login(self) -> bool:
-        """Authenticate with Shoonya using automated TOTP."""
+        """Authenticate with Shoonya QuickAuth and preserve exact broker rejection emsg."""
         if not self.has_credentials():
             logger.warning("[Shoonya] Missing credentials — switching to simulated tick mode")
             self.is_simulated = True
             return False
 
         try:
+            import json
             import pyotp
+            import requests
             from NorenRestApiPy.NorenApi import NorenApi
 
             self.api = NorenApi(host=SHOONYA_HOST, websocket=SHOONYA_WS)
 
-            # Determine 2FA value: if 6 digits provided directly, use as-is; otherwise generate from Base32 secret
-            if self.totp_secret.isdigit() and len(self.totp_secret) == 6:
-                totp = self.totp_secret
+            totp_clean = "".join((self.totp_secret or "").split())
+            if totp_clean.isdigit():
+                if len(totp_clean) != 6:
+                    self.last_error = "Invalid 2FA: enter a 6-digit OTP or Base32 TOTP secret"
+                    logger.error("[Shoonya] %s", self.last_error)
+                    self.is_simulated = True
+                    return False
+                totp = totp_clean
             else:
-                totp = pyotp.TOTP(self.totp_secret).now()
+                totp = pyotp.TOTP(totp_clean.upper()).now()
 
             logger.info("[Shoonya] Attempting login for user: %s (vc: %s)", self.uid, self.vendor_code)
-            # NorenApi.login hashes password and (uid|api_secret) with sha256 internally.
-            # Pass plain password and plain api_key to avoid double-hashing.
-            res = self.api.login(
-                userid=self.uid,
-                password=self.password,
-                twoFA=totp,
-                vendor_code=self.vendor_code,
-                api_secret=self.api_key,
-                imei=self.imei,
-            )
+            pwd_hash = hashlib.sha256(self.password.encode("utf-8")).hexdigest()
+            app_hash = hashlib.sha256(f"{self.uid}|{self.api_key}".encode("utf-8")).hexdigest()
+            values = {
+                "source": "API",
+                "apkversion": "1.0.0",
+                "uid": self.uid,
+                "pwd": pwd_hash,
+                "factor2": totp,
+                "vc": self.vendor_code,
+                "appkey": app_hash,
+                "imei": self.imei,
+            }
+            auth_url = f"{SHOONYA_HOST.rstrip('/')}/QuickAuth"
+            resp = requests.post(auth_url, data=f"jData={json.dumps(values)}", timeout=15)
 
-            if isinstance(res, dict) and res.get("stat") == "Ok":
+            res = None
+            try:
+                res = resp.json()
+            except Exception:
+                res = None
+
+            if isinstance(res, dict) and res.get("stat") == "Ok" and res.get("susertoken"):
+                self.api.set_session(
+                    userid=self.uid,
+                    password=self.password,
+                    usertoken=res["susertoken"],
+                )
+                self.usertoken = str(res["susertoken"])
                 self.last_login_time = datetime.now(timezone.utc)
                 self.is_simulated = False
                 self.last_error = None
                 logger.info("[Shoonya] Login successful. Session token acquired.")
                 return True
-            else:
-                self.last_error = str((res or {}).get("emsg") if isinstance(res, dict) else res or "Login rejected")
-                logger.error("[Shoonya] Login failed response: %s", res)
-                self.is_simulated = True
-                return False
+
+            emsg = ""
+            if isinstance(res, dict):
+                emsg = str(res.get("emsg") or res.get("message") or "").strip()
+            if not emsg:
+                snippet = (getattr(resp, "text", "") or "").strip()[:160]
+                emsg = f"Shoonya HTTP {resp.status_code}: {snippet}" if snippet else f"Shoonya HTTP {resp.status_code} login rejected"
+
+            self.last_error = emsg
+            logger.error("[Shoonya] Login failed response (HTTP %s): %s", resp.status_code, emsg)
+            self.is_simulated = True
+            return False
 
         except Exception as exc:
             self.last_error = str(exc)

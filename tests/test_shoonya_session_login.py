@@ -139,3 +139,48 @@ def test_broadcaster_overlays_live_shoonya_ticks(monkeypatch):
     assert payload["source"] == "SHOONYA_LIVE"
     assert payload["prices"]["RELIANCE"]["close"] == 1412.5
     assert payload["prices"]["RELIANCE"]["data_status"] == "LIVE"
+
+
+def test_shoonya_login_preserves_exact_broker_emsg(monkeypatch):
+    import requests
+    from feed.bar_builder import BarBuilder
+    from feed.shoonya_client import ShoonyaFeedManager
+    from feed.token_master import TokenMaster
+
+    mgr = ShoonyaFeedManager(bar_builder=BarBuilder(), token_master=TokenMaster())
+    mgr.uid = "FN243453"
+    mgr.password = "secretpw"
+    mgr.api_key = "secretapikey"
+    mgr.vendor_code = "FN243453_U"
+    mgr.totp_secret = "123 456"
+
+    class _MockResp:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+            self.text = str(payload)
+
+        def json(self):
+            return self._payload
+
+    captured = {}
+
+    def _fail_post(url, data=None, timeout=15):
+        captured["url"] = url
+        captured["data"] = data
+        return _MockResp(400, {"stat": "Not_Ok", "emsg": "Invalid Input : Password Expired"})
+
+    monkeypatch.setattr(requests, "post", _fail_post)
+    assert mgr.login() is False
+    assert mgr.last_error == "Invalid Input : Password Expired"
+    assert captured["url"].endswith("/QuickAuth")
+    assert '"factor2": "123456"' in captured["data"]
+
+    def _ok_post(url, data=None, timeout=15):
+        return _MockResp(200, {"stat": "Ok", "susertoken": "tok-abc-123"})
+
+    monkeypatch.setattr(requests, "post", _ok_post)
+    assert mgr.login() is True
+    assert mgr.usertoken == "tok-abc-123"
+    assert mgr.is_simulated is False
+    assert mgr.last_error is None
