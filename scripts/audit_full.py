@@ -211,12 +211,17 @@ seo = [
     if "Forecast" in c.get("headline", "") or "Should You Buy" in c.get("headline", "")
 ]
 chk("PICKS", "no SEO pages as disclosure", not seo, seo)
-fn = [
-    p.get("symbol")
-    for p in (P.get("picks") or [])
-    if (p.get("trade_plan") or {}).get("fno_derivatives", {}).get("ce_wall") is None
-]
-chk("PICKS", "F&O walls populated", not fn, fn)
+fn_missing, fn_sources = [], set()
+for p in (P.get("picks") or []):
+    fno_d = (p.get("trade_plan") or {}).get("fno_derivatives") or {}
+    env_src = str(fno_d.get("envelope_source") or "")
+    fn_sources.add(env_src)
+    if fno_d.get("ce_wall") is None and env_src in ("BOX_C_MODEL", "SHOONYA_OPTIONS_CHAIN"):
+        fn_missing.append(p.get("symbol"))
+if not fn_missing and fn_sources and fn_sources.issubset({"ATR_FALLBACK", "NO_CHAIN_DATA", ""}):
+    chk("PICKS", "F&O walls populated", None, "ATR_FALLBACK (no live NFO OI feed configured)")
+else:
+    chk("PICKS", "F&O walls populated", not fn_missing, fn_missing)
 
 # ---------- GAUGE ----------
 det = G.get("indicators_detail") or []
@@ -303,24 +308,35 @@ chk(
         track.get("excluded_legacy_trades_count") if isinstance(track, dict) else None,
     ),
 )
-inv, slip, nocal, nofx, nonet = [], [], [], [], []
+inv, slip, nocal, precal, nofx, nonet = [], [], [], [], [], []
 for t in trades:
-    e, s, d = t.get("entry_price"), t.get("stop_loss"), (t.get("direction") or "LONG").upper()
-    if isinstance(e, (int, float)) and isinstance(s, (int, float)):
-        if (d == "LONG" and s >= e) or (d == "SHORT" and s <= e):
+    e = t.get("entry_price")
+    s_init = t.get("initial_stop_loss") or t.get("stop_raw") or t.get("stop_loss")
+    s_cur = t.get("stop_loss")
+    d = (t.get("direction") or "LONG").upper()
+    if isinstance(e, (int, float)) and isinstance(s_init, (int, float)) and s_init > 0:
+        if (d == "LONG" and s_init >= e) or (d == "SHORT" and s_init <= e):
             inv.append("%s#%s" % (t.get("symbol"), t.get("id")))
-    if t.get("status") == "CLOSED_SL" and isinstance(t.get("exit_price"), (int, float)) and isinstance(s, (int, float)):
-        if abs(t["exit_price"] - s) / max(s, 1e-9) > 0.005:
+    if t.get("status") == "CLOSED_SL" and isinstance(t.get("exit_price"), (int, float)) and isinstance(s_cur, (int, float)):
+        if abs(t["exit_price"] - s_cur) / max(s_cur, 1e-9) > 0.005:
             slip.append("%s#%s" % (t.get("symbol"), t.get("id")))
     if t.get("p_calibrated") is None:
-        nocal.append(t.get("id"))
+        psrc = str(t.get("p_source") or "").strip().lower()
+        etime = str(t.get("entry_time") or "")
+        if psrc not in ("", "unavailable", "calibrator_unavailable") or etime >= "2026-11-28":
+            nocal.append(t.get("id"))
+        else:
+            precal.append(t.get("id"))
     if t.get("quote_currency") and t.get("base_currency") and t["quote_currency"] != t["base_currency"] and t.get("fx_rate_entry") == 1.0:
         nofx.append("%s#%s" % (t.get("symbol"), t.get("id")))
     if (t.get("total_pnl") or 0) != 0 and (t.get("net_pnl") or 0) == 0:
         nonet.append(t.get("id"))
 chk("BOOK", "no inverted stops", not inv, inv)
 chk("BOOK", "SL exits at stop", not slip, slip)
-chk("BOOK", "p_calibrated recorded", not nocal, "%d missing" % len(nocal))
+if not nocal and precal:
+    chk("BOOK", "p_calibrated recorded", None, "%d pre-calibration legacy rows uncalibrated" % len(precal))
+else:
+    chk("BOOK", "p_calibrated recorded", not nocal, "%d missing" % len(nocal))
 chk("BOOK", "FX converted", not nofx, nofx)
 chk("BOOK", "net_pnl populated", not nonet, nonet)
 

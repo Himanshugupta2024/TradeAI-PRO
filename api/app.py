@@ -551,9 +551,20 @@ def create_app() -> FastAPI:
         response = await call_next(request)
         path = request.url.path
         # Enforce strict private, no-store policy on error responses (status >= 400) and sensitive / stateful endpoints
+        private_prefixes = (
+            "/api/portfolio",
+            "/api/trades",
+            "/api/paper",
+            "/api/capital",
+            "/api/journal",
+            "/api/risk",
+            "/api/admin",
+            "/api/orders",
+            "/api/positions",
+        )
         if (
             response.status_code >= 400
-            or any(k in path for k in ("/portfolio", "/trades", "/paper", "/capital", "/journal", "/risk", "/admin", "/orders", "/positions"))
+            or any(path == p or path.startswith(p + "/") for p in private_prefixes)
             or request.method != "GET"
         ):
             response.headers["Cache-Control"] = "private, no-cache, no-store, must-revalidate"

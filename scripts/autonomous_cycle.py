@@ -267,6 +267,16 @@ async def run_single_autonomous_cycle(
     except Exception as exc:
         logger.error("[AutonomousWorker] Database initialization failed: %s", exc)
 
+    # 1b. Sync latest ML / calibrator model bundle from Supabase runtime_state
+    try:
+        from api.model_sync import sync_from_db
+
+        sync_res = await asyncio.to_thread(sync_from_db)
+        if isinstance(sync_res, dict) and sync_res.get("applied"):
+            logger.info("🧠 [AutonomousWorker] Synced model bundle v%s from Supabase", sync_res.get("version"))
+    except Exception as msync_exc:
+        logger.debug("[AutonomousWorker] Model bundle sync skipped: %s", msync_exc)
+
     # 2. Acquire Distributed Lock
     lock_mgr = DistributedLockManager(default_duration_sec=660, heartbeat_timeout_sec=180)
     lock_acquired = lock_mgr.acquire(

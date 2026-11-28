@@ -156,6 +156,24 @@ def classify_legacy_trade(trade: Any) -> tuple[str, str]:
                 if breach > sl_dist + 0.02:
                     return "LEGACY_EXCLUDED", "UNENFORCED_STOP_EOD_BREACH_LEGACY"
 
+            total_pnl_val = float(get("total_pnl") or 0.0)
+            net_pnl_val = float(get("net_pnl") or 0.0)
+            est_costs_val = float(get("estimated_costs") or 0.0)
+            sym_str = str(get("symbol") or "")
+            entry_t = str(get("entry_time") or "")
+            if "/" not in sym_str and entry_t and abs(total_pnl_val) > 1e-6 and abs(net_pnl_val) < 1e-9 and abs(est_costs_val) < 1e-9:
+                try:
+                    from zoneinfo import ZoneInfo
+
+                    dt_e = datetime.fromisoformat(entry_t.replace("Z", "+00:00"))
+                    if dt_e.tzinfo is not None:
+                        dt_e = dt_e.astimezone(ZoneInfo("Asia/Kolkata"))
+                    hhmm = dt_e.hour * 60 + dt_e.minute
+                    if hhmm < 9 * 60 or hhmm > 16 * 60:
+                        return "LEGACY_EXCLUDED", "UNCOSTED_OFFHOURS_LEGACY"
+                except Exception:
+                    pass
+
     return "VALID", ""
 
 
